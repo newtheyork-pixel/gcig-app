@@ -194,3 +194,4 @@ This scaffold is production-capable with a few hardening steps:
 ## License
 
 Private / internal to GCIG.
+# gcig-app
