@@ -10,7 +10,7 @@ import {
   Users,
   UserCircle,
   LogOut,
-  TrendingUp,
+  Vote,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext.jsx';
 import RoleBadge from './RoleBadge.jsx';
@@ -21,6 +21,7 @@ const NAV_ITEMS = [
   { to: '/events', label: 'Events Calendar', icon: CalendarRange },
   { to: '/archive', label: 'Pitch Archive', icon: FileText },
   { to: '/portfolio', label: 'Portfolio', icon: LineChart },
+  { to: '/votes', label: 'Voting', icon: Vote },
   { to: '/reports', label: 'Research Reports', icon: BookOpen },
   { to: '/attendance', label: 'Attendance', icon: ClipboardCheck },
   { to: '/members', label: 'Members', icon: Users, adminOnly: true },
@@ -32,14 +33,19 @@ export default function Sidebar({ onNavigate }) {
 
   return (
     <aside className="flex h-full w-64 flex-col bg-navy text-white">
-      <div className="flex items-center gap-3 px-6 py-6 border-b border-navy-500/50">
-        <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-gold text-navy">
-          <TrendingUp className="h-6 w-6" />
-        </div>
-        <div>
+      <div className="flex flex-col items-center gap-3 px-6 py-6 border-b border-navy-500/50">
+        <img
+          src="/grace-logo.png"
+          alt="Grace Church School"
+          className="h-14 w-auto"
+          onError={(e) => {
+            e.currentTarget.style.display = 'none';
+          }}
+        />
+        <div className="text-center">
           <div className="text-lg font-bold tracking-tight">GCIG</div>
           <div className="text-[10px] uppercase tracking-wider text-gold">
-            Grace Church Investment Group
+            Grace Church School Investment Group
           </div>
         </div>
       </div>

@@ -2,12 +2,14 @@ import { useState } from 'react';
 import { Outlet } from 'react-router-dom';
 import { Menu, X } from 'lucide-react';
 import Sidebar from './Sidebar.jsx';
+import VoteNotification from './VoteNotification.jsx';
 
 export default function Layout() {
   const [drawerOpen, setDrawerOpen] = useState(false);
 
   return (
     <div className="flex h-full bg-[#F7F8FB]">
+      <VoteNotification />
       {/* Desktop sidebar */}
       <div className="hidden md:block shrink-0">
         <Sidebar />

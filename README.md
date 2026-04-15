@@ -1,4 +1,4 @@
-# GCIG — Grace Church Investment Group
+# GCIG — Grace Church School Investment Group
 
 Full-stack web application for the student-run GCIG investment club. Invite-only
 auth, pitch & event calendars, pitch deck archive, live portfolio tracker (Yahoo

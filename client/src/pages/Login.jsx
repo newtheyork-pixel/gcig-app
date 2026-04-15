@@ -1,6 +1,5 @@
 import { useState } from 'react';
 import { Navigate, useNavigate } from 'react-router-dom';
-import { TrendingUp } from 'lucide-react';
 import { useAuth } from '../context/AuthContext.jsx';
 import Button from '../components/Button.jsx';
 
@@ -39,13 +38,18 @@ export default function Login() {
   return (
     <div className="flex min-h-full items-center justify-center bg-gradient-to-br from-navy via-navy-700 to-navy-800 p-4">
       <div className="w-full max-w-md">
-        <div className="mb-6 text-center">
-          <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-xl bg-gold text-navy">
-            <TrendingUp className="h-8 w-8" />
-          </div>
+        <div className="mb-6 flex flex-col items-center text-center">
+          <img
+            src="/grace-logo.png"
+            alt="Grace Church School"
+            className="h-20 w-auto"
+            onError={(e) => {
+              e.currentTarget.style.display = 'none';
+            }}
+          />
           <h1 className="mt-4 text-2xl font-bold text-white">GCIG</h1>
           <p className="mt-1 text-xs uppercase tracking-wider text-gold">
-            Grace Church Investment Group
+            Grace Church School Investment Group
           </p>
         </div>
 

@@ -22,6 +22,12 @@ enum AttendanceStatus {
   Excused
 }
 
+enum VoteAction {
+  Buy
+  Hold
+  Sell
+}
+
 model User {
   id           Int          @id @default(autoincrement())
   name         String
@@ -30,6 +36,19 @@ model User {
   role         Role
   createdAt    DateTime     @default(now())
   attendance   Attendance[]
+  votes        Vote[]
+}
+
+model Vote {
+  id         Int        @id @default(autoincrement())
+  ticker     String
+  action     VoteAction
+  note       String?
+  createdAt  DateTime   @default(now())
+  createdBy  Int
+  creator    User       @relation(fields: [createdBy], references: [id], onDelete: Cascade)
+
+  @@index([createdAt])
 }
 
 model Pitch {
