@@ -137,11 +137,16 @@ router.put('/:id', requireAdmin, async (req, res) => {
   res.json(user);
 });
 
+// Roles only the President can assign. They sit outside the operational
+// hierarchy and must never be handed out by an industry leader.
+const PRESIDENT_ONLY_ROLES = new Set(['AdvisoryBoardMember', 'FacultyAdvisory']);
+
 // Change a user's primary role.
 //   - President: can change anyone's role to anything.
 //   - Industry leader: can change roles of members in industries they lead,
 //     but only if target's current rank AND new rank are both strictly below
-//     the leader's own rank.
+//     the leader's own rank. Cannot touch AB/Faculty (either to assign or to
+//     modify someone already in those roles).
 //   - Everyone else: forbidden.
 router.put('/:id/role', async (req, res) => {
   const targetId = Number(req.params.id);
@@ -161,6 +166,18 @@ router.put('/:id/role', async (req, res) => {
       select: { id: true, name: true, email: true, role: true, extraRoles: true },
     });
     return res.json(updated);
+  }
+
+  // Non-Presidents cannot assign or remove Advisory Board / Faculty roles.
+  if (PRESIDENT_ONLY_ROLES.has(newRole)) {
+    return res.status(403).json({
+      error: 'Only the President can assign Advisory Board or Faculty Advisor roles',
+    });
+  }
+  if (PRESIDENT_ONLY_ROLES.has(target.role)) {
+    return res.status(403).json({
+      error: 'Only the President can modify Advisory Board or Faculty Advisor members',
+    });
   }
 
   // Must lead an industry that contains the target.

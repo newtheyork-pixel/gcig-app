@@ -37,6 +37,10 @@ const ALL_ROLES = [
   'FacultyAdvisory',
 ];
 
+// Advisory Board and Faculty are observer roles. Only the President can assign
+// them or touch someone who already has them — industry leaders are blocked.
+const PRESIDENT_ONLY_ROLES = new Set(['AdvisoryBoardMember', 'FacultyAdvisory']);
+
 export default function Industries() {
   const { user, isAdmin } = useAuth();
   const [industries, setIndustries] = useState([]);
@@ -292,11 +296,14 @@ function MemberModalBody({
   const canAddRemove = isAdmin;
   const canChangeRoles = isAdmin || isLeader;
 
-  // Leader: can only assign roles strictly below their own rank.
+  // Leader: can only assign roles strictly below their own rank. AB/Faculty
+  // are off-limits entirely — only the President can toggle those.
   const callerRank = isAdmin
     ? Infinity
     : ROLE_RANK[currentUser?.role] ?? 0;
-  const assignableRoles = ALL_ROLES.filter((r) => ROLE_RANK[r] < callerRank);
+  const assignableRoles = ALL_ROLES.filter(
+    (r) => ROLE_RANK[r] < callerRank && (isAdmin || !PRESIDENT_ONLY_ROLES.has(r))
+  );
 
   return (
     <div className="space-y-4">
@@ -338,8 +345,9 @@ function MemberModalBody({
           <ul className="mt-2 space-y-2">
             {industry.members.map((m) => {
               const memberRank = ROLE_RANK[m.role] ?? 0;
+              const isObserverRole = PRESIDENT_ONLY_ROLES.has(m.role);
               const leaderCanManageThisMember =
-                isLeader && memberRank < callerRank;
+                isLeader && memberRank < callerRank && !isObserverRole;
               const canEditRole = isAdmin || leaderCanManageThisMember;
               const isLeaderOfIndustry = m.id === industry.leader?.id;
               return (
