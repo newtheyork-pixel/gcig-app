@@ -11,18 +11,18 @@ import RoleBadge, { ROLE_LABELS } from '../components/RoleBadge.jsx';
 const LEADER_ROLES = new Set(['President', 'CIO', 'SeniorPortfolioManager', 'PortfolioManager']);
 
 // Must match the server's ROLE_RANK — used to decide which roles a leader
-// can assign to members in their industry. Advisory Board Members and
-// Faculty Advisors sit directly below Presidents.
+// can assign to members in their industry. Advisory Board and Faculty are
+// observer roles that sit outside the operational hierarchy.
 const ROLE_RANK = {
-  President: 20,
-  AdvisoryBoardMember: 19,
-  FacultyAdvisory: 19,
-  CIO: 15,
-  SeniorPortfolioManager: 14,
-  PortfolioManager: 13,
-  SeniorAnalyst: 12,
-  Analyst: 11,
-  JuniorAnalyst: 10,
+  President: 10,
+  CIO: 9,
+  SeniorPortfolioManager: 8,
+  PortfolioManager: 7,
+  SeniorAnalyst: 6,
+  Analyst: 5,
+  JuniorAnalyst: 4,
+  AdvisoryBoardMember: 1,
+  FacultyAdvisory: 1,
 };
 
 const ALL_ROLES = [
