@@ -25,6 +25,7 @@ function emptyForm() {
     location: '',
     slideshowUrl: '',
     presenterIds: [],
+    industryId: '',
   };
 }
 
@@ -37,6 +38,7 @@ export default function Pitches() {
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [users, setUsers] = useState([]);
+  const [industries, setIndustries] = useState([]);
   const [selected, setSelected] = useState(null);
 
   async function load() {
@@ -49,18 +51,32 @@ export default function Pitches() {
     setUsers(data);
   }
 
+  async function loadIndustries() {
+    const { data } = await api.get('/industries');
+    setIndustries(data);
+  }
+
   useEffect(() => {
     load();
+    loadIndustries();
     if (canEdit) loadUsers();
   }, [canEdit]);
 
-  const events = pitches.map((p) => ({
-    id: p.id,
-    title: `${p.ticker} — ${p.pitcherName}`,
-    start: new Date(p.date),
-    end: new Date(new Date(p.date).getTime() + 60 * 60 * 1000),
-    resource: p,
-  }));
+  const events = pitches.map((p) => {
+    const presenterText =
+      p.presenters && p.presenters.length > 0
+        ? p.presenters.map((pp) => pp.name.split(' ')[0]).join(', ')
+        : p.industry
+        ? `${p.industry.name} pod`
+        : p.pitcherName || 'TBD';
+    return {
+      id: p.id,
+      title: `${p.ticker} — ${presenterText}`,
+      start: new Date(p.date),
+      end: new Date(new Date(p.date).getTime() + 60 * 60 * 1000),
+      resource: p,
+    };
+  });
 
   function openCreate() {
     setForm(emptyForm());
@@ -70,12 +86,13 @@ export default function Pitches() {
   function openEdit(pitch) {
     setForm({
       id: pitch.id,
-      pitcherName: pitch.pitcherName,
+      pitcherName: pitch.pitcherName || '',
       ticker: pitch.ticker,
       date: new Date(pitch.date).toISOString().slice(0, 16),
       location: pitch.location || '',
       slideshowUrl: pitch.slideshowUrl || '',
       presenterIds: (pitch.presenters || []).map((p) => p.id),
+      industryId: pitch.industry?.id ? String(pitch.industry.id) : '',
     });
     setModalOpen(true);
     setSelected(null);
@@ -86,12 +103,19 @@ export default function Pitches() {
     setError('');
     setSubmitting(true);
     try {
-      // Derive pitcherName from selected presenters if the free-text field is blank.
+      // Derive pitcherName from selected presenters, falling back to industry
+      // pod label, then explicit text.
       const presenterNames = users
         .filter((u) => form.presenterIds.includes(u.id))
         .map((u) => u.name);
+      const industry = industries.find(
+        (i) => String(i.id) === String(form.industryId)
+      );
       const pitcherName =
-        form.pitcherName?.trim() || presenterNames.join(', ') || 'TBD';
+        form.pitcherName?.trim() ||
+        presenterNames.join(', ') ||
+        (industry ? `${industry.name} pod` : '') ||
+        'TBD';
 
       const body = {
         pitcherName,
@@ -100,6 +124,7 @@ export default function Pitches() {
         location: form.location || null,
         slideshowUrl: form.slideshowUrl || null,
         presenterIds: form.presenterIds,
+        industryId: form.industryId ? Number(form.industryId) : null,
       };
 
       if (form.id) {
@@ -161,6 +186,19 @@ export default function Pitches() {
               <div className="text-xs uppercase text-navy-400">Ticker</div>
               <div className="text-xl font-bold text-navy">{selected.ticker}</div>
             </div>
+            {selected.industry && (
+              <div>
+                <div className="text-xs uppercase text-navy-400">Industry Pod</div>
+                <div className="mt-1 inline-flex items-center gap-2 rounded-full bg-gold-100 px-3 py-1 text-sm font-semibold text-gold-800">
+                  {selected.industry.name}
+                  {selected.industry.leader && (
+                    <span className="text-xs text-gold-700">
+                      · led by {selected.industry.leader.name}
+                    </span>
+                  )}
+                </div>
+              </div>
+            )}
             <div>
               <div className="text-xs uppercase text-navy-400">Presenters</div>
               {selected.presenters && selected.presenters.length > 0 ? (
@@ -174,8 +212,12 @@ export default function Pitches() {
                     </span>
                   ))}
                 </div>
+              ) : selected.industry ? (
+                <div className="text-sm text-navy">
+                  The full {selected.industry.name} pod is presenting.
+                </div>
               ) : (
-                <div className="font-semibold text-navy">{selected.pitcherName}</div>
+                <div className="font-semibold text-navy">{selected.pitcherName || 'TBD'}</div>
               )}
             </div>
             <div>
@@ -222,7 +264,29 @@ export default function Pitches() {
         <form onSubmit={handleSubmit} className="space-y-3">
           <div>
             <label className="block text-sm font-medium text-navy">
-              Presenters (members)
+              Industry (pod pitching)
+            </label>
+            <select
+              value={form.industryId}
+              onChange={(e) => setForm({ ...form, industryId: e.target.value })}
+              className="mt-1 w-full rounded-lg border border-navy-100 px-3 py-2 text-sm focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold"
+            >
+              <option value="">(no industry — individual pitch)</option>
+              {industries.map((i) => (
+                <option key={i.id} value={i.id}>
+                  {i.name}
+                  {i.leader ? ` — led by ${i.leader.name}` : ''}
+                </option>
+              ))}
+            </select>
+            <p className="mt-1 text-xs text-navy-400">
+              Everyone in the selected pod gets an email and in-app popup.
+            </p>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-navy">
+              Specific Presenters (optional — overrides "whole pod")
             </label>
             <div className="mt-1">
               <MemberPicker
@@ -232,11 +296,12 @@ export default function Pitches() {
               />
             </div>
             <p className="mt-1 text-xs text-navy-400">
-              Each selected member gets an email and an in-app popup.
+              Leave blank if the full industry pod is presenting.
             </p>
           </div>
+
           <Field
-            label="Additional names (if any — optional)"
+            label="Additional names (optional — for guest pitchers)"
             value={form.pitcherName}
             onChange={(v) => setForm({ ...form, pitcherName: v })}
           />

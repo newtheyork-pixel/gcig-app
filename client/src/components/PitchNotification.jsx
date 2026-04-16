@@ -68,7 +68,17 @@ export default function PitchNotification() {
 
         <div className="p-6">
           <p className="text-sm text-navy">
-            You've been added as a presenter on the <strong>{pitch.ticker}</strong> pitch.
+            {pitch.industry ? (
+              <>
+                The <strong>{pitch.industry.name}</strong> pod is pitching{' '}
+                <strong>{pitch.ticker}</strong>.
+              </>
+            ) : (
+              <>
+                You've been added as a presenter on the{' '}
+                <strong>{pitch.ticker}</strong> pitch.
+              </>
+            )}
           </p>
           {pitch.presenters && pitch.presenters.length > 0 && (
             <div className="mt-3 text-xs text-navy-400">

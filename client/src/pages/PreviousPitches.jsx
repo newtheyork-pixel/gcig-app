@@ -66,7 +66,18 @@ export default function PreviousPitches() {
                     <div className="text-sm font-bold text-navy">{p.ticker}</div>
                     <ExternalLink className="h-4 w-4 text-navy-400 group-hover:text-gold" />
                   </div>
-                  <div className="mt-1 text-sm text-navy-400">{p.pitcherName}</div>
+                  {p.industry && (
+                    <div className="mt-1 inline-block rounded-full bg-gold-100 px-2 py-0.5 text-[10px] font-bold text-gold-800">
+                      {p.industry.name}
+                    </div>
+                  )}
+                  <div className="mt-1 text-sm text-navy-400">
+                    {p.presenters && p.presenters.length > 0
+                      ? p.presenters.map((pp) => pp.name).join(', ')
+                      : p.industry
+                      ? `${p.industry.name} pod`
+                      : p.pitcherName}
+                  </div>
                   <div className="mt-2 text-xs text-navy-400">
                     {format(new Date(p.date), 'MMM d, yyyy')}
                   </div>

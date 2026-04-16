@@ -53,6 +53,7 @@ model Industry {
   leaderId  Int?
   leader    User?          @relation("IndustryLeader", fields: [leaderId], references: [id], onDelete: SetNull)
   members   UserIndustry[]
+  pitches   Pitch[]
   createdAt DateTime       @default(now())
 }
 
@@ -83,6 +84,8 @@ model Pitch {
   date            DateTime
   location        String?
   slideshowUrl    String?
+  industryId      Int?
+  industry        Industry?        @relation(fields: [industryId], references: [id], onDelete: SetNull)
   createdAt       DateTime         @default(now())
   votingSessions  VotingSession[]
   presenters      PitchPresenter[]

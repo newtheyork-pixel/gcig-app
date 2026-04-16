@@ -13,15 +13,35 @@ function pitchInclude() {
     presenters: {
       include: { user: { select: { id: true, name: true, email: true, role: true } } },
     },
+    industry: {
+      select: {
+        id: true,
+        name: true,
+        leader: { select: { id: true, name: true, role: true } },
+        members: {
+          include: {
+            user: { select: { id: true, name: true, email: true, role: true } },
+          },
+        },
+      },
+    },
   };
 }
 
 function shapePitch(p) {
   if (!p) return p;
-  const { presenters = [], ...rest } = p;
+  const { presenters = [], industry, ...rest } = p;
   return {
     ...rest,
     presenters: presenters.map((pp) => pp.user),
+    industry: industry
+      ? {
+          id: industry.id,
+          name: industry.name,
+          leader: industry.leader,
+          members: industry.members.map((m) => m.user),
+        }
+      : null,
   };
 }
 
@@ -82,19 +102,24 @@ router.post('/mine/seen/:pitchId', async (req, res) => {
   res.json({ ok: true });
 });
 
-async function notifyNewPresenters(pitch, newPresenterIds, clientOrigin) {
-  if (newPresenterIds.length === 0) return;
-  const [users, allPresenters] = await Promise.all([
-    prisma.user.findMany({
-      where: { id: { in: newPresenterIds } },
-      select: { id: true, name: true, email: true },
-    }),
-    prisma.pitchPresenter.findMany({
-      where: { pitchId: pitch.id },
-      include: { user: { select: { name: true } } },
-    }),
-  ]);
-  const pitcherDisplay = allPresenters.map((p) => p.user.name).join(', ') || pitch.pitcherName;
+async function notifyUsers(pitch, userIds, clientOrigin) {
+  if (userIds.length === 0) return;
+  const users = await prisma.user.findMany({
+    where: { id: { in: userIds } },
+    select: { id: true, name: true, email: true },
+  });
+  const allPresenters = await prisma.pitchPresenter.findMany({
+    where: { pitchId: pitch.id },
+    include: { user: { select: { name: true } } },
+  });
+  const industry = pitch.industryId
+    ? await prisma.industry.findUnique({ where: { id: pitch.industryId } })
+    : null;
+  const presenterNames = allPresenters.map((p) => p.user.name).join(', ');
+  const pitcherDisplay =
+    industry && !presenterNames
+      ? `${industry.name} pod`
+      : presenterNames || pitch.pitcherName || 'TBD';
 
   await Promise.all(
     users.map((u) =>
@@ -113,19 +138,20 @@ async function notifyNewPresenters(pitch, newPresenterIds, clientOrigin) {
 }
 
 router.post('/', canEditPitches, async (req, res) => {
-  const { pitcherName, ticker, date, location, slideshowUrl, presenterIds } = req.body;
-  if (!pitcherName || !ticker || !date) {
-    return res.status(400).json({ error: 'pitcherName, ticker, date required' });
+  const { pitcherName, ticker, date, location, slideshowUrl, presenterIds, industryId } = req.body;
+  if (!ticker || !date) {
+    return res.status(400).json({ error: 'ticker and date required' });
   }
   const ids = Array.isArray(presenterIds) ? presenterIds.map(Number).filter(Boolean) : [];
 
   const pitch = await prisma.pitch.create({
     data: {
-      pitcherName,
+      pitcherName: pitcherName || '',
       ticker: ticker.toUpperCase(),
       date: new Date(date),
       location: location || null,
       slideshowUrl: slideshowUrl || null,
+      industryId: industryId ? Number(industryId) : null,
       presenters: ids.length
         ? { create: ids.map((userId) => ({ userId })) }
         : undefined,
@@ -133,14 +159,38 @@ router.post('/', canEditPitches, async (req, res) => {
     include: pitchInclude(),
   });
 
-  // Fire-and-forget email notifications to newly-assigned presenters.
-  notifyNewPresenters(
+  // Notify everyone who should know: explicit presenters + all members of
+  // the assigned industry (deduped, excluding the creator).
+  const recipientIds = new Set(ids);
+  if (pitch.industryId) {
+    const podMembers = await prisma.userIndustry.findMany({
+      where: { industryId: pitch.industryId },
+      select: { userId: true },
+    });
+    for (const m of podMembers) recipientIds.add(m.userId);
+  }
+  recipientIds.delete(req.user.id); // don't email yourself
+
+  notifyUsers(
     pitch,
-    ids,
+    [...recipientIds],
     process.env.CLIENT_ORIGIN || 'https://gcig-client.onrender.com'
   ).catch(() => {});
 
-  res.status(201).json(shapePitch(pitch));
+  // Ensure industry members also get the in-app PitchNotification popup.
+  if (recipientIds.size > 0) {
+    await prisma.pitchPresenter.createMany({
+      data: [...recipientIds].map((userId) => ({ pitchId: pitch.id, userId })),
+      skipDuplicates: true,
+    });
+  }
+
+  // Re-fetch to include the full presenter list in the response.
+  const fresh = await prisma.pitch.findUnique({
+    where: { id: pitch.id },
+    include: pitchInclude(),
+  });
+  res.status(201).json(shapePitch(fresh));
 });
 
 router.put('/:id', canEditPitches, async (req, res) => {
@@ -151,13 +201,14 @@ router.put('/:id', canEditPitches, async (req, res) => {
   });
   if (!existing) return res.status(404).json({ error: 'Not found' });
 
-  const { pitcherName, ticker, date, location, slideshowUrl, presenterIds } = req.body;
+  const { pitcherName, ticker, date, location, slideshowUrl, presenterIds, industryId } = req.body;
   const data = {};
   if (pitcherName !== undefined) data.pitcherName = pitcherName;
   if (ticker !== undefined) data.ticker = ticker.toUpperCase();
   if (date !== undefined) data.date = new Date(date);
   if (location !== undefined) data.location = location || null;
   if (slideshowUrl !== undefined) data.slideshowUrl = slideshowUrl || null;
+  if (industryId !== undefined) data.industryId = industryId ? Number(industryId) : null;
 
   let newPresenterIds = [];
   if (Array.isArray(presenterIds)) {
@@ -188,7 +239,7 @@ router.put('/:id', canEditPitches, async (req, res) => {
   });
 
   if (newPresenterIds.length > 0) {
-    notifyNewPresenters(
+    notifyUsers(
       pitch,
       newPresenterIds,
       process.env.CLIENT_ORIGIN || 'https://gcig-client.onrender.com'
