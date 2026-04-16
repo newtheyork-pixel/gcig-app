@@ -11,7 +11,7 @@ import RoleBadge from '../components/RoleBadge.jsx';
 const LEADER_ROLES = new Set(['President', 'CIO', 'SeniorPortfolioManager', 'PortfolioManager']);
 
 export default function Industries() {
-  const { isAdmin } = useAuth();
+  const { user, isAdmin } = useAuth();
   const [industries, setIndustries] = useState([]);
   const [users, setUsers] = useState([]);
   const [createOpen, setCreateOpen] = useState(false);
@@ -165,7 +165,7 @@ export default function Industries() {
                 )}
               </div>
 
-              {isAdmin && (
+              {(isAdmin || user?.id === ind.leader?.id) && (
                 <Button
                   variant="outline"
                   onClick={() => setMemberModal(ind)}

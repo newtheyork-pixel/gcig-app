@@ -1,11 +1,47 @@
 import { Router } from 'express';
 import prisma from '../db.js';
-import { verifyJwt, requireAdmin } from '../middleware/auth.js';
+import { verifyJwt, requireAdmin, ROLE_RANK, roleForRank } from '../middleware/auth.js';
 
 const router = Router();
 router.use(verifyJwt);
 
-// List industries with leader + members.
+// President or industry leader can manage membership.
+async function canManageIndustry(req, industryId) {
+  if (req.user.role === 'President') return true;
+  const industry = await prisma.industry.findUnique({
+    where: { id: industryId },
+    select: { leaderId: true },
+  });
+  return industry && industry.leaderId === req.user.id;
+}
+
+// Promote `userId` to one rank below `leaderRole`, but never demote.
+async function applyLeaderRankAdjust(userId, leaderRole) {
+  if (!leaderRole) return;
+  const targetRank = (ROLE_RANK[leaderRole] ?? 0) - 1;
+  const targetRole = roleForRank(targetRank);
+  if (!targetRole) return;
+  const member = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { role: true },
+  });
+  if (!member) return;
+  const currentRank = ROLE_RANK[member.role] ?? 0;
+  if (currentRank < targetRank) {
+    await prisma.user.update({ where: { id: userId }, data: { role: targetRole } });
+  }
+}
+
+// Ensure the leader is also a member of their own industry.
+async function ensureLeaderIsMember(industryId, leaderId) {
+  if (!leaderId) return;
+  await prisma.userIndustry.upsert({
+    where: { userId_industryId: { userId: leaderId, industryId } },
+    update: {},
+    create: { userId: leaderId, industryId },
+  });
+}
+
 router.get('/', async (_req, res) => {
   const industries = await prisma.industry.findMany({
     orderBy: { name: 'asc' },
@@ -27,17 +63,15 @@ router.get('/', async (_req, res) => {
   res.json(shaped);
 });
 
-// Create industry (President only).
 router.post('/', requireAdmin, async (req, res) => {
   const { name, leaderId } = req.body || {};
   if (!name) return res.status(400).json({ error: 'name required' });
+  const lId = leaderId ? Number(leaderId) : null;
   try {
     const industry = await prisma.industry.create({
-      data: {
-        name: String(name).trim(),
-        leaderId: leaderId ? Number(leaderId) : null,
-      },
+      data: { name: String(name).trim(), leaderId: lId },
     });
+    await ensureLeaderIsMember(industry.id, lId);
     res.status(201).json(industry);
   } catch (err) {
     if (err.code === 'P2002') {
@@ -47,7 +81,6 @@ router.post('/', requireAdmin, async (req, res) => {
   }
 });
 
-// Update industry name / leader (President only).
 router.put('/:id', requireAdmin, async (req, res) => {
   const id = Number(req.params.id);
   const { name, leaderId } = req.body || {};
@@ -55,6 +88,7 @@ router.put('/:id', requireAdmin, async (req, res) => {
   if (name !== undefined) data.name = String(name).trim();
   if (leaderId !== undefined) data.leaderId = leaderId ? Number(leaderId) : null;
   const industry = await prisma.industry.update({ where: { id }, data });
+  await ensureLeaderIsMember(industry.id, industry.leaderId);
   res.json(industry);
 });
 
@@ -64,22 +98,39 @@ router.delete('/:id', requireAdmin, async (req, res) => {
   res.json({ ok: true });
 });
 
-// Add a member to an industry (President only).
-router.post('/:id/members', requireAdmin, async (req, res) => {
+// Add member — President OR this industry's leader.
+router.post('/:id/members', async (req, res) => {
   const industryId = Number(req.params.id);
+  if (!(await canManageIndustry(req, industryId))) {
+    return res.status(403).json({ error: 'Only the industry leader or President can add members' });
+  }
   const { userId } = req.body || {};
   if (!userId) return res.status(400).json({ error: 'userId required' });
+  const memberId = Number(userId);
+
   await prisma.userIndustry.upsert({
-    where: { userId_industryId: { userId: Number(userId), industryId } },
+    where: { userId_industryId: { userId: memberId, industryId } },
     update: {},
-    create: { userId: Number(userId), industryId },
+    create: { userId: memberId, industryId },
   });
+
+  // Auto-adjust member's rank to one below the leader's.
+  const industry = await prisma.industry.findUnique({
+    where: { id: industryId },
+    include: { leader: { select: { role: true } } },
+  });
+  if (industry?.leader?.role) {
+    await applyLeaderRankAdjust(memberId, industry.leader.role);
+  }
+
   res.json({ ok: true });
 });
 
-// Remove a member from an industry (President only).
-router.delete('/:id/members/:userId', requireAdmin, async (req, res) => {
+router.delete('/:id/members/:userId', async (req, res) => {
   const industryId = Number(req.params.id);
+  if (!(await canManageIndustry(req, industryId))) {
+    return res.status(403).json({ error: 'Only the industry leader or President can remove members' });
+  }
   const userId = Number(req.params.userId);
   await prisma.userIndustry.delete({
     where: { userId_industryId: { userId, industryId } },

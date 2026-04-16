@@ -32,7 +32,7 @@ export function requireAdmin(req, res, next) {
 
 // Permission hierarchy (higher number = more power).
 // Advisory/Faculty roles are observers — low rank.
-const ROLE_RANK = {
+export const ROLE_RANK = {
   President: 10,
   CIO: 9,
   SeniorPortfolioManager: 8,
@@ -43,6 +43,14 @@ const ROLE_RANK = {
   AdvisoryBoardMember: 3,
   FacultyAdvisory: 3,
 };
+
+// Look up the role string for a given numeric rank. Returns null if no match.
+export function roleForRank(rank) {
+  for (const [role, r] of Object.entries(ROLE_RANK)) {
+    if (r === rank) return role;
+  }
+  return null;
+}
 
 export function requireRole(minRole) {
   const minRank = ROLE_RANK[minRole] || 0;
