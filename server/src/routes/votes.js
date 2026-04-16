@@ -5,48 +5,193 @@ import { verifyJwt, requireAdmin } from '../middleware/auth.js';
 const router = Router();
 router.use(verifyJwt);
 
-// All authed users — full vote history, newest first.
+// ── Tally computation ──────────────────────────────────────────────
+
+const GENERAL_BODY_WEIGHT = 2;
+
+function computeTally(ballots, allUsers) {
+  const userMap = new Map(allUsers.map((u) => [u.id, u]));
+
+  const presidentBallots = ballots.filter(
+    (b) => userMap.get(b.userId)?.role === 'President'
+  );
+  const memberBallots = ballots.filter(
+    (b) => userMap.get(b.userId)?.role !== 'President'
+  );
+
+  // General body counts
+  const memberCounts = { Buy: 0, Hold: 0, Sell: 0 };
+  for (const b of memberBallots) memberCounts[b.action]++;
+
+  const maxMemberVotes = Math.max(memberCounts.Buy, memberCounts.Hold, memberCounts.Sell);
+  const memberWinners = Object.keys(memberCounts).filter(
+    (k) => memberCounts[k] === maxMemberVotes && memberCounts[k] > 0
+  );
+  // Tie in general body → 0 contribution; presidents decide alone.
+  const generalBodyDecision = memberWinners.length === 1 ? memberWinners[0] : null;
+
+  // Final weighted tally
+  const weights = { Buy: 0, Hold: 0, Sell: 0 };
+  for (const b of presidentBallots) weights[b.action]++;
+  if (generalBodyDecision) weights[generalBodyDecision] += GENERAL_BODY_WEIGHT;
+
+  const maxWeight = Math.max(weights.Buy, weights.Hold, weights.Sell);
+  const finalWinners = Object.keys(weights).filter(
+    (k) => weights[k] === maxWeight && weights[k] > 0
+  );
+  // Tie in final → default to Hold (conservative).
+  const finalDecision = finalWinners.length === 1 ? finalWinners[0] : 'Hold';
+
+  return {
+    memberCounts,
+    memberTotal: memberBallots.length,
+    generalBodyDecision,
+    generalBodyWeight: generalBodyDecision ? GENERAL_BODY_WEIGHT : 0,
+    presidentVotes: presidentBallots.map((b) => ({
+      userId: b.userId,
+      name: userMap.get(b.userId)?.name || 'Unknown',
+      action: b.action,
+      note: b.note,
+    })),
+    presidentCount: presidentBallots.length,
+    weights,
+    totalWeightedVotes: (generalBodyDecision ? GENERAL_BODY_WEIGHT : 0) + presidentBallots.length,
+    finalDecision,
+    isTied: finalWinners.length > 1,
+  };
+}
+
+// ── Auto-close expired sessions (lazy evaluation) ──────────────────
+
+async function closeExpiredSessions() {
+  await prisma.votingSession.updateMany({
+    where: { status: 'open', deadline: { lte: new Date() } },
+    data: { status: 'closed', closedAt: new Date() },
+  });
+}
+
+// ── Routes ──────────────────────────────────────────────────────────
+
+// List all sessions (with ballot counts + status).
 router.get('/', async (_req, res) => {
-  const votes = await prisma.vote.findMany({
+  await closeExpiredSessions();
+  const sessions = await prisma.votingSession.findMany({
     orderBy: { createdAt: 'desc' },
-    include: { creator: { select: { id: true, name: true, role: true } } },
+    include: {
+      creator: { select: { id: true, name: true, role: true } },
+      pitch: { select: { id: true, ticker: true, pitcherName: true, slideshowUrl: true } },
+      _count: { select: { ballots: true } },
+    },
   });
-  res.json(votes);
+  res.json(sessions);
 });
 
-// Latest vote for popup check. Returns null if none exist.
-router.get('/latest', async (_req, res) => {
-  const latest = await prisma.vote.findFirst({
+// Most recent OPEN session the current user hasn't voted in (for popup).
+router.get('/pending', async (req, res) => {
+  await closeExpiredSessions();
+  const session = await prisma.votingSession.findFirst({
+    where: {
+      status: 'open',
+      ballots: { none: { userId: req.user.id } },
+    },
     orderBy: { createdAt: 'desc' },
-    include: { creator: { select: { id: true, name: true, role: true } } },
+    include: {
+      creator: { select: { id: true, name: true, role: true } },
+      pitch: { select: { id: true, ticker: true, pitcherName: true } },
+    },
   });
-  res.json(latest || null);
+  res.json(session || null);
 });
 
-// President only — cast a new vote.
+// Session detail — includes all ballots + live tally.
+router.get('/:id', async (req, res) => {
+  await closeExpiredSessions();
+  const id = Number(req.params.id);
+  const session = await prisma.votingSession.findUnique({
+    where: { id },
+    include: {
+      creator: { select: { id: true, name: true, role: true } },
+      pitch: { select: { id: true, ticker: true, pitcherName: true, slideshowUrl: true, date: true } },
+      ballots: {
+        include: { user: { select: { id: true, name: true, role: true } } },
+        orderBy: { castAt: 'asc' },
+      },
+    },
+  });
+  if (!session) return res.status(404).json({ error: 'Not found' });
+
+  const allUsers = await prisma.user.findMany({
+    select: { id: true, name: true, role: true },
+  });
+
+  const tally = computeTally(session.ballots, allUsers);
+  const myBallot = session.ballots.find((b) => b.userId === req.user.id) || null;
+
+  res.json({ ...session, tally, myBallot });
+});
+
+// Create a new voting session (President only).
 router.post('/', requireAdmin, async (req, res) => {
-  const { ticker, action, note } = req.body || {};
-  if (!ticker || !action) {
-    return res.status(400).json({ error: 'ticker and action required' });
+  const { ticker, title, pitchId, deadline } = req.body || {};
+  if (!ticker || !deadline) {
+    return res.status(400).json({ error: 'ticker and deadline required' });
   }
-  if (!['Buy', 'Hold', 'Sell'].includes(action)) {
-    return res.status(400).json({ error: 'Invalid action' });
+  const deadlineDate = new Date(deadline);
+  if (deadlineDate <= new Date()) {
+    return res.status(400).json({ error: 'deadline must be in the future' });
   }
-  const vote = await prisma.vote.create({
+  const session = await prisma.votingSession.create({
     data: {
       ticker: ticker.toUpperCase(),
-      action,
-      note: note || null,
+      title: title || null,
+      pitchId: pitchId ? Number(pitchId) : null,
+      deadline: deadlineDate,
       createdBy: req.user.id,
     },
-    include: { creator: { select: { id: true, name: true, role: true } } },
+    include: {
+      creator: { select: { id: true, name: true, role: true } },
+      pitch: { select: { id: true, ticker: true, pitcherName: true } },
+    },
   });
-  res.status(201).json(vote);
+  res.status(201).json(session);
 });
 
+// Cast or update your ballot on an open session.
+router.post('/:id/ballot', async (req, res) => {
+  const sessionId = Number(req.params.id);
+  const { action, note } = req.body || {};
+  if (!action || !['Buy', 'Hold', 'Sell'].includes(action)) {
+    return res.status(400).json({ error: 'action must be Buy, Hold, or Sell' });
+  }
+  const session = await prisma.votingSession.findUnique({ where: { id: sessionId } });
+  if (!session) return res.status(404).json({ error: 'Session not found' });
+  if (session.status !== 'open' || new Date() > session.deadline) {
+    return res.status(400).json({ error: 'Voting is closed for this session' });
+  }
+
+  const ballot = await prisma.ballot.upsert({
+    where: { sessionId_userId: { sessionId, userId: req.user.id } },
+    update: { action, note: note || null, castAt: new Date() },
+    create: { sessionId, userId: req.user.id, action, note: note || null },
+    include: { user: { select: { id: true, name: true, role: true } } },
+  });
+  res.json(ballot);
+});
+
+// Close a session early (President only).
+router.post('/:id/close', requireAdmin, async (req, res) => {
+  const id = Number(req.params.id);
+  const session = await prisma.votingSession.update({
+    where: { id },
+    data: { status: 'closed', closedAt: new Date() },
+  });
+  res.json(session);
+});
+
+// Delete a session (President only).
 router.delete('/:id', requireAdmin, async (req, res) => {
   const id = Number(req.params.id);
-  await prisma.vote.delete({ where: { id } });
+  await prisma.votingSession.delete({ where: { id } });
   res.json({ ok: true });
 });
 
