@@ -147,4 +147,5 @@ model PortfolioSnapshot {
   id         Int      @id @default(autoincrement())
   date       DateTime @unique
   totalValue Float
+  cashValue  Float?
 }

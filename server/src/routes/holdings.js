@@ -13,14 +13,21 @@ router.get('/quotes', async (_req, res) => {
   try {
     const data = await getSheetPortfolio();
 
-    // Write a daily snapshot for today from the sheet total.
+    // Write a daily snapshot for today from the sheet total + cash.
     if (data.totals.totalValue > 0) {
       const today = new Date();
       today.setHours(0, 0, 0, 0);
       await prisma.portfolioSnapshot.upsert({
         where: { date: today },
-        update: { totalValue: data.totals.totalValue },
-        create: { date: today, totalValue: data.totals.totalValue },
+        update: {
+          totalValue: data.totals.totalValue,
+          cashValue: data.totals.cashValue,
+        },
+        create: {
+          date: today,
+          totalValue: data.totals.totalValue,
+          cashValue: data.totals.cashValue,
+        },
       });
     }
 

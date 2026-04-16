@@ -86,12 +86,19 @@ export default function Portfolio() {
   const [range, setRange] = useState('6M');
 
   // Normalize history (with real Date objects) once.
+  // equity = totalValue - cashValue (falls back to total if cash is unknown).
   const fullHistory = useMemo(
     () =>
-      history.map((s) => ({
-        date: new Date(s.date),
-        value: Number(s.totalValue.toFixed(2)),
-      })),
+      history.map((s) => {
+        const total = Number(s.totalValue.toFixed(2));
+        const cash = s.cashValue != null ? Number(s.cashValue.toFixed(2)) : 0;
+        return {
+          date: new Date(s.date),
+          value: total,
+          cash,
+          equity: Math.max(total - cash, 0),
+        };
+      }),
     [history]
   );
 
@@ -119,12 +126,13 @@ export default function Portfolio() {
     return [Math.floor(min - pad), Math.ceil(max + pad)];
   }, [chartData]);
 
-  // Daily change: today's live value vs. most recent non-weekend snapshot.
+  // Daily change on equity (invested capital) — cash parked isn't "performance."
+  // Dollar change = total change (cash contributes ~0 to day-over-day movement).
+  // Percent = dollar change / yesterday's equity base.
   const dailyChange = useMemo(() => {
     if (!data || fullHistory.length < 2) return null;
-    const today = data.totals?.totalValue;
-    if (today == null) return null;
-    // Walk back to the most recent snapshot that isn't today and isn't a weekend.
+    const todayTotal = data.totals?.totalValue;
+    if (todayTotal == null) return null;
     const todayIso = new Date().toISOString().slice(0, 10);
     for (let i = fullHistory.length - 1; i >= 0; i--) {
       const snap = fullHistory[i];
@@ -132,16 +140,20 @@ export default function Portfolio() {
       if (snapIso === todayIso) continue;
       const day = snap.date.getDay();
       if (day === 0 || day === 6) continue;
-      const diff = today - snap.value;
-      const pct = snap.value > 0 ? (diff / snap.value) * 100 : 0;
+      const diff = todayTotal - snap.value;
+      const base = snap.equity;
+      const pct = base > 0 ? (diff / base) * 100 : 0;
       return { diff, pct };
     }
     return null;
   }, [data, fullHistory]);
 
-  // Annualized Sharpe ratio (risk-free rate = 0).
-  // Excludes weekends and adjusts for known cash flows so the return %
-  // reflects actual market movement.
+  // Annualized Sharpe on equity returns.
+  // Daily equity return = (Δ total − cash flow) / equity_yesterday
+  //   - Δ total captures market movement of the equity holdings (cash is flat).
+  //   - Dividing by equity isolates invested-capital performance.
+  //   - Cash flows (infusions / withdrawals) are subtracted so they don't
+  //     look like gains.
   const sharpe = useMemo(() => {
     if (fullHistory.length < 20) return null;
     const returns = [];
@@ -150,13 +162,13 @@ export default function Portfolio() {
       const curr = fullHistory[i];
       const day = curr.date.getDay();
       if (day === 0 || day === 6) continue;
-      // Subtract any cash flow that happened on this day from curr's value.
       const cfOnDay = CASH_FLOWS.filter(
         (cf) => cf.date.toISOString().slice(0, 10) === curr.date.toISOString().slice(0, 10)
       ).reduce((s, cf) => s + cf.amount, 0);
-      const adjusted = curr.value - cfOnDay;
-      if (prev.value <= 0) continue;
-      returns.push((adjusted - prev.value) / prev.value);
+      const dollarChange = curr.value - cfOnDay - prev.value;
+      const base = prev.equity;
+      if (base <= 0) continue;
+      returns.push(dollarChange / base);
     }
     if (returns.length < 10) return null;
     const mean = returns.reduce((a, b) => a + b, 0) / returns.length;
@@ -164,15 +176,14 @@ export default function Portfolio() {
       returns.reduce((s, r) => s + (r - mean) ** 2, 0) / returns.length;
     const std = Math.sqrt(variance);
     if (std === 0) return null;
-    // Annualize using ~252 trading days, then subtract the risk-free rate.
     const annualReturn = mean * 252;
     const annualStd = std * Math.sqrt(252);
     return (annualReturn - RISK_FREE_RATE) / annualStd;
   }, [fullHistory]);
 
-  // Change between first and last point in the visible range.
-  // Cash flows that occur strictly after the start date get subtracted, so the
-  // percent reflects market performance rather than money added.
+  // Change between first and last point in the visible range, on equity base.
+  // Dollar change = total change minus any capital infusions in range.
+  // Percent = dollar change / equity at start of range.
   const rangeChange = useMemo(() => {
     if (chartData.length < 2) return null;
     const start = chartData[0];
@@ -182,7 +193,8 @@ export default function Portfolio() {
     ).reduce((sum, cf) => sum + cf.amount, 0);
     const rawDiff = end.value - start.value;
     const diff = rawDiff - cashFlowInRange;
-    const pct = start.value > 0 ? (diff / start.value) * 100 : 0;
+    const base = start.equity > 0 ? start.equity : start.value;
+    const pct = base > 0 ? (diff / base) * 100 : 0;
     return { diff, pct, cashFlowInRange };
   }, [chartData]);
 
@@ -297,7 +309,7 @@ export default function Portfolio() {
                 {sharpe.toFixed(2)}
               </div>
               <div className="mt-1 text-xs text-navy-400">
-                Annualized • Rf = {(RISK_FREE_RATE * 100).toFixed(2)}% (3mo T-bill)
+                Equity only • Rf = {(RISK_FREE_RATE * 100).toFixed(2)}%
               </div>
             </>
           ) : (

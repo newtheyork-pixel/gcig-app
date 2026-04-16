@@ -150,6 +150,7 @@ export async function getSheetPortfolio() {
   // derive from shares × price and shares × costBasis. For cash, cost = value.
   let totalValue = 0;
   let totalCost = 0;
+  let cashValue = 0;
   for (const h of holdings) {
     const mv =
       h.marketValue != null
@@ -160,6 +161,7 @@ export async function getSheetPortfolio() {
     let cost = 0;
     if (h.isCash) {
       cost = mv; // cash has zero unrealized P/L
+      cashValue += mv;
     } else if (h.shares != null && h.costBasis != null) {
       cost = h.shares * h.costBasis;
     }
@@ -171,7 +173,7 @@ export async function getSheetPortfolio() {
 
   const data = {
     holdings,
-    totals: { totalValue, totalCost, totalGainLoss, totalGainLossPct },
+    totals: { totalValue, totalCost, totalGainLoss, totalGainLossPct, cashValue },
     fetchedAt: new Date().toISOString(),
   };
   cached = { at: Date.now(), data };
