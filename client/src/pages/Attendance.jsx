@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { format } from 'date-fns';
-import { Download } from 'lucide-react';
+import { Download, ChevronDown, ChevronUp } from 'lucide-react';
 import api, { API_BASE } from '../api/client.js';
 import { useAuth } from '../context/AuthContext.jsx';
 import PageHeader from '../components/PageHeader.jsx';
@@ -85,6 +85,7 @@ function MineAttendance() {
 function AdminAttendance() {
   const [data, setData] = useState({ users: [], events: [], records: [] });
   const [loading, setLoading] = useState(true);
+  const [showPast, setShowPast] = useState(false);
 
   async function load() {
     setLoading(true);
@@ -97,6 +98,16 @@ function AdminAttendance() {
     load();
   }, []);
 
+  // Sort events newest first so the most recent meeting is the leftmost column.
+  const sortedEvents = useMemo(() => {
+    return [...data.events].sort(
+      (a, b) => new Date(b.date) - new Date(a.date)
+    );
+  }, [data.events]);
+
+  // Show only the most recent 2 by default; expand to all with "Show Past"
+  const visibleEvents = showPast ? sortedEvents : sortedEvents.slice(0, 2);
+
   const recordMap = useMemo(() => {
     const m = new Map();
     for (const r of data.records) m.set(`${r.userId}:${r.eventId}`, r.status);
@@ -104,7 +115,6 @@ function AdminAttendance() {
   }, [data.records]);
 
   async function setStatus(userId, eventId, status) {
-    // Optimistic
     const key = `${userId}:${eventId}`;
     const prev = recordMap.get(key);
     recordMap.set(key, status);
@@ -154,56 +164,100 @@ function AdminAttendance() {
             No events yet — create events first to start tracking attendance.
           </div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-navy-100 text-left text-xs uppercase text-navy-400">
-                  <th className="sticky left-0 z-10 bg-white py-2 pr-4">Member</th>
-                  {data.events.map((e) => (
-                    <th key={e.id} className="py-2 px-2 text-center">
-                      <div className="font-semibold text-navy normal-case">{e.title}</div>
-                      <div className="text-[10px] text-navy-400">
-                        {format(new Date(e.date), 'MMM d')}
-                      </div>
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-navy-50">
-                {data.users.map((u) => (
-                  <tr key={u.id}>
-                    <td className="sticky left-0 z-10 bg-white py-3 pr-4">
-                      <div className="font-semibold text-navy">{u.name}</div>
-                      <div className="mt-1">
-                        <RoleBadge role={u.role} />
-                      </div>
-                    </td>
-                    {data.events.map((e) => {
-                      const status = recordMap.get(`${u.id}:${e.id}`) || '';
+          <>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-navy-100 text-left text-xs uppercase text-navy-400">
+                    <th className="sticky left-0 z-10 bg-white py-2 pr-4">Member</th>
+                    {visibleEvents.map((e, i) => {
+                      const isNewest = i === 0;
                       return (
-                        <td key={e.id} className="py-3 px-2 text-center">
-                          <select
-                            value={status}
-                            onChange={(ev) => setStatus(u.id, e.id, ev.target.value)}
-                            className={`rounded-md border border-navy-100 px-2 py-1 text-xs font-semibold ${
-                              status ? STATUS_COLORS[status] : ''
-                            }`}
-                          >
-                            <option value="">—</option>
-                            {STATUSES.map((s) => (
-                              <option key={s} value={s}>
-                                {s}
-                              </option>
-                            ))}
-                          </select>
-                        </td>
+                        <th
+                          key={e.id}
+                          className={`py-2 px-3 text-center ${
+                            isNewest
+                              ? 'bg-gold-100 rounded-t-lg'
+                              : ''
+                          }`}
+                        >
+                          {isNewest && (
+                            <div className="mb-1 rounded-full bg-gold px-2 py-0.5 text-[10px] font-bold uppercase text-navy inline-block">
+                              Current
+                            </div>
+                          )}
+                          <div className="font-semibold text-navy normal-case">{e.title}</div>
+                          <div className="text-[10px] text-navy-400">
+                            {format(new Date(e.date), 'MMM d, yyyy')}
+                          </div>
+                        </th>
                       );
                     })}
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                </thead>
+                <tbody className="divide-y divide-navy-50">
+                  {data.users.map((u) => (
+                    <tr key={u.id}>
+                      <td className="sticky left-0 z-10 bg-white py-3 pr-4">
+                        <div className="font-semibold text-navy">{u.name}</div>
+                        <div className="mt-1">
+                          <RoleBadge role={u.role} />
+                        </div>
+                      </td>
+                      {visibleEvents.map((e, i) => {
+                        const isNewest = i === 0;
+                        const status = recordMap.get(`${u.id}:${e.id}`) || '';
+                        return (
+                          <td
+                            key={e.id}
+                            className={`py-3 px-3 text-center ${
+                              isNewest ? 'bg-gold-100/40' : ''
+                            }`}
+                          >
+                            <select
+                              value={status}
+                              onChange={(ev) => setStatus(u.id, e.id, ev.target.value)}
+                              className={`rounded-md border border-navy-100 px-2 py-1 text-xs font-semibold ${
+                                status ? STATUS_COLORS[status] : ''
+                              }`}
+                            >
+                              <option value="">—</option>
+                              {STATUSES.map((s) => (
+                                <option key={s} value={s}>
+                                  {s}
+                                </option>
+                              ))}
+                            </select>
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            {sortedEvents.length > 2 && (
+              <div className="mt-4 text-center">
+                <button
+                  onClick={() => setShowPast(!showPast)}
+                  className="inline-flex items-center gap-1 rounded-lg border border-navy-100 bg-white px-4 py-2 text-sm font-semibold text-navy hover:bg-navy-50"
+                >
+                  {showPast ? (
+                    <>
+                      <ChevronUp className="h-4 w-4" />
+                      Hide Past Meetings
+                    </>
+                  ) : (
+                    <>
+                      <ChevronDown className="h-4 w-4" />
+                      Show Past Meetings ({sortedEvents.length - 2} more)
+                    </>
+                  )}
+                </button>
+              </div>
+            )}
+          </>
         )}
       </Card>
     </>
