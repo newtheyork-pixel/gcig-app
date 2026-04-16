@@ -28,6 +28,8 @@ export default function Pitches() {
   const [pitches, setPitches] = useState([]);
   const [modalOpen, setModalOpen] = useState(false);
   const [form, setForm] = useState(emptyForm());
+  const [error, setError] = useState('');
+  const [submitting, setSubmitting] = useState(false);
   const [selected, setSelected] = useState(null);
 
   async function load() {
@@ -67,20 +69,28 @@ export default function Pitches() {
 
   async function handleSubmit(e) {
     e.preventDefault();
-    const fd = new FormData();
-    fd.append('pitcherName', form.pitcherName);
-    fd.append('ticker', form.ticker);
-    fd.append('date', new Date(form.date).toISOString());
-    if (form.location) fd.append('location', form.location);
-    if (form.slideshow) fd.append('slideshow', form.slideshow);
+    setError('');
+    setSubmitting(true);
+    try {
+      const fd = new FormData();
+      fd.append('pitcherName', form.pitcherName);
+      fd.append('ticker', form.ticker);
+      fd.append('date', new Date(form.date).toISOString());
+      if (form.location) fd.append('location', form.location);
+      if (form.slideshow) fd.append('slideshow', form.slideshow);
 
-    if (form.id) {
-      await api.put(`/pitches/${form.id}`, fd);
-    } else {
-      await api.post('/pitches', fd);
+      if (form.id) {
+        await api.put(`/pitches/${form.id}`, fd);
+      } else {
+        await api.post('/pitches', fd);
+      }
+      setModalOpen(false);
+      load();
+    } catch (err) {
+      setError(err.response?.data?.error || err.message || 'Upload failed — check file size (max 25 MB) and format (.pdf, .ppt, .pptx)');
+    } finally {
+      setSubmitting(false);
     }
-    setModalOpen(false);
-    load();
   }
 
   async function handleDelete(id) {
@@ -207,11 +217,18 @@ export default function Pitches() {
               className="mt-1 w-full text-sm"
             />
           </div>
+          {error && (
+            <div className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">
+              {error}
+            </div>
+          )}
           <div className="flex justify-end gap-2 pt-2">
             <Button variant="outline" onClick={() => setModalOpen(false)}>
               Cancel
             </Button>
-            <Button type="submit">Save</Button>
+            <Button type="submit" disabled={submitting}>
+              {submitting ? 'Uploading…' : 'Save'}
+            </Button>
           </div>
         </form>
       </Modal>

@@ -7,7 +7,7 @@ import { parse } from 'csv-parse/sync';
 
 const SHEET_ID = process.env.GCIG_SHEET_ID;
 const SHEET_GID = process.env.GCIG_SHEET_GID || '0';
-const CACHE_TTL_MS = 60 * 1000;
+const CACHE_TTL_MS = 20 * 60 * 1000; // 20 minutes
 
 let cached = null; // { at: number, data: ParsedPortfolio }
 
