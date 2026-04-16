@@ -1,22 +1,29 @@
 import { useEffect, useMemo, useState } from 'react';
 import { format } from 'date-fns';
-import { Plus, Search, Download, Trash2 } from 'lucide-react';
+import { Plus, Search, ExternalLink, Trash2 } from 'lucide-react';
 import api from '../api/client.js';
+import { useAuth } from '../context/AuthContext.jsx';
 import PageHeader from '../components/PageHeader.jsx';
 import Card from '../components/Card.jsx';
 import Button from '../components/Button.jsx';
 import Modal from '../components/Modal.jsx';
-import AdminOnly from '../components/AdminOnly.jsx';
+
+const REPORT_ROLES = ['President', 'CIO', 'SeniorPortfolioManager', 'PortfolioManager'];
 
 function emptyForm() {
-  return { title: '', author: '', ticker: '', date: '', description: '', file: null };
+  return { title: '', author: '', ticker: '', date: '', description: '', fileUrl: '' };
 }
 
 export default function Reports() {
+  const { user } = useAuth();
+  const canEdit = REPORT_ROLES.includes(user?.role);
+
   const [reports, setReports] = useState([]);
   const [query, setQuery] = useState('');
   const [modalOpen, setModalOpen] = useState(false);
   const [form, setForm] = useState(emptyForm());
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState('');
 
   async function load() {
     const { data } = await api.get('/reports');
@@ -39,17 +46,25 @@ export default function Reports() {
 
   async function handleSubmit(e) {
     e.preventDefault();
-    const fd = new FormData();
-    fd.append('title', form.title);
-    fd.append('author', form.author);
-    if (form.ticker) fd.append('ticker', form.ticker);
-    fd.append('date', new Date(form.date).toISOString());
-    if (form.description) fd.append('description', form.description);
-    fd.append('file', form.file);
-    await api.post('/reports', fd);
-    setModalOpen(false);
-    setForm(emptyForm());
-    load();
+    setError('');
+    setSubmitting(true);
+    try {
+      await api.post('/reports', {
+        title: form.title,
+        author: form.author,
+        ticker: form.ticker || null,
+        date: new Date(form.date).toISOString(),
+        description: form.description || null,
+        fileUrl: form.fileUrl,
+      });
+      setModalOpen(false);
+      setForm(emptyForm());
+      load();
+    } catch (err) {
+      setError(err.response?.data?.error || 'Failed to save report');
+    } finally {
+      setSubmitting(false);
+    }
   }
 
   async function handleDelete(id) {
@@ -64,12 +79,12 @@ export default function Reports() {
         title="Research Reports"
         subtitle="Library of member-authored research."
         actions={
-          <AdminOnly>
+          canEdit && (
             <Button onClick={() => setModalOpen(true)} variant="gold">
               <Plus className="h-4 w-4" />
-              Upload Report
+              Add Report
             </Button>
-          </AdminOnly>
+          )
         }
       />
 
@@ -113,10 +128,10 @@ export default function Reports() {
                     rel="noreferrer"
                     className="inline-flex items-center gap-1 rounded-lg border border-navy-100 px-3 py-2 text-xs font-semibold text-navy hover:bg-navy-50"
                   >
-                    <Download className="h-3.5 w-3.5" />
-                    View
+                    <ExternalLink className="h-3.5 w-3.5" />
+                    Open
                   </a>
-                  <AdminOnly>
+                  {canEdit && (
                     <button
                       onClick={() => handleDelete(r.id)}
                       className="rounded-lg p-2 text-red-600 hover:bg-red-50"
@@ -124,7 +139,7 @@ export default function Reports() {
                     >
                       <Trash2 className="h-4 w-4" />
                     </button>
-                  </AdminOnly>
+                  )}
                 </div>
               </li>
             ))}
@@ -132,7 +147,7 @@ export default function Reports() {
         )}
       </Card>
 
-      <Modal open={modalOpen} onClose={() => setModalOpen(false)} title="Upload Report">
+      <Modal open={modalOpen} onClose={() => setModalOpen(false)} title="Add Report">
         <form onSubmit={handleSubmit} className="space-y-3">
           <Field label="Title" value={form.title} onChange={(v) => setForm({ ...form, title: v })} required />
           <Field label="Author" value={form.author} onChange={(v) => setForm({ ...form, author: v })} required />
@@ -148,20 +163,31 @@ export default function Reports() {
             />
           </div>
           <div>
-            <label className="block text-sm font-medium text-navy">PDF File</label>
+            <label className="block text-sm font-medium text-navy">Google Docs Link</label>
             <input
-              type="file"
-              accept=".pdf"
+              type="url"
               required
-              onChange={(e) => setForm({ ...form, file: e.target.files[0] })}
-              className="mt-1 w-full text-sm"
+              value={form.fileUrl}
+              onChange={(e) => setForm({ ...form, fileUrl: e.target.value })}
+              placeholder="https://docs.google.com/document/d/..."
+              className="mt-1 w-full rounded-lg border border-navy-100 px-3 py-2 text-sm focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold"
             />
+            <p className="mt-1 text-xs text-navy-400">
+              Make sure the doc is shared so members can view it.
+            </p>
           </div>
+          {error && (
+            <div className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">
+              {error}
+            </div>
+          )}
           <div className="flex justify-end gap-2 pt-2">
             <Button variant="outline" onClick={() => setModalOpen(false)}>
               Cancel
             </Button>
-            <Button type="submit">Upload</Button>
+            <Button type="submit" disabled={submitting}>
+              {submitting ? 'Saving…' : 'Save Report'}
+            </Button>
           </div>
         </form>
       </Modal>
