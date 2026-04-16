@@ -1,26 +1,9 @@
 import { Router } from 'express';
 import prisma from '../db.js';
-import { verifyJwt, requireAdmin, ROLE_RANK, roleForRank } from '../middleware/auth.js';
+import { verifyJwt, requireAdmin, ROLE_RANK } from '../middleware/auth.js';
 
 const router = Router();
 router.use(verifyJwt);
-
-// Promote `userId` to one rank below `leaderRole`, but never demote.
-async function applyLeaderRankAdjust(userId, leaderRole) {
-  if (!leaderRole) return;
-  const targetRank = (ROLE_RANK[leaderRole] ?? 0) - 1;
-  const targetRole = roleForRank(targetRank);
-  if (!targetRole) return;
-  const member = await prisma.user.findUnique({
-    where: { id: userId },
-    select: { role: true },
-  });
-  if (!member) return;
-  const currentRank = ROLE_RANK[member.role] ?? 0;
-  if (currentRank < targetRank) {
-    await prisma.user.update({ where: { id: userId }, data: { role: targetRole } });
-  }
-}
 
 // Ensure the leader is also a member of their own industry.
 async function ensureLeaderIsMember(industryId, leaderId) {
@@ -116,16 +99,6 @@ router.post('/:id/members', requireAdmin, async (req, res) => {
     update: {},
     create: { userId: memberId, industryId },
   });
-
-  // Auto-promote (never demote) to one rank below the leader — convenience
-  // when the President drops a new member in.
-  const industry = await prisma.industry.findUnique({
-    where: { id: industryId },
-    include: { leader: { select: { role: true } } },
-  });
-  if (industry?.leader?.role) {
-    await applyLeaderRankAdjust(memberId, industry.leader.role);
-  }
 
   res.json({ ok: true });
 });

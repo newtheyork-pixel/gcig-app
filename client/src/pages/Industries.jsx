@@ -322,7 +322,7 @@ function MemberModalBody({
             </Button>
           </div>
           <p className="mt-1 text-xs text-navy-400">
-            New members are auto-promoted to one rank below the leader.
+            Members keep their current role. The leader can adjust it later.
           </p>
         </div>
       )}
