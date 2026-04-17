@@ -11,8 +11,7 @@ import {
   sendTwoFactorCodeEmail,
 } from '../services/email.js';
 import { auditReq } from '../services/audit.js';
-import { signChallenge } from './twoFactor.js';
-import { generateEmailCode } from '../services/twoFactor.js';
+import { signChallenge, issueEmailCode } from './twoFactor.js';
 
 const router = Router();
 
@@ -238,20 +237,12 @@ router.post('/login', authLimiter, async (req, res) => {
 
   // If the user has 2FA enabled, password is only the first factor —
   // hand back a short-lived challenge token and make them complete 2FA.
-  // For email method, also email them an 8-char code right now.
+  // If email method is on, email them a code right now.
   if (user.twoFactorEnabled) {
     const challengeToken = signChallenge(user.id);
-    if (user.twoFactorMethod === 'email') {
-      const code = generateEmailCode();
-      const codeHash = await bcrypt.hash(code, 10);
-      const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
-      await prisma.twoFactorCode.deleteMany({
-        where: { userId: user.id, purpose: 'login' },
-      });
-      await prisma.twoFactorCode.create({
-        data: { userId: user.id, codeHash, expiresAt, purpose: 'login' },
-      });
+    if (user.twoFactorEmailEnabled) {
       try {
+        const code = await issueEmailCode(user.id, 'login');
         await sendTwoFactorCodeEmail(user.email, {
           name: user.name,
           code,
@@ -266,12 +257,18 @@ router.post('/login', authLimiter, async (req, res) => {
       'login.password_ok_awaiting_2fa',
       'user',
       user.id,
-      { method: user.twoFactorMethod }
+      {
+        totp: user.twoFactorTotpEnabled,
+        email: user.twoFactorEmailEnabled,
+      }
     );
     return res.json({
       twoFactorRequired: true,
       challengeToken,
-      method: user.twoFactorMethod, // 'totp' or 'email'
+      methods: {
+        totp: user.twoFactorTotpEnabled,
+        email: user.twoFactorEmailEnabled,
+      },
     });
   }
 
@@ -393,7 +390,8 @@ router.get('/me', verifyJwt, async (req, res) => {
       email: true,
       role: true,
       twoFactorEnabled: true,
-      twoFactorMethod: true,
+      twoFactorTotpEnabled: true,
+      twoFactorEmailEnabled: true,
       createdAt: true,
     },
   });

@@ -39,10 +39,12 @@ model User {
   role              Role
   extraRoles        Role[]           @default([])
   tokenVersion      Int              @default(0)
-  twoFactorSecret   String?
-  twoFactorEnabled  Boolean          @default(false)
-  twoFactorMethod   String?          // 'totp' | 'email'
-  createdAt         DateTime         @default(now())
+  twoFactorSecret        String?
+  twoFactorEnabled       Boolean          @default(false) // any method active
+  twoFactorTotpEnabled   Boolean          @default(false)
+  twoFactorEmailEnabled  Boolean          @default(false)
+  twoFactorMethod        String?          // legacy — retained to backfill; unused
+  createdAt              DateTime         @default(now())
   attendance        Attendance[]
   createdSessions   VotingSession[]  @relation("SessionCreator")
   ballots           Ballot[]

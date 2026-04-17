@@ -3,9 +3,13 @@ import { ShieldCheck, ShieldOff, Smartphone, Mail } from 'lucide-react';
 import api from '../api/client.js';
 import Button from './Button.jsx';
 
+/**
+ * Two independent methods — TOTP and Email. A user can have both on, one, or
+ * neither. Each method has its own enable / disable flow.
+ */
 export default function TwoFactorPanel() {
   const [status, setStatus] = useState(null);
-  const [stage, setStage] = useState('idle'); // idle | choose | totp-setup | email-setup | disable
+  const [activePanel, setActivePanel] = useState(null); // 'totp-setup' | 'email-setup' | 'totp-disable' | 'email-disable'
   const [setup, setSetup] = useState(null);
   const [code, setCode] = useState('');
   const [password, setPassword] = useState('');
@@ -22,27 +26,22 @@ export default function TwoFactorPanel() {
     loadStatus();
   }, []);
 
+  function reset() {
+    setActivePanel(null);
+    setSetup(null);
+    setCode('');
+    setPassword('');
+    setError('');
+  }
+
   async function startTotp() {
     setError('');
+    setMessage('');
     setLoading(true);
     try {
       const { data } = await api.post('/2fa/setup');
       setSetup(data);
-      setStage('totp-setup');
-    } catch (err) {
-      setError(err.response?.data?.error || 'Setup failed');
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  async function startEmail() {
-    setError('');
-    setLoading(true);
-    try {
-      const { data } = await api.post('/2fa/setup-email');
-      setSetup({ email: data.email });
-      setStage('email-setup');
+      setActivePanel('totp-setup');
     } catch (err) {
       setError(err.response?.data?.error || 'Setup failed');
     } finally {
@@ -56,13 +55,43 @@ export default function TwoFactorPanel() {
     setLoading(true);
     try {
       await api.post('/2fa/verify-setup', { code });
-      setMessage('Two-factor authentication is on.');
-      setStage('idle');
-      setSetup(null);
-      setCode('');
+      setMessage('Authenticator app enabled.');
+      reset();
       await loadStatus();
     } catch (err) {
       setError(err.response?.data?.error || 'Verification failed');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function submitTotpDisable(e) {
+    e.preventDefault();
+    setError('');
+    setLoading(true);
+    try {
+      const { data } = await api.post('/2fa/disable-totp', { password, code });
+      if (data.token) localStorage.setItem('gcig_token', data.token);
+      setMessage('Authenticator app disabled.');
+      reset();
+      await loadStatus();
+    } catch (err) {
+      setError(err.response?.data?.error || 'Disable failed');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function startEmail() {
+    setError('');
+    setMessage('');
+    setLoading(true);
+    try {
+      const { data } = await api.post('/2fa/setup-email');
+      setSetup({ email: data.email });
+      setActivePanel('email-setup');
+    } catch (err) {
+      setError(err.response?.data?.error || 'Setup failed');
     } finally {
       setLoading(false);
     }
@@ -74,10 +103,8 @@ export default function TwoFactorPanel() {
     setLoading(true);
     try {
       await api.post('/2fa/verify-setup-email', { code });
-      setMessage('Email 2FA is on.');
-      setStage('idle');
-      setSetup(null);
-      setCode('');
+      setMessage('Email 2FA enabled.');
+      reset();
       await loadStatus();
     } catch (err) {
       setError(err.response?.data?.error || 'Verification failed');
@@ -86,7 +113,7 @@ export default function TwoFactorPanel() {
     }
   }
 
-  async function resendEmailSetup() {
+  async function resendSetupEmail() {
     setError('');
     setMessage('');
     try {
@@ -97,28 +124,26 @@ export default function TwoFactorPanel() {
     }
   }
 
-  async function requestDisableCode() {
+  async function sendDisableEmailCode() {
     setError('');
     setMessage('');
     try {
-      await api.post('/2fa/send-disable-code');
+      await api.post('/2fa/send-disable-email-code');
       setMessage('Code sent — check your inbox.');
     } catch (err) {
       setError(err.response?.data?.error || 'Failed to send code');
     }
   }
 
-  async function submitDisable(e) {
+  async function submitEmailDisable(e) {
     e.preventDefault();
     setError('');
     setLoading(true);
     try {
-      const { data } = await api.post('/2fa/disable', { password, code });
+      const { data } = await api.post('/2fa/disable-email', { password, code });
       if (data.token) localStorage.setItem('gcig_token', data.token);
-      setMessage('Two-factor authentication is off.');
-      setStage('idle');
-      setPassword('');
-      setCode('');
+      setMessage('Email 2FA disabled.');
+      reset();
       await loadStatus();
     } catch (err) {
       setError(err.response?.data?.error || 'Disable failed');
@@ -129,100 +154,9 @@ export default function TwoFactorPanel() {
 
   if (!status) return <div className="text-navy-400">Loading…</div>;
 
-  if (stage === 'idle') {
-    return (
-      <div>
-        <div className="flex items-start gap-3">
-          {status.twoFactorEnabled ? (
-            <ShieldCheck className="h-8 w-8 shrink-0 text-emerald-600" />
-          ) : (
-            <ShieldOff className="h-8 w-8 shrink-0 text-navy-400" />
-          )}
-          <div className="flex-1">
-            <div className="font-semibold text-navy">
-              {status.twoFactorEnabled
-                ? 'Two-factor authentication is ON'
-                : 'Two-factor authentication is OFF'}
-            </div>
-            <p className="mt-1 text-sm text-navy-400">
-              {status.twoFactorEnabled
-                ? "You'll need a code every time you sign in. If you lose access, ask the President to reset it."
-                : 'Add a second factor so a stolen password alone cannot sign in.'}
-            </p>
-          </div>
-        </div>
+  // ── Per-method setup / disable sub-panels ──────────────────────────
 
-        {message && (
-          <div className="mt-3 rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
-            {message}
-          </div>
-        )}
-
-        <div className="mt-4">
-          {status.twoFactorEnabled ? (
-            <Button variant="danger" onClick={() => setStage('disable')}>
-              Disable 2FA
-            </Button>
-          ) : (
-            <Button onClick={() => setStage('choose')}>Enable 2FA</Button>
-          )}
-        </div>
-        {error && (
-          <div className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">
-            {error}
-          </div>
-        )}
-      </div>
-    );
-  }
-
-  if (stage === 'choose') {
-    return (
-      <div className="space-y-3">
-        <p className="text-sm text-navy">Pick a method:</p>
-        <button
-          type="button"
-          onClick={startTotp}
-          disabled={loading}
-          className="flex w-full items-start gap-3 rounded-lg border border-navy-100 p-4 text-left hover:border-gold hover:bg-gold-100/30 transition"
-        >
-          <Smartphone className="h-6 w-6 shrink-0 text-navy" />
-          <div>
-            <div className="font-semibold text-navy">Authenticator app (Recommended)</div>
-            <div className="mt-1 text-xs text-navy-400">
-              Google Authenticator, Authy, 1Password. Works offline, hardest to phish.
-            </div>
-          </div>
-        </button>
-        <button
-          type="button"
-          onClick={startEmail}
-          disabled={loading}
-          className="flex w-full items-start gap-3 rounded-lg border border-navy-100 p-4 text-left hover:border-gold hover:bg-gold-100/30 transition"
-        >
-          <Mail className="h-6 w-6 shrink-0 text-navy" />
-          <div>
-            <div className="font-semibold text-navy">Email code</div>
-            <div className="mt-1 text-xs text-navy-400">
-              We email you an 8-character code every sign-in. Simpler but weaker — anyone in your inbox can sign in as you.
-            </div>
-          </div>
-        </button>
-        <button
-          type="button"
-          onClick={() => setStage('idle')}
-          className="text-xs font-semibold text-navy-400 underline"
-        >
-          Cancel
-        </button>
-        {error && (
-          <div className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>
-        )}
-      </div>
-    );
-  }
-
-  if (stage === 'totp-setup' && setup) {
+  if (activePanel === 'totp-setup' && setup) {
     return (
       <div className="space-y-5">
         <div>
@@ -242,7 +176,6 @@ export default function TwoFactorPanel() {
             </div>
           </details>
         </div>
-
         <form onSubmit={confirmTotp} className="space-y-3 border-t border-navy-100 pt-4">
           <div className="text-sm font-semibold text-navy">
             2. Enter the 6-digit code from your app
@@ -260,11 +193,11 @@ export default function TwoFactorPanel() {
             <div className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>
           )}
           <div className="flex gap-2">
-            <Button variant="outline" onClick={() => setStage('idle')}>
+            <Button variant="outline" onClick={reset}>
               Cancel
             </Button>
             <Button type="submit" disabled={loading || !code}>
-              {loading ? 'Verifying…' : 'Enable 2FA'}
+              {loading ? 'Verifying…' : 'Enable authenticator app'}
             </Button>
           </div>
         </form>
@@ -272,7 +205,7 @@ export default function TwoFactorPanel() {
     );
   }
 
-  if (stage === 'email-setup' && setup) {
+  if (activePanel === 'email-setup' && setup) {
     return (
       <div className="space-y-4">
         <div>
@@ -291,15 +224,13 @@ export default function TwoFactorPanel() {
             className="w-full rounded-lg border border-navy-100 px-3 py-3 text-center text-xl font-bold tracking-[0.3em] font-mono text-navy focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold"
           />
           {message && (
-            <div className="rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
-              {message}
-            </div>
+            <div className="rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-800">{message}</div>
           )}
           {error && (
             <div className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>
           )}
           <div className="flex gap-2">
-            <Button variant="outline" onClick={() => setStage('idle')}>
+            <Button variant="outline" onClick={reset}>
               Cancel
             </Button>
             <Button type="submit" disabled={loading || !code}>
@@ -309,7 +240,7 @@ export default function TwoFactorPanel() {
           <div className="text-center">
             <button
               type="button"
-              onClick={resendEmailSetup}
+              onClick={resendSetupEmail}
               className="text-xs font-semibold text-gold-700 underline"
             >
               Resend code
@@ -320,13 +251,11 @@ export default function TwoFactorPanel() {
     );
   }
 
-  if (stage === 'disable') {
-    const isEmail = status.twoFactorEnabled && status.twoFactorMethod === 'email';
+  if (activePanel === 'totp-disable') {
     return (
-      <form onSubmit={submitDisable} className="space-y-3">
+      <form onSubmit={submitTotpDisable} className="space-y-3">
         <p className="text-sm text-navy">
-          Disabling 2FA makes your account less secure. Confirm with your password
-          {isEmail ? ' and an emailed code' : ' and a current code from your authenticator app'}.
+          Turn off the authenticator app. Confirm with your password and a current code.
         </p>
         <div>
           <label className="block text-sm font-medium text-navy">Password</label>
@@ -339,26 +268,64 @@ export default function TwoFactorPanel() {
           />
         </div>
         <div>
-          <label className="block text-sm font-medium text-navy">
-            {isEmail ? 'Email code' : 'Authenticator code'}
-          </label>
+          <label className="block text-sm font-medium text-navy">Authenticator code</label>
           <input
             type="text"
             required
             value={code}
             onChange={(e) => setCode(e.target.value)}
-            placeholder={isEmail ? 'ABCD-EFGH' : '123 456'}
+            placeholder="123 456"
             className="mt-1 w-full rounded-lg border border-navy-100 px-3 py-2 text-sm focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold"
           />
-          {isEmail && (
-            <button
-              type="button"
-              onClick={requestDisableCode}
-              className="mt-1 text-xs font-semibold text-gold-700 underline"
-            >
-              Send me a code
-            </button>
-          )}
+        </div>
+        {error && (
+          <div className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>
+        )}
+        <div className="flex gap-2">
+          <Button variant="outline" onClick={reset}>
+            Cancel
+          </Button>
+          <Button variant="danger" type="submit" disabled={loading}>
+            {loading ? 'Disabling…' : 'Turn off authenticator'}
+          </Button>
+        </div>
+      </form>
+    );
+  }
+
+  if (activePanel === 'email-disable') {
+    return (
+      <form onSubmit={submitEmailDisable} className="space-y-3">
+        <p className="text-sm text-navy">
+          Turn off email 2FA. Confirm with your password and an emailed code.
+        </p>
+        <div>
+          <label className="block text-sm font-medium text-navy">Password</label>
+          <input
+            type="password"
+            required
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            className="mt-1 w-full rounded-lg border border-navy-100 px-3 py-2 text-sm focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold"
+          />
+        </div>
+        <div>
+          <label className="block text-sm font-medium text-navy">Email code</label>
+          <input
+            type="text"
+            required
+            value={code}
+            onChange={(e) => setCode(e.target.value)}
+            placeholder="ABCD-EFGH"
+            className="mt-1 w-full rounded-lg border border-navy-100 px-3 py-2 text-sm focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold"
+          />
+          <button
+            type="button"
+            onClick={sendDisableEmailCode}
+            className="mt-1 text-xs font-semibold text-gold-700 underline"
+          >
+            Send me a code
+          </button>
         </div>
         {message && (
           <div className="rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-800">{message}</div>
@@ -367,25 +334,100 @@ export default function TwoFactorPanel() {
           <div className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>
         )}
         <div className="flex gap-2">
-          <Button
-            variant="outline"
-            onClick={() => {
-              setStage('idle');
-              setError('');
-              setMessage('');
-              setPassword('');
-              setCode('');
-            }}
-          >
+          <Button variant="outline" onClick={reset}>
             Cancel
           </Button>
           <Button variant="danger" type="submit" disabled={loading}>
-            {loading ? 'Disabling…' : 'Disable 2FA'}
+            {loading ? 'Disabling…' : 'Turn off email 2FA'}
           </Button>
         </div>
       </form>
     );
   }
 
-  return null;
+  // ── Overview ────────────────────────────────────────────────────────
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-start gap-3">
+        {status.twoFactorEnabled ? (
+          <ShieldCheck className="h-8 w-8 shrink-0 text-emerald-600" />
+        ) : (
+          <ShieldOff className="h-8 w-8 shrink-0 text-navy-400" />
+        )}
+        <div>
+          <div className="font-semibold text-navy">
+            {status.twoFactorEnabled
+              ? 'Two-factor authentication is ON'
+              : 'Two-factor authentication is OFF'}
+          </div>
+          <p className="mt-1 text-sm text-navy-400">
+            {status.twoFactorEnabled
+              ? "You'll need a code every sign-in. If you get locked out, ask the President to reset."
+              : 'Add at least one method to protect your account.'}
+          </p>
+        </div>
+      </div>
+
+      {message && (
+        <div className="rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
+          {message}
+        </div>
+      )}
+      {error && (
+        <div className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>
+      )}
+
+      <MethodRow
+        icon={<Smartphone className="h-5 w-5" />}
+        title="Authenticator app"
+        description="Google Authenticator, Authy, 1Password — strongest option."
+        enabled={status.twoFactorTotpEnabled}
+        onEnable={startTotp}
+        onDisable={() => setActivePanel('totp-disable')}
+        loading={loading}
+      />
+      <MethodRow
+        icon={<Mail className="h-5 w-5" />}
+        title="Email code"
+        description="We email you an 8-character code every sign-in."
+        enabled={status.twoFactorEmailEnabled}
+        onEnable={startEmail}
+        onDisable={() => setActivePanel('email-disable')}
+        loading={loading}
+      />
+    </div>
+  );
+}
+
+function MethodRow({ icon, title, description, enabled, onEnable, onDisable, loading }) {
+  return (
+    <div className="flex items-center justify-between gap-4 rounded-lg border border-navy-100 p-4">
+      <div className="flex min-w-0 items-start gap-3">
+        <div className="mt-0.5 text-navy">{icon}</div>
+        <div className="min-w-0">
+          <div className="font-semibold text-navy">{title}</div>
+          <div className="mt-0.5 text-xs text-navy-400">{description}</div>
+          <div
+            className={`mt-1 text-[10px] font-bold uppercase ${
+              enabled ? 'text-emerald-700' : 'text-navy-400'
+            }`}
+          >
+            {enabled ? 'On' : 'Off'}
+          </div>
+        </div>
+      </div>
+      <div className="shrink-0">
+        {enabled ? (
+          <Button variant="outline" onClick={onDisable}>
+            Turn off
+          </Button>
+        ) : (
+          <Button onClick={onEnable} disabled={loading}>
+            Turn on
+          </Button>
+        )}
+      </div>
+    </div>
+  );
 }
