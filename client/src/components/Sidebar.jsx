@@ -2,7 +2,6 @@ import { NavLink } from 'react-router-dom';
 import {
   LayoutDashboard,
   CalendarDays,
-  CalendarRange,
   FileText,
   LineChart,
   BookOpen,
@@ -20,8 +19,7 @@ import RoleBadge from './RoleBadge.jsx';
 
 const NAV_ITEMS = [
   { to: '/', label: 'Dashboard', icon: LayoutDashboard, end: true },
-  { to: '/pitches', label: 'Pitches Calendar', icon: CalendarDays },
-  { to: '/events', label: 'Events Calendar', icon: CalendarRange },
+  { to: '/calendar', label: 'Calendar', icon: CalendarDays },
   { to: '/archive', label: 'Pitch Archive', icon: FileText },
   { to: '/portfolio', label: 'Portfolio', icon: LineChart },
   { to: '/chat', label: 'Chat', icon: MessageSquare },

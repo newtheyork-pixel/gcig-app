@@ -10,8 +10,7 @@ import AuditLog from './pages/AuditLog.jsx';
 import Chat from './pages/Chat.jsx';
 import InactivityTimer from './components/InactivityTimer.jsx';
 import Dashboard from './pages/Dashboard.jsx';
-import Pitches from './pages/Pitches.jsx';
-import Events from './pages/Events.jsx';
+import Calendar from './pages/Calendar.jsx';
 import PreviousPitches from './pages/PreviousPitches.jsx';
 import Portfolio from './pages/Portfolio.jsx';
 import Reports from './pages/Reports.jsx';
@@ -48,8 +47,10 @@ export default function App() {
         }
       >
         <Route index element={<Dashboard />} />
-        <Route path="pitches" element={<Pitches />} />
-        <Route path="events" element={<Events />} />
+        <Route path="calendar" element={<Calendar />} />
+        {/* Legacy routes — keep so old bookmarks/links still work */}
+        <Route path="pitches" element={<Calendar />} />
+        <Route path="events" element={<Calendar />} />
         <Route path="archive" element={<PreviousPitches />} />
         <Route path="portfolio" element={<Portfolio />} />
         <Route path="votes" element={<Votes />} />
