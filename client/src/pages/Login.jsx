@@ -23,6 +23,9 @@ export default function Login() {
   const [twoFactorMethod, setTwoFactorMethod] = useState('totp');
   // Which methods are available on this account.
   const [availableMethods, setAvailableMethods] = useState({ totp: false, email: false });
+  // Tracks whether we've already asked the server to email a code this attempt,
+  // so switching tabs back and forth doesn't send repeatedly.
+  const [emailSent, setEmailSent] = useState(false);
   const codeRefs = useRef([]);
 
   if (user) return <Navigate to="/" replace />;
@@ -45,6 +48,7 @@ export default function Login() {
         setMode('2fa');
         setTwoFactorCode('');
         setMessage('');
+        setEmailSent(false);
       } else {
         navigate('/');
       }
@@ -69,15 +73,15 @@ export default function Login() {
     }
   }
 
-  async function switchToEmailMethod() {
+  async function sendEmailCode({ force = false } = {}) {
     setError('');
     setMessage('');
-    setTwoFactorMethod('email');
-    setTwoFactorCode('');
+    if (emailSent && !force) return; // already sent; caller can pass force:true to resend
     try {
       const { default: apiClient } = await import('../api/client.js');
       await apiClient.post('/2fa/resend-login-email', { challengeToken });
-      setMessage('Code sent — check your inbox.');
+      setEmailSent(true);
+      setMessage(force ? 'New code sent — check your inbox.' : 'Code sent — check your inbox.');
     } catch (err) {
       setError(err.response?.data?.error || 'Failed to send email');
     }
@@ -188,7 +192,9 @@ export default function Login() {
               <h2 className="text-lg font-semibold text-navy">Two-factor verification</h2>
               <p className="mt-1 text-sm text-navy-400">
                 {twoFactorMethod === 'email'
-                  ? 'Enter the 8-character code we emailed you.'
+                  ? emailSent
+                    ? 'Enter the 8-character code we emailed you.'
+                    : 'Click "Send code" to get an 8-character code by email.'
                   : 'Enter the 6-digit code from your authenticator app.'}
               </p>
 
@@ -213,7 +219,14 @@ export default function Login() {
                   </button>
                   <button
                     type="button"
-                    onClick={switchToEmailMethod}
+                    onClick={() => {
+                      // Switching tab only — do NOT auto-send. User clicks
+                      // the "Send code" button below when ready.
+                      setTwoFactorMethod('email');
+                      setTwoFactorCode('');
+                      setError('');
+                      setMessage('');
+                    }}
                     className={`flex-1 rounded-md px-3 py-1.5 text-xs font-semibold transition ${
                       twoFactorMethod === 'email'
                         ? 'bg-navy text-white'
@@ -225,62 +238,84 @@ export default function Login() {
                 </div>
               )}
 
-              <form onSubmit={handleTwoFactor} className="mt-6 space-y-4">
-                <input
-                  type="text"
-                  inputMode="text"
-                  autoFocus
-                  value={twoFactorCode}
-                  onChange={(e) => setTwoFactorCode(e.target.value)}
-                  placeholder={twoFactorMethod === 'email' ? 'ABCD-EFGH' : '123 456'}
-                  className="w-full rounded-lg border border-navy-100 px-3 py-3 text-center text-xl font-bold tracking-widest text-navy focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold"
-                />
-                {error && (
-                  <div className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">
-                    {error}
-                  </div>
-                )}
-                {message && (
-                  <div className="rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
-                    {message}
-                  </div>
-                )}
-                <Button type="submit" disabled={submitting || !twoFactorCode} className="w-full">
-                  {submitting ? 'Verifying…' : 'Verify & Sign in'}
-                </Button>
-                <div className="flex items-center justify-between text-xs">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setMode('login');
-                      setError('');
-                      setMessage('');
-                    }}
-                    className="font-semibold text-navy-400 underline"
-                  >
-                    Cancel
-                  </button>
-                  {twoFactorMethod === 'email' && (
+              {/* Email method: show "Send code" button until the user requests it */}
+              {twoFactorMethod === 'email' && !emailSent ? (
+                <div className="mt-6 space-y-4">
+                  {message && (
+                    <div className="rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
+                      {message}
+                    </div>
+                  )}
+                  {error && (
+                    <div className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">
+                      {error}
+                    </div>
+                  )}
+                  <Button onClick={() => sendEmailCode()} className="w-full">
+                    Send code to my email
+                  </Button>
+                  <div className="text-center">
                     <button
                       type="button"
-                      onClick={async () => {
+                      onClick={() => {
+                        setMode('login');
                         setError('');
                         setMessage('');
-                        try {
-                          const { default: apiClient } = await import('../api/client.js');
-                          await apiClient.post('/2fa/resend-login-email', { challengeToken });
-                          setMessage('New code sent — check your inbox.');
-                        } catch (err) {
-                          setError(err.response?.data?.error || 'Failed to resend');
-                        }
                       }}
-                      className="font-semibold text-gold-700 underline"
+                      className="text-xs font-semibold text-navy-400 underline"
                     >
-                      Resend code
+                      Cancel
                     </button>
-                  )}
+                  </div>
                 </div>
-              </form>
+              ) : (
+                <form onSubmit={handleTwoFactor} className="mt-6 space-y-4">
+                  <input
+                    type="text"
+                    inputMode="text"
+                    autoFocus
+                    value={twoFactorCode}
+                    onChange={(e) => setTwoFactorCode(e.target.value)}
+                    placeholder={twoFactorMethod === 'email' ? 'ABCD-EFGH' : '123 456'}
+                    className="w-full rounded-lg border border-navy-100 px-3 py-3 text-center text-xl font-bold tracking-widest text-navy focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold"
+                  />
+                  {error && (
+                    <div className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">
+                      {error}
+                    </div>
+                  )}
+                  {message && (
+                    <div className="rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
+                      {message}
+                    </div>
+                  )}
+                  <Button type="submit" disabled={submitting || !twoFactorCode} className="w-full">
+                    {submitting ? 'Verifying…' : 'Verify & Sign in'}
+                  </Button>
+                  <div className="flex items-center justify-between text-xs">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setMode('login');
+                        setError('');
+                        setMessage('');
+                      }}
+                      className="font-semibold text-navy-400 underline"
+                    >
+                      Cancel
+                    </button>
+                    {twoFactorMethod === 'email' && (
+                      <button
+                        type="button"
+                        onClick={() => sendEmailCode({ force: true })}
+                        className="font-semibold text-gold-700 underline"
+                      >
+                        Resend code
+                      </button>
+                    )}
+                  </div>
+                </form>
+              )}
             </>
           ) : mode === 'verify' ? (
             <>

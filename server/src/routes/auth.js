@@ -8,10 +8,9 @@ import { authLimiter, codeLimiter } from '../middleware/rateLimit.js';
 import {
   sendVerificationCode,
   sendPasswordResetEmail,
-  sendTwoFactorCodeEmail,
 } from '../services/email.js';
 import { auditReq } from '../services/audit.js';
-import { signChallenge, issueEmailCode } from './twoFactor.js';
+import { signChallenge } from './twoFactor.js';
 
 const router = Router();
 
@@ -238,25 +237,11 @@ router.post('/login', authLimiter, async (req, res) => {
   // If the user has 2FA enabled, password is only the first factor —
   // hand back a short-lived challenge token and make them complete 2FA.
   //
-  // Only send an email code if email is the ONLY method the user has
-  // (no authenticator fallback available). If they have both, let the
-  // client pick — default is the authenticator app; they can request an
-  // email code explicitly via /2fa/resend-login-email.
+  // We never auto-send an email code. The client requests one explicitly via
+  // /2fa/resend-login-email (email-only users click "Send me a code"; users
+  // with both methods enabled click the Email toggle).
   if (user.twoFactorEnabled) {
     const challengeToken = signChallenge(user.id);
-    const emailOnly = user.twoFactorEmailEnabled && !user.twoFactorTotpEnabled;
-    if (emailOnly) {
-      try {
-        const code = await issueEmailCode(user.id, 'login');
-        await sendTwoFactorCodeEmail(user.email, {
-          name: user.name,
-          code,
-          purpose: 'login',
-        });
-      } catch (err) {
-        console.error('2FA login email failed:', err.message);
-      }
-    }
     await auditReq(
       { ...req, user: { id: user.id, name: user.name, role: user.role } },
       'login.password_ok_awaiting_2fa',
