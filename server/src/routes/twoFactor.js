@@ -5,6 +5,7 @@ import prisma from '../db.js';
 import { verifyJwt, issueJwt } from '../middleware/auth.js';
 import { authLimiter, codeLimiter } from '../middleware/rateLimit.js';
 import { auditReq } from '../services/audit.js';
+import { trackLogin } from '../services/knownLogins.js';
 import {
   generateSecret,
   buildQrCodeDataUrl,
@@ -248,6 +249,9 @@ router.post('/login', codeLimiter, async (req, res) => {
     'user',
     user.id,
     { via: acceptedVia }
+  );
+  trackLogin(user, req).catch((err) =>
+    console.error('trackLogin failed:', err.message)
   );
   res.json({
     token: jwtToken,

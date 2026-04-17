@@ -1,5 +1,5 @@
-import { useState, useRef } from 'react';
-import { Navigate, useNavigate, Link } from 'react-router-dom';
+import { useState, useRef, useEffect } from 'react';
+import { Navigate, useNavigate, Link, useSearchParams } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext.jsx';
 import Button from '../components/Button.jsx';
 
@@ -8,6 +8,7 @@ const ALLOWED_DOMAIN = '@gcschool.org';
 export default function Login() {
   const { user, login, signup, verify, resendCode, verifyTwoFactor } = useAuth();
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const [mode, setMode] = useState('login'); // 'login' | 'signup' | 'verify' | '2fa'
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
@@ -23,6 +24,13 @@ export default function Login() {
   const [twoFactorMethod, setTwoFactorMethod] = useState('totp');
   // Which methods are available on this account.
   const [availableMethods, setAvailableMethods] = useState({ totp: false, email: false });
+
+  // Show a hint if the user landed here because the inactivity timer kicked in.
+  useEffect(() => {
+    if (searchParams.get('timedOut') === '1') {
+      setMessage('Signed out after 2 hours of inactivity. Please sign in again.');
+    }
+  }, [searchParams]);
   // Tracks whether we've already asked the server to email a code this attempt,
   // so switching tabs back and forth doesn't send repeatedly.
   const [emailSent, setEmailSent] = useState(false);

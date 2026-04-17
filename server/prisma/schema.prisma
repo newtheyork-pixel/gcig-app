@@ -55,6 +55,23 @@ model User {
   pitchPresenters   PitchPresenter[]
   backupCodes       BackupCode[]
   twoFactorCodes    TwoFactorCode[]
+  knownLogins       KnownLogin[]
+}
+
+// Fingerprints of IPs a user has successfully signed in from. Used to warn
+// them via email when a sign-in comes from a new location. IPs are hashed
+// so the DB never stores raw IPs long-term.
+model KnownLogin {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  ipHash    String
+  userAgent String?
+  lastSeen  DateTime @default(now())
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, ipHash])
+  @@index([userId])
 }
 
 model TwoFactorCode {

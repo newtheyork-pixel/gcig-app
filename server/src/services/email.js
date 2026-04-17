@@ -53,6 +53,46 @@ export async function sendVerificationCode(toEmail, code) {
   });
 }
 
+export async function sendNewDeviceLoginEmail(toEmail, { name, ip, userAgent, when }) {
+  await getTransporter().sendMail({
+    from: from(),
+    to: toEmail,
+    subject: 'New sign-in to your GCIG account',
+    html: `
+      <div style="font-family: 'Inter', system-ui, sans-serif; max-width: 480px; margin: 0 auto; padding: 32px;">
+        <div style="text-align: center; margin-bottom: 24px;">
+          <h1 style="color: #1B2A4A; font-size: 24px; margin: 0;">GCIG</h1>
+          <p style="color: #C9A84C; font-size: 11px; text-transform: uppercase; letter-spacing: 2px; margin: 4px 0 0;">
+            Grace Church School Investment Group
+          </p>
+        </div>
+        <div style="background: #F7F8FB; border-radius: 12px; padding: 24px;">
+          <p style="color: #1B2A4A; font-size: 14px; margin: 0 0 8px;">Hi ${name},</p>
+          <p style="color: #1B2A4A; font-size: 14px; margin: 0 0 16px;">
+            Your GCIG account was just signed in from a device we haven't seen before. If this was you, you can ignore this email.
+          </p>
+          <div style="background: #1B2A4A; border-radius: 8px; padding: 16px; margin: 0 0 16px;">
+            <p style="color: #8C99BB; font-size: 12px; margin: 0 0 4px;">When</p>
+            <p style="color: white; font-size: 13px; margin: 0 0 12px;">${when}</p>
+            <p style="color: #8C99BB; font-size: 12px; margin: 0 0 4px;">IP Address</p>
+            <p style="color: white; font-size: 13px; font-family: monospace; margin: 0 0 12px;">${ip || 'unknown'}</p>
+            <p style="color: #8C99BB; font-size: 12px; margin: 0 0 4px;">Browser</p>
+            <p style="color: white; font-size: 12px; margin: 0;">${userAgent || 'unknown'}</p>
+          </div>
+          <p style="color: #1B2A4A; font-size: 14px; margin: 0 0 8px;">
+            <strong>Didn't recognize this?</strong>
+          </p>
+          <ol style="color: #1B2A4A; font-size: 13px; padding-left: 20px; margin: 0;">
+            <li style="margin-bottom: 4px;">Change your password immediately</li>
+            <li style="margin-bottom: 4px;">Sign out of every device from your Profile page</li>
+            <li style="margin-bottom: 4px;">Enable 2FA if you haven't already</li>
+          </ol>
+        </div>
+      </div>
+    `,
+  });
+}
+
 export async function sendTwoFactorCodeEmail(toEmail, { name, code, purpose = 'login' }) {
   const display = `${code.slice(0, 4)}-${code.slice(4, 8)}`;
   const subject =

@@ -10,6 +10,7 @@ import {
   sendPasswordResetEmail,
 } from '../services/email.js';
 import { auditReq } from '../services/audit.js';
+import { trackLogin } from '../services/knownLogins.js';
 import { signChallenge } from './twoFactor.js';
 
 const router = Router();
@@ -324,6 +325,10 @@ router.post('/login', authLimiter, async (req, res) => {
     'login.success',
     'user',
     user.id
+  );
+  // Fire-and-forget new-device alert.
+  trackLogin(user, req).catch((err) =>
+    console.error('trackLogin failed:', err.message)
   );
   res.json({
     token,
