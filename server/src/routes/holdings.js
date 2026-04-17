@@ -5,6 +5,68 @@ import YahooFinance from 'yahoo-finance2';
 // direct HTTP call to Yahoo's quoteSummary endpoint below.
 const yahooFinance = new YahooFinance();
 
+// Finnhub is our primary data source when FINNHUB_API_KEY is configured.
+// Free tier: 60 calls/min, real-time US quotes, company profile included.
+async function fetchFinnhub(ticker) {
+  const key = process.env.FINNHUB_API_KEY;
+  if (!key) return null;
+  const base = 'https://finnhub.io/api/v1';
+  try {
+    const [quoteRes, profileRes, metricRes] = await Promise.all([
+      fetch(`${base}/quote?symbol=${encodeURIComponent(ticker)}&token=${key}`),
+      fetch(`${base}/stock/profile2?symbol=${encodeURIComponent(ticker)}&token=${key}`),
+      fetch(`${base}/stock/metric?symbol=${encodeURIComponent(ticker)}&metric=all&token=${key}`),
+    ]);
+    if (!quoteRes.ok) return null;
+    const [q, profile, metric] = await Promise.all([
+      quoteRes.json(),
+      profileRes.ok ? profileRes.json() : {},
+      metricRes.ok ? metricRes.json() : {},
+    ]);
+    // Finnhub returns c=0 for unknown tickers.
+    if (!q || !q.c) return null;
+    const m = metric?.metric || {};
+    return {
+      ticker,
+      name: profile?.name || ticker,
+      exchange: profile?.exchange || null,
+      currency: profile?.currency || 'USD',
+      sector: profile?.finnhubIndustry || null,
+      industry: profile?.finnhubIndustry || null,
+      website: profile?.weburl || null,
+      summary: null, // Finnhub profile2 has no business summary on free tier
+      employees: null,
+      country: profile?.country || null,
+      price: q.c,
+      previousClose: q.pc,
+      dayHigh: q.h,
+      dayLow: q.l,
+      fiftyTwoWeekHigh: m['52WeekHigh'] ?? null,
+      fiftyTwoWeekLow: m['52WeekLow'] ?? null,
+      // Finnhub returns marketCapitalization in millions.
+      marketCap:
+        profile?.marketCapitalization != null
+          ? profile.marketCapitalization * 1e6
+          : null,
+      trailingPE: m.peBasicExclExtraTTM ?? m.peInclExtraTTM ?? null,
+      forwardPE: m.peNormalizedAnnual ?? null,
+      dividendYield:
+        m.currentDividendYieldTTM != null
+          ? m.currentDividendYieldTTM / 100
+          : null,
+      beta: m.beta ?? null,
+      volume: null,
+      avgVolume: m['10DayAverageTradingVolume']
+        ? m['10DayAverageTradingVolume'] * 1e6
+        : null,
+      _source: 'finnhub',
+    };
+  } catch (err) {
+    console.warn(`finnhub(${ticker}) failed:`, err.message);
+    return null;
+  }
+}
+
 // Fallback: Yahoo's v8 chart endpoint returns meta with current price + previous
 // close + 52w range WITHOUT needing a crumb. Used if the library's quote() call
 // fails because of rate limiting / cookie issues.
@@ -145,8 +207,17 @@ router.get('/info/:ticker', async (req, res) => {
   }
 
   try {
-    // quote (library) handles crumb/cookie auth; summary (direct fetch) is
-    // best-effort and can return null without breaking the whole response.
+    // Primary: Finnhub (reliable, real-time, no rate-limit issues).
+    if (process.env.FINNHUB_API_KEY) {
+      const finnhubData = await fetchFinnhub(raw);
+      if (finnhubData) {
+        tickerCache.set(raw, { at: Date.now(), data: finnhubData });
+        return res.json(finnhubData);
+      }
+    }
+
+    // Fallback: Yahoo Finance. Yahoo rate-limits aggressively on the crumb
+    // endpoint, so we also try chart meta + quoteSummary directly.
     const opts = { validateResult: false };
     const [quoteResult, summaryResult, chartResult] = await Promise.allSettled([
       yahooFinance.quote(raw, {}, opts),
