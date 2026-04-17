@@ -199,7 +199,7 @@ router.post('/accept-invite', authLimiter, async (req, res) => {
   });
   await prisma.pendingInvite.delete({ where: { id: invite.id } });
 
-  const token = issueJwt(user);
+  const jwtToken = issueJwt(user);
   await auditReq(
     { ...req, user: { id: user.id, name: user.name, role: user.role } },
     'invite.accepted',
@@ -207,7 +207,7 @@ router.post('/accept-invite', authLimiter, async (req, res) => {
     user.id
   );
   res.status(201).json({
-    token,
+    token: jwtToken,
     user: { id: user.id, name: user.name, email: user.email, role: user.role },
   });
 });
