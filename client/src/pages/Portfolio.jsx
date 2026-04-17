@@ -116,15 +116,38 @@ export default function Portfolio() {
     return cutoff ? fullHistory.filter((d) => d.date >= cutoff) : fullHistory;
   }, [fullHistory, range]);
 
-  // Tight y-axis domain — pad 1% so the line doesn't touch top/bottom.
+  // Chart series: cumulative % return from the start of the visible range,
+  // measured against the equity base and excluding any capital infusions
+  // that occurred after the range started.
+  const percentSeries = useMemo(() => {
+    if (chartData.length === 0) return [];
+    const start = chartData[0];
+    const base = start.equity > 0 ? start.equity : start.value;
+    if (base <= 0) return [];
+    return chartData.map((d) => {
+      // Sum every cash flow that occurred strictly AFTER the range start and
+      // up to this data point. Subtracting it from the current value leaves
+      // only market movement.
+      const cfSoFar = CASH_FLOWS.filter(
+        (cf) => cf.date > start.date && cf.date <= d.date
+      ).reduce((s, cf) => s + cf.amount, 0);
+      const dollarDelta = d.value - cfSoFar - start.value;
+      const percent = (dollarDelta / base) * 100;
+      return { ...d, dollarDelta, percent };
+    });
+  }, [chartData]);
+
+  // Tight y-axis domain in percent — pad slightly so the line doesn't kiss
+  // the top / bottom of the chart.
   const yDomain = useMemo(() => {
-    if (chartData.length === 0) return [0, 1];
-    const values = chartData.map((d) => d.value);
+    if (percentSeries.length === 0) return [0, 1];
+    const values = percentSeries.map((d) => d.percent);
     const min = Math.min(...values);
     const max = Math.max(...values);
-    const pad = (max - min) * 0.05 || max * 0.01;
-    return [Math.floor(min - pad), Math.ceil(max + pad)];
-  }, [chartData]);
+    const range = max - min;
+    const pad = Math.max(range * 0.1, 0.5);
+    return [Number((min - pad).toFixed(2)), Number((max + pad).toFixed(2))];
+  }, [percentSeries]);
 
   // Daily change on equity (invested capital) — cash parked isn't "performance."
   // Dollar change = total change (cash contributes ~0 to day-over-day movement).
@@ -199,9 +222,9 @@ export default function Portfolio() {
   }, [chartData]);
 
   // Build display data with a short date label. For long ranges we thin labels out.
-  const displayData = chartData.map((d) => ({
+  const displayData = percentSeries.map((d) => ({
     ...d,
-    label: format(d.date, chartData.length > 90 ? 'MMM yyyy' : 'MMM d'),
+    label: format(d.date, percentSeries.length > 90 ? 'MMM yyyy' : 'MMM d'),
     tooltipLabel: format(d.date, 'MMM d, yyyy'),
   }));
 
@@ -387,11 +410,16 @@ export default function Portfolio() {
                     tickLine={false}
                     axisLine={false}
                     domain={yDomain}
-                    tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`}
+                    tickFormatter={(v) =>
+                      `${v >= 0 ? '+' : ''}${v.toFixed(Math.abs(v) < 1 ? 2 : 1)}%`
+                    }
                     width={55}
                   />
                   <Tooltip
-                    formatter={(v) => [fmtMoney(v), 'Value']}
+                    formatter={(v, _name, entry) => [
+                      `${v >= 0 ? '+' : ''}${v.toFixed(2)}% (${fmtMoney(entry?.payload?.dollarDelta)})`,
+                      'Return',
+                    ]}
                     labelFormatter={(_, payload) => payload?.[0]?.payload?.tooltipLabel || ''}
                     contentStyle={{
                       borderRadius: 8,
@@ -401,7 +429,7 @@ export default function Portfolio() {
                   />
                   <Area
                     type="monotone"
-                    dataKey="value"
+                    dataKey="percent"
                     stroke="#1B2A4A"
                     strokeWidth={2.5}
                     fill="url(#navyFill)"
