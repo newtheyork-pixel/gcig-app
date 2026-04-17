@@ -56,6 +56,21 @@ model User {
   backupCodes       BackupCode[]
   twoFactorCodes    TwoFactorCode[]
   knownLogins       KnownLogin[]
+  chatMessages      ChatMessage[]
+}
+
+// Chat channels are addressed by a simple string:
+//   "general"        — everyone has access
+//   "industry:<id>"  — members of that industry only
+model ChatMessage {
+  id        Int      @id @default(autoincrement())
+  channel   String
+  userId    Int
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  content   String
+  createdAt DateTime @default(now())
+
+  @@index([channel, createdAt])
 }
 
 // Fingerprints of IPs a user has successfully signed in from. Used to warn

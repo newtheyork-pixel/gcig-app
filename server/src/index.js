@@ -18,6 +18,7 @@ import voteRoutes from './routes/votes.js';
 import industryRoutes from './routes/industries.js';
 import auditRoutes from './routes/audit.js';
 import twoFactorRoutes from './routes/twoFactor.js';
+import chatRoutes from './routes/chat.js';
 import { ensureRecurringMeetings } from './services/recurringMeetings.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -76,6 +77,7 @@ app.use('/api/votes', voteRoutes);
 app.use('/api/industries', industryRoutes);
 app.use('/api/audit', auditRoutes);
 app.use('/api/2fa', twoFactorRoutes);
+app.use('/api/chat', chatRoutes);
 
 // Generic error handler. Logs the full error server-side for debugging but
 // never leaks internal details (stack traces, Prisma error bodies, etc.) to

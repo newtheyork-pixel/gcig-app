@@ -7,6 +7,7 @@ import AcceptInvite from './pages/AcceptInvite.jsx';
 import ForgotPassword from './pages/ForgotPassword.jsx';
 import ResetPassword from './pages/ResetPassword.jsx';
 import AuditLog from './pages/AuditLog.jsx';
+import Chat from './pages/Chat.jsx';
 import InactivityTimer from './components/InactivityTimer.jsx';
 import Dashboard from './pages/Dashboard.jsx';
 import Pitches from './pages/Pitches.jsx';
@@ -57,6 +58,7 @@ export default function App() {
         <Route path="attendance" element={<Attendance />} />
         <Route path="members" element={<Members />} />
         <Route path="audit" element={<AuditLog />} />
+        <Route path="chat" element={<Chat />} />
         <Route path="profile" element={<Profile />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />

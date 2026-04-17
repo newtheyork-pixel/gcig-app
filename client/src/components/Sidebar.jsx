@@ -13,6 +13,7 @@ import {
   Vote,
   Building2,
   ShieldAlert,
+  MessageSquare,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext.jsx';
 import RoleBadge from './RoleBadge.jsx';
@@ -23,6 +24,7 @@ const NAV_ITEMS = [
   { to: '/events', label: 'Events Calendar', icon: CalendarRange },
   { to: '/archive', label: 'Pitch Archive', icon: FileText },
   { to: '/portfolio', label: 'Portfolio', icon: LineChart },
+  { to: '/chat', label: 'Chat', icon: MessageSquare },
   { to: '/votes', label: 'Voting', icon: Vote },
   { to: '/industries', label: 'Industries', icon: Building2 },
   { to: '/reports', label: 'Research Reports', icon: BookOpen },
