@@ -1,5 +1,12 @@
 import { useEffect, useState } from 'react';
-import { ExternalLink, TrendingUp, TrendingDown } from 'lucide-react';
+import { format } from 'date-fns';
+import {
+  ExternalLink,
+  TrendingUp,
+  TrendingDown,
+  FileText,
+  BookOpen,
+} from 'lucide-react';
 import api from '../api/client.js';
 import { safeHref } from '../api/safeUrl.js';
 import Modal from './Modal.jsx';
@@ -42,6 +49,7 @@ function fmtPct(n) {
 export default function HoldingDetailModal({ holding, onClose }) {
   const ticker = holding?.ticker;
   const [info, setInfo] = useState(null);
+  const [coverage, setCoverage] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
@@ -51,17 +59,25 @@ export default function HoldingDetailModal({ holding, onClose }) {
     setLoading(true);
     setError('');
     setInfo(null);
-    api
-      .get(`/holdings/info/${encodeURIComponent(ticker)}`)
-      .then(({ data }) => {
-        if (!cancelled) setInfo(data);
-      })
-      .catch((err) => {
-        if (!cancelled) setError(err.response?.data?.error || 'Failed to load ticker info');
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
+    setCoverage(null);
+    Promise.all([
+      api
+        .get(`/holdings/info/${encodeURIComponent(ticker)}`)
+        .then(({ data }) => data)
+        .catch((err) => {
+          setError(err.response?.data?.error || 'Failed to load ticker info');
+          return null;
+        }),
+      api
+        .get(`/holdings/coverage/${encodeURIComponent(ticker)}`)
+        .then(({ data }) => data)
+        .catch(() => ({ pitches: [], reports: [] })),
+    ]).then(([infoData, coverageData]) => {
+      if (cancelled) return;
+      setInfo(infoData);
+      setCoverage(coverageData);
+      setLoading(false);
+    });
     return () => {
       cancelled = true;
     };
@@ -188,6 +204,95 @@ export default function HoldingDetailModal({ holding, onClose }) {
               </div>
             </div>
           )}
+
+          {/* Our Coverage — pitches and reports authored by the club */}
+          {coverage &&
+            (coverage.pitches.length > 0 || coverage.reports.length > 0) && (
+              <div>
+                <div className="mb-2 text-xs font-bold uppercase tracking-wider text-navy-400">
+                  Our Coverage
+                </div>
+                <div className="space-y-2">
+                  {coverage.pitches.map((p) => (
+                    <div
+                      key={`pitch-${p.id}`}
+                      className="flex items-start gap-3 rounded-lg border border-navy-100 bg-white p-3"
+                    >
+                      <div className="mt-0.5 rounded-lg bg-gold-100 p-1.5 text-gold-700">
+                        <FileText className="h-4 w-4" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-xs font-bold uppercase tracking-wider text-gold-800">
+                            Pitch
+                          </span>
+                          {p.industry && (
+                            <span className="rounded-full bg-gold-100 px-2 py-0.5 text-[10px] font-semibold text-gold-800">
+                              {p.industry.name}
+                            </span>
+                          )}
+                          <span className="text-xs text-navy-400">
+                            {format(new Date(p.date), 'MMM d, yyyy')}
+                          </span>
+                        </div>
+                        <div className="mt-1 text-sm font-semibold text-navy">
+                          By {p.presenters.join(', ')}
+                        </div>
+                      </div>
+                      {p.slideshowUrl && (
+                        <a
+                          href={safeHref(p.slideshowUrl)}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="inline-flex items-center gap-1 rounded-lg border border-navy-100 px-2 py-1 text-[11px] font-semibold text-navy hover:bg-navy-50"
+                        >
+                          <ExternalLink className="h-3 w-3" />
+                          Slides
+                        </a>
+                      )}
+                    </div>
+                  ))}
+                  {coverage.reports.map((r) => (
+                    <div
+                      key={`report-${r.id}`}
+                      className="flex items-start gap-3 rounded-lg border border-navy-100 bg-white p-3"
+                    >
+                      <div className="mt-0.5 rounded-lg bg-navy-50 p-1.5 text-navy">
+                        <BookOpen className="h-4 w-4" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className="text-xs font-bold uppercase tracking-wider text-navy">
+                            Report
+                          </span>
+                          <span className="text-xs text-navy-400">
+                            {format(new Date(r.date), 'MMM d, yyyy')}
+                          </span>
+                        </div>
+                        <div className="mt-1 text-sm font-semibold text-navy truncate">
+                          {r.title}
+                        </div>
+                        <div className="text-xs text-navy-400">By {r.author}</div>
+                        {r.description && (
+                          <p className="mt-1 text-xs text-navy line-clamp-2">
+                            {r.description}
+                          </p>
+                        )}
+                      </div>
+                      <a
+                        href={safeHref(r.fileUrl)}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex items-center gap-1 rounded-lg border border-navy-100 px-2 py-1 text-[11px] font-semibold text-navy hover:bg-navy-50"
+                      >
+                        <ExternalLink className="h-3 w-3" />
+                        Open
+                      </a>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
 
           {/* Stats grid */}
           <div className="grid grid-cols-2 gap-x-6 gap-y-3 sm:grid-cols-3">

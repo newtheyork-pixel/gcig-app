@@ -307,6 +307,57 @@ router.get('/info/:ticker', async (req, res) => {
   }
 });
 
+// Research coverage for a ticker: pitches and reports the club has produced.
+// Returned alongside ticker info in the holding detail modal.
+router.get('/coverage/:ticker', async (req, res) => {
+  const raw = String(req.params.ticker || '').trim().toUpperCase();
+  if (!raw || !/^[A-Z0-9.\-]{1,10}$/.test(raw)) {
+    return res.status(400).json({ error: 'Invalid ticker' });
+  }
+  try {
+    const [pitches, reports] = await Promise.all([
+      prisma.pitch.findMany({
+        where: { ticker: { equals: raw, mode: 'insensitive' } },
+        orderBy: { date: 'desc' },
+        include: {
+          industry: { select: { id: true, name: true } },
+          presenters: {
+            include: { user: { select: { id: true, name: true } } },
+          },
+        },
+      }),
+      prisma.report.findMany({
+        where: { ticker: { equals: raw, mode: 'insensitive' } },
+        orderBy: { date: 'desc' },
+      }),
+    ]);
+    res.json({
+      pitches: pitches.map((p) => ({
+        id: p.id,
+        date: p.date,
+        slideshowUrl: p.slideshowUrl,
+        location: p.location,
+        industry: p.industry,
+        presenters:
+          p.presenters.length > 0
+            ? p.presenters.map((pp) => pp.user.name)
+            : [p.pitcherName],
+      })),
+      reports: reports.map((r) => ({
+        id: r.id,
+        title: r.title,
+        author: r.author,
+        date: r.date,
+        description: r.description,
+        fileUrl: r.fileUrl,
+      })),
+    });
+  } catch (err) {
+    console.error(`coverage(${raw}) failed:`, err);
+    res.status(500).json({ error: 'Failed to load coverage' });
+  }
+});
+
 router.get('/history', async (_req, res) => {
   const snapshots = await prisma.portfolioSnapshot.findMany({
     orderBy: { date: 'asc' },
