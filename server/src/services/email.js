@@ -53,6 +53,43 @@ export async function sendVerificationCode(toEmail, code) {
   });
 }
 
+export async function sendTwoFactorCodeEmail(toEmail, { name, code, purpose = 'login' }) {
+  const display = `${code.slice(0, 4)}-${code.slice(4, 8)}`;
+  const subject =
+    purpose === 'setup'
+      ? `Confirm 2FA setup: ${display}`
+      : `GCIG sign-in code: ${display}`;
+  const intro =
+    purpose === 'setup'
+      ? 'Enter this code to finish setting up email 2FA on your account.'
+      : 'Enter this code to finish signing in.';
+  await getTransporter().sendMail({
+    from: from(),
+    to: toEmail,
+    subject,
+    html: `
+      <div style="font-family: 'Inter', system-ui, sans-serif; max-width: 480px; margin: 0 auto; padding: 32px;">
+        <div style="text-align: center; margin-bottom: 24px;">
+          <h1 style="color: #1B2A4A; font-size: 24px; margin: 0;">GCIG</h1>
+          <p style="color: #C9A84C; font-size: 11px; text-transform: uppercase; letter-spacing: 2px; margin: 4px 0 0;">
+            Grace Church School Investment Group
+          </p>
+        </div>
+        <div style="background: #F7F8FB; border-radius: 12px; padding: 24px; text-align: center;">
+          ${name ? `<p style="color: #1B2A4A; font-size: 14px; margin: 0 0 8px;">Hi ${name},</p>` : ''}
+          <p style="color: #1B2A4A; font-size: 14px; margin: 0 0 16px;">${intro}</p>
+          <div style="background: #1B2A4A; color: #C9A84C; font-size: 26px; font-weight: 700; letter-spacing: 6px; padding: 16px 24px; border-radius: 8px; display: inline-block; font-family: monospace;">
+            ${display}
+          </div>
+          <p style="color: #8C99BB; font-size: 12px; margin: 16px 0 0;">
+            This code expires in 10 minutes. If you didn't request this, someone may be trying to access your account — change your password.
+          </p>
+        </div>
+      </div>
+    `,
+  });
+}
+
 export async function sendPasswordResetEmail(toEmail, { name, resetUrl }) {
   await getTransporter().sendMail({
     from: from(),

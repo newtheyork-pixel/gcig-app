@@ -19,6 +19,7 @@ export default function Login() {
   const [pendingEmail, setPendingEmail] = useState('');
   const [challengeToken, setChallengeToken] = useState('');
   const [twoFactorCode, setTwoFactorCode] = useState('');
+  const [twoFactorMethod, setTwoFactorMethod] = useState('totp');
   const codeRefs = useRef([]);
 
   if (user) return <Navigate to="/" replace />;
@@ -31,6 +32,7 @@ export default function Login() {
       const result = await login(email, password);
       if (result.twoFactorRequired) {
         setChallengeToken(result.challengeToken);
+        setTwoFactorMethod(result.method || 'totp');
         setMode('2fa');
         setTwoFactorCode('');
       } else {
@@ -161,7 +163,9 @@ export default function Login() {
             <>
               <h2 className="text-lg font-semibold text-navy">Two-factor verification</h2>
               <p className="mt-1 text-sm text-navy-400">
-                Enter the 6-digit code from your authenticator app, or a backup code.
+                {twoFactorMethod === 'email'
+                  ? "We emailed you an 8-character code. Enter it below (or a backup code)."
+                  : 'Enter the 6-digit code from your authenticator app, or a backup code.'}
               </p>
               <form onSubmit={handleTwoFactor} className="mt-6 space-y-4">
                 <input
@@ -170,7 +174,9 @@ export default function Login() {
                   autoFocus
                   value={twoFactorCode}
                   onChange={(e) => setTwoFactorCode(e.target.value)}
-                  placeholder="123 456  or  ABCD-EFGH"
+                  placeholder={
+                    twoFactorMethod === 'email' ? 'ABCD-EFGH' : '123 456  or  ABCD-EFGH'
+                  }
                   className="w-full rounded-lg border border-navy-100 px-3 py-3 text-center text-xl font-bold tracking-widest text-navy focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold"
                 />
                 {error && (
@@ -178,20 +184,47 @@ export default function Login() {
                     {error}
                   </div>
                 )}
+                {message && (
+                  <div className="rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
+                    {message}
+                  </div>
+                )}
                 <Button type="submit" disabled={submitting || !twoFactorCode} className="w-full">
                   {submitting ? 'Verifying…' : 'Verify & Sign in'}
                 </Button>
-                <div className="text-center">
+                <div className="flex items-center justify-between text-xs">
                   <button
                     type="button"
                     onClick={() => {
                       setMode('login');
                       setError('');
+                      setMessage('');
                     }}
-                    className="text-xs font-semibold text-navy-400 underline"
+                    className="font-semibold text-navy-400 underline"
                   >
                     Cancel
                   </button>
+                  {twoFactorMethod === 'email' && (
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        setError('');
+                        setMessage('');
+                        try {
+                          await (await import('../api/client.js')).default.post(
+                            '/2fa/resend-login-email',
+                            { challengeToken }
+                          );
+                          setMessage('New code sent — check your inbox.');
+                        } catch (err) {
+                          setError(err.response?.data?.error || 'Failed to resend');
+                        }
+                      }}
+                      className="font-semibold text-gold-700 underline"
+                    >
+                      Resend code
+                    </button>
+                  )}
                 </div>
               </form>
             </>

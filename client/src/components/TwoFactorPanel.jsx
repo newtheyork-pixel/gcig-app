@@ -1,18 +1,19 @@
 import { useEffect, useState } from 'react';
-import { ShieldCheck, ShieldOff, Copy, Check } from 'lucide-react';
+import { ShieldCheck, ShieldOff, Copy, Check, Smartphone, Mail } from 'lucide-react';
 import api from '../api/client.js';
 import Button from './Button.jsx';
 
 export default function TwoFactorPanel() {
-  const [status, setStatus] = useState(null); // { enabled }
-  const [stage, setStage] = useState('idle'); // idle | setup | verify | disable
-  const [setup, setSetup] = useState(null); // { secret, qrCodeDataUrl, backupCodes }
+  const [status, setStatus] = useState(null); // { twoFactorEnabled, email }
+  const [stage, setStage] = useState('idle'); // idle | choose | totp-setup | email-setup | disable | show-backups
+  const [setup, setSetup] = useState(null); // { secret, qrCodeDataUrl, backupCodes, email }
   const [code, setCode] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [message, setMessage] = useState('');
   const [loading, setLoading] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [postEnableBackups, setPostEnableBackups] = useState(null);
 
   async function loadStatus() {
     const { data } = await api.get('/auth/me');
@@ -23,13 +24,13 @@ export default function TwoFactorPanel() {
     loadStatus();
   }, []);
 
-  async function startSetup() {
+  async function startTotp() {
     setError('');
     setLoading(true);
     try {
       const { data } = await api.post('/2fa/setup');
       setSetup(data);
-      setStage('setup');
+      setStage('totp-setup');
     } catch (err) {
       setError(err.response?.data?.error || 'Setup failed');
     } finally {
@@ -37,7 +38,21 @@ export default function TwoFactorPanel() {
     }
   }
 
-  async function confirmSetup(e) {
+  async function startEmail() {
+    setError('');
+    setLoading(true);
+    try {
+      const { data } = await api.post('/2fa/setup-email');
+      setSetup({ email: data.email });
+      setStage('email-setup');
+    } catch (err) {
+      setError(err.response?.data?.error || 'Setup failed');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function confirmTotp(e) {
     e.preventDefault();
     setError('');
     setLoading(true);
@@ -55,16 +70,44 @@ export default function TwoFactorPanel() {
     }
   }
 
+  async function confirmEmail(e) {
+    e.preventDefault();
+    setError('');
+    setLoading(true);
+    try {
+      const { data } = await api.post('/2fa/verify-setup-email', { code });
+      setPostEnableBackups(data.backupCodes || []);
+      setMessage('Email 2FA is on.');
+      setStage('show-backups');
+      setCode('');
+      await loadStatus();
+    } catch (err) {
+      setError(err.response?.data?.error || 'Verification failed');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function resendEmailSetup() {
+    setError('');
+    setLoading(true);
+    try {
+      await api.post('/2fa/resend-setup-email');
+      setMessage('New code sent.');
+    } catch (err) {
+      setError(err.response?.data?.error || 'Failed to resend');
+    } finally {
+      setLoading(false);
+    }
+  }
+
   async function submitDisable(e) {
     e.preventDefault();
     setError('');
     setLoading(true);
     try {
       const { data } = await api.post('/2fa/disable', { password, code });
-      if (data.token) {
-        // Server re-issued our session; keep us logged in.
-        localStorage.setItem('gcig_token', data.token);
-      }
+      if (data.token) localStorage.setItem('gcig_token', data.token);
       setMessage('Two-factor authentication is off.');
       setStage('idle');
       setPassword('');
@@ -78,15 +121,49 @@ export default function TwoFactorPanel() {
   }
 
   function copyBackup() {
-    if (!setup?.backupCodes) return;
-    navigator.clipboard.writeText(setup.backupCodes.join('\n'));
+    const codes = setup?.backupCodes || postEnableBackups;
+    if (!codes) return;
+    navigator.clipboard.writeText(codes.join('\n'));
     setCopied(true);
     setTimeout(() => setCopied(false), 1500);
   }
 
   if (!status) return <div className="text-navy-400">Loading…</div>;
 
-  // After verify-setup completes, we land back on idle with message shown.
+  // Post-enable: show backup codes once, then idle.
+  if (stage === 'show-backups' && postEnableBackups) {
+    return (
+      <div className="space-y-4">
+        <div className="rounded-lg bg-emerald-50 border border-emerald-200 px-4 py-3">
+          <div className="text-sm font-semibold text-emerald-800">{message || 'Enabled.'}</div>
+          <div className="mt-1 text-xs text-emerald-700">
+            Save your backup codes now — they're your only recovery if you lose access.
+            Each code works once.
+          </div>
+        </div>
+        <div className="grid grid-cols-2 gap-2 rounded-lg bg-navy-50 p-3 font-mono text-sm text-navy">
+          {postEnableBackups.map((c) => (
+            <div key={c}>{c}</div>
+          ))}
+        </div>
+        <div className="flex gap-2">
+          <Button variant="outline" onClick={copyBackup}>
+            {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+            {copied ? 'Copied' : 'Copy all codes'}
+          </Button>
+          <Button
+            onClick={() => {
+              setPostEnableBackups(null);
+              setStage('idle');
+            }}
+          >
+            I saved them
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
   if (stage === 'idle') {
     return (
       <div>
@@ -104,8 +181,8 @@ export default function TwoFactorPanel() {
             </div>
             <p className="mt-1 text-sm text-navy-400">
               {status.twoFactorEnabled
-                ? "You'll need a code from your authenticator app every time you sign in."
-                : 'Add a second factor (authenticator app) so a stolen password alone cannot sign in to your account.'}
+                ? "You'll need a code every time you sign in."
+                : 'Add a second factor so a stolen password alone cannot sign in.'}
             </p>
           </div>
         </div>
@@ -122,9 +199,7 @@ export default function TwoFactorPanel() {
               Disable 2FA
             </Button>
           ) : (
-            <Button onClick={startSetup} disabled={loading}>
-              {loading ? 'Preparing…' : 'Enable 2FA'}
-            </Button>
+            <Button onClick={() => setStage('choose')}>Enable 2FA</Button>
           )}
         </div>
         {error && (
@@ -136,7 +211,53 @@ export default function TwoFactorPanel() {
     );
   }
 
-  if (stage === 'setup' && setup) {
+  if (stage === 'choose') {
+    return (
+      <div className="space-y-3">
+        <p className="text-sm text-navy">Pick a method:</p>
+        <button
+          type="button"
+          onClick={startTotp}
+          disabled={loading}
+          className="flex w-full items-start gap-3 rounded-lg border border-navy-100 p-4 text-left hover:border-gold hover:bg-gold-100/30 transition"
+        >
+          <Smartphone className="h-6 w-6 shrink-0 text-navy" />
+          <div>
+            <div className="font-semibold text-navy">Authenticator app (Recommended)</div>
+            <div className="mt-1 text-xs text-navy-400">
+              Google Authenticator, Authy, 1Password. Works offline, nothing to send, hardest to phish.
+            </div>
+          </div>
+        </button>
+        <button
+          type="button"
+          onClick={startEmail}
+          disabled={loading}
+          className="flex w-full items-start gap-3 rounded-lg border border-navy-100 p-4 text-left hover:border-gold hover:bg-gold-100/30 transition"
+        >
+          <Mail className="h-6 w-6 shrink-0 text-navy" />
+          <div>
+            <div className="font-semibold text-navy">Email code</div>
+            <div className="mt-1 text-xs text-navy-400">
+              We email you an 8-character code every time you sign in. Simpler but less secure — anyone with your email inbox can sign in as you.
+            </div>
+          </div>
+        </button>
+        <button
+          type="button"
+          onClick={() => setStage('idle')}
+          className="text-xs font-semibold text-navy-400 underline"
+        >
+          Cancel
+        </button>
+        {error && (
+          <div className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>
+        )}
+      </div>
+    );
+  }
+
+  if (stage === 'totp-setup' && setup) {
     return (
       <div className="space-y-5">
         <div>
@@ -160,7 +281,7 @@ export default function TwoFactorPanel() {
         <div>
           <div className="text-sm font-semibold text-navy">2. Save your backup codes</div>
           <p className="mt-1 text-xs text-navy-400">
-            You can use these codes if you lose access to your authenticator. Each code works once.
+            Each code works once if you lose access to your authenticator.
           </p>
           <div className="mt-3 grid grid-cols-2 gap-2 rounded-lg bg-navy-50 p-3 font-mono text-sm text-navy">
             {setup.backupCodes.map((c) => (
@@ -173,7 +294,7 @@ export default function TwoFactorPanel() {
           </Button>
         </div>
 
-        <form onSubmit={confirmSetup} className="space-y-3 border-t border-navy-100 pt-4">
+        <form onSubmit={confirmTotp} className="space-y-3 border-t border-navy-100 pt-4">
           <div className="text-sm font-semibold text-navy">
             3. Enter the 6-digit code from your app to confirm
           </div>
@@ -204,6 +325,54 @@ export default function TwoFactorPanel() {
     );
   }
 
+  if (stage === 'email-setup' && setup) {
+    return (
+      <div className="space-y-4">
+        <div>
+          <div className="text-sm font-semibold text-navy">Check your email</div>
+          <p className="mt-1 text-sm text-navy-400">
+            We sent an 8-character code to <strong>{setup.email}</strong>. Enter it below to confirm.
+          </p>
+        </div>
+        <form onSubmit={confirmEmail} className="space-y-3">
+          <input
+            type="text"
+            autoFocus
+            value={code}
+            onChange={(e) => setCode(e.target.value)}
+            placeholder="ABCD-EFGH"
+            className="w-full rounded-lg border border-navy-100 px-3 py-3 text-center text-xl font-bold tracking-[0.3em] font-mono text-navy focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold"
+          />
+          {message && (
+            <div className="rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
+              {message}
+            </div>
+          )}
+          {error && (
+            <div className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>
+          )}
+          <div className="flex gap-2">
+            <Button variant="outline" onClick={() => setStage('idle')}>
+              Cancel
+            </Button>
+            <Button type="submit" disabled={loading || !code}>
+              {loading ? 'Verifying…' : 'Enable email 2FA'}
+            </Button>
+          </div>
+          <div className="text-center">
+            <button
+              type="button"
+              onClick={resendEmailSetup}
+              className="text-xs font-semibold text-gold-700 underline"
+            >
+              Resend code
+            </button>
+          </div>
+        </form>
+      </div>
+    );
+  }
+
   if (stage === 'disable') {
     return (
       <form onSubmit={submitDisable} className="space-y-3">
@@ -223,7 +392,7 @@ export default function TwoFactorPanel() {
         </div>
         <div>
           <label className="block text-sm font-medium text-navy">
-            Authenticator code or backup code
+            2FA code or backup code
           </label>
           <input
             type="text"
@@ -233,11 +402,12 @@ export default function TwoFactorPanel() {
             placeholder="123 456  or  ABCD-EFGH"
             className="mt-1 w-full rounded-lg border border-navy-100 px-3 py-2 text-sm focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold"
           />
+          <p className="mt-1 text-xs text-navy-400">
+            For email 2FA you'll need a backup code (we don't send a disable-only code).
+          </p>
         </div>
         {error && (
-          <div className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">
-            {error}
-          </div>
+          <div className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>
         )}
         <div className="flex gap-2">
           <Button

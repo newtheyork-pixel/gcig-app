@@ -45,7 +45,11 @@ export function AuthProvider({ children }) {
   async function login(email, password) {
     const res = await api.post('/auth/login', { email, password });
     if (res.data.twoFactorRequired) {
-      return { twoFactorRequired: true, challengeToken: res.data.challengeToken };
+      return {
+        twoFactorRequired: true,
+        challengeToken: res.data.challengeToken,
+        method: res.data.method, // 'totp' or 'email'
+      };
     }
     saveSession(res.data.token, res.data.user);
     setUser(res.data.user);

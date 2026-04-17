@@ -5,9 +5,14 @@ import jwt from 'jsonwebtoken';
 import prisma from '../db.js';
 import { verifyJwt, issueJwt } from '../middleware/auth.js';
 import { authLimiter, codeLimiter } from '../middleware/rateLimit.js';
-import { sendVerificationCode, sendPasswordResetEmail } from '../services/email.js';
+import {
+  sendVerificationCode,
+  sendPasswordResetEmail,
+  sendTwoFactorCodeEmail,
+} from '../services/email.js';
 import { auditReq } from '../services/audit.js';
 import { signChallenge } from './twoFactor.js';
+import { generateEmailCode } from '../services/twoFactor.js';
 
 const router = Router();
 
@@ -233,15 +238,41 @@ router.post('/login', authLimiter, async (req, res) => {
 
   // If the user has 2FA enabled, password is only the first factor —
   // hand back a short-lived challenge token and make them complete 2FA.
+  // For email method, also email them an 8-char code right now.
   if (user.twoFactorEnabled) {
     const challengeToken = signChallenge(user.id);
+    if (user.twoFactorMethod === 'email') {
+      const code = generateEmailCode();
+      const codeHash = await bcrypt.hash(code, 10);
+      const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
+      await prisma.twoFactorCode.deleteMany({
+        where: { userId: user.id, purpose: 'login' },
+      });
+      await prisma.twoFactorCode.create({
+        data: { userId: user.id, codeHash, expiresAt, purpose: 'login' },
+      });
+      try {
+        await sendTwoFactorCodeEmail(user.email, {
+          name: user.name,
+          code,
+          purpose: 'login',
+        });
+      } catch (err) {
+        console.error('2FA login email failed:', err.message);
+      }
+    }
     await auditReq(
       { ...req, user: { id: user.id, name: user.name, role: user.role } },
       'login.password_ok_awaiting_2fa',
       'user',
-      user.id
+      user.id,
+      { method: user.twoFactorMethod }
     );
-    return res.json({ twoFactorRequired: true, challengeToken });
+    return res.json({
+      twoFactorRequired: true,
+      challengeToken,
+      method: user.twoFactorMethod, // 'totp' or 'email'
+    });
   }
 
   const token = issueJwt(user);

@@ -47,6 +47,39 @@ export async function generateBackupCodes(count = 8) {
   return { plain, hashed };
 }
 
+// 8-character alphanumeric code (ambiguous chars removed) for email 2FA.
+// Format: XXXX-XXXX (displayed dashed, stored without dash).
+const EMAIL_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+export function generateEmailCode() {
+  let raw = '';
+  for (let i = 0; i < 8; i++) {
+    raw += EMAIL_ALPHABET[crypto.randomInt(0, EMAIL_ALPHABET.length)];
+  }
+  return raw;
+}
+
+export function normalizeEmailCode(code) {
+  return String(code).trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+}
+
+// Consume a valid TwoFactorCode matching the given purpose.
+// Returns true if consumed (also deletes it), false otherwise.
+export async function consumeEmailCode(prisma, userId, code, purpose) {
+  const cleaned = normalizeEmailCode(code);
+  if (!cleaned) return false;
+  const candidates = await prisma.twoFactorCode.findMany({
+    where: { userId, purpose, expiresAt: { gte: new Date() } },
+  });
+  for (const c of candidates) {
+    const ok = await bcrypt.compare(cleaned, c.codeHash);
+    if (ok) {
+      await prisma.twoFactorCode.delete({ where: { id: c.id } });
+      return true;
+    }
+  }
+  return false;
+}
+
 // Consumes a backup code if it matches one of the user's unused codes.
 // Returns true if consumed, false otherwise.
 export async function consumeBackupCode(prisma, userId, code) {
