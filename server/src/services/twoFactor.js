@@ -1,10 +1,12 @@
-// otplib ships CJS exports — use the default import and destructure.
-import otplib from 'otplib';
+// otplib ships CJS exports that Node ESM can't named-import. Use
+// createRequire to pull it in — works regardless of otplib version.
+import { createRequire } from 'node:module';
 import QRCode from 'qrcode';
 import crypto from 'node:crypto';
 import bcrypt from 'bcrypt';
 
-const { authenticator } = otplib;
+const require = createRequire(import.meta.url);
+const { authenticator } = require('otplib');
 
 // TOTP config: 6 digits, 30-second step, 1-step skew tolerance (i.e. accept
 // the previous/next 30s window) to handle clock drift on phones.
