@@ -143,10 +143,30 @@ async function notifyUsers(pitch, userIds, clientOrigin) {
   );
 }
 
-router.post('/', canEditPitches, async (req, res) => {
+// Non-Presidents can only attach a pitch to an industry they lead.
+async function assertCanUseIndustry(req, industryId) {
+  if (!industryId) return; // individual pitch — always OK
+  if (req.user.role === 'President') return;
+  const industry = await prisma.industry.findUnique({
+    where: { id: Number(industryId) },
+    select: { leaderId: true },
+  });
+  if (!industry || industry.leaderId !== req.user.id) {
+    const err = new Error("You can only schedule pitches for industries you lead");
+    err.status = 403;
+    throw err;
+  }
+}
+
+router.post('/', canEditPitches, async (req, res, next) => {
   const { pitcherName, ticker, date, location, slideshowUrl, presenterIds, industryId } = req.body;
   if (!ticker || !date) {
     return res.status(400).json({ error: 'ticker and date required' });
+  }
+  try {
+    await assertCanUseIndustry(req, industryId);
+  } catch (err) {
+    return res.status(err.status || 500).json({ error: err.message });
   }
   const ids = Array.isArray(presenterIds) ? presenterIds.map(Number).filter(Boolean) : [];
 
@@ -212,6 +232,17 @@ router.put('/:id', canEditPitches, async (req, res) => {
   if (!existing) return res.status(404).json({ error: 'Not found' });
 
   const { pitcherName, ticker, date, location, slideshowUrl, presenterIds, industryId } = req.body;
+
+  // Non-Presidents cannot edit a pitch that belongs to an industry they don't lead,
+  // and cannot reassign it to an industry they don't lead.
+  if (req.user.role !== 'President') {
+    const targetIndustry = industryId !== undefined ? industryId : existing.industryId;
+    try {
+      await assertCanUseIndustry(req, targetIndustry);
+    } catch (err) {
+      return res.status(err.status || 500).json({ error: err.message });
+    }
+  }
   const data = {};
   if (pitcherName !== undefined) data.pitcherName = pitcherName;
   if (ticker !== undefined) data.ticker = ticker.toUpperCase();

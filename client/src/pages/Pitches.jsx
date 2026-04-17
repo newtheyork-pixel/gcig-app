@@ -272,15 +272,24 @@ export default function Pitches() {
               className="mt-1 w-full rounded-lg border border-navy-100 px-3 py-2 text-sm focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold"
             >
               <option value="">(no industry — individual pitch)</option>
-              {industries.map((i) => (
-                <option key={i.id} value={i.id}>
-                  {i.name}
-                  {i.leader ? ` — led by ${i.leader.name}` : ''}
-                </option>
-              ))}
+              {industries
+                .filter(
+                  (i) =>
+                    // Presidents see every industry; everyone else only sees
+                    // industries they lead.
+                    user?.role === 'President' || i.leader?.id === user?.id
+                )
+                .map((i) => (
+                  <option key={i.id} value={i.id}>
+                    {i.name}
+                    {i.leader ? ` — led by ${i.leader.name}` : ''}
+                  </option>
+                ))}
             </select>
             <p className="mt-1 text-xs text-navy-400">
-              Everyone in the selected pod gets an email and in-app popup.
+              {user?.role === 'President'
+                ? 'Everyone in the selected pod gets an email and in-app popup.'
+                : 'You can only schedule pitches for industries you lead.'}
             </p>
           </div>
 
