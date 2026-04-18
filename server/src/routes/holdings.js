@@ -378,8 +378,41 @@ const ALLOWED_BENCHMARKS = new Set([
   'VXUS',
 ]);
 
-// Stooq is our primary historical-data source: free, no auth, no aggressive
-// rate limits. Yahoo is the fallback.
+// Financial Modeling Prep — our primary historical-data source when
+// FMP_API_KEY is configured. Free tier: 250 calls/day, covers every major US
+// ticker/ETF, reliable from cloud IPs.
+async function fetchFmpDaily(symbol) {
+  const key = process.env.FMP_API_KEY;
+  if (!key) return null;
+  const url = `https://financialmodelingprep.com/api/v3/historical-price-full/${encodeURIComponent(symbol)}?serietype=line&apikey=${encodeURIComponent(key)}`;
+  try {
+    const r = await fetch(url);
+    if (!r.ok) return null;
+    const json = await r.json();
+    const hist = json?.historical;
+    if (!Array.isArray(hist) || hist.length === 0) return null;
+    const cutoff = new Date();
+    cutoff.setFullYear(cutoff.getFullYear() - 2);
+    // FMP returns newest first; flip chronological for consistency.
+    const series = [];
+    for (const row of hist) {
+      const d = row?.date;
+      const c = Number(row?.close);
+      if (!d || !Number.isFinite(c)) continue;
+      if (new Date(d) < cutoff) continue;
+      series.push({ date: d, close: c });
+    }
+    series.sort((a, b) => (a.date < b.date ? -1 : 1));
+    return series.length > 0 ? series : null;
+  } catch (e) {
+    console.warn(`fmp(${symbol}) failed:`, e.message);
+    return null;
+  }
+}
+
+// Stooq — free, no auth historically but began requiring a key in mid-2026
+// (returns an "apikey" text message for anonymous CSV requests). Still worth
+// trying as a last-ditch fallback since some endpoints remain open.
 async function fetchStooqDaily(symbol) {
   const url = `https://stooq.com/q/d/l/?s=${encodeURIComponent(symbol.toLowerCase())}.us&i=d`;
   const r = await fetch(url, {
@@ -391,7 +424,14 @@ async function fetchStooqDaily(symbol) {
   });
   if (!r.ok) return null;
   const text = await r.text();
-  if (!text || text.startsWith('No data') || !text.includes(',')) return null;
+  if (
+    !text ||
+    text.startsWith('No data') ||
+    text.toLowerCase().includes('apikey') ||
+    text.toLowerCase().includes('get your api')
+  ) {
+    return null;
+  }
   // CSV: Date,Open,High,Low,Close,Volume
   const lines = text.trim().split(/\r?\n/);
   if (lines.length < 2) return null;
@@ -449,21 +489,34 @@ router.get('/benchmark/:symbol', async (req, res) => {
     return res.json(cached.data);
   }
   try {
-    // Try Stooq first (reliable), then Yahoo as fallback.
-    let series = await fetchStooqDaily(sym).catch((e) => {
-      console.warn(`stooq(${sym}) failed:`, e.message);
-      return null;
-    });
-    let source = 'stooq';
-    if (!series || series.length === 0) {
-      series = await fetchYahooDaily(sym).catch((e) => {
-        console.warn(`yahoo(${sym}) failed:`, e.message);
-        return null;
-      });
-      source = 'yahoo';
+    // Try FMP (if key set) → Yahoo → Stooq. Skip early as soon as one works.
+    const attempts = [
+      { name: 'fmp', fn: fetchFmpDaily },
+      { name: 'yahoo', fn: fetchYahooDaily },
+      { name: 'stooq', fn: fetchStooqDaily },
+    ];
+    let series = null;
+    let source = null;
+    const errors = [];
+    for (const a of attempts) {
+      try {
+        const result = await a.fn(sym);
+        if (result && result.length > 0) {
+          series = result;
+          source = a.name;
+          break;
+        } else {
+          errors.push(`${a.name}: empty`);
+        }
+      } catch (e) {
+        errors.push(`${a.name}: ${e.message}`);
+      }
     }
-    if (!series || series.length === 0) {
-      return res.status(502).json({ error: 'No data from Stooq or Yahoo' });
+    if (!series) {
+      console.warn(`benchmark(${sym}) all sources failed:`, errors.join('; '));
+      return res
+        .status(502)
+        .json({ error: `No benchmark data available (${errors.join('; ')})` });
     }
     const data = { symbol: sym, series, source };
     BENCHMARK_CACHE.set(sym, { at: Date.now(), data });
