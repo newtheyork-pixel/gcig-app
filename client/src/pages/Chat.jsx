@@ -63,8 +63,13 @@ export default function Chat() {
           params: { channel: activeChannel, since: lastIdRef.current },
         });
         if (data.length > 0) {
-          setMessages((prev) => [...prev, ...data]);
-          lastIdRef.current = data[data.length - 1].id;
+          setMessages((prev) => {
+            const existing = new Set(prev.map((m) => m.id));
+            const toAdd = data.filter((m) => !existing.has(m.id));
+            if (toAdd.length === 0) return prev;
+            return [...prev, ...toAdd];
+          });
+          lastIdRef.current = Math.max(lastIdRef.current, data[data.length - 1].id);
         }
       } catch {
         /* ignore transient errors */
@@ -92,8 +97,10 @@ export default function Chat() {
         channel: activeChannel,
         content: trimmed,
       });
-      setMessages((prev) => [...prev, data]);
-      lastIdRef.current = data.id;
+      setMessages((prev) =>
+        prev.some((m) => m.id === data.id) ? prev : [...prev, data]
+      );
+      lastIdRef.current = Math.max(lastIdRef.current, data.id);
       setDraft('');
     } catch (err) {
       setError(err.response?.data?.error || 'Failed to send');

@@ -234,6 +234,49 @@ export async function sendPitchAssignmentEmail(
   });
 }
 
+// Broadcast email sent by CIO+ to a group of members. Recipients go in BCC so
+// everyone stays private. `bodyHtml` is pre-escaped HTML (the route converts
+// newlines → <br> so the sender doesn't need to know HTML). `senderName` is
+// rendered as a human "from" line inside the template.
+export async function sendBroadcastEmail(
+  toEmails,
+  { subject, bodyHtml, senderName, audienceLabel }
+) {
+  if (!Array.isArray(toEmails) || toEmails.length === 0) {
+    throw new Error('No recipients');
+  }
+  await getTransporter().sendMail({
+    from: from(),
+    to: from(), // our own address — recipients are bcc'd
+    bcc: toEmails,
+    subject,
+    html: `
+      <div style="font-family: 'Inter', system-ui, sans-serif; max-width: 560px; margin: 0 auto; padding: 32px;">
+        <div style="text-align: center; margin-bottom: 24px;">
+          <h1 style="color: #1B2A4A; font-size: 24px; margin: 0;">GCIG</h1>
+          <p style="color: #C9A84C; font-size: 11px; text-transform: uppercase; letter-spacing: 2px; margin: 4px 0 0;">
+            Grace Church School Investment Group
+          </p>
+        </div>
+        <div style="background: #F7F8FB; border-radius: 12px; padding: 24px;">
+          <div style="color: #8C99BB; font-size: 11px; text-transform: uppercase; letter-spacing: 1.5px; margin: 0 0 4px;">
+            From
+          </div>
+          <div style="color: #1B2A4A; font-size: 14px; font-weight: 600; margin: 0 0 12px;">
+            ${senderName}${audienceLabel ? ` &middot; to ${audienceLabel}` : ''}
+          </div>
+          <div style="color: #1B2A4A; font-size: 15px; line-height: 1.55; white-space: pre-wrap;">
+            ${bodyHtml}
+          </div>
+        </div>
+        <p style="color: #8C99BB; font-size: 11px; text-align: center; margin: 16px 0 0;">
+          You received this because you are a member of GCIG. Replies go to ${senderName}.
+        </p>
+      </div>
+    `,
+  });
+}
+
 export async function sendInviteEmail(toEmail, { name, role, inviteUrl }) {
   await getTransporter().sendMail({
     from: from(),

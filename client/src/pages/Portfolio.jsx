@@ -18,6 +18,22 @@ import PageHeader from '../components/PageHeader.jsx';
 import Card from '../components/Card.jsx';
 import Button from '../components/Button.jsx';
 import HoldingDetailModal from '../components/HoldingDetailModal.jsx';
+import RiskPanel from '../components/RiskPanel.jsx';
+import { useAuth } from '../context/AuthContext.jsx';
+
+// Operational ranks for the client-side PM+ gate. Mirrors server ROLE_RANK;
+// the server is still the source of truth (betas endpoint requires the role).
+const CLIENT_ROLE_RANK = {
+  President: 10,
+  CIO: 9,
+  SeniorPortfolioManager: 8,
+  PortfolioManager: 7,
+  SeniorAnalyst: 6,
+  Analyst: 5,
+  JuniorAnalyst: 4,
+  AdvisoryBoardMember: 1,
+  FacultyAdvisory: 1,
+};
 
 const RANGES = [
   { key: '1W', label: '1W', days: 7 },
@@ -66,6 +82,8 @@ function fmtPct(n) {
 }
 
 export default function Portfolio() {
+  const { user } = useAuth();
+  const canSeeRisk = (CLIENT_ROLE_RANK[user?.role] || 0) >= 7;
   const [data, setData] = useState(null);
   const [history, setHistory] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -507,6 +525,15 @@ export default function Portfolio() {
           )}
         </Card>
       </div>
+
+      {canSeeRisk && (
+        <RiskPanel
+          holdings={holdings}
+          totals={totals}
+          history={fullHistory}
+          cashFlows={CASH_FLOWS}
+        />
+      )}
 
       <SectorAllocation holdings={holdings} totalValue={totals.totalValue} />
 

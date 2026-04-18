@@ -22,6 +22,7 @@ import Industries from './pages/Industries.jsx';
 import Library from './pages/Library.jsx';
 import Admin from './pages/Admin.jsx';
 import PitchOutcomes from './pages/PitchOutcomes.jsx';
+import Broadcast from './pages/Broadcast.jsx';
 
 export default function App() {
   const { loading } = useAuth();
@@ -67,6 +68,7 @@ export default function App() {
         <Route path="industries" element={<Industries />} />
         <Route path="attendance" element={<Attendance />} />
         <Route path="chat" element={<Chat />} />
+        <Route path="broadcast" element={<Broadcast />} />
         <Route path="profile" element={<Profile />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />

@@ -110,7 +110,7 @@ async function fetchQuoteSummary(ticker) {
   }
 }
 import prisma from '../db.js';
-import { verifyJwt, requireSuperAdmin } from '../middleware/auth.js';
+import { verifyJwt, requireSuperAdmin, requireRole } from '../middleware/auth.js';
 import { getSheetPortfolio } from '../services/sheetPortfolio.js';
 
 const router = Router();
@@ -474,6 +474,70 @@ router.delete('/snapshot/:date', requireSuperAdmin, async (req, res) => {
     res.json({ ok: true });
   } catch {
     res.status(404).json({ error: 'Snapshot not found' });
+  }
+});
+
+// Batch beta lookup for every non-cash position in the current sheet.
+// Used by the PM+ risk panel. Cached for 30 min — betas don't move intraday.
+// Each ticker goes through the same Finnhub → Yahoo fallback as /info/:ticker
+// but we only ask for the number we need.
+const betasCache = { at: 0, data: null };
+const BETAS_TTL_MS = 30 * 60 * 1000;
+
+async function fetchBetaOnly(ticker) {
+  // Try Finnhub metric endpoint first (1 call for beta).
+  const key = process.env.FINNHUB_API_KEY;
+  if (key) {
+    try {
+      const r = await fetch(
+        `https://finnhub.io/api/v1/stock/metric?symbol=${encodeURIComponent(ticker)}&metric=all&token=${key}`
+      );
+      if (r.ok) {
+        const j = await r.json();
+        const b = j?.metric?.beta;
+        if (typeof b === 'number' && Number.isFinite(b)) return { beta: b, source: 'finnhub' };
+      }
+    } catch {
+      /* fall through */
+    }
+  }
+  // Fallback: Yahoo quoteSummary.
+  const summary = await fetchQuoteSummary(ticker);
+  const stats = summary?.defaultKeyStatistics;
+  const detail = summary?.summaryDetail;
+  const raw =
+    (stats?.beta && typeof stats.beta === 'object' ? stats.beta.raw : stats?.beta) ??
+    (detail?.beta && typeof detail.beta === 'object' ? detail.beta.raw : detail?.beta);
+  if (typeof raw === 'number' && Number.isFinite(raw)) return { beta: raw, source: 'yahoo' };
+  return { beta: null, source: null };
+}
+
+router.get('/betas', requireRole('PortfolioManager'), async (_req, res) => {
+  try {
+    if (betasCache.data && Date.now() - betasCache.at < BETAS_TTL_MS) {
+      return res.json(betasCache.data);
+    }
+    const portfolio = await getSheetPortfolio();
+    const tickers = portfolio.holdings
+      .filter((h) => !h.isCash && h.ticker)
+      .map((h) => h.ticker);
+    // Parallel but cap fan-out at 6 at a time to stay inside Finnhub's 60/min free tier.
+    const byTicker = {};
+    const CHUNK = 6;
+    for (let i = 0; i < tickers.length; i += CHUNK) {
+      const slice = tickers.slice(i, i + CHUNK);
+      const results = await Promise.all(slice.map((t) => fetchBetaOnly(t)));
+      slice.forEach((t, idx) => {
+        byTicker[t] = results[idx];
+      });
+    }
+    const payload = { byTicker, fetchedAt: new Date().toISOString() };
+    betasCache.at = Date.now();
+    betasCache.data = payload;
+    res.json(payload);
+  } catch (err) {
+    console.error('betas fetch failed:', err.message);
+    res.status(502).json({ error: err.message || 'Failed to fetch betas' });
   }
 });
 

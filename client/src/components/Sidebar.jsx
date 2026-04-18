@@ -12,6 +12,7 @@ import {
   ShieldAlert,
   MessageSquare,
   Trophy,
+  Megaphone,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext.jsx';
 import RoleBadge from './RoleBadge.jsx';
@@ -27,6 +28,7 @@ const NAV_SECTIONS = [
     items: [
       { to: '/calendar', label: 'Calendar', icon: CalendarDays },
       { to: '/chat', label: 'Chat', icon: MessageSquare },
+      { to: '/broadcast', label: 'Broadcast', icon: Megaphone, executiveOnly: true },
       { to: '/attendance', label: 'Attendance', icon: ClipboardCheck, hideForAdvisory: true },
     ],
   },
