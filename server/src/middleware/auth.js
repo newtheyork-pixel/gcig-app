@@ -28,13 +28,19 @@ export async function verifyJwt(req, res, next) {
     // all old JWTs are immediately invalid.
     const user = await prisma.user.findUnique({
       where: { id: payload.id },
-      select: { id: true, name: true, role: true, tokenVersion: true },
+      select: { id: true, name: true, email: true, role: true, tokenVersion: true },
     });
     if (!user) return res.status(401).json({ error: 'User not found' });
     if ((payload.v ?? 0) !== (user.tokenVersion ?? 0)) {
       return res.status(401).json({ error: 'Session revoked, please sign in again' });
     }
-    req.user = { id: user.id, name: user.name, role: user.role };
+    req.user = {
+      id: user.id,
+      name: user.name,
+      email: user.email,
+      role: user.role,
+      isSuperAdmin: isSuperAdminEmail(user.email),
+    };
     next();
   } catch {
     return res.status(401).json({ error: 'Invalid or expired token' });
@@ -44,6 +50,38 @@ export async function verifyJwt(req, res, next) {
 export function requireAdmin(req, res, next) {
   if (!req.user || req.user.role !== 'President') {
     return res.status(403).json({ error: 'President role required' });
+  }
+  next();
+}
+
+// Super admin = owner of the app. Identified by email match against the
+// SUPER_ADMIN_EMAIL env var (comma-separated list supported for future
+// flexibility). Sits above President and is the ONLY tier that can touch a
+// small set of irreversible / sensitive operations. If the env var isn't set,
+// no one is super admin.
+export function isSuperAdminEmail(email) {
+  if (!email || !process.env.SUPER_ADMIN_EMAIL) return false;
+  const allowed = process.env.SUPER_ADMIN_EMAIL.split(',').map((e) =>
+    e.trim().toLowerCase()
+  );
+  return allowed.includes(String(email).trim().toLowerCase());
+}
+
+// Canonical "user" shape sent to the client in every auth response.
+// Includes the isSuperAdmin flag so the UI can gate owner-only features.
+export function serializeUser(user) {
+  return {
+    id: user.id,
+    name: user.name,
+    email: user.email,
+    role: user.role,
+    isSuperAdmin: isSuperAdminEmail(user.email),
+  };
+}
+
+export function requireSuperAdmin(req, res, next) {
+  if (!req.user?.isSuperAdmin) {
+    return res.status(403).json({ error: 'Super admin required' });
   }
   next();
 }

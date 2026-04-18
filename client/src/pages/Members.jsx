@@ -21,7 +21,7 @@ const ROLES = [
 ];
 
 export default function Members({ embedded = false } = {}) {
-  const { isAdmin } = useAuth();
+  const { isAdmin, isSuperAdmin } = useAuth();
   const [users, setUsers] = useState([]);
   const [modalOpen, setModalOpen] = useState(false);
   const [form, setForm] = useState({ name: '', email: '', role: 'JuniorAnalyst' });
@@ -154,7 +154,7 @@ export default function Members({ embedded = false } = {}) {
                     )}
                   </td>
                   <td className="py-3 pr-4 text-right">
-                    {isAdmin ? (
+                    {isSuperAdmin ? (
                       <>
                         {u.twoFactorEnabled && (
                           <span
@@ -188,6 +188,13 @@ export default function Members({ embedded = false } = {}) {
                           Delete
                         </button>
                       </>
+                    ) : isAdmin && u.twoFactorEnabled ? (
+                      <span
+                        title="2FA enabled"
+                        className="inline-flex items-center text-emerald-600"
+                      >
+                        <ShieldCheck className="h-3.5 w-3.5" />
+                      </span>
                     ) : (
                       <span className="text-xs text-navy-400">—</span>
                     )}

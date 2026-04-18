@@ -255,7 +255,7 @@ router.post('/login', codeLimiter, async (req, res) => {
   );
   res.json({
     token: jwtToken,
-    user: { id: user.id, name: user.name, email: user.email, role: user.role },
+    user: serializeUser(user),
   });
 });
 
@@ -281,8 +281,8 @@ router.post('/resend-login-email', codeLimiter, async (req, res) => {
 
 // Admin: wipe a user's 2FA (lost-device recovery).
 router.post('/admin-reset/:id', verifyJwt, async (req, res) => {
-  if (req.user.role !== 'President') {
-    return res.status(403).json({ error: 'President only' });
+  if (!req.user.isSuperAdmin) {
+    return res.status(403).json({ error: 'Super admin only' });
   }
   const id = Number(req.params.id);
   await prisma.$transaction([

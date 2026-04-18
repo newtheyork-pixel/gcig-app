@@ -108,6 +108,9 @@ export function AuthProvider({ children }) {
   const isExecutive = user?.role === 'President' || user?.role === 'CIO';
   const isAdvisory =
     user?.role === 'AdvisoryBoardMember' || user?.role === 'FacultyAdvisory';
+  // Owner-only tier above President. Identified by email via SUPER_ADMIN_EMAIL
+  // on the server. Gates irreversible / sensitive operations.
+  const isSuperAdmin = !!user?.isSuperAdmin;
 
   return (
     <AuthContext.Provider
@@ -126,6 +129,7 @@ export function AuthProvider({ children }) {
         isAdmin,
         isExecutive,
         isAdvisory,
+        isSuperAdmin,
       }}
     >
       {children}

@@ -2,7 +2,13 @@ import { Router } from 'express';
 import bcrypt from 'bcrypt';
 import crypto from 'node:crypto';
 import prisma from '../db.js';
-import { verifyJwt, requireAdmin, requireExecutive, ROLE_RANK } from '../middleware/auth.js';
+import {
+  verifyJwt,
+  requireAdmin,
+  requireExecutive,
+  requireSuperAdmin,
+  ROLE_RANK,
+} from '../middleware/auth.js';
 import { sendInviteEmail } from '../services/email.js';
 import { auditReq } from '../services/audit.js';
 
@@ -260,7 +266,7 @@ router.put('/:id/extra-roles', requireExecutive, async (req, res) => {
   res.json(user);
 });
 
-router.post('/:id/reset-password', requireAdmin, async (req, res) => {
+router.post('/:id/reset-password', requireSuperAdmin, async (req, res) => {
   const id = Number(req.params.id);
   const tempPassword = generateTempPassword();
   const passwordHash = await bcrypt.hash(tempPassword, 10);
@@ -273,7 +279,7 @@ router.post('/:id/reset-password', requireAdmin, async (req, res) => {
   res.json({ tempPassword });
 });
 
-router.delete('/:id', requireAdmin, async (req, res) => {
+router.delete('/:id', requireSuperAdmin, async (req, res) => {
   const id = Number(req.params.id);
   if (id === req.user.id) {
     return res.status(400).json({ error: 'Cannot delete your own account' });

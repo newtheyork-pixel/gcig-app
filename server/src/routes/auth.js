@@ -3,7 +3,7 @@ import bcrypt from 'bcrypt';
 import crypto from 'node:crypto';
 import jwt from 'jsonwebtoken';
 import prisma from '../db.js';
-import { verifyJwt, issueJwt } from '../middleware/auth.js';
+import { verifyJwt, issueJwt, serializeUser } from '../middleware/auth.js';
 import { authLimiter, codeLimiter } from '../middleware/rateLimit.js';
 import {
   sendVerificationCode,
@@ -120,7 +120,7 @@ router.post('/verify', codeLimiter, async (req, res) => {
   );
   res.status(201).json({
     token,
-    user: { id: user.id, name: user.name, email: user.email, role: user.role },
+    user: serializeUser(user),
   });
 });
 
@@ -213,7 +213,7 @@ router.post('/accept-invite', authLimiter, async (req, res) => {
   );
   res.status(201).json({
     token: jwtToken,
-    user: { id: user.id, name: user.name, email: user.email, role: user.role },
+    user: serializeUser(user),
   });
 });
 
@@ -332,7 +332,7 @@ router.post('/login', authLimiter, async (req, res) => {
   );
   res.json({
     token,
-    user: { id: user.id, name: user.name, email: user.email, role: user.role },
+    user: serializeUser(user),
   });
 });
 
@@ -447,7 +447,7 @@ router.get('/me', verifyJwt, async (req, res) => {
     },
   });
   if (!user) return res.status(404).json({ error: 'User not found' });
-  res.json(user);
+  res.json({ ...user, ...serializeUser(user) });
 });
 
 router.post('/change-password', verifyJwt, async (req, res) => {
