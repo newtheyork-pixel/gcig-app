@@ -175,7 +175,13 @@ router.get('/outcomes/all', async (_req, res) => {
       };
     });
 
-    const results = [...pitchResults, ...reportResults].sort(
+    // A row is "tracked" if we have any club decision recorded: either the
+    // ticker is in the current portfolio (isPosition) OR it was voted on.
+    function stamp(r) {
+      r.hasOutcome = r.isPosition || !!r.votedOutcome;
+      return r;
+    }
+    const results = [...pitchResults.map(stamp), ...reportResults.map(stamp)].sort(
       (a, b) => new Date(b.date) - new Date(a.date)
     );
 
@@ -208,15 +214,15 @@ router.get('/outcomes/all', async (_req, res) => {
       }))
       .sort((a, b) => b.avgReturn - a.avgReturn);
 
-    // Club-wide averages.
-    const tracked = results.filter((r) => r.isPosition && r.percent != null);
+    // Club-wide averages only count rows with an actual $ return.
+    const withReturn = results.filter((r) => r.isPosition && r.percent != null);
     const clubAvg =
-      tracked.length > 0
-        ? tracked.reduce((s, r) => s + r.percent, 0) / tracked.length
+      withReturn.length > 0
+        ? withReturn.reduce((s, r) => s + r.percent, 0) / withReturn.length
         : 0;
     const clubHitRate =
-      tracked.length > 0
-        ? tracked.filter((r) => r.percent > 0).length / tracked.length
+      withReturn.length > 0
+        ? withReturn.filter((r) => r.percent > 0).length / withReturn.length
         : 0;
 
     res.json({
@@ -224,11 +230,137 @@ router.get('/outcomes/all', async (_req, res) => {
       leaderboard,
       clubAvg,
       clubHitRate,
-      trackedCount: tracked.length,
+      trackedCount: results.filter((r) => r.hasOutcome).length,
     });
   } catch (err) {
     console.error('pitch outcomes failed:', err);
     res.status(500).json({ error: 'Failed to compute outcomes' });
+  }
+});
+
+// Personal outcome stats for the logged-in user. Mirrors /outcomes/all but
+// filtered to pitches + reports the user is tied to (presenter or author).
+router.get('/outcomes/mine', async (req, res) => {
+  try {
+    const [myPitches, reports, portfolio, lots, me] = await Promise.all([
+      prisma.pitch.findMany({
+        where: { presenters: { some: { userId: req.user.id } } },
+        orderBy: { date: 'desc' },
+        include: {
+          presenters: {
+            include: { user: { select: { id: true, name: true } } },
+          },
+        },
+      }),
+      prisma.report.findMany({
+        where: { ticker: { not: null } },
+        orderBy: { date: 'desc' },
+      }),
+      getSheetPortfolio().catch(() => null),
+      prisma.holdingLot.findMany(),
+      prisma.user.findUnique({ where: { id: req.user.id }, select: { name: true } }),
+    ]);
+
+    const holdingsByTicker = new Map();
+    for (const h of portfolio?.holdings || []) {
+      if (!h.isCash) holdingsByTicker.set(h.ticker.toUpperCase(), h);
+    }
+    function nearestLot(ticker, refDate) {
+      const ts = new Date(refDate).getTime();
+      let best = null;
+      let bestDiff = Infinity;
+      for (const l of lots) {
+        if (l.ticker.toUpperCase() !== ticker.toUpperCase()) continue;
+        const diff = Math.abs(new Date(l.buyDate).getTime() - ts);
+        if (diff < bestDiff) {
+          bestDiff = diff;
+          best = l;
+        }
+      }
+      return bestDiff <= 90 * 24 * 60 * 60 * 1000 ? best : null;
+    }
+    function outcomeFor(ticker, refDate) {
+      const t = (ticker || '').toUpperCase();
+      const h = holdingsByTicker.get(t);
+      const lot = nearestLot(t, refDate);
+      const buyPrice = lot?.pricePerShare ?? h?.costBasis ?? null;
+      const currentPrice = h?.price ?? null;
+      const percent =
+        buyPrice != null && currentPrice != null && buyPrice > 0
+          ? ((currentPrice - buyPrice) / buyPrice) * 100
+          : null;
+      return { ticker: t, holding: h, lot, buyPrice, currentPrice, percent };
+    }
+
+    const pitchRows = myPitches.map((p) => {
+      const o = outcomeFor(p.ticker, p.date);
+      return {
+        id: `pitch-${p.id}`,
+        type: 'pitch',
+        ticker: o.ticker,
+        date: p.date,
+        isPosition: !!o.holding,
+        votedOutcome: p.votedOutcome,
+        buyPrice: o.buyPrice,
+        currentPrice: o.currentPrice,
+        percent: o.percent,
+      };
+    });
+
+    // Reports where my name appears in the author field.
+    const myName = (me?.name || '').toLowerCase();
+    const myReports = myName
+      ? reports.filter((r) =>
+          (r.author || '')
+            .split(/[,&]|\band\b/i)
+            .map((s) => s.trim().toLowerCase())
+            .includes(myName)
+        )
+      : [];
+    const reportRows = myReports.map((r) => {
+      const o = outcomeFor(r.ticker, r.date);
+      return {
+        id: `report-${r.id}`,
+        type: 'report',
+        ticker: o.ticker,
+        title: r.title,
+        date: r.date,
+        isPosition: !!o.holding,
+        votedOutcome: null,
+        buyPrice: o.buyPrice,
+        currentPrice: o.currentPrice,
+        percent: o.percent,
+      };
+    });
+
+    const rows = [...pitchRows, ...reportRows].sort(
+      (a, b) => new Date(b.date) - new Date(a.date)
+    );
+
+    const withReturn = rows.filter((r) => r.isPosition && r.percent != null);
+    const avgReturn =
+      withReturn.length > 0
+        ? withReturn.reduce((s, r) => s + r.percent, 0) / withReturn.length
+        : 0;
+    const hitRate =
+      withReturn.length > 0
+        ? withReturn.filter((r) => r.percent > 0).length / withReturn.length
+        : 0;
+    const totalPitches = myPitches.length;
+    const pitchesVotedNo = myPitches.filter((p) => p.votedOutcome === 'NoBuy').length;
+
+    res.json({
+      rows,
+      totalPitches,
+      totalReports: myReports.length,
+      positionsCount: withReturn.length,
+      pitchesVotedNo,
+      avgReturn,
+      hitRate,
+    });
+  } catch (err) {
+    console.error('outcomes/mine failed:', err);
+    res.status(500).json({ error: 'Failed to compute personal outcomes' });
   }
 });
 

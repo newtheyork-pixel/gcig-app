@@ -51,8 +51,10 @@ export default function PitchOutcomes() {
   }
 
   const { results = [], leaderboard = [], clubAvg = 0, clubHitRate = 0, trackedCount = 0 } = data || {};
-  const positionsOnly = results.filter((r) => r.isPosition);
-  const notTracked = results.filter((r) => !r.isPosition);
+  // "Tracked" = either a current position OR a recorded vote outcome. Those
+  // belong in the main table so NoBuy decisions show up alongside returns.
+  const tracked = results.filter((r) => r.hasOutcome);
+  const notTracked = results.filter((r) => !r.hasOutcome);
 
   return (
     <>
@@ -157,12 +159,13 @@ export default function PitchOutcomes() {
         </Card>
       </div>
 
-      {/* Every pitch / report that's now a position */}
+      {/* Every pitch / report with a recorded outcome: bought (returns shown)
+          or voted no (no return but still tracked). */}
       <div className="mt-6">
-        <Card title="Coverage tied to current positions">
-          {positionsOnly.length === 0 ? (
+        <Card title="Tracked outcomes">
+          {tracked.length === 0 ? (
             <div className="py-8 text-center text-navy-400">
-              No pitches or reports have been tied to current holdings yet.
+              No pitches or reports have recorded outcomes yet.
             </div>
           ) : (
             <div className="overflow-x-auto">
@@ -175,12 +178,13 @@ export default function PitchOutcomes() {
                     <th className="py-2 pr-4">By</th>
                     <th className="py-2 pr-4 text-right">Buy Price</th>
                     <th className="py-2 pr-4 text-right">Now</th>
-                    <th className="py-2 pr-4 text-right">Return</th>
+                    <th className="py-2 pr-4 text-right">Outcome</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-navy-50">
-                  {positionsOnly.map((r) => {
+                  {tracked.map((r) => {
                     const up = (r.percent ?? 0) >= 0;
+                    const isNoBuy = r.votedOutcome === 'NoBuy';
                     return (
                       <tr key={r.id}>
                         <td className="py-3 pr-4">
@@ -214,21 +218,27 @@ export default function PitchOutcomes() {
                           {r.presenters.map((p) => p.name).join(', ')}
                         </td>
                         <td className="py-3 pr-4 text-right tabular-nums">
-                          {fmtMoney(r.buyPrice)}
+                          {isNoBuy ? '—' : fmtMoney(r.buyPrice)}
                         </td>
                         <td className="py-3 pr-4 text-right tabular-nums">
-                          {fmtMoney(r.currentPrice)}
+                          {isNoBuy ? '—' : fmtMoney(r.currentPrice)}
                         </td>
                         <td
                           className={`py-3 pr-4 text-right tabular-nums font-bold ${
-                            r.percent == null
+                            isNoBuy
+                              ? ''
+                              : r.percent == null
                               ? 'text-navy-400'
                               : up
                               ? 'text-emerald-600'
                               : 'text-red-600'
                           }`}
                         >
-                          {r.percent != null ? (
+                          {isNoBuy ? (
+                            <span className="inline-flex items-center rounded-full bg-red-50 px-2 py-0.5 text-[10px] font-bold uppercase text-red-700">
+                              Voted No
+                            </span>
+                          ) : r.percent != null ? (
                             <span className="inline-flex items-center gap-1 justify-end">
                               {up ? (
                                 <TrendingUp className="h-3.5 w-3.5" />
@@ -256,9 +266,9 @@ export default function PitchOutcomes() {
         <div className="mt-6">
           <Card title="Coverage not tied to current holdings">
             <div className="mb-3 text-xs text-navy-400">
-              Ticker isn't in the current portfolio (either never bought, sold,
-              or a ticker mismatch on the pitch/report). Not counted in the
-              leaderboard.
+              No decision recorded yet — either the pitch hasn't been voted
+              on, the ticker on the pitch doesn't match a current holding,
+              or we sold the position.
             </div>
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
