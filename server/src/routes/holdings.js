@@ -361,6 +361,66 @@ router.get('/coverage/:ticker', async (req, res) => {
   }
 });
 
+// ── Benchmark historical closes ──────────────────────────────────────
+// Used to overlay an index (SPY/VOO/QQQ/…) on the portfolio performance chart.
+// Pulls from Yahoo's v8 chart endpoint (no auth required) and caches for 12h
+// since we only need daily closes that don't change mid-day anyway.
+const BENCHMARK_CACHE = new Map(); // symbol -> { at, data }
+const BENCHMARK_TTL_MS = 12 * 60 * 60 * 1000;
+const ALLOWED_BENCHMARKS = new Set([
+  'SPY',
+  'VOO',
+  'IVV',
+  'QQQ',
+  'DIA',
+  'IWM',
+  'VTI',
+  'VXUS',
+]);
+
+router.get('/benchmark/:symbol', async (req, res) => {
+  const sym = String(req.params.symbol || '').trim().toUpperCase();
+  if (!ALLOWED_BENCHMARKS.has(sym)) {
+    return res.status(400).json({ error: 'Unsupported benchmark' });
+  }
+  const cached = BENCHMARK_CACHE.get(sym);
+  if (cached && Date.now() - cached.at < BENCHMARK_TTL_MS) {
+    return res.json(cached.data);
+  }
+  try {
+    // 2 years of daily closes covers every time range the UI supports.
+    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(sym)}?interval=1d&range=2y`;
+    const r = await fetch(url, {
+      headers: {
+        'User-Agent':
+          'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+        Accept: 'application/json',
+      },
+    });
+    if (!r.ok) {
+      return res.status(502).json({ error: `Yahoo returned ${r.status}` });
+    }
+    const json = await r.json();
+    const result = json?.chart?.result?.[0];
+    const timestamps = result?.timestamp || [];
+    const closes = result?.indicators?.quote?.[0]?.close || [];
+    const series = [];
+    for (let i = 0; i < timestamps.length; i++) {
+      if (closes[i] == null) continue;
+      series.push({
+        date: new Date(timestamps[i] * 1000).toISOString().slice(0, 10),
+        close: closes[i],
+      });
+    }
+    const data = { symbol: sym, series };
+    BENCHMARK_CACHE.set(sym, { at: Date.now(), data });
+    res.json(data);
+  } catch (err) {
+    console.error(`benchmark(${sym}) failed:`, err.message);
+    res.status(502).json({ error: 'Failed to fetch benchmark' });
+  }
+});
+
 // ── Holding Lots ─────────────────────────────────────────────────────
 // Per-purchase cost basis tracking. Anyone authed can read; only the super
 // admin can mutate.

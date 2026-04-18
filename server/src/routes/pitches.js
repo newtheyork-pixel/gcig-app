@@ -3,6 +3,7 @@ import prisma from '../db.js';
 import { verifyJwt, requireRole } from '../middleware/auth.js';
 import { sendPitchAssignmentEmail } from '../services/email.js';
 import { assertSafeHttpUrl } from '../services/validateUrl.js';
+import { getSheetPortfolio } from '../services/sheetPortfolio.js';
 
 const canEditPitches = requireRole('PortfolioManager');
 
@@ -62,6 +63,131 @@ router.get('/:id', async (req, res) => {
 });
 
 // Pitches I'm presenting that are in the future and I haven't dismissed.
+// Outcomes for every pitch that became a position — buy price, current
+// price, return. Also rolls up a per-presenter hit rate for the leaderboard.
+//
+// Buy price selection:
+//   1. The HoldingLot whose buyDate is closest to the pitch date (within ±90d)
+//   2. Falls back to the holding's avg cost from the sheet
+router.get('/outcomes/all', async (_req, res) => {
+  try {
+    const [pitches, portfolio, lots] = await Promise.all([
+      prisma.pitch.findMany({
+        orderBy: { date: 'desc' },
+        include: {
+          presenters: {
+            include: { user: { select: { id: true, name: true } } },
+          },
+        },
+      }),
+      getSheetPortfolio().catch(() => null),
+      prisma.holdingLot.findMany(),
+    ]);
+
+    const holdingsByTicker = new Map();
+    for (const h of portfolio?.holdings || []) {
+      if (!h.isCash) holdingsByTicker.set(h.ticker.toUpperCase(), h);
+    }
+
+    function nearestLot(ticker, pitchDate) {
+      const ts = new Date(pitchDate).getTime();
+      let best = null;
+      let bestDiff = Infinity;
+      for (const l of lots) {
+        if (l.ticker.toUpperCase() !== ticker.toUpperCase()) continue;
+        const diff = Math.abs(new Date(l.buyDate).getTime() - ts);
+        if (diff < bestDiff) {
+          bestDiff = diff;
+          best = l;
+        }
+      }
+      // Only count a lot as "the buy for this pitch" if it's within 90 days.
+      const NINETY_DAYS = 90 * 24 * 60 * 60 * 1000;
+      return bestDiff <= NINETY_DAYS ? best : null;
+    }
+
+    const results = pitches.map((p) => {
+      const ticker = (p.ticker || '').toUpperCase();
+      const h = holdingsByTicker.get(ticker);
+      const lot = nearestLot(ticker, p.date);
+      const presenters =
+        p.presenters.length > 0
+          ? p.presenters.map((pp) => ({ id: pp.user.id, name: pp.user.name }))
+          : [{ id: null, name: p.pitcherName }];
+      const buyPrice = lot?.pricePerShare ?? h?.costBasis ?? null;
+      const currentPrice = h?.price ?? null;
+      const percent =
+        buyPrice != null && currentPrice != null && buyPrice > 0
+          ? ((currentPrice - buyPrice) / buyPrice) * 100
+          : null;
+      const isPosition = !!h;
+      return {
+        id: p.id,
+        ticker,
+        date: p.date,
+        presenters,
+        industry: p.industryId,
+        isPosition,
+        buyPrice,
+        buyDate: lot?.buyDate ?? null,
+        currentPrice,
+        percent,
+      };
+    });
+
+    // Roll up per-presenter (each presenter gets credit for the pitch).
+    const byPresenter = new Map();
+    for (const r of results) {
+      if (!r.isPosition || r.percent == null) continue;
+      for (const p of r.presenters) {
+        const key = p.name;
+        if (!byPresenter.has(key)) {
+          byPresenter.set(key, {
+            name: p.name,
+            id: p.id,
+            pitches: 0,
+            totalReturn: 0,
+            wins: 0,
+          });
+        }
+        const agg = byPresenter.get(key);
+        agg.pitches += 1;
+        agg.totalReturn += r.percent;
+        if (r.percent > 0) agg.wins += 1;
+      }
+    }
+    const leaderboard = [...byPresenter.values()]
+      .map((a) => ({
+        ...a,
+        avgReturn: a.pitches > 0 ? a.totalReturn / a.pitches : 0,
+        hitRate: a.pitches > 0 ? a.wins / a.pitches : 0,
+      }))
+      .sort((a, b) => b.avgReturn - a.avgReturn);
+
+    // Club-wide averages.
+    const tracked = results.filter((r) => r.isPosition && r.percent != null);
+    const clubAvg =
+      tracked.length > 0
+        ? tracked.reduce((s, r) => s + r.percent, 0) / tracked.length
+        : 0;
+    const clubHitRate =
+      tracked.length > 0
+        ? tracked.filter((r) => r.percent > 0).length / tracked.length
+        : 0;
+
+    res.json({
+      results,
+      leaderboard,
+      clubAvg,
+      clubHitRate,
+      trackedCount: tracked.length,
+    });
+  } catch (err) {
+    console.error('pitch outcomes failed:', err);
+    res.status(500).json({ error: 'Failed to compute outcomes' });
+  }
+});
+
 router.get('/mine/upcoming', async (req, res) => {
   const now = new Date();
   const rows = await prisma.pitchPresenter.findMany({

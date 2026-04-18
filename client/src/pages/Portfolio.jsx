@@ -8,6 +8,11 @@ import {
   CartesianGrid,
   Tooltip,
   ResponsiveContainer,
+  PieChart,
+  Pie,
+  Cell,
+  Legend,
+  Line,
 } from 'recharts';
 import { TrendingUp, TrendingDown, RefreshCw, ExternalLink } from 'lucide-react';
 import api from '../api/client.js';
@@ -105,6 +110,29 @@ export default function Portfolio() {
   const [range, setRange] = useState('6M');
   const [selectedHolding, setSelectedHolding] = useState(null);
 
+  // Benchmark overlay on the performance chart.
+  const [benchmark, setBenchmark] = useState('VOO');
+  const [benchmarkMode, setBenchmarkMode] = useState('both'); // off | raw | adjusted | both
+  const [benchmarkSeries, setBenchmarkSeries] = useState(null); // { date, close }[]
+  useEffect(() => {
+    if (benchmarkMode === 'off' || !benchmark) {
+      setBenchmarkSeries(null);
+      return;
+    }
+    let cancelled = false;
+    api
+      .get(`/holdings/benchmark/${benchmark}`)
+      .then(({ data }) => {
+        if (!cancelled) setBenchmarkSeries(data.series);
+      })
+      .catch(() => {
+        if (!cancelled) setBenchmarkSeries([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [benchmark, benchmarkMode]);
+
   // Normalize history (with real Date objects) once.
   // equity = totalValue - cashValue (falls back to total if cash is unknown).
   const fullHistory = useMemo(
@@ -181,13 +209,24 @@ export default function Portfolio() {
   // the top / bottom of the chart.
   const yDomain = useMemo(() => {
     if (percentSeries.length === 0) return [0, 1];
-    const values = percentSeries.map((d) => d.percent);
+    // Include benchmark values so they're not clipped by the axis.
+    const values = [];
+    for (const d of percentSeries) values.push(d.percent);
+    if (benchmarkSeries && benchmarkSeries.length > 0 && benchmarkMode !== 'off') {
+      // Rebase benchmark values the same way displayData does so the axis
+      // reflects what the user will actually see drawn.
+      const first = benchmarkSeries[0];
+      for (const b of benchmarkSeries) {
+        const pct = first?.close > 0 ? ((b.close - first.close) / first.close) * 100 : 0;
+        values.push(pct);
+      }
+    }
     const min = Math.min(...values);
     const max = Math.max(...values);
     const range = max - min;
     const pad = Math.max(range * 0.1, 0.5);
     return [Number((min - pad).toFixed(2)), Number((max + pad).toFixed(2))];
-  }, [percentSeries]);
+  }, [percentSeries, benchmarkSeries, benchmarkMode]);
 
   // Daily change on equity (invested capital) — cash parked isn't "performance."
   // Dollar change = total change (cash contributes ~0 to day-over-day movement).
@@ -270,11 +309,63 @@ export default function Portfolio() {
   }, [chartData, range]);
 
   // Build display data with a short date label. For long ranges we thin labels out.
-  const displayData = percentSeries.map((d) => ({
-    ...d,
-    label: format(d.date, percentSeries.length > 90 ? 'MMM yyyy' : 'MMM d'),
-    tooltipLabel: format(d.date, 'MMM d, yyyy'),
-  }));
+  // Benchmark overlay: align by ISO date, rebase to the first snapshot in the
+  // range, and scale the adjusted line by our starting equity ratio so cash
+  // drag is visible as underperformance vs raw.
+  const displayData = useMemo(() => {
+    if (percentSeries.length === 0) return [];
+    const benchByDate = new Map();
+    if (benchmarkSeries && benchmarkSeries.length > 0) {
+      for (const b of benchmarkSeries) benchByDate.set(b.date, b.close);
+    }
+    const start = percentSeries[0];
+    // Find benchmark close on (or immediately before) the range's start date.
+    let benchBase = null;
+    if (benchByDate.size > 0) {
+      const startIso = start.date.toISOString().slice(0, 10);
+      if (benchByDate.has(startIso)) benchBase = benchByDate.get(startIso);
+      else {
+        const sortedDates = [...benchByDate.keys()].sort();
+        for (let i = sortedDates.length - 1; i >= 0; i--) {
+          if (sortedDates[i] <= startIso) {
+            benchBase = benchByDate.get(sortedDates[i]);
+            break;
+          }
+        }
+      }
+    }
+    // Equity ratio at range start = equity / total. Used to dampen the adjusted
+    // benchmark: if we're 80% invested, raw benchmark × 0.80 = what a passive
+    // 80/20 equity/cash portfolio would have returned.
+    const equityRatio =
+      start.value > 0 ? Math.max(0, Math.min(1, start.equity / start.value)) : 1;
+
+    return percentSeries.map((d) => {
+      const iso = d.date.toISOString().slice(0, 10);
+      let benchPctRaw = null;
+      if (benchBase && benchBase > 0) {
+        // Find the benchmark close for this day (or the most recent prior close).
+        let close = benchByDate.get(iso);
+        if (close == null) {
+          // Walk backwards up to 5 days to catch weekends/holidays.
+          for (let i = 1; i <= 5 && close == null; i++) {
+            const prev = new Date(d.date);
+            prev.setDate(prev.getDate() - i);
+            close = benchByDate.get(prev.toISOString().slice(0, 10));
+          }
+        }
+        if (close != null) benchPctRaw = ((close - benchBase) / benchBase) * 100;
+      }
+      const benchPctAdjusted = benchPctRaw != null ? benchPctRaw * equityRatio : null;
+      return {
+        ...d,
+        label: format(d.date, percentSeries.length > 90 ? 'MMM yyyy' : 'MMM d'),
+        tooltipLabel: format(d.date, 'MMM d, yyyy'),
+        benchRaw: benchPctRaw,
+        benchAdjusted: benchPctAdjusted,
+      };
+    });
+  }, [percentSeries, benchmarkSeries]);
 
   return (
     <>
@@ -423,20 +514,66 @@ export default function Portfolio() {
                 </>
               )}
             </div>
-            <div className="flex rounded-lg border border-navy-100 bg-white p-0.5">
-              {RANGES.map((r) => (
-                <button
-                  key={r.key}
-                  onClick={() => setRange(r.key)}
-                  className={`rounded-md px-3 py-1 text-xs font-semibold transition ${
-                    range === r.key
-                      ? 'bg-navy text-white'
-                      : 'text-navy-400 hover:text-navy'
-                  }`}
+            <div className="flex flex-wrap items-center gap-2">
+              <div className="flex items-center gap-1.5 text-[11px] font-semibold text-navy-400">
+                vs.
+                <select
+                  value={benchmark}
+                  onChange={(e) => setBenchmark(e.target.value)}
+                  className="rounded-md border border-navy-100 bg-white px-2 py-1 text-xs text-navy"
+                  disabled={benchmarkMode === 'off'}
                 >
-                  {r.label}
-                </button>
-              ))}
+                  {['VOO', 'SPY', 'IVV', 'QQQ', 'DIA', 'IWM', 'VTI', 'VXUS'].map((s) => (
+                    <option key={s} value={s}>
+                      {s}
+                    </option>
+                  ))}
+                </select>
+                <div className="flex rounded-md border border-navy-100 bg-white p-0.5">
+                  {[
+                    { k: 'off', l: 'Off' },
+                    { k: 'raw', l: 'Raw' },
+                    { k: 'adjusted', l: 'Adj.' },
+                    { k: 'both', l: 'Both' },
+                  ].map((m) => (
+                    <button
+                      key={m.k}
+                      onClick={() => setBenchmarkMode(m.k)}
+                      className={`rounded px-2 py-0.5 text-[10px] font-bold uppercase transition ${
+                        benchmarkMode === m.k
+                          ? 'bg-navy text-white'
+                          : 'text-navy-400 hover:text-navy'
+                      }`}
+                      title={
+                        m.k === 'raw'
+                          ? 'Raw benchmark return'
+                          : m.k === 'adjusted'
+                          ? 'Adjusted for our equity/cash mix at range start'
+                          : m.k === 'both'
+                          ? 'Show raw and adjusted lines'
+                          : 'Hide benchmark'
+                      }
+                    >
+                      {m.l}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="flex rounded-lg border border-navy-100 bg-white p-0.5">
+                {RANGES.map((r) => (
+                  <button
+                    key={r.key}
+                    onClick={() => setRange(r.key)}
+                    className={`rounded-md px-3 py-1 text-xs font-semibold transition ${
+                      range === r.key
+                        ? 'bg-navy text-white'
+                        : 'text-navy-400 hover:text-navy'
+                    }`}
+                  >
+                    {r.label}
+                  </button>
+                ))}
+              </div>
             </div>
           </div>
 
@@ -471,10 +608,17 @@ export default function Portfolio() {
                     width={55}
                   />
                   <Tooltip
-                    formatter={(v, _name, entry) => [
-                      `${v >= 0 ? '+' : ''}${v.toFixed(2)}% (${fmtMoney(entry?.payload?.dollarDelta)})`,
-                      'Return',
-                    ]}
+                    formatter={(v, name, entry) => {
+                      if (v == null) return ['—', name];
+                      const txt = `${v >= 0 ? '+' : ''}${v.toFixed(2)}%`;
+                      if (name === 'Portfolio') {
+                        return [
+                          `${txt} (${fmtMoney(entry?.payload?.dollarDelta)})`,
+                          name,
+                        ];
+                      }
+                      return [txt, name];
+                    }}
                     labelFormatter={(_, payload) => payload?.[0]?.payload?.tooltipLabel || ''}
                     contentStyle={{
                       borderRadius: 8,
@@ -482,15 +626,50 @@ export default function Portfolio() {
                       fontSize: 12,
                     }}
                   />
+                  {(benchmarkMode === 'both' || benchmarkMode !== 'off') && (
+                    <Legend
+                      verticalAlign="top"
+                      height={24}
+                      iconSize={10}
+                      wrapperStyle={{ fontSize: 11, color: '#8C99BB' }}
+                    />
+                  )}
                   <Area
                     type="monotone"
                     dataKey="percent"
+                    name="Portfolio"
                     stroke="#1B2A4A"
                     strokeWidth={2.5}
                     fill="url(#navyFill)"
                     dot={false}
                     activeDot={{ r: 5, fill: '#C9A84C', stroke: '#1B2A4A', strokeWidth: 2 }}
                   />
+                  {(benchmarkMode === 'raw' || benchmarkMode === 'both') && (
+                    <Line
+                      type="monotone"
+                      dataKey="benchRaw"
+                      name={`${benchmark} (raw)`}
+                      stroke="#C9A84C"
+                      strokeWidth={2}
+                      strokeDasharray="4 3"
+                      dot={false}
+                      activeDot={{ r: 4, fill: '#C9A84C', stroke: '#1B2A4A', strokeWidth: 1 }}
+                      connectNulls
+                    />
+                  )}
+                  {(benchmarkMode === 'adjusted' || benchmarkMode === 'both') && (
+                    <Line
+                      type="monotone"
+                      dataKey="benchAdjusted"
+                      name={`${benchmark} (adj.)`}
+                      stroke="#8C99BB"
+                      strokeWidth={2}
+                      strokeDasharray="2 3"
+                      dot={false}
+                      activeDot={{ r: 4, fill: '#8C99BB', stroke: '#1B2A4A', strokeWidth: 1 }}
+                      connectNulls
+                    />
+                  )}
                 </AreaChart>
               </ResponsiveContainer>
             </div>
@@ -501,6 +680,8 @@ export default function Portfolio() {
           )}
         </Card>
       </div>
+
+      <SectorAllocation holdings={holdings} totalValue={totals.totalValue} />
 
       <div className="mt-6">
         <Card title="Holdings">
@@ -629,5 +810,126 @@ export default function Portfolio() {
         onClose={() => setSelectedHolding(null)}
       />
     </>
+  );
+}
+
+// Palette for sector slices — navy/gold anchors plus enough supporting hues
+// to cover typical S&P sectors without repeating.
+const SECTOR_COLORS = [
+  '#1B2A4A', // navy
+  '#C9A84C', // gold
+  '#3B5998',
+  '#8C99BB',
+  '#B48A3C',
+  '#4A6AA8',
+  '#6E7FA8',
+  '#D4B76B',
+  '#2E4375',
+  '#A88C3C',
+  '#7C8FB8',
+];
+
+function SectorAllocation({ holdings, totalValue }) {
+  // Aggregate market value by sector. Cash is counted as its own slice so the
+  // chart sums to 100% of the portfolio.
+  const slices = useMemo(() => {
+    if (!holdings || holdings.length === 0 || !totalValue) return [];
+    const bySector = new Map();
+    for (const h of holdings) {
+      const mv =
+        h.marketValue ??
+        (h.shares != null && h.price != null ? h.shares * h.price : 0);
+      if (!mv) continue;
+      const key = h.isCash ? 'Cash' : h.sector && h.sector.trim() ? h.sector.trim() : 'Unclassified';
+      bySector.set(key, (bySector.get(key) || 0) + mv);
+    }
+    return [...bySector.entries()]
+      .map(([name, value]) => ({
+        name,
+        value,
+        pct: (value / totalValue) * 100,
+      }))
+      .sort((a, b) => b.value - a.value);
+  }, [holdings, totalValue]);
+
+  if (slices.length === 0) return null;
+
+  const topConcentration = slices[0];
+  const concentrationWarning = topConcentration.pct > 25;
+
+  return (
+    <div className="mt-6">
+      <Card title="Sector Allocation">
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+          <div style={{ width: '100%', height: 280 }}>
+            <ResponsiveContainer>
+              <PieChart>
+                <Pie
+                  data={slices}
+                  dataKey="value"
+                  nameKey="name"
+                  cx="50%"
+                  cy="50%"
+                  innerRadius={60}
+                  outerRadius={100}
+                  paddingAngle={1}
+                >
+                  {slices.map((_, i) => (
+                    <Cell key={i} fill={SECTOR_COLORS[i % SECTOR_COLORS.length]} />
+                  ))}
+                </Pie>
+                <Tooltip
+                  formatter={(v, name) => [
+                    `${v.toLocaleString('en-US', {
+                      style: 'currency',
+                      currency: 'USD',
+                      maximumFractionDigits: 0,
+                    })} (${((v / totalValue) * 100).toFixed(2)}%)`,
+                    name,
+                  ]}
+                  contentStyle={{
+                    borderRadius: 8,
+                    borderColor: '#C9A84C',
+                    fontSize: 12,
+                  }}
+                />
+              </PieChart>
+            </ResponsiveContainer>
+          </div>
+          <div>
+            <ul className="space-y-2">
+              {slices.map((s, i) => (
+                <li key={s.name} className="flex items-center gap-3">
+                  <span
+                    className="h-3 w-3 rounded-sm"
+                    style={{ backgroundColor: SECTOR_COLORS[i % SECTOR_COLORS.length] }}
+                  />
+                  <span className="flex-1 text-sm font-semibold text-navy truncate">
+                    {s.name}
+                  </span>
+                  <span className="text-xs tabular-nums text-navy-400">
+                    {s.value.toLocaleString('en-US', {
+                      style: 'currency',
+                      currency: 'USD',
+                      maximumFractionDigits: 0,
+                    })}
+                  </span>
+                  <span className="w-14 text-right text-sm font-bold tabular-nums text-navy">
+                    {s.pct.toFixed(1)}%
+                  </span>
+                </li>
+              ))}
+            </ul>
+            {concentrationWarning && (
+              <div className="mt-4 rounded-lg border border-gold-300 bg-gold-100/40 px-3 py-2 text-xs text-navy">
+                <strong>Heads up:</strong> {topConcentration.name} is{' '}
+                {topConcentration.pct.toFixed(1)}% of the portfolio — watch
+                concentration risk.
+              </div>
+            )}
+          </div>
+        </div>
+      </Card>
+    </div>
   );
 }

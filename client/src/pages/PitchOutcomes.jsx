@@ -1,0 +1,233 @@
+import { useEffect, useState } from 'react';
+import { format } from 'date-fns';
+import { Trophy, TrendingUp, TrendingDown, Target } from 'lucide-react';
+import api from '../api/client.js';
+import PageHeader from '../components/PageHeader.jsx';
+import Card from '../components/Card.jsx';
+
+function fmtMoney(n) {
+  if (n == null || Number.isNaN(n)) return '—';
+  return n.toLocaleString('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    maximumFractionDigits: 2,
+  });
+}
+function fmtPct(n) {
+  if (n == null || Number.isNaN(n)) return '—';
+  return `${n >= 0 ? '+' : ''}${n.toFixed(2)}%`;
+}
+
+export default function PitchOutcomes() {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState('');
+
+  useEffect(() => {
+    api
+      .get('/pitches/outcomes/all')
+      .then((r) => setData(r.data))
+      .catch((e) => setErr(e.response?.data?.error || 'Failed to load outcomes'))
+      .finally(() => setLoading(false));
+  }, []);
+
+  if (loading) {
+    return (
+      <>
+        <PageHeader title="Pitch Outcomes" subtitle="Loading…" />
+      </>
+    );
+  }
+
+  if (err) {
+    return (
+      <>
+        <PageHeader title="Pitch Outcomes" />
+        <Card>
+          <div className="py-8 text-center text-red-600">{err}</div>
+        </Card>
+      </>
+    );
+  }
+
+  const { results = [], leaderboard = [], clubAvg = 0, clubHitRate = 0, trackedCount = 0 } = data || {};
+  const positionsOnly = results.filter((r) => r.isPosition);
+
+  return (
+    <>
+      <PageHeader
+        title="Pitch Outcomes"
+        subtitle="How pitches that became positions have performed."
+      />
+
+      {/* Club-wide top stats */}
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+        <Card>
+          <div className="flex items-center gap-3">
+            <Trophy className="h-6 w-6 text-gold" />
+            <div>
+              <div className="text-xs uppercase tracking-wider text-navy-400">
+                Club Avg Return
+              </div>
+              <div
+                className={`mt-1 text-2xl font-bold ${
+                  clubAvg >= 0 ? 'text-emerald-600' : 'text-red-600'
+                }`}
+              >
+                {fmtPct(clubAvg)}
+              </div>
+            </div>
+          </div>
+        </Card>
+        <Card>
+          <div className="flex items-center gap-3">
+            <Target className="h-6 w-6 text-gold" />
+            <div>
+              <div className="text-xs uppercase tracking-wider text-navy-400">
+                Hit Rate
+              </div>
+              <div className="mt-1 text-2xl font-bold text-navy">
+                {(clubHitRate * 100).toFixed(0)}%
+              </div>
+              <div className="text-[11px] text-navy-400">
+                of pitches currently in the green
+              </div>
+            </div>
+          </div>
+        </Card>
+        <Card>
+          <div className="text-xs uppercase tracking-wider text-navy-400">
+            Pitches Tracked
+          </div>
+          <div className="mt-1 text-3xl font-bold text-navy">{trackedCount}</div>
+          <div className="text-[11px] text-navy-400">
+            Only pitches that became positions are included.
+          </div>
+        </Card>
+      </div>
+
+      {/* Leaderboard */}
+      <div className="mt-6">
+        <Card title="Leaderboard">
+          {leaderboard.length === 0 ? (
+            <div className="py-8 text-center text-navy-400">
+              No presenter has a tracked pitch yet.
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-navy-100 text-left text-xs uppercase text-navy-400">
+                    <th className="py-2 pr-4">#</th>
+                    <th className="py-2 pr-4">Presenter</th>
+                    <th className="py-2 pr-4 text-right">Pitches</th>
+                    <th className="py-2 pr-4 text-right">Avg Return</th>
+                    <th className="py-2 pr-4 text-right">Hit Rate</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-navy-50">
+                  {leaderboard.map((row, i) => (
+                    <tr key={`${row.id ?? 'anon'}-${row.name}`}>
+                      <td className="py-3 pr-4 font-bold text-gold-700">
+                        {i + 1}
+                      </td>
+                      <td className="py-3 pr-4 font-semibold text-navy">
+                        {row.name}
+                      </td>
+                      <td className="py-3 pr-4 text-right tabular-nums">
+                        {row.pitches}
+                      </td>
+                      <td
+                        className={`py-3 pr-4 text-right tabular-nums font-bold ${
+                          row.avgReturn >= 0 ? 'text-emerald-600' : 'text-red-600'
+                        }`}
+                      >
+                        {fmtPct(row.avgReturn)}
+                      </td>
+                      <td className="py-3 pr-4 text-right tabular-nums">
+                        {(row.hitRate * 100).toFixed(0)}%
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </Card>
+      </div>
+
+      {/* Every pitch that's now a position */}
+      <div className="mt-6">
+        <Card title="Pitch-by-pitch">
+          {positionsOnly.length === 0 ? (
+            <div className="py-8 text-center text-navy-400">
+              No pitches have been tied to current holdings yet. Seed the
+              matching HoldingLot for each pitch to start tracking.
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-navy-100 text-left text-xs uppercase text-navy-400">
+                    <th className="py-2 pr-4">Ticker</th>
+                    <th className="py-2 pr-4">Pitched</th>
+                    <th className="py-2 pr-4">By</th>
+                    <th className="py-2 pr-4 text-right">Buy Price</th>
+                    <th className="py-2 pr-4 text-right">Now</th>
+                    <th className="py-2 pr-4 text-right">Return</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-navy-50">
+                  {positionsOnly.map((r) => {
+                    const up = (r.percent ?? 0) >= 0;
+                    return (
+                      <tr key={r.id}>
+                        <td className="py-3 pr-4 font-bold text-navy">
+                          {r.ticker}
+                        </td>
+                        <td className="py-3 pr-4 text-xs text-navy-400">
+                          {format(new Date(r.date), 'MMM d, yyyy')}
+                        </td>
+                        <td className="py-3 pr-4 text-sm text-navy">
+                          {r.presenters.map((p) => p.name).join(', ')}
+                        </td>
+                        <td className="py-3 pr-4 text-right tabular-nums">
+                          {fmtMoney(r.buyPrice)}
+                        </td>
+                        <td className="py-3 pr-4 text-right tabular-nums">
+                          {fmtMoney(r.currentPrice)}
+                        </td>
+                        <td
+                          className={`py-3 pr-4 text-right tabular-nums font-bold ${
+                            r.percent == null
+                              ? 'text-navy-400'
+                              : up
+                              ? 'text-emerald-600'
+                              : 'text-red-600'
+                          }`}
+                        >
+                          {r.percent != null ? (
+                            <span className="inline-flex items-center gap-1 justify-end">
+                              {up ? (
+                                <TrendingUp className="h-3.5 w-3.5" />
+                              ) : (
+                                <TrendingDown className="h-3.5 w-3.5" />
+                              )}
+                              {fmtPct(r.percent)}
+                            </span>
+                          ) : (
+                            '—'
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </Card>
+      </div>
+    </>
+  );
+}

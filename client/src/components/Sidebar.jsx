@@ -11,6 +11,7 @@ import {
   Building2,
   ShieldAlert,
   MessageSquare,
+  Trophy,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext.jsx';
 import RoleBadge from './RoleBadge.jsx';
@@ -33,6 +34,7 @@ const NAV_SECTIONS = [
     header: 'Investing',
     items: [
       { to: '/portfolio', label: 'Portfolio', icon: LineChart },
+      { to: '/outcomes', label: 'Pitch Outcomes', icon: Trophy },
       { to: '/votes', label: 'Voting', icon: Vote },
       { to: '/industries', label: 'Industries', icon: Building2 },
     ],

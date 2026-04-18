@@ -21,6 +21,7 @@ import Votes from './pages/Votes.jsx';
 import Industries from './pages/Industries.jsx';
 import Library from './pages/Library.jsx';
 import Admin from './pages/Admin.jsx';
+import PitchOutcomes from './pages/PitchOutcomes.jsx';
 
 export default function App() {
   const { loading } = useAuth();
@@ -53,6 +54,7 @@ export default function App() {
         {/* Legacy routes — keep so old bookmarks/links still work */}
         <Route path="pitches" element={<Calendar />} />
         <Route path="events" element={<Calendar />} />
+        <Route path="outcomes" element={<PitchOutcomes />} />
         <Route path="library" element={<Library />} />
         <Route path="admin" element={<Admin />} />
         {/* Legacy routes — keep old bookmarks working */}
