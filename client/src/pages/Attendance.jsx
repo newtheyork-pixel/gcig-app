@@ -1,15 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { format } from 'date-fns';
-import {
-  Download,
-  ChevronDown,
-  ChevronUp,
-  TrendingUp,
-  TrendingDown,
-  Target,
-  FileText,
-  BookOpen,
-} from 'lucide-react';
+import { Download, ChevronDown, ChevronUp } from 'lucide-react';
 import api, { API_BASE } from '../api/client.js';
 import { useAuth } from '../context/AuthContext.jsx';
 import PageHeader from '../components/PageHeader.jsx';
@@ -49,24 +40,17 @@ function AdvisoryAttendance() {
 
 function MineAttendance() {
   const [data, setData] = useState(null);
-  const [mine, setMine] = useState(null);
   useEffect(() => {
     api.get('/attendance/mine').then((r) => setData(r.data));
-    api
-      .get('/pitches/outcomes/mine')
-      .then((r) => setMine(r.data))
-      .catch(() => setMine({ rows: [], totalPitches: 0 }));
   }, []);
 
   if (!data) return <div>Loading…</div>;
-
-  const hasOutcomeData = mine && (mine.totalPitches > 0 || mine.totalReports > 0);
 
   return (
     <>
       <PageHeader
         title="My Attendance"
-        subtitle="Your attendance record and pitch performance."
+        subtitle="Your attendance record across all club meetings and events."
       />
 
       {/* Attendance summary */}
@@ -89,138 +73,8 @@ function MineAttendance() {
         </Card>
       </div>
 
-      {/* Personal pitch/report returns */}
-      {hasOutcomeData && (
-        <div className="mt-6">
-          <div className="mb-2 text-sm font-semibold text-navy">My Coverage</div>
-          <div className="grid grid-cols-2 gap-4 md:grid-cols-4">
-            <Card>
-              <div className="text-xs uppercase text-navy-400">Pitches Given</div>
-              <div className="mt-2 text-3xl font-bold text-navy">{mine.totalPitches}</div>
-              {mine.pitchesVotedNo > 0 && (
-                <div className="text-[11px] text-navy-400">
-                  {mine.pitchesVotedNo} voted no
-                </div>
-              )}
-            </Card>
-            <Card>
-              <div className="text-xs uppercase text-navy-400">Reports Written</div>
-              <div className="mt-2 text-3xl font-bold text-navy">{mine.totalReports || 0}</div>
-            </Card>
-            <Card>
-              <div className="text-xs uppercase text-navy-400">Avg Return</div>
-              <div
-                className={`mt-2 flex items-center gap-1 text-3xl font-bold ${
-                  (mine.avgReturn ?? 0) >= 0 ? 'text-emerald-600' : 'text-red-600'
-                }`}
-              >
-                {(mine.avgReturn ?? 0) >= 0 ? (
-                  <TrendingUp className="h-6 w-6" />
-                ) : (
-                  <TrendingDown className="h-6 w-6" />
-                )}
-                {(mine.avgReturn ?? 0) >= 0 ? '+' : ''}
-                {(mine.avgReturn ?? 0).toFixed(2)}%
-              </div>
-              <div className="text-[11px] text-navy-400">
-                Across {mine.positionsCount || 0} held positions
-              </div>
-            </Card>
-            <Card>
-              <div className="flex items-center gap-2">
-                <Target className="h-5 w-5 text-gold" />
-                <div className="text-xs uppercase text-navy-400">Hit Rate</div>
-              </div>
-              <div className="mt-2 text-3xl font-bold text-navy">
-                {((mine.hitRate ?? 0) * 100).toFixed(0)}%
-              </div>
-              <div className="text-[11px] text-navy-400">
-                Positions currently in the green
-              </div>
-            </Card>
-          </div>
-
-          {mine.rows && mine.rows.length > 0 && (
-            <div className="mt-4">
-              <Card>
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm">
-                    <thead>
-                      <tr className="border-b border-navy-100 text-left text-xs uppercase text-navy-400">
-                        <th className="py-2 pr-4">Type</th>
-                        <th className="py-2 pr-4">Ticker</th>
-                        <th className="py-2 pr-4">Date</th>
-                        <th className="py-2 pr-4 text-right">Outcome</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-navy-50">
-                      {mine.rows.map((r) => {
-                        const isNoBuy = r.votedOutcome === 'NoBuy';
-                        const up = (r.percent ?? 0) >= 0;
-                        return (
-                          <tr key={r.id}>
-                            <td className="py-3 pr-4">
-                              <span
-                                className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider ${
-                                  r.type === 'report'
-                                    ? 'bg-navy-50 text-navy'
-                                    : 'bg-gold-100 text-gold-800'
-                                }`}
-                              >
-                                {r.type === 'report' ? (
-                                  <BookOpen className="h-3 w-3" />
-                                ) : (
-                                  <FileText className="h-3 w-3" />
-                                )}
-                                {r.type}
-                              </span>
-                            </td>
-                            <td className="py-3 pr-4 font-bold text-navy">
-                              {r.ticker}
-                              {r.title && (
-                                <div className="truncate max-w-[200px] text-xs font-normal text-navy-400">
-                                  {r.title}
-                                </div>
-                              )}
-                            </td>
-                            <td className="py-3 pr-4 text-xs text-navy-400">
-                              {format(new Date(r.date), 'MMM d, yyyy')}
-                            </td>
-                            <td className="py-3 pr-4 text-right">
-                              {isNoBuy ? (
-                                <span className="inline-flex items-center rounded-full bg-red-50 px-2 py-0.5 text-[10px] font-bold uppercase text-red-700">
-                                  Voted No
-                                </span>
-                              ) : r.percent != null ? (
-                                <span
-                                  className={`font-bold tabular-nums ${
-                                    up ? 'text-emerald-600' : 'text-red-600'
-                                  }`}
-                                >
-                                  {up ? '+' : ''}
-                                  {r.percent.toFixed(2)}%
-                                </span>
-                              ) : r.isPosition ? (
-                                <span className="text-xs text-navy-400">Held</span>
-                              ) : (
-                                <span className="text-xs text-navy-400">Pending</span>
-                              )}
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              </Card>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Attendance history */}
       <div className="mt-6">
-        <Card title="Attendance History">
+        <Card title="History">
           {data.records.length === 0 ? (
             <div className="py-8 text-center text-navy-400">No attendance records yet.</div>
           ) : (
