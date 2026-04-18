@@ -8,6 +8,7 @@ import { authLimiter, codeLimiter } from '../middleware/rateLimit.js';
 import {
   sendVerificationCode,
   sendPasswordResetEmail,
+  primaryClientOrigin,
 } from '../services/email.js';
 import { auditReq } from '../services/audit.js';
 import { trackLogin } from '../services/knownLogins.js';
@@ -371,8 +372,7 @@ router.post('/forgot-password', authLimiter, async (req, res) => {
     data: { email: normalized, token, expiresAt },
   });
 
-  const clientOrigin = process.env.CLIENT_ORIGIN || 'https://gcig-client.onrender.com';
-  const resetUrl = `${clientOrigin}/reset-password?token=${token}`;
+  const resetUrl = `${primaryClientOrigin('https://gcig-client.onrender.com')}/reset-password?token=${token}`;
 
   try {
     await sendPasswordResetEmail(normalized, { name: user.name, resetUrl });

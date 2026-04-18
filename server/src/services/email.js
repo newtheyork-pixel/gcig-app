@@ -1,5 +1,17 @@
 import nodemailer from 'nodemailer';
 
+// CLIENT_ORIGIN may be a comma-separated list (used for CORS). When we build
+// user-facing links (invites, password resets, pitch emails), we need ONE
+// canonical origin — the first entry. Also strips any trailing slash and
+// repairs a common typo (`https//` missing a colon).
+export function primaryClientOrigin(fallback = 'http://localhost:5173') {
+  const raw = process.env.CLIENT_ORIGIN || fallback;
+  const first = String(raw).split(',')[0].trim();
+  if (!first) return fallback;
+  const repaired = first.replace(/^https\/\//i, 'https://').replace(/^http\/\//i, 'http://');
+  return repaired.replace(/\/+$/, '');
+}
+
 let transporter = null;
 
 function getTransporter() {

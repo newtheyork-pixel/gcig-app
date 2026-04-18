@@ -9,7 +9,7 @@ import {
   requireSuperAdmin,
   ROLE_RANK,
 } from '../middleware/auth.js';
-import { sendInviteEmail } from '../services/email.js';
+import { sendInviteEmail, primaryClientOrigin } from '../services/email.js';
 import { auditReq } from '../services/audit.js';
 
 const router = Router();
@@ -91,8 +91,7 @@ router.post('/', requireExecutive, async (req, res) => {
     },
   });
 
-  const clientOrigin = process.env.CLIENT_ORIGIN || 'http://localhost:5173';
-  const inviteUrl = `${clientOrigin}/accept-invite?token=${token}`;
+  const inviteUrl = `${primaryClientOrigin()}/accept-invite?token=${token}`;
 
   const ROLE_LABELS = {
     President: 'President',

@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import prisma from '../db.js';
 import { verifyJwt, requireRole } from '../middleware/auth.js';
-import { sendPitchAssignmentEmail } from '../services/email.js';
+import { sendPitchAssignmentEmail, primaryClientOrigin } from '../services/email.js';
 import { assertSafeHttpUrl } from '../services/validateUrl.js';
 import { getSheetPortfolio } from '../services/sheetPortfolio.js';
 
@@ -560,7 +560,7 @@ router.post('/', canEditPitches, async (req, res, next) => {
   notifyUsers(
     pitch,
     [...recipientIds],
-    process.env.CLIENT_ORIGIN || 'https://gcig-client.onrender.com'
+    primaryClientOrigin('https://gcig-client.onrender.com')
   ).catch(() => {});
 
   // Ensure industry members also get the in-app PitchNotification popup.
@@ -680,7 +680,7 @@ router.put('/:id', canEditPitches, async (req, res) => {
     notifyUsers(
       pitch,
       [...toNotify],
-      process.env.CLIENT_ORIGIN || 'https://gcig-client.onrender.com'
+      primaryClientOrigin('https://gcig-client.onrender.com')
     ).catch(() => {});
   }
 
