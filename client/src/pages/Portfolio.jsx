@@ -11,8 +11,6 @@ import {
   PieChart,
   Pie,
   Cell,
-  Legend,
-  Line,
 } from 'recharts';
 import { TrendingUp, TrendingDown, RefreshCw, ExternalLink } from 'lucide-react';
 import api from '../api/client.js';
@@ -110,29 +108,6 @@ export default function Portfolio() {
   const [range, setRange] = useState('6M');
   const [selectedHolding, setSelectedHolding] = useState(null);
 
-  // Benchmark overlay on the performance chart.
-  const [benchmark, setBenchmark] = useState('VOO');
-  const [benchmarkMode, setBenchmarkMode] = useState('both'); // off | raw | adjusted | both
-  const [benchmarkSeries, setBenchmarkSeries] = useState(null); // { date, close }[]
-  useEffect(() => {
-    if (benchmarkMode === 'off' || !benchmark) {
-      setBenchmarkSeries(null);
-      return;
-    }
-    let cancelled = false;
-    api
-      .get(`/holdings/benchmark/${benchmark}`)
-      .then(({ data }) => {
-        if (!cancelled) setBenchmarkSeries(data.series);
-      })
-      .catch(() => {
-        if (!cancelled) setBenchmarkSeries([]);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [benchmark, benchmarkMode]);
-
   // Normalize history (with real Date objects) once.
   // equity = totalValue - cashValue (falls back to total if cash is unknown).
   const fullHistory = useMemo(
@@ -209,24 +184,13 @@ export default function Portfolio() {
   // the top / bottom of the chart.
   const yDomain = useMemo(() => {
     if (percentSeries.length === 0) return [0, 1];
-    // Include benchmark values so they're not clipped by the axis.
-    const values = [];
-    for (const d of percentSeries) values.push(d.percent);
-    if (benchmarkSeries && benchmarkSeries.length > 0 && benchmarkMode !== 'off') {
-      // Rebase benchmark values the same way displayData does so the axis
-      // reflects what the user will actually see drawn.
-      const first = benchmarkSeries[0];
-      for (const b of benchmarkSeries) {
-        const pct = first?.close > 0 ? ((b.close - first.close) / first.close) * 100 : 0;
-        values.push(pct);
-      }
-    }
+    const values = percentSeries.map((d) => d.percent);
     const min = Math.min(...values);
     const max = Math.max(...values);
     const range = max - min;
     const pad = Math.max(range * 0.1, 0.5);
     return [Number((min - pad).toFixed(2)), Number((max + pad).toFixed(2))];
-  }, [percentSeries, benchmarkSeries, benchmarkMode]);
+  }, [percentSeries]);
 
   // Daily change on equity (invested capital) — cash parked isn't "performance."
   // Dollar change = total change (cash contributes ~0 to day-over-day movement).
@@ -309,70 +273,11 @@ export default function Portfolio() {
   }, [chartData, range]);
 
   // Build display data with a short date label. For long ranges we thin labels out.
-  // Benchmark overlay: align by ISO date, rebase to the first snapshot in the
-  // range, and scale the adjusted line by our starting equity ratio so cash
-  // drag is visible as underperformance vs raw.
-  const displayData = useMemo(() => {
-    if (percentSeries.length === 0) return [];
-    const benchByDate = new Map();
-    if (benchmarkSeries && benchmarkSeries.length > 0) {
-      for (const b of benchmarkSeries) benchByDate.set(b.date, b.close);
-    }
-    const start = percentSeries[0];
-    // Find benchmark close on (or immediately before) the range's start date.
-    let benchBase = null;
-    if (benchByDate.size > 0) {
-      const startIso = start.date.toISOString().slice(0, 10);
-      if (benchByDate.has(startIso)) benchBase = benchByDate.get(startIso);
-      else {
-        const sortedDates = [...benchByDate.keys()].sort();
-        for (let i = sortedDates.length - 1; i >= 0; i--) {
-          if (sortedDates[i] <= startIso) {
-            benchBase = benchByDate.get(sortedDates[i]);
-            break;
-          }
-        }
-      }
-    }
-    // Equity ratio for the adjusted benchmark line. Using today's ratio (equity
-    // / total) rather than range start's — ALL range starts when we were
-    // nearly 100% cash, which would make the adjusted line flat near zero and
-    // useless. Today's ratio answers "if all our stock exposure had earned the
-    // benchmark's return, how much would we be up?".
-    const equityRatio = (() => {
-      const t = data?.totals;
-      if (!t || !t.totalValue) return 1;
-      const cash = t.cashValue || 0;
-      const equity = Math.max(0, t.totalValue - cash);
-      return Math.max(0, Math.min(1, equity / t.totalValue));
-    })();
-
-    return percentSeries.map((d) => {
-      const iso = d.date.toISOString().slice(0, 10);
-      let benchPctRaw = null;
-      if (benchBase && benchBase > 0) {
-        // Find the benchmark close for this day (or the most recent prior close).
-        let close = benchByDate.get(iso);
-        if (close == null) {
-          // Walk backwards up to 5 days to catch weekends/holidays.
-          for (let i = 1; i <= 5 && close == null; i++) {
-            const prev = new Date(d.date);
-            prev.setDate(prev.getDate() - i);
-            close = benchByDate.get(prev.toISOString().slice(0, 10));
-          }
-        }
-        if (close != null) benchPctRaw = ((close - benchBase) / benchBase) * 100;
-      }
-      const benchPctAdjusted = benchPctRaw != null ? benchPctRaw * equityRatio : null;
-      return {
-        ...d,
-        label: format(d.date, percentSeries.length > 90 ? 'MMM yyyy' : 'MMM d'),
-        tooltipLabel: format(d.date, 'MMM d, yyyy'),
-        benchRaw: benchPctRaw,
-        benchAdjusted: benchPctAdjusted,
-      };
-    });
-  }, [percentSeries, benchmarkSeries, data]);
+  const displayData = percentSeries.map((d) => ({
+    ...d,
+    label: format(d.date, percentSeries.length > 90 ? 'MMM yyyy' : 'MMM d'),
+    tooltipLabel: format(d.date, 'MMM d, yyyy'),
+  }));
 
   return (
     <>
@@ -539,58 +444,7 @@ export default function Portfolio() {
             </div>
           </div>
 
-          {/* Secondary row: benchmark compare strip */}
-          <div className="mt-3 mb-4 flex flex-wrap items-center gap-2 border-t border-navy-50 pt-3">
-            <span className="text-[11px] font-bold uppercase tracking-wider text-navy-400">
-              Compare to
-            </span>
-            <select
-              value={benchmark}
-              onChange={(e) => setBenchmark(e.target.value)}
-              className="rounded-md border border-navy-100 bg-white px-2.5 py-1 text-xs font-semibold text-navy focus:border-gold focus:outline-none"
-              disabled={benchmarkMode === 'off'}
-            >
-              {['VOO', 'SPY', 'IVV', 'QQQ', 'DIA', 'IWM', 'VTI', 'VXUS'].map((s) => (
-                <option key={s} value={s}>
-                  {s}
-                </option>
-              ))}
-            </select>
-            <div className="flex rounded-md border border-navy-100 bg-white p-0.5">
-              {[
-                { k: 'off', l: 'Off' },
-                { k: 'raw', l: 'Raw' },
-                { k: 'adjusted', l: 'Adjusted' },
-                { k: 'both', l: 'Both' },
-              ].map((m) => (
-                <button
-                  key={m.k}
-                  onClick={() => setBenchmarkMode(m.k)}
-                  className={`rounded-[5px] px-2.5 py-1 text-[11px] font-semibold transition ${
-                    benchmarkMode === m.k
-                      ? 'bg-navy text-white'
-                      : 'text-navy-400 hover:text-navy'
-                  }`}
-                  title={
-                    m.k === 'raw'
-                      ? `Raw ${benchmark} return`
-                      : m.k === 'adjusted'
-                      ? `${benchmark} scaled to our current equity exposure`
-                      : m.k === 'both'
-                      ? 'Show raw and adjusted lines'
-                      : 'Hide benchmark'
-                  }
-                >
-                  {m.l}
-                </button>
-              ))}
-            </div>
-            {benchmarkMode !== 'off' && benchmarkSeries && benchmarkSeries.length === 0 && (
-              <span className="text-[11px] text-red-600">
-                Couldn't load {benchmark} data
-              </span>
-            )}
-          </div>
+          <div className="mb-4" />
 
           {displayData.length > 1 ? (
             <div style={{ width: '100%', height: 320 }}>
@@ -623,17 +477,10 @@ export default function Portfolio() {
                     width={55}
                   />
                   <Tooltip
-                    formatter={(v, name, entry) => {
-                      if (v == null) return ['—', name];
-                      const txt = `${v >= 0 ? '+' : ''}${v.toFixed(2)}%`;
-                      if (name === 'Portfolio') {
-                        return [
-                          `${txt} (${fmtMoney(entry?.payload?.dollarDelta)})`,
-                          name,
-                        ];
-                      }
-                      return [txt, name];
-                    }}
+                    formatter={(v, _name, entry) => [
+                      `${v >= 0 ? '+' : ''}${v.toFixed(2)}% (${fmtMoney(entry?.payload?.dollarDelta)})`,
+                      'Return',
+                    ]}
                     labelFormatter={(_, payload) => payload?.[0]?.payload?.tooltipLabel || ''}
                     contentStyle={{
                       borderRadius: 8,
@@ -641,52 +488,15 @@ export default function Portfolio() {
                       fontSize: 12,
                     }}
                   />
-                  {(benchmarkMode === 'both' || benchmarkMode !== 'off') && (
-                    <Legend
-                      verticalAlign="top"
-                      height={24}
-                      iconSize={10}
-                      wrapperStyle={{ fontSize: 11, color: '#8C99BB' }}
-                    />
-                  )}
                   <Area
                     type="monotone"
                     dataKey="percent"
-                    name="Portfolio"
                     stroke="#1B2A4A"
                     strokeWidth={2.5}
                     fill="url(#navyFill)"
                     dot={false}
                     activeDot={{ r: 5, fill: '#C9A84C', stroke: '#1B2A4A', strokeWidth: 2 }}
                   />
-                  {(benchmarkMode === 'raw' || benchmarkMode === 'both') && (
-                    <Line
-                      type="monotone"
-                      dataKey="benchRaw"
-                      name={`${benchmark} (raw)`}
-                      stroke="#C9A84C"
-                      strokeWidth={2}
-                      strokeDasharray="5 4"
-                      dot={false}
-                      activeDot={{ r: 4, fill: '#C9A84C', stroke: '#1B2A4A', strokeWidth: 1 }}
-                      connectNulls
-                      isAnimationActive={false}
-                    />
-                  )}
-                  {(benchmarkMode === 'adjusted' || benchmarkMode === 'both') && (
-                    <Line
-                      type="monotone"
-                      dataKey="benchAdjusted"
-                      name={`${benchmark} (adj.)`}
-                      stroke="#6E7FA8"
-                      strokeWidth={2}
-                      strokeDasharray="2 4"
-                      dot={false}
-                      activeDot={{ r: 4, fill: '#6E7FA8', stroke: '#1B2A4A', strokeWidth: 1 }}
-                      connectNulls
-                      isAnimationActive={false}
-                    />
-                  )}
                 </AreaChart>
               </ResponsiveContainer>
             </div>
