@@ -334,11 +334,18 @@ export default function Portfolio() {
         }
       }
     }
-    // Equity ratio at range start = equity / total. Used to dampen the adjusted
-    // benchmark: if we're 80% invested, raw benchmark × 0.80 = what a passive
-    // 80/20 equity/cash portfolio would have returned.
-    const equityRatio =
-      start.value > 0 ? Math.max(0, Math.min(1, start.equity / start.value)) : 1;
+    // Equity ratio for the adjusted benchmark line. Using today's ratio (equity
+    // / total) rather than range start's — ALL range starts when we were
+    // nearly 100% cash, which would make the adjusted line flat near zero and
+    // useless. Today's ratio answers "if all our stock exposure had earned the
+    // benchmark's return, how much would we be up?".
+    const equityRatio = (() => {
+      const t = data?.totals;
+      if (!t || !t.totalValue) return 1;
+      const cash = t.cashValue || 0;
+      const equity = Math.max(0, t.totalValue - cash);
+      return Math.max(0, Math.min(1, equity / t.totalValue));
+    })();
 
     return percentSeries.map((d) => {
       const iso = d.date.toISOString().slice(0, 10);
@@ -365,7 +372,7 @@ export default function Portfolio() {
         benchAdjusted: benchPctAdjusted,
       };
     });
-  }, [percentSeries, benchmarkSeries]);
+  }, [percentSeries, benchmarkSeries, data]);
 
   return (
     <>
@@ -485,7 +492,8 @@ export default function Portfolio() {
 
       <div className="mt-6">
         <Card>
-          <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+          {/* Header row: title + perf summary on left, range selector on right */}
+          <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
               <div className="text-sm font-semibold text-navy">Performance Over Time</div>
               {rangeChange && (
@@ -514,67 +522,74 @@ export default function Portfolio() {
                 </>
               )}
             </div>
-            <div className="flex flex-wrap items-center gap-2">
-              <div className="flex items-center gap-1.5 text-[11px] font-semibold text-navy-400">
-                vs.
-                <select
-                  value={benchmark}
-                  onChange={(e) => setBenchmark(e.target.value)}
-                  className="rounded-md border border-navy-100 bg-white px-2 py-1 text-xs text-navy"
-                  disabled={benchmarkMode === 'off'}
+            <div className="flex rounded-lg border border-navy-100 bg-white p-0.5">
+              {RANGES.map((r) => (
+                <button
+                  key={r.key}
+                  onClick={() => setRange(r.key)}
+                  className={`rounded-md px-3 py-1 text-xs font-semibold transition ${
+                    range === r.key
+                      ? 'bg-navy text-white'
+                      : 'text-navy-400 hover:text-navy'
+                  }`}
                 >
-                  {['VOO', 'SPY', 'IVV', 'QQQ', 'DIA', 'IWM', 'VTI', 'VXUS'].map((s) => (
-                    <option key={s} value={s}>
-                      {s}
-                    </option>
-                  ))}
-                </select>
-                <div className="flex rounded-md border border-navy-100 bg-white p-0.5">
-                  {[
-                    { k: 'off', l: 'Off' },
-                    { k: 'raw', l: 'Raw' },
-                    { k: 'adjusted', l: 'Adj.' },
-                    { k: 'both', l: 'Both' },
-                  ].map((m) => (
-                    <button
-                      key={m.k}
-                      onClick={() => setBenchmarkMode(m.k)}
-                      className={`rounded px-2 py-0.5 text-[10px] font-bold uppercase transition ${
-                        benchmarkMode === m.k
-                          ? 'bg-navy text-white'
-                          : 'text-navy-400 hover:text-navy'
-                      }`}
-                      title={
-                        m.k === 'raw'
-                          ? 'Raw benchmark return'
-                          : m.k === 'adjusted'
-                          ? 'Adjusted for our equity/cash mix at range start'
-                          : m.k === 'both'
-                          ? 'Show raw and adjusted lines'
-                          : 'Hide benchmark'
-                      }
-                    >
-                      {m.l}
-                    </button>
-                  ))}
-                </div>
-              </div>
-              <div className="flex rounded-lg border border-navy-100 bg-white p-0.5">
-                {RANGES.map((r) => (
-                  <button
-                    key={r.key}
-                    onClick={() => setRange(r.key)}
-                    className={`rounded-md px-3 py-1 text-xs font-semibold transition ${
-                      range === r.key
-                        ? 'bg-navy text-white'
-                        : 'text-navy-400 hover:text-navy'
-                    }`}
-                  >
-                    {r.label}
-                  </button>
-                ))}
-              </div>
+                  {r.label}
+                </button>
+              ))}
             </div>
+          </div>
+
+          {/* Secondary row: benchmark compare strip */}
+          <div className="mt-3 mb-4 flex flex-wrap items-center gap-2 border-t border-navy-50 pt-3">
+            <span className="text-[11px] font-bold uppercase tracking-wider text-navy-400">
+              Compare to
+            </span>
+            <select
+              value={benchmark}
+              onChange={(e) => setBenchmark(e.target.value)}
+              className="rounded-md border border-navy-100 bg-white px-2.5 py-1 text-xs font-semibold text-navy focus:border-gold focus:outline-none"
+              disabled={benchmarkMode === 'off'}
+            >
+              {['VOO', 'SPY', 'IVV', 'QQQ', 'DIA', 'IWM', 'VTI', 'VXUS'].map((s) => (
+                <option key={s} value={s}>
+                  {s}
+                </option>
+              ))}
+            </select>
+            <div className="flex rounded-md border border-navy-100 bg-white p-0.5">
+              {[
+                { k: 'off', l: 'Off' },
+                { k: 'raw', l: 'Raw' },
+                { k: 'adjusted', l: 'Adjusted' },
+                { k: 'both', l: 'Both' },
+              ].map((m) => (
+                <button
+                  key={m.k}
+                  onClick={() => setBenchmarkMode(m.k)}
+                  className={`rounded-[5px] px-2.5 py-1 text-[11px] font-semibold transition ${
+                    benchmarkMode === m.k
+                      ? 'bg-navy text-white'
+                      : 'text-navy-400 hover:text-navy'
+                  }`}
+                  title={
+                    m.k === 'raw'
+                      ? `Raw ${benchmark} return`
+                      : m.k === 'adjusted'
+                      ? `${benchmark} scaled to our current equity exposure`
+                      : m.k === 'both'
+                      ? 'Show raw and adjusted lines'
+                      : 'Hide benchmark'
+                  }
+                >
+                  {m.l}
+                </button>
+              ))}
+            </div>
+            {benchmarkMode !== 'off' && benchmarkSeries && benchmarkSeries.length === 0 && (
+              <span className="text-[11px] text-red-600">
+                Couldn't load {benchmark} data
+              </span>
+            )}
           </div>
 
           {displayData.length > 1 ? (
@@ -651,10 +666,11 @@ export default function Portfolio() {
                       name={`${benchmark} (raw)`}
                       stroke="#C9A84C"
                       strokeWidth={2}
-                      strokeDasharray="4 3"
+                      strokeDasharray="5 4"
                       dot={false}
                       activeDot={{ r: 4, fill: '#C9A84C', stroke: '#1B2A4A', strokeWidth: 1 }}
                       connectNulls
+                      isAnimationActive={false}
                     />
                   )}
                   {(benchmarkMode === 'adjusted' || benchmarkMode === 'both') && (
@@ -662,12 +678,13 @@ export default function Portfolio() {
                       type="monotone"
                       dataKey="benchAdjusted"
                       name={`${benchmark} (adj.)`}
-                      stroke="#8C99BB"
+                      stroke="#6E7FA8"
                       strokeWidth={2}
-                      strokeDasharray="2 3"
+                      strokeDasharray="2 4"
                       dot={false}
-                      activeDot={{ r: 4, fill: '#8C99BB', stroke: '#1B2A4A', strokeWidth: 1 }}
+                      activeDot={{ r: 4, fill: '#6E7FA8', stroke: '#1B2A4A', strokeWidth: 1 }}
                       connectNulls
+                      isAnimationActive={false}
                     />
                   )}
                 </AreaChart>
