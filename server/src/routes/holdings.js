@@ -110,7 +110,7 @@ async function fetchQuoteSummary(ticker) {
   }
 }
 import prisma from '../db.js';
-import { verifyJwt } from '../middleware/auth.js';
+import { verifyJwt, requireSuperAdmin } from '../middleware/auth.js';
 import { getSheetPortfolio } from '../services/sheetPortfolio.js';
 
 const router = Router();
@@ -358,6 +358,80 @@ router.get('/coverage/:ticker', async (req, res) => {
   } catch (err) {
     console.error(`coverage(${raw}) failed:`, err);
     res.status(500).json({ error: 'Failed to load coverage' });
+  }
+});
+
+// ── Holding Lots ─────────────────────────────────────────────────────
+// Per-purchase cost basis tracking. Anyone authed can read; only the super
+// admin can mutate.
+
+function validTicker(t) {
+  return !!t && /^[A-Z0-9.\-]{1,10}$/.test(t);
+}
+
+router.get('/lots/:ticker', async (req, res) => {
+  const raw = String(req.params.ticker || '').trim().toUpperCase();
+  if (!validTicker(raw)) return res.status(400).json({ error: 'Invalid ticker' });
+  const lots = await prisma.holdingLot.findMany({
+    where: { ticker: raw },
+    orderBy: { buyDate: 'asc' },
+  });
+  res.json(lots);
+});
+
+router.post('/lots', requireSuperAdmin, async (req, res) => {
+  const { ticker, shares, pricePerShare, buyDate, note } = req.body || {};
+  const t = String(ticker || '').trim().toUpperCase();
+  const s = Number(shares);
+  const p = Number(pricePerShare);
+  const d = buyDate ? new Date(buyDate) : null;
+  if (!validTicker(t)) return res.status(400).json({ error: 'Invalid ticker' });
+  if (!Number.isFinite(s) || s <= 0) return res.status(400).json({ error: 'Invalid shares' });
+  if (!Number.isFinite(p) || p <= 0) return res.status(400).json({ error: 'Invalid price' });
+  if (!d || Number.isNaN(d.getTime())) return res.status(400).json({ error: 'Invalid buy date' });
+  const lot = await prisma.holdingLot.create({
+    data: { ticker: t, shares: s, pricePerShare: p, buyDate: d, note: note || null },
+  });
+  res.status(201).json(lot);
+});
+
+router.put('/lots/:id', requireSuperAdmin, async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isFinite(id)) return res.status(400).json({ error: 'Invalid id' });
+  const { shares, pricePerShare, buyDate, note } = req.body || {};
+  const data = {};
+  if (shares !== undefined) {
+    const s = Number(shares);
+    if (!Number.isFinite(s) || s <= 0) return res.status(400).json({ error: 'Invalid shares' });
+    data.shares = s;
+  }
+  if (pricePerShare !== undefined) {
+    const p = Number(pricePerShare);
+    if (!Number.isFinite(p) || p <= 0) return res.status(400).json({ error: 'Invalid price' });
+    data.pricePerShare = p;
+  }
+  if (buyDate !== undefined) {
+    const d = new Date(buyDate);
+    if (Number.isNaN(d.getTime())) return res.status(400).json({ error: 'Invalid buy date' });
+    data.buyDate = d;
+  }
+  if (note !== undefined) data.note = note || null;
+  try {
+    const lot = await prisma.holdingLot.update({ where: { id }, data });
+    res.json(lot);
+  } catch {
+    res.status(404).json({ error: 'Lot not found' });
+  }
+});
+
+router.delete('/lots/:id', requireSuperAdmin, async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isFinite(id)) return res.status(400).json({ error: 'Invalid id' });
+  try {
+    await prisma.holdingLot.delete({ where: { id } });
+    res.json({ ok: true });
+  } catch {
+    res.status(404).json({ error: 'Lot not found' });
   }
 });
 

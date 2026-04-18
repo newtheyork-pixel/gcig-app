@@ -279,3 +279,19 @@ model PortfolioSnapshot {
   totalValue Float
   cashValue  Float?
 }
+
+// A single purchase lot for a ticker. We may buy the same stock at different
+// times and prices; tracking each lot gives us an exact cost basis instead
+// of relying on the sheet's rounded avg cost column.
+model HoldingLot {
+  id            Int      @id @default(autoincrement())
+  ticker        String
+  shares        Float
+  pricePerShare Float
+  buyDate       DateTime
+  note          String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([ticker])
+}

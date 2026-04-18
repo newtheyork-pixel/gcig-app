@@ -6,9 +6,12 @@ import {
   TrendingDown,
   FileText,
   BookOpen,
+  Plus,
+  Trash2,
 } from 'lucide-react';
 import api from '../api/client.js';
 import { safeHref } from '../api/safeUrl.js';
+import { useAuth } from '../context/AuthContext.jsx';
 import Modal from './Modal.jsx';
 
 function fmtMoney(n, currency = 'USD') {
@@ -48,10 +51,20 @@ function fmtPct(n) {
 
 export default function HoldingDetailModal({ holding, onClose }) {
   const ticker = holding?.ticker;
+  const { isSuperAdmin } = useAuth();
   const [info, setInfo] = useState(null);
   const [coverage, setCoverage] = useState(null);
+  const [lots, setLots] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+
+  function loadLots() {
+    if (!ticker) return Promise.resolve([]);
+    return api
+      .get(`/holdings/lots/${encodeURIComponent(ticker)}`)
+      .then(({ data }) => data)
+      .catch(() => []);
+  }
 
   useEffect(() => {
     if (!ticker) return;
@@ -60,6 +73,7 @@ export default function HoldingDetailModal({ holding, onClose }) {
     setError('');
     setInfo(null);
     setCoverage(null);
+    setLots([]);
     Promise.all([
       api
         .get(`/holdings/info/${encodeURIComponent(ticker)}`)
@@ -72,16 +86,30 @@ export default function HoldingDetailModal({ holding, onClose }) {
         .get(`/holdings/coverage/${encodeURIComponent(ticker)}`)
         .then(({ data }) => data)
         .catch(() => ({ pitches: [], reports: [] })),
-    ]).then(([infoData, coverageData]) => {
+      loadLots(),
+    ]).then(([infoData, coverageData, lotsData]) => {
       if (cancelled) return;
       setInfo(infoData);
       setCoverage(coverageData);
+      setLots(lotsData);
       setLoading(false);
     });
     return () => {
       cancelled = true;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ticker]);
+
+  async function refreshLots() {
+    const data = await loadLots();
+    setLots(data);
+  }
+
+  async function handleDeleteLot(id) {
+    if (!confirm('Delete this lot?')) return;
+    await api.delete(`/holdings/lots/${id}`);
+    refreshLots();
+  }
 
   // Our position math — pulled from the sheet-derived holding object.
   const ourMarketValue =
@@ -203,6 +231,19 @@ export default function HoldingDetailModal({ holding, onClose }) {
                 />
               </div>
             </div>
+          )}
+
+          {/* Purchase Lots — exact per-buy cost basis */}
+          {holding && !holding.isCash && (
+            <LotSection
+              ticker={ticker}
+              lots={lots}
+              currentPrice={info.price}
+              currency={info.currency}
+              canEdit={isSuperAdmin}
+              onChange={refreshLots}
+              onDelete={handleDeleteLot}
+            />
           )}
 
           {/* Our Coverage — pitches and reports authored by the club */}
@@ -386,6 +427,258 @@ function Stat({ label, value }) {
       <div className="text-sm font-semibold text-navy tabular-nums">
         {value ?? '—'}
       </div>
+    </div>
+  );
+}
+
+function LotSection({ ticker, lots, currentPrice, currency, canEdit, onChange, onDelete }) {
+  const [adding, setAdding] = useState(false);
+  const [form, setForm] = useState({ shares: '', pricePerShare: '', buyDate: '' });
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState('');
+
+  // Lot-level totals.
+  const totals = lots.reduce(
+    (acc, l) => {
+      const cost = l.shares * l.pricePerShare;
+      const mv = currentPrice != null ? l.shares * currentPrice : null;
+      acc.shares += l.shares;
+      acc.cost += cost;
+      if (mv != null) acc.mv = (acc.mv ?? 0) + mv;
+      return acc;
+    },
+    { shares: 0, cost: 0, mv: null }
+  );
+  const avgCost = totals.shares > 0 ? totals.cost / totals.shares : null;
+  const gainDollar = totals.mv != null ? totals.mv - totals.cost : null;
+  const gainPct = gainDollar != null && totals.cost > 0 ? (gainDollar / totals.cost) * 100 : null;
+
+  async function handleAdd(e) {
+    e.preventDefault();
+    setErr('');
+    setSaving(true);
+    try {
+      await api.post('/holdings/lots', {
+        ticker,
+        shares: Number(form.shares),
+        pricePerShare: Number(form.pricePerShare),
+        buyDate: new Date(form.buyDate).toISOString(),
+      });
+      setForm({ shares: '', pricePerShare: '', buyDate: '' });
+      setAdding(false);
+      onChange();
+    } catch (e2) {
+      setErr(e2.response?.data?.error || 'Failed to save lot');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div>
+      <div className="mb-2 flex items-center justify-between">
+        <div className="text-xs font-bold uppercase tracking-wider text-navy-400">
+          Purchase Lots
+        </div>
+        {canEdit && !adding && (
+          <button
+            onClick={() => setAdding(true)}
+            className="inline-flex items-center gap-1 rounded-lg border border-navy-100 px-2 py-1 text-[11px] font-semibold text-navy hover:bg-navy-50"
+          >
+            <Plus className="h-3 w-3" />
+            Add Lot
+          </button>
+        )}
+      </div>
+
+      {lots.length === 0 && !adding ? (
+        <div className="rounded-lg border border-dashed border-navy-100 bg-navy-50/40 p-3 text-center text-xs text-navy-400">
+          No lots recorded yet.
+        </div>
+      ) : (
+        <div className="overflow-x-auto rounded-lg border border-navy-100">
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="bg-navy-50 text-left text-[10px] uppercase tracking-wider text-navy-400">
+                <th className="px-3 py-2">Buy Date</th>
+                <th className="px-3 py-2 text-right">Shares</th>
+                <th className="px-3 py-2 text-right">Price</th>
+                <th className="px-3 py-2 text-right">Cost</th>
+                <th className="px-3 py-2 text-right">Market Value</th>
+                <th className="px-3 py-2 text-right">Return</th>
+                {canEdit && <th className="px-3 py-2"></th>}
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-navy-50">
+              {lots.map((l) => {
+                const cost = l.shares * l.pricePerShare;
+                const mv = currentPrice != null ? l.shares * currentPrice : null;
+                const gDollar = mv != null ? mv - cost : null;
+                const gPct = gDollar != null && cost > 0 ? (gDollar / cost) * 100 : null;
+                const up = (gDollar ?? 0) >= 0;
+                return (
+                  <tr key={l.id}>
+                    <td className="px-3 py-2 text-navy">
+                      {format(new Date(l.buyDate), 'MMM d, yyyy')}
+                    </td>
+                    <td className="px-3 py-2 text-right tabular-nums text-navy">
+                      {l.shares.toLocaleString('en-US')}
+                    </td>
+                    <td className="px-3 py-2 text-right tabular-nums text-navy">
+                      {fmtMoney(l.pricePerShare, currency)}
+                    </td>
+                    <td className="px-3 py-2 text-right tabular-nums text-navy">
+                      {fmtMoney(cost, currency)}
+                    </td>
+                    <td className="px-3 py-2 text-right tabular-nums text-navy">
+                      {mv != null ? fmtMoney(mv, currency) : '—'}
+                    </td>
+                    <td
+                      className={`px-3 py-2 text-right tabular-nums font-semibold ${
+                        gDollar == null ? 'text-navy-400' : up ? 'text-emerald-600' : 'text-red-600'
+                      }`}
+                    >
+                      {gDollar != null ? (
+                        <>
+                          {fmtMoney(gDollar, currency)}
+                          {gPct != null && (
+                            <span className="ml-1 text-[10px]">
+                              ({up ? '+' : ''}
+                              {gPct.toFixed(2)}%)
+                            </span>
+                          )}
+                        </>
+                      ) : (
+                        '—'
+                      )}
+                    </td>
+                    {canEdit && (
+                      <td className="px-3 py-2 text-right">
+                        <button
+                          onClick={() => onDelete(l.id)}
+                          className="rounded p-1 text-red-600 hover:bg-red-50"
+                          aria-label="Delete lot"
+                        >
+                          <Trash2 className="h-3 w-3" />
+                        </button>
+                      </td>
+                    )}
+                  </tr>
+                );
+              })}
+              {lots.length > 0 && (
+                <tr className="bg-navy-50/50 font-semibold">
+                  <td className="px-3 py-2 text-navy">Total</td>
+                  <td className="px-3 py-2 text-right tabular-nums text-navy">
+                    {totals.shares.toLocaleString('en-US')}
+                  </td>
+                  <td className="px-3 py-2 text-right tabular-nums text-navy-400">
+                    avg {avgCost != null ? fmtMoney(avgCost, currency) : '—'}
+                  </td>
+                  <td className="px-3 py-2 text-right tabular-nums text-navy">
+                    {fmtMoney(totals.cost, currency)}
+                  </td>
+                  <td className="px-3 py-2 text-right tabular-nums text-navy">
+                    {totals.mv != null ? fmtMoney(totals.mv, currency) : '—'}
+                  </td>
+                  <td
+                    className={`px-3 py-2 text-right tabular-nums ${
+                      gainDollar == null
+                        ? 'text-navy-400'
+                        : gainDollar >= 0
+                        ? 'text-emerald-600'
+                        : 'text-red-600'
+                    }`}
+                  >
+                    {gainDollar != null ? (
+                      <>
+                        {fmtMoney(gainDollar, currency)}
+                        {gainPct != null && (
+                          <span className="ml-1 text-[10px]">
+                            ({gainDollar >= 0 ? '+' : ''}
+                            {gainPct.toFixed(2)}%)
+                          </span>
+                        )}
+                      </>
+                    ) : (
+                      '—'
+                    )}
+                  </td>
+                  {canEdit && <td />}
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {canEdit && adding && (
+        <form
+          onSubmit={handleAdd}
+          className="mt-2 space-y-2 rounded-lg border border-navy-100 bg-navy-50/40 p-3"
+        >
+          <div className="grid grid-cols-3 gap-2">
+            <label className="block">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-navy-400">
+                Shares
+              </span>
+              <input
+                type="number"
+                step="any"
+                required
+                value={form.shares}
+                onChange={(e) => setForm({ ...form, shares: e.target.value })}
+                className="mt-1 w-full rounded-md border border-navy-100 px-2 py-1 text-sm"
+              />
+            </label>
+            <label className="block">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-navy-400">
+                Price / share
+              </span>
+              <input
+                type="number"
+                step="any"
+                required
+                value={form.pricePerShare}
+                onChange={(e) => setForm({ ...form, pricePerShare: e.target.value })}
+                className="mt-1 w-full rounded-md border border-navy-100 px-2 py-1 text-sm"
+              />
+            </label>
+            <label className="block">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-navy-400">
+                Buy date
+              </span>
+              <input
+                type="date"
+                required
+                value={form.buyDate}
+                onChange={(e) => setForm({ ...form, buyDate: e.target.value })}
+                className="mt-1 w-full rounded-md border border-navy-100 px-2 py-1 text-sm"
+              />
+            </label>
+          </div>
+          {err && <div className="text-xs text-red-600">{err}</div>}
+          <div className="flex justify-end gap-2">
+            <button
+              type="button"
+              onClick={() => {
+                setAdding(false);
+                setErr('');
+              }}
+              className="rounded border border-navy-100 px-3 py-1 text-xs font-semibold text-navy"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              disabled={saving}
+              className="rounded bg-navy px-3 py-1 text-xs font-semibold text-white disabled:opacity-60"
+            >
+              {saving ? 'Saving…' : 'Add Lot'}
+            </button>
+          </div>
+        </form>
+      )}
     </div>
   );
 }
