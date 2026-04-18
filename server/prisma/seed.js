@@ -12,6 +12,38 @@ const SNAPSHOT_CORRECTIONS = [
   { date: '2026-04-17', totalValue: 132239.81 },
 ];
 
+// Historical pitches that were voted down — we don't have the ballot-level
+// data, just the final decision. Match each known pitch by ticker + approx
+// date and stamp `votedOutcome = 'NoBuy'`. Idempotent.
+const NO_BUY_PITCHES = [
+  { ticker: 'INTU', date: '2026-01-28' },
+  { ticker: 'KSA', date: '2025-12-17' },
+  { ticker: 'CRM', date: '2025-11-12' },
+];
+
+async function seedNoBuyOutcomes() {
+  for (const p of NO_BUY_PITCHES) {
+    const start = new Date(`${p.date}T00:00:00Z`);
+    const end = new Date(`${p.date}T23:59:59Z`);
+    const match = await prisma.pitch.findFirst({
+      where: {
+        ticker: { equals: p.ticker, mode: 'insensitive' },
+        date: { gte: start, lte: end },
+      },
+    });
+    if (!match) {
+      console.log(`NoBuy seed: pitch ${p.ticker} on ${p.date} not found — skipping`);
+      continue;
+    }
+    if (match.votedOutcome === 'NoBuy') continue;
+    await prisma.pitch.update({
+      where: { id: match.id },
+      data: { votedOutcome: 'NoBuy' },
+    });
+    console.log(`Marked pitch ${p.ticker} (${p.date}) as NoBuy`);
+  }
+}
+
 async function seedSnapshotCorrections() {
   for (const c of SNAPSHOT_CORRECTIONS) {
     const date = new Date(`${c.date}T00:00:00Z`);
@@ -84,6 +116,7 @@ async function main() {
 
   await seedLots();
   await seedSnapshotCorrections();
+  await seedNoBuyOutcomes();
 }
 
 main()

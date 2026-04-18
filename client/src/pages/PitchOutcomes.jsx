@@ -268,6 +268,7 @@ export default function PitchOutcomes() {
                     <th className="py-2 pr-4">Ticker</th>
                     <th className="py-2 pr-4">Date</th>
                     <th className="py-2 pr-4">By</th>
+                    <th className="py-2 pr-4">Outcome</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-navy-50">
@@ -297,6 +298,19 @@ export default function PitchOutcomes() {
                       </td>
                       <td className="py-3 pr-4 text-sm text-navy">
                         {r.presenters.map((p) => p.name).join(', ')}
+                      </td>
+                      <td className="py-3 pr-4">
+                        {r.votedOutcome === 'NoBuy' ? (
+                          <span className="rounded-full bg-red-50 px-2 py-0.5 text-[10px] font-bold uppercase text-red-700">
+                            Voted No
+                          </span>
+                        ) : r.votedOutcome === 'Buy' ? (
+                          <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-bold uppercase text-emerald-700">
+                            Voted Buy
+                          </span>
+                        ) : (
+                          <span className="text-[10px] text-navy-400">—</span>
+                        )}
                       </td>
                     </tr>
                   ))}

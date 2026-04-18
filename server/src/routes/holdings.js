@@ -378,6 +378,67 @@ const ALLOWED_BENCHMARKS = new Set([
   'VXUS',
 ]);
 
+// Stooq is our primary historical-data source: free, no auth, no aggressive
+// rate limits. Yahoo is the fallback.
+async function fetchStooqDaily(symbol) {
+  const url = `https://stooq.com/q/d/l/?s=${encodeURIComponent(symbol.toLowerCase())}.us&i=d`;
+  const r = await fetch(url, {
+    headers: {
+      'User-Agent':
+        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+      Accept: 'text/csv,text/plain;q=0.9,*/*;q=0.8',
+    },
+  });
+  if (!r.ok) return null;
+  const text = await r.text();
+  if (!text || text.startsWith('No data') || !text.includes(',')) return null;
+  // CSV: Date,Open,High,Low,Close,Volume
+  const lines = text.trim().split(/\r?\n/);
+  if (lines.length < 2) return null;
+  const header = lines[0].split(',').map((h) => h.trim().toLowerCase());
+  const dateIdx = header.indexOf('date');
+  const closeIdx = header.indexOf('close');
+  if (dateIdx === -1 || closeIdx === -1) return null;
+  // Keep last ~2 years so we match the Yahoo range.
+  const cutoff = new Date();
+  cutoff.setFullYear(cutoff.getFullYear() - 2);
+  const series = [];
+  for (let i = 1; i < lines.length; i++) {
+    const cols = lines[i].split(',');
+    const d = cols[dateIdx];
+    const c = Number(cols[closeIdx]);
+    if (!d || !Number.isFinite(c)) continue;
+    if (new Date(d) < cutoff) continue;
+    series.push({ date: d, close: c });
+  }
+  return series.length > 0 ? series : null;
+}
+
+async function fetchYahooDaily(symbol) {
+  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}?interval=1d&range=2y`;
+  const r = await fetch(url, {
+    headers: {
+      'User-Agent':
+        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+      Accept: 'application/json',
+    },
+  });
+  if (!r.ok) return null;
+  const json = await r.json();
+  const result = json?.chart?.result?.[0];
+  const timestamps = result?.timestamp || [];
+  const closes = result?.indicators?.quote?.[0]?.close || [];
+  const series = [];
+  for (let i = 0; i < timestamps.length; i++) {
+    if (closes[i] == null) continue;
+    series.push({
+      date: new Date(timestamps[i] * 1000).toISOString().slice(0, 10),
+      close: closes[i],
+    });
+  }
+  return series.length > 0 ? series : null;
+}
+
 router.get('/benchmark/:symbol', async (req, res) => {
   const sym = String(req.params.symbol || '').trim().toUpperCase();
   if (!ALLOWED_BENCHMARKS.has(sym)) {
@@ -388,31 +449,23 @@ router.get('/benchmark/:symbol', async (req, res) => {
     return res.json(cached.data);
   }
   try {
-    // 2 years of daily closes covers every time range the UI supports.
-    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(sym)}?interval=1d&range=2y`;
-    const r = await fetch(url, {
-      headers: {
-        'User-Agent':
-          'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-        Accept: 'application/json',
-      },
+    // Try Stooq first (reliable), then Yahoo as fallback.
+    let series = await fetchStooqDaily(sym).catch((e) => {
+      console.warn(`stooq(${sym}) failed:`, e.message);
+      return null;
     });
-    if (!r.ok) {
-      return res.status(502).json({ error: `Yahoo returned ${r.status}` });
-    }
-    const json = await r.json();
-    const result = json?.chart?.result?.[0];
-    const timestamps = result?.timestamp || [];
-    const closes = result?.indicators?.quote?.[0]?.close || [];
-    const series = [];
-    for (let i = 0; i < timestamps.length; i++) {
-      if (closes[i] == null) continue;
-      series.push({
-        date: new Date(timestamps[i] * 1000).toISOString().slice(0, 10),
-        close: closes[i],
+    let source = 'stooq';
+    if (!series || series.length === 0) {
+      series = await fetchYahooDaily(sym).catch((e) => {
+        console.warn(`yahoo(${sym}) failed:`, e.message);
+        return null;
       });
+      source = 'yahoo';
     }
-    const data = { symbol: sym, series };
+    if (!series || series.length === 0) {
+      return res.status(502).json({ error: 'No data from Stooq or Yahoo' });
+    }
+    const data = { symbol: sym, series, source };
     BENCHMARK_CACHE.set(sym, { at: Date.now(), data });
     res.json(data);
   } catch (err) {

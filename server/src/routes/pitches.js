@@ -147,6 +147,7 @@ router.get('/outcomes/all', async (_req, res) => {
         presenters,
         industry: p.industryId,
         isPosition: !!o.holding,
+        votedOutcome: p.votedOutcome,
         buyPrice: o.buyPrice,
         buyDate: o.lot?.buyDate ?? null,
         currentPrice: o.currentPrice,

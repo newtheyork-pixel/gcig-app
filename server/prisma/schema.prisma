@@ -151,6 +151,9 @@ model Pitch {
   slideshowUrl    String?
   industryId      Int?
   industry        Industry?        @relation(fields: [industryId], references: [id], onDelete: SetNull)
+  // What the club decided after the pitch: "Buy" = we bought, "NoBuy" = we
+  // voted no, null = not voted / still pending.
+  votedOutcome    String?
   createdAt       DateTime         @default(now())
   votingSessions  VotingSession[]
   presenters      PitchPresenter[]
