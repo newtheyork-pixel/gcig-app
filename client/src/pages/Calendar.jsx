@@ -286,7 +286,11 @@ export default function Calendar() {
             Event
           </span>
         </div>
-        <div style={{ height: 600 }}>
+        {/* Mobile: agenda list. Desktop: full BigCalendar grid. */}
+        <div className="md:hidden">
+          <MobileAgenda events={calendarEvents} onSelect={handleSelectEvent} />
+        </div>
+        <div className="hidden md:block" style={{ height: 600 }}>
           <BigCalendar
             localizer={localizer}
             events={calendarEvents}
@@ -593,6 +597,88 @@ export default function Calendar() {
         </form>
       </Modal>
     </>
+  );
+}
+
+// Mobile fallback for the calendar grid. Shows a scrollable agenda of the
+// next 30 days of events + pitches (plus the most recent past events so
+// history is still reachable). Pitches are tinted gold, events navy — same
+// palette as the desktop grid.
+function MobileAgenda({ events, onSelect }) {
+  const now = new Date();
+  const horizon = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
+  const pastLimit = new Date(now.getTime() - 14 * 24 * 60 * 60 * 1000);
+  const visible = events
+    .filter((e) => e.start >= pastLimit && e.start <= horizon)
+    .sort((a, b) => a.start - b.start);
+
+  if (visible.length === 0) {
+    return (
+      <div className="py-10 text-center text-sm text-navy-400">
+        Nothing on the calendar in the next 30 days.
+      </div>
+    );
+  }
+
+  // Group by date (YYYY-MM-DD).
+  const groups = new Map();
+  for (const e of visible) {
+    const key = format(e.start, 'yyyy-MM-dd');
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(e);
+  }
+
+  return (
+    <div className="space-y-5">
+      {[...groups.entries()].map(([dayKey, dayEvents]) => {
+        const day = new Date(dayKey);
+        const isToday = format(now, 'yyyy-MM-dd') === dayKey;
+        return (
+          <div key={dayKey}>
+            <div className="mb-2 flex items-baseline gap-2 border-b border-navy-50 pb-1">
+              <div className={`text-sm font-bold ${isToday ? 'text-gold-700' : 'text-navy'}`}>
+                {format(day, 'EEE, MMM d')}
+              </div>
+              {isToday && (
+                <span className="rounded-full bg-gold px-2 py-0.5 text-[10px] font-bold uppercase text-navy">
+                  Today
+                </span>
+              )}
+            </div>
+            <div className="space-y-2">
+              {dayEvents.map((e) => {
+                const isPitch = e.resource?.type === 'pitch';
+                return (
+                  <button
+                    key={e.id}
+                    onClick={() => onSelect(e)}
+                    className={`flex w-full items-start gap-3 rounded-lg border px-3 py-2 text-left transition ${
+                      isPitch
+                        ? 'border-gold-300 bg-gold-100/40 hover:bg-gold-100/70'
+                        : 'border-navy-100 bg-white hover:bg-navy-50'
+                    }`}
+                  >
+                    <div className="w-14 shrink-0 text-xs text-navy-400 tabular-nums">
+                      {format(e.start, 'h:mm a')}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="truncate text-sm font-semibold text-navy">
+                        {e.title}
+                      </div>
+                      {e.resource?.data?.location && (
+                        <div className="truncate text-[11px] text-navy-400">
+                          {e.resource.data.location}
+                        </div>
+                      )}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })}
+    </div>
   );
 }
 

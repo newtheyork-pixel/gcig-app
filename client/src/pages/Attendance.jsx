@@ -196,7 +196,18 @@ function AdminAttendance() {
           </div>
         ) : (
           <>
-            <div className="overflow-x-auto">
+            {/* Mobile: one event at a time. Defaults to the current meeting;
+                a pill bar at the top lets you switch. Each member is its own
+                row with a big dropdown. */}
+            <MobileAttendance
+              events={visibleEvents}
+              users={data.users}
+              recordMap={recordMap}
+              currentEventId={currentEventId}
+              setStatus={setStatus}
+            />
+
+            <div className="hidden md:block overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-navy-100 text-left text-xs uppercase text-navy-400">
@@ -290,5 +301,83 @@ function AdminAttendance() {
         )}
       </Card>
     </>
+  );
+}
+
+function MobileAttendance({ events, users, recordMap, currentEventId, setStatus }) {
+  const [selectedEventId, setSelectedEventId] = useState(
+    currentEventId || events[0]?.id || null
+  );
+  // Re-sync when the parent's current event changes (e.g. after fetch).
+  useEffect(() => {
+    if (!selectedEventId && (currentEventId || events[0]?.id)) {
+      setSelectedEventId(currentEventId || events[0]?.id || null);
+    }
+  }, [currentEventId, events, selectedEventId]);
+
+  const selected = events.find((e) => e.id === selectedEventId) || events[0];
+  if (!selected) return null;
+
+  return (
+    <div className="md:hidden">
+      {/* Event pill selector */}
+      <div className="-mx-2 flex gap-2 overflow-x-auto px-2 pb-3">
+        {events.map((e) => {
+          const isCurrent = e.id === currentEventId;
+          const isActive = e.id === selected.id;
+          return (
+            <button
+              key={e.id}
+              onClick={() => setSelectedEventId(e.id)}
+              className={`shrink-0 rounded-full border px-3 py-1.5 text-xs font-semibold transition ${
+                isActive
+                  ? 'border-navy bg-navy text-white'
+                  : isCurrent
+                  ? 'border-gold bg-gold-100/60 text-navy'
+                  : 'border-navy-100 bg-white text-navy-400'
+              }`}
+            >
+              {isCurrent && !isActive && <span className="mr-1 text-gold">●</span>}
+              <span>{e.title}</span>
+              <span className="ml-2 opacity-60">
+                {format(new Date(e.date), 'M/d')}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+
+      <div className="mb-2 text-xs text-navy-400">
+        {format(new Date(selected.date), 'EEE, MMM d, yyyy')}
+      </div>
+
+      <ul className="divide-y divide-navy-50">
+        {users.map((u) => {
+          const status = recordMap.get(`${u.id}:${selected.id}`) || '';
+          return (
+            <li key={u.id} className="flex items-center justify-between gap-3 py-3">
+              <div className="min-w-0 flex-1">
+                <div className="truncate font-semibold text-navy">{u.name}</div>
+                <div className="mt-0.5"><RoleBadge role={u.role} /></div>
+              </div>
+              <select
+                value={status}
+                onChange={(ev) => setStatus(u.id, selected.id, ev.target.value)}
+                className={`shrink-0 rounded-md border border-navy-100 px-2 py-2 text-xs font-semibold ${
+                  status ? STATUS_COLORS[status] : ''
+                }`}
+              >
+                <option value="">—</option>
+                {STATUSES.map((s) => (
+                  <option key={s} value={s}>
+                    {s}
+                  </option>
+                ))}
+              </select>
+            </li>
+          );
+        })}
+      </ul>
+    </div>
   );
 }

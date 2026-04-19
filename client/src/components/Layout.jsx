@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Outlet } from 'react-router-dom';
-import { Menu, X } from 'lucide-react';
 import Sidebar from './Sidebar.jsx';
+import MobileTabBar from './MobileTabBar.jsx';
 import VoteNotification from './VoteNotification.jsx';
 import PitchNotification from './PitchNotification.jsx';
 
@@ -12,15 +12,16 @@ export default function Layout() {
     <div className="flex h-full bg-[#F7F8FB]">
       <VoteNotification />
       <PitchNotification />
-      {/* Desktop sidebar */}
+
+      {/* Desktop sidebar — hidden below md */}
       <div className="hidden md:block shrink-0">
         <Sidebar />
       </div>
 
-      {/* Mobile drawer */}
+      {/* Mobile "More" drawer — overflow nav from the tab bar */}
       {drawerOpen && (
         <div
-          className="fixed inset-0 z-40 bg-navy/50 md:hidden"
+          className="fixed inset-0 z-50 bg-navy/60 md:hidden"
           onClick={() => setDrawerOpen(false)}
         >
           <div
@@ -33,23 +34,14 @@ export default function Layout() {
       )}
 
       <main className="flex-1 overflow-y-auto">
-        {/* Mobile header */}
-        <div className="md:hidden sticky top-0 z-30 flex items-center justify-between bg-navy px-4 py-3 text-white">
-          <button
-            onClick={() => setDrawerOpen(!drawerOpen)}
-            className="rounded-lg p-1 hover:bg-navy-500"
-            aria-label="Toggle menu"
-          >
-            {drawerOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
-          </button>
-          <div className="text-sm font-semibold tracking-[0.15em] uppercase text-gold">Investment Group</div>
-          <div className="w-7" />
-        </div>
-
-        <div className="mx-auto max-w-7xl px-4 py-6 md:px-8 md:py-8">
+        {/* Extra bottom padding on mobile so the tab bar doesn't cover the
+            last row of content. Desktop gets the normal py-8. */}
+        <div className="mx-auto max-w-7xl px-4 pt-4 pb-[calc(5.5rem+env(safe-area-inset-bottom))] md:px-8 md:pt-8 md:pb-8">
           <Outlet />
         </div>
       </main>
+
+      <MobileTabBar onOpenMore={() => setDrawerOpen(true)} />
     </div>
   );
 }

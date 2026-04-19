@@ -546,7 +546,87 @@ export default function Portfolio() {
               No positions found in the sheet.
             </div>
           ) : (
-            <div className="overflow-x-auto">
+            <>
+            {/* Mobile: stacked cards */}
+            <div className="space-y-2 md:hidden">
+              {holdings.map((h) => {
+                const up = (h.dollarReturn ?? 0) >= 0;
+                const marketValue =
+                  h.marketValue ??
+                  (h.shares != null && h.price != null ? h.shares * h.price : null);
+                return (
+                  <button
+                    key={h.ticker}
+                    onClick={() => !h.isCash && setSelectedHolding(h)}
+                    disabled={h.isCash}
+                    className={`w-full rounded-lg border border-navy-100 px-3 py-3 text-left transition ${
+                      h.isCash
+                        ? 'bg-gold-100/40 cursor-default'
+                        : 'bg-white active:bg-navy-50'
+                    }`}
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-baseline gap-2">
+                          <span className="font-bold text-navy">{h.ticker}</span>
+                          {h.portfolioPct != null && (
+                            <span className="text-[10px] font-semibold text-navy-400">
+                              {h.portfolioPct.toFixed(1)}%
+                            </span>
+                          )}
+                        </div>
+                        <div className="truncate text-xs text-navy-400">{h.name}</div>
+                        {h.sector && !h.isCash && (
+                          <div className="mt-0.5 text-[10px] uppercase tracking-wider text-navy-400">
+                            {h.sector}
+                          </div>
+                        )}
+                      </div>
+                      <div className="text-right tabular-nums">
+                        <div className="font-bold text-navy">{fmtMoney(marketValue)}</div>
+                        {!h.isCash && (
+                          <div
+                            className={`text-xs font-semibold ${
+                              up ? 'text-emerald-600' : 'text-red-600'
+                            }`}
+                          >
+                            {fmtPct(h.percentReturn)}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                    {!h.isCash && (
+                      <div className="mt-2 flex justify-between gap-2 border-t border-navy-50 pt-2 text-[11px] text-navy-400">
+                        <span>
+                          {h.shares ?? '—'} sh @ {fmtMoney(h.costBasis)}
+                        </span>
+                        <span className={up ? 'text-emerald-600' : 'text-red-600'}>
+                          {fmtMoney(h.dollarReturn)}
+                        </span>
+                      </div>
+                    )}
+                  </button>
+                );
+              })}
+              <div className="mt-3 flex items-center justify-between rounded-lg border-2 border-navy-100 px-3 py-3 text-sm">
+                <span className="font-bold text-navy">
+                  Total ({holdings.length})
+                </span>
+                <div className="text-right">
+                  <div className="font-bold text-navy tabular-nums">
+                    {fmtMoney(totals.totalValue)}
+                  </div>
+                  <div
+                    className={`text-xs font-semibold ${isUp ? 'text-emerald-600' : 'text-red-600'}`}
+                  >
+                    {fmtPct(lifetimeGainLossPct)}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Desktop: full table */}
+            <div className="hidden md:block overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
                   <tr className="border-b border-navy-100 text-left text-xs uppercase text-navy-400">
@@ -650,10 +730,11 @@ export default function Portfolio() {
                 </tfoot>
               </table>
             </div>
+            </>
           )}
           <div className="mt-4 text-xs text-navy-400">
             Positions and prices are read live from the club's Google Sheet. To
-            add or remove a position, edit the sheet directly. Click any
+            add or remove a position, edit the sheet directly. Tap any
             holding to see company details.
           </div>
         </Card>

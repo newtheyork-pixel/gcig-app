@@ -39,7 +39,50 @@ export default function AuditLog({ embedded = false } = {}) {
         ) : logs.length === 0 ? (
           <div className="py-8 text-center text-navy-400">No events yet.</div>
         ) : (
-          <div className="overflow-x-auto">
+          <>
+          {/* Mobile: card list with key fields only */}
+          <ul className="space-y-2 md:hidden">
+            {logs.map((l) => {
+              const color = ACTION_COLOR[l.action] || 'bg-navy-50 text-navy';
+              let metaPreview = '';
+              if (l.metadata) {
+                try {
+                  const parsed = JSON.parse(l.metadata);
+                  metaPreview = Object.entries(parsed)
+                    .map(([k, v]) => `${k}=${v}`)
+                    .join(', ');
+                } catch {
+                  metaPreview = l.metadata;
+                }
+              }
+              return (
+                <li key={l.id} className="rounded-lg border border-navy-100 px-3 py-2">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0 flex-1">
+                      <span
+                        className={`inline-block rounded-full px-2 py-0.5 text-[10px] font-bold ${color}`}
+                      >
+                        {l.action}
+                      </span>
+                      <div className="mt-1 truncate text-sm text-navy">
+                        {l.userName || '—'}
+                      </div>
+                      {metaPreview && (
+                        <div className="mt-0.5 truncate text-[11px] text-navy-400">
+                          {metaPreview}
+                        </div>
+                      )}
+                    </div>
+                    <div className="shrink-0 text-right text-[10px] text-navy-400">
+                      <div>{format(new Date(l.createdAt), 'MMM d')}</div>
+                      <div>{format(new Date(l.createdAt), 'h:mm a')}</div>
+                    </div>
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+          <div className="hidden md:block overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-navy-100 text-left text-xs uppercase text-navy-400">
@@ -94,6 +137,7 @@ export default function AuditLog({ embedded = false } = {}) {
               </tbody>
             </table>
           </div>
+          </>
         )}
       </Card>
     </>

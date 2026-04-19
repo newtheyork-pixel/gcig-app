@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { format, isToday, isYesterday } from 'date-fns';
-import { Send, Hash, Building2, Trash2 } from 'lucide-react';
+import { Send, Hash, Building2, Trash2, Menu, X } from 'lucide-react';
 import api from '../api/client.js';
 import { useAuth } from '../context/AuthContext.jsx';
 import PageHeader from '../components/PageHeader.jsx';
@@ -26,6 +26,7 @@ export default function Chat() {
   const lastIdRef = useRef(0);
   const scrollRef = useRef(null);
   const pollingRef = useRef(null);
+  const [channelsOpen, setChannelsOpen] = useState(false);
 
   // Load the channel list once.
   useEffect(() => {
@@ -137,11 +138,22 @@ export default function Chat() {
         subtitle="Real-time messaging for the whole group and each industry pod."
       />
 
-      <div className="flex h-[calc(100vh-220px)] min-h-[500px] overflow-hidden rounded-xl border border-navy-100 bg-white shadow-card">
-        {/* Channel list */}
-        <aside className="flex w-56 shrink-0 flex-col border-r border-navy-100 bg-navy-50">
-          <div className="px-4 py-3 text-xs font-semibold uppercase tracking-wider text-navy-400">
+      <div className="relative flex h-[calc(100vh-180px)] min-h-[420px] overflow-hidden rounded-xl border border-navy-100 bg-white shadow-card md:h-[calc(100vh-220px)] md:min-h-[500px]">
+        {/* Channel list — always visible on desktop, slide-in drawer on mobile */}
+        <aside
+          className={`absolute inset-y-0 left-0 z-20 flex w-64 shrink-0 flex-col border-r border-navy-100 bg-navy-50 transition-transform md:static md:w-56 md:translate-x-0 ${
+            channelsOpen ? 'translate-x-0 shadow-xl' : '-translate-x-full'
+          }`}
+        >
+          <div className="flex items-center justify-between px-4 py-3 text-xs font-semibold uppercase tracking-wider text-navy-400">
             Channels
+            <button
+              onClick={() => setChannelsOpen(false)}
+              className="rounded p-1 text-navy-400 hover:bg-navy-100 md:hidden"
+              aria-label="Close channels"
+            >
+              <X className="h-4 w-4" />
+            </button>
           </div>
           <nav className="flex-1 overflow-y-auto px-2 pb-3">
             {allChannels.map((c) => {
@@ -150,7 +162,10 @@ export default function Chat() {
               return (
                 <button
                   key={c.key}
-                  onClick={() => setActiveChannel(c.key)}
+                  onClick={() => {
+                    setActiveChannel(c.key);
+                    setChannelsOpen(false);
+                  }}
                   className={`mb-1 flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm transition ${
                     active
                       ? 'bg-navy text-white'
@@ -170,16 +185,31 @@ export default function Chat() {
           </nav>
         </aside>
 
+        {/* Scrim when the mobile drawer is open */}
+        {channelsOpen && (
+          <div
+            className="absolute inset-0 z-10 bg-navy/40 md:hidden"
+            onClick={() => setChannelsOpen(false)}
+          />
+        )}
+
         {/* Messages + input */}
-        <div className="flex flex-1 flex-col">
-          <div className="flex items-center gap-2 border-b border-navy-100 px-5 py-3">
+        <div className="flex min-w-0 flex-1 flex-col">
+          <div className="flex items-center gap-2 border-b border-navy-100 px-3 py-3 md:px-5">
+            <button
+              onClick={() => setChannelsOpen(true)}
+              className="rounded-lg p-1.5 text-navy-400 hover:bg-navy-50 md:hidden"
+              aria-label="Open channels"
+            >
+              <Menu className="h-4 w-4" />
+            </button>
             <Hash className="h-4 w-4 text-navy-400" />
             <div className="font-semibold text-navy">{activeLabel}</div>
           </div>
 
           <div
             ref={scrollRef}
-            className="flex-1 overflow-y-auto px-5 py-4 space-y-3"
+            className="flex-1 overflow-y-auto px-3 py-3 space-y-3 md:px-5 md:py-4"
           >
             {messages.length === 0 ? (
               <div className="py-12 text-center text-sm text-navy-400">
@@ -237,7 +267,7 @@ export default function Chat() {
 
           <form
             onSubmit={sendMessage}
-            className="border-t border-navy-100 px-5 py-3"
+            className="border-t border-navy-100 px-3 py-3 md:px-5"
           >
             {error && (
               <div className="mb-2 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700">
