@@ -21,7 +21,7 @@ import RoleBadge from './RoleBadge.jsx';
 // into 4 scannable clusters instead of a flat list of 12.
 const NAV_SECTIONS = [
   {
-    items: [{ to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard, end: true }],
+    items: [{ to: '/', label: 'Dashboard', icon: LayoutDashboard, end: true }],
   },
   {
     header: 'Day to day',

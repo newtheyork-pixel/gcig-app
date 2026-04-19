@@ -40,7 +40,7 @@ export default function AcceptInvite() {
       .finally(() => setLoading(false));
   }, [token]);
 
-  if (user) return <Navigate to="/dashboard" replace />;
+  if (user) return <Navigate to="/" replace />;
 
   async function handleSubmit(e) {
     e.preventDefault();
@@ -58,7 +58,7 @@ export default function AcceptInvite() {
       const { data } = await api.post('/auth/accept-invite', { token, password });
       localStorage.setItem('gcig_token', data.token);
       localStorage.setItem('gcig_user', JSON.stringify(data.user));
-      window.location.href = '/dashboard';
+      window.location.href = '/';
     } catch (err) {
       setError(err.response?.data?.error || 'Failed to set up account');
     } finally {

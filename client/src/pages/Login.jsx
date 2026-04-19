@@ -36,7 +36,7 @@ export default function Login() {
   const [emailSent, setEmailSent] = useState(false);
   const codeRefs = useRef([]);
 
-  if (user) return <Navigate to="/dashboard" replace />;
+  if (user) return <Navigate to="/" replace />;
 
   async function handleLogin(e) {
     e.preventDefault();
@@ -58,7 +58,7 @@ export default function Login() {
         setMessage('');
         setEmailSent(false);
       } else {
-        navigate('/dashboard');
+        navigate('/');
       }
     } catch (err) {
       setError(err.response?.data?.error || 'Login failed');
@@ -73,7 +73,7 @@ export default function Login() {
     setSubmitting(true);
     try {
       await verifyTwoFactor(challengeToken, twoFactorCode.trim());
-      navigate('/dashboard');
+      navigate('/');
     } catch (err) {
       setError(err.response?.data?.error || 'Verification failed');
     } finally {
@@ -125,7 +125,7 @@ export default function Login() {
     }
     try {
       await verify(pendingEmail, codeStr);
-      navigate('/dashboard');
+      navigate('/');
     } catch (err) {
       setError(err.response?.data?.error || 'Verification failed');
     } finally {
