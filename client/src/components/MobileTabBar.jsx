@@ -16,7 +16,7 @@ import {
 // mobile only with `md:hidden`.
 
 const TABS = [
-  { to: '/', label: 'Home', icon: LayoutDashboard, end: true },
+  { to: '/dashboard', label: 'Home', icon: LayoutDashboard, end: true },
   { to: '/portfolio', label: 'Portfolio', icon: LineChart },
   { to: '/chat', label: 'Chat', icon: MessageSquare },
   { to: '/calendar', label: 'Calendar', icon: CalendarDays },

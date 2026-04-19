@@ -29,6 +29,9 @@ export default {
       },
       fontFamily: {
         sans: ['Inter', 'system-ui', '-apple-system', 'sans-serif'],
+        // Institutional serif used on the public landing page. Source Serif 4
+        // is free-to-host and reads cleanly at both display and body sizes.
+        serif: ['"Source Serif 4"', 'Georgia', 'serif'],
       },
       boxShadow: {
         card: '0 1px 3px rgba(27, 42, 74, 0.08), 0 1px 2px rgba(27, 42, 74, 0.04)',
