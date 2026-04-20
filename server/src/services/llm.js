@@ -25,6 +25,15 @@ function normalizeBase(raw) {
   return `${s}/v1`;
 }
 
+// OpenAI's gpt-5 / o-series reasoning models reject non-default temperature
+// and require max_completion_tokens instead of max_tokens. Detect by name
+// prefix so we omit the params cleanly.
+function isReasoningModel(model) {
+  if (!model) return false;
+  const m = String(model).toLowerCase();
+  return m.startsWith('gpt-5') || m.startsWith('o1') || m.startsWith('o3') || m.startsWith('o4');
+}
+
 async function callEndpoint({
   endpoint,
   apiKey,
@@ -37,6 +46,14 @@ async function callEndpoint({
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
+    const body = {
+      model,
+      messages,
+      ...(jsonMode ? { response_format: { type: 'json_object' } } : {}),
+    };
+    if (!isReasoningModel(model) && temperature != null) {
+      body.temperature = temperature;
+    }
     const res = await fetch(endpoint, {
       method: 'POST',
       signal: controller.signal,
@@ -44,14 +61,19 @@ async function callEndpoint({
         'Content-Type': 'application/json',
         ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
       },
-      body: JSON.stringify({
-        model,
-        temperature: temperature ?? 0.2,
-        ...(jsonMode ? { response_format: { type: 'json_object' } } : {}),
-        messages,
-      }),
+      body: JSON.stringify(body),
     });
-    if (!res.ok) return { ok: false, status: res.status };
+    if (!res.ok) {
+      const text = await res.text().catch(() => '');
+      let detail = '';
+      try {
+        const parsed = JSON.parse(text);
+        detail = parsed?.error?.message || '';
+      } catch {
+        detail = text.slice(0, 200);
+      }
+      return { ok: false, status: res.status, detail };
+    }
     const json = await res.json();
     const content = json?.choices?.[0]?.message?.content;
     return { ok: true, content: typeof content === 'string' ? content : null };
@@ -140,7 +162,9 @@ export async function probeProviders({ timeoutMs = 6000 } = {}) {
     if (r.ok) {
       status.local.ok = true;
     } else {
-      status.local.error = r.status ? `HTTP ${r.status}` : r.error?.message || 'unreachable';
+      status.local.error = r.status
+        ? `HTTP ${r.status}${r.detail ? ' — ' + r.detail : ''}`
+        : r.error?.message || 'unreachable';
     }
   }
 
@@ -159,7 +183,9 @@ export async function probeProviders({ timeoutMs = 6000 } = {}) {
     if (r.ok) {
       status.openai.ok = true;
     } else {
-      status.openai.error = r.status ? `HTTP ${r.status}` : r.error?.message || 'unreachable';
+      status.openai.error = r.status
+        ? `HTTP ${r.status}${r.detail ? ' — ' + r.detail : ''}`
+        : r.error?.message || 'unreachable';
     }
   }
 
