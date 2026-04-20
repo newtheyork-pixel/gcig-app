@@ -55,7 +55,28 @@ export async function getNewsForTicker(ticker, name) {
   const ck = cacheKey(ticker, name);
   const cached = cache.get(ck);
   if (cached && Date.now() - cached.at < CACHE_TTL_MS) {
-    return cached.data;
+    // If the cached batch was fetched while the LLM was unreachable (e.g.
+    // the tunnel was down), it'll be sitting here unranked for 15 minutes.
+    // Try to rank it again on cache hit — the ranker is cheap when every
+    // URL is already in the ArticleRanking DB, and will retry the LLM for
+    // the unknown ones if it's now available.
+    const data = cached.data;
+    const hasRankings = data.articles.some(
+      (a) => typeof a.score === 'number'
+    );
+    if (!hasRankings && process.env.LOCAL_LLM_URL) {
+      try {
+        const retried = await rankArticles(data.articles, { ticker });
+        data.articles = retried;
+        data.ranked = retried.some((a) => typeof a.score === 'number');
+        if (!data.narrative) {
+          data.narrative = await summarizeTickerNews(ticker, retried);
+        }
+      } catch {
+        /* keep original cached payload */
+      }
+    }
+    return data;
   }
 
   const override = TICKER_TOPIC_OVERRIDES[ticker];
