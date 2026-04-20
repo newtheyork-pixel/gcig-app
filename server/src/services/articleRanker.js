@@ -1,6 +1,5 @@
-// Ranks newsapi articles by investment materiality using a locally hosted
-// OpenAI-compatible LLM (Ollama running Qwen 2.5 on the club's own hardware,
-// tunneled to Render via Cloudflare).
+// Ranks newsapi articles by investment materiality. Uses the shared llm
+// client, which tries local Ollama first and falls back to OpenAI.
 //
 // Rankings are persisted per URL in the ArticleRanking table so we never
 // pay to re-classify the same article twice. On every call we:
@@ -10,21 +9,11 @@
 //   4. Merge cached + newly-computed rankings back into the article list
 // If every article in a batch is already ranked, the LLM is never called.
 //
-// Config:
-//   LOCAL_LLM_URL         required. Base URL ending at /v1 or the host root,
-//                         e.g. "https://llm.thegriffinfund.org" or
-//                         "https://xyz.trycloudflare.com". Ollama exposes
-//                         the OpenAI-compatible endpoint at /v1/chat/completions.
-//   LOCAL_LLM_MODEL       defaults to "qwen2.5:14b-instruct-q4_K_M"
-//   LOCAL_LLM_TIMEOUT_MS  defaults to 25000
-//
-// If LOCAL_LLM_URL is missing or the call fails/times out, cached rankings
-// are still applied; uncached articles just stay unranked. Ranking is
-// strictly a best-effort enhancement — never blocks news delivery.
+// If every provider fails, cached rankings are still applied; uncached
+// articles just stay unranked. Ranking is strictly a best-effort
+// enhancement — never blocks news delivery.
 import prisma from '../db.js';
-
-const DEFAULT_MODEL = 'qwen2.5:14b-instruct-q4_K_M';
-const DEFAULT_TIMEOUT_MS = 25_000;
+import { llmChat } from './llm.js';
 
 const SYSTEM_PROMPT = `You are ranking news articles for a student-run investment club. For each article, score its MATERIALITY on a 0.0 to 10.0 scale with one decimal place. Higher = more likely to move the stock or change the investment thesis.
 
@@ -133,106 +122,72 @@ export async function rankArticles(articles, { ticker } = {}) {
   const known = articles.filter((a) => persisted.has(a.url));
   const unknown = articles.filter((a) => a.url && !persisted.has(a.url));
 
-  const model = process.env.LOCAL_LLM_MODEL || DEFAULT_MODEL;
-
-  // If everything is already ranked, or the LLM is disabled and nothing is
-  // ranked yet, we just apply what we have and return.
-  const llmUrl = process.env.LOCAL_LLM_URL;
-  if (!llmUrl || unknown.length === 0) {
+  // If everything is already ranked, or no LLM provider is configured and
+  // nothing is cached yet, apply what we have and return.
+  const anyProvider = !!(process.env.LOCAL_LLM_URL || process.env.OPENAI_API_KEY);
+  if (!anyProvider || unknown.length === 0) {
     return applyAndSort(articles, persisted);
   }
-
-  const timeoutMs = Number(process.env.LOCAL_LLM_TIMEOUT_MS) || DEFAULT_TIMEOUT_MS;
 
   // Only send the unknown subset to the LLM. Reduces tokens and honors
   // "don't re-rank what we've already seen".
   const compact = compactForRanking(unknown);
 
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  const endpoint = `${baseUrl(llmUrl)}/chat/completions`;
-
-  try {
-    const res = await fetch(endpoint, {
-      method: 'POST',
-      signal: controller.signal,
-      headers: {
-        'Content-Type': 'application/json',
-        // Optional bearer — some tunnel / reverse-proxy setups want one.
-        ...(process.env.LOCAL_LLM_API_KEY
-          ? { Authorization: `Bearer ${process.env.LOCAL_LLM_API_KEY}` }
-          : {}),
+  const content = await llmChat({
+    messages: [
+      { role: 'system', content: SYSTEM_PROMPT },
+      {
+        role: 'user',
+        content: `Ticker context: ${ticker || 'unspecified'}\n\nArticles:\n${JSON.stringify(compact)}`,
       },
-      body: JSON.stringify({
-        model,
-        temperature: 0.1,
-        // JSON mode — both OpenAI and Ollama's openai-compat endpoint honor it.
-        response_format: { type: 'json_object' },
-        messages: [
-          { role: 'system', content: SYSTEM_PROMPT },
-          {
-            role: 'user',
-            content: `Ticker context: ${ticker || 'unspecified'}\n\nArticles:\n${JSON.stringify(compact)}`,
-          },
-        ],
-      }),
-    });
-    if (!res.ok) {
-      console.warn(`articleRanker: LLM responded ${res.status}`);
+    ],
+    temperature: 0.1,
+    jsonMode: true,
+  });
+  if (!content) return applyAndSort(articles, persisted);
+
+  let parsed;
+  try {
+    parsed = JSON.parse(content);
+  } catch {
+    // Some models wrap the JSON in markdown fences despite json mode.
+    const match = content.match(/\{[\s\S]*\}/);
+    if (!match) return applyAndSort(articles, persisted);
+    try {
+      parsed = JSON.parse(match[0]);
+    } catch {
       return applyAndSort(articles, persisted);
     }
-    const json = await res.json();
-    const content = json?.choices?.[0]?.message?.content;
-    if (!content) return applyAndSort(articles, persisted);
-
-    let parsed;
-    try {
-      parsed = JSON.parse(content);
-    } catch {
-      // Some models wrap the JSON in markdown fences despite json mode.
-      const match = content.match(/\{[\s\S]*\}/);
-      if (!match) return applyAndSort(articles, persisted);
-      try {
-        parsed = JSON.parse(match[0]);
-      } catch {
-        return applyAndSort(articles, persisted);
-      }
-    }
-    const rankings = Array.isArray(parsed?.rankings) ? parsed.rankings : null;
-    if (!rankings) return applyAndSort(articles, persisted);
-
-    // Walk the rankings response. Indices refer to positions in `unknown`
-    // (what we actually sent), not the original full article list.
-    const toPersist = [];
-    for (const r of rankings) {
-      if (typeof r?.index !== 'number') continue;
-      const src = unknown[r.index];
-      if (!src?.url) continue;
-      const rawScore = Number(r?.score);
-      if (!Number.isFinite(rawScore)) continue;
-      // Clamp + round to one decimal; defend against the model returning
-      // 10.5 or -0.2 edge cases.
-      const score = Math.round(Math.max(0, Math.min(10, rawScore)) * 10) / 10;
-      const reason = typeof r.reason === 'string' ? r.reason.slice(0, 120) : null;
-      persisted.set(src.url, { score, reason });
-      toPersist.push({ url: src.url, score, reason });
-    }
-
-    // Fire-and-forget save. We don't await because the response is already
-    // assembled; the write happens while the client gets its data.
-    persistRankings(toPersist, model, ticker).catch(() => {});
-
-    return applyAndSort(articles, persisted);
-  } catch (err) {
-    // Timeouts land here as AbortError. Graceful fallback: apply whatever
-    // we pulled from the DB, leave the rest untagged.
-    if (err.name !== 'AbortError') {
-      console.warn('articleRanker failed:', err.message);
-    }
-    return applyAndSort(articles, persisted);
-  } finally {
-    clearTimeout(timer);
   }
+  const rankings = Array.isArray(parsed?.rankings) ? parsed.rankings : null;
+  if (!rankings) return applyAndSort(articles, persisted);
+
+  // Walk the rankings response. Indices refer to positions in `unknown`
+  // (what we actually sent), not the original full article list.
+  const toPersist = [];
+  for (const r of rankings) {
+    if (typeof r?.index !== 'number') continue;
+    const src = unknown[r.index];
+    if (!src?.url) continue;
+    const rawScore = Number(r?.score);
+    if (!Number.isFinite(rawScore)) continue;
+    // Clamp + round to one decimal; defend against the model returning
+    // 10.5 or -0.2 edge cases.
+    const score = Math.round(Math.max(0, Math.min(10, rawScore)) * 10) / 10;
+    const reason = typeof r.reason === 'string' ? r.reason.slice(0, 120) : null;
+    persisted.set(src.url, { score, reason });
+    toPersist.push({ url: src.url, score, reason });
+  }
+
+  // Fire-and-forget save. We don't await because the response is already
+  // assembled; the write happens while the client gets its data.
+  const modelTag =
+    process.env.LOCAL_LLM_URL
+      ? process.env.LOCAL_LLM_MODEL || 'qwen2.5:14b-instruct-q4_K_M'
+      : process.env.OPENAI_MODEL || 'gpt-4o-mini';
+  persistRankings(toPersist, modelTag, ticker).catch(() => {});
+
+  return applyAndSort(articles, persisted);
 }
 
 // Attach score/reason from a URL→tag map onto each article, then sort

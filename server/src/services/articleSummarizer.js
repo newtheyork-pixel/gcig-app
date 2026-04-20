@@ -1,5 +1,8 @@
-// LLM-powered summaries of news content, hitting the same local Ollama
-// endpoint as the ranker. Two entry points:
+// LLM-powered summaries of news content. Uses the shared llm client, which
+// tries local Ollama first and falls back to OpenAI so these keep working
+// when the home-machine tunnel goes down.
+//
+// Entry points:
 //
 //   summarizeArticle(url, plainText)
 //     → 2-3 sentence TL;DR of a single article. Cached in ArticleRanking.summary
@@ -11,63 +14,20 @@
 //       fresh set on cache miss, so we cache this in memory tied to the
 //       article set we were given.
 //
-// Both fail open — if Ollama is unreachable or returns garbage, we return
-// null and callers render as if summaries aren't available.
+// Both fail open — if every provider fails or returns garbage we return null
+// and callers render as if summaries aren't available.
 import prisma from '../db.js';
+import { llmChat } from './llm.js';
 
-const DEFAULT_MODEL = 'qwen2.5:14b-instruct-q4_K_M';
-const DEFAULT_TIMEOUT_MS = 25_000;
-
-function baseUrl(raw) {
-  const s = String(raw).trim().replace(/\/+$/, '');
-  if (/\/v1$/.test(s)) return s;
-  return `${s}/v1`;
-}
-
-async function callChat(systemPrompt, userContent) {
-  const url = process.env.LOCAL_LLM_URL;
-  if (!url) return null;
-  const model = process.env.LOCAL_LLM_MODEL || DEFAULT_MODEL;
-  const timeoutMs = Number(process.env.LOCAL_LLM_TIMEOUT_MS) || DEFAULT_TIMEOUT_MS;
-
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-
-  try {
-    const res = await fetch(`${baseUrl(url)}/chat/completions`, {
-      method: 'POST',
-      signal: controller.signal,
-      headers: {
-        'Content-Type': 'application/json',
-        ...(process.env.LOCAL_LLM_API_KEY
-          ? { Authorization: `Bearer ${process.env.LOCAL_LLM_API_KEY}` }
-          : {}),
-      },
-      body: JSON.stringify({
-        model,
-        temperature: 0.2,
-        messages: [
-          { role: 'system', content: systemPrompt },
-          { role: 'user', content: userContent },
-        ],
-      }),
-    });
-    if (!res.ok) {
-      console.warn(`articleSummarizer: LLM responded ${res.status}`);
-      return null;
-    }
-    const json = await res.json();
-    const content = json?.choices?.[0]?.message?.content;
-    if (typeof content !== 'string') return null;
-    return content.trim();
-  } catch (err) {
-    if (err.name !== 'AbortError') {
-      console.warn('articleSummarizer failed:', err.message);
-    }
-    return null;
-  } finally {
-    clearTimeout(timer);
-  }
+async function callChat(systemPrompt, userContent, { temperature = 0.2 } = {}) {
+  const content = await llmChat({
+    messages: [
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: userContent },
+    ],
+    temperature,
+  });
+  return typeof content === 'string' ? content.trim() : null;
 }
 
 // ── Per-article summaries ─────────────────────────────────────────────
