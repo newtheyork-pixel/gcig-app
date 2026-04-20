@@ -12,6 +12,10 @@ const MAX_SECTOR_PCT = 30;     // flag sectors above this weight
 const CASH_FLOOR_PCT = 2;      // flag if cash ever drops below this
 const CASH_CEILING_PCT = 15;   // flag if cash sits above this
 
+// Broad-market index ETFs are not single-name concentration risk, so they
+// don't need to obey the per-position cap.
+const POSITION_CAP_EXEMPT = new Set(['VOO']);
+
 function fmt(n, digits = 2) {
   if (n == null || !Number.isFinite(n)) return '—';
   return n.toFixed(digits);
@@ -132,6 +136,7 @@ export default function RiskPanel({ holdings, totals, history, cashFlows = [] })
     const out = [];
     if (!concentration) return out;
     for (const w of concentration.weights) {
+      if (POSITION_CAP_EXEMPT.has(w.ticker)) continue;
       if (w.pct > MAX_POSITION_PCT) {
         out.push({
           severity: w.pct > MAX_POSITION_PCT * 1.5 ? 'high' : 'med',
@@ -261,7 +266,8 @@ export default function RiskPanel({ holdings, totals, history, cashFlows = [] })
             </div>
             <div className="space-y-1.5">
               {concentration.weights.slice(0, 10).map((w) => {
-                const over = w.pct > MAX_POSITION_PCT;
+                const over =
+                  w.pct > MAX_POSITION_PCT && !POSITION_CAP_EXEMPT.has(w.ticker);
                 const beta = betas?.[w.ticker]?.beta;
                 return (
                   <div key={w.ticker} className="flex items-center gap-3 text-xs">
