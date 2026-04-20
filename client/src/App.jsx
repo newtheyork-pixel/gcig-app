@@ -23,6 +23,7 @@ import Library from './pages/Library.jsx';
 import Admin from './pages/Admin.jsx';
 import PitchOutcomes from './pages/PitchOutcomes.jsx';
 import Broadcast from './pages/Broadcast.jsx';
+import Landing from './pages/Landing.jsx';
 
 export default function App() {
   const { loading } = useAuth();
@@ -39,7 +40,7 @@ export default function App() {
       <InactivityTimer />
       <Routes>
       {/* Public */}
-      <Route path="/" element={<Navigate to="/login" replace />} />
+      <Route path="/" element={<Landing />} />
       <Route path="/login" element={<Login />} />
       <Route path="/accept-invite" element={<AcceptInvite />} />
       <Route path="/forgot-password" element={<ForgotPassword />} />
