@@ -192,7 +192,16 @@ export async function summarizeVoteSession(session) {
 
 // ── Dashboard week-in-review ──────────────────────────────────────────
 
-const WIR_SYSTEM_PROMPT = `You are writing a one-paragraph weekly briefing for members of a student-run investment club. You will receive structured data about the last 7 days: new pitches, upcoming pitches, open/closed votes, portfolio performance, and the most material news from the club's holdings. Write ONE concise paragraph (max 90 words) that captures what happened, what's coming up, and how the portfolio did. Plain prose. No bullets, no headers. Reference specific tickers and names where relevant. Skip sections where data is empty rather than saying "no news" — silence is fine. If the input is nearly empty (nothing happened this week), return exactly: INSUFFICIENT`;
+const WIR_SYSTEM_PROMPT = `You are writing a one-paragraph weekly briefing for members of a student-run investment club. You will receive structured data about the last 7 days.
+
+STRICT RULES:
+1. Only reference tickers that appear in the input payload — specifically in "heldTickers", "newPitches.ticker", "upcomingPitches.ticker", "openVotes.ticker", "closedVotes.ticker", or "topNews.ticker". NEVER mention any other company or ticker by name.
+2. Only cite news items that are present in "topNews". If "topNews" is empty, do NOT mention news at all — don't invent headlines.
+3. The club does NOT hold every company. If a ticker isn't in "heldTickers", do not describe any event as affecting "our position" in it.
+4. Prefer concrete numbers from the input (pitch counts, vote tallies, portfolio % change) over vague language.
+5. Write ONE paragraph, max 90 words, plain prose, no bullets, no headers.
+
+If the input is nearly empty (no pitches, no votes, no portfolio move, no news), return exactly: INSUFFICIENT`;
 
 export async function generateWeekInReview(payload) {
   const out = await callChat(

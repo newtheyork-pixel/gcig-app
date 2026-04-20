@@ -28,6 +28,40 @@ async function buildWeekInReviewPayload() {
   const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
   const weekAhead = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
 
+  // Pull the sheet first so we can use the actual holding list to gate
+  // which news articles are allowed into the summary. No point surfacing
+  // AAPL news when the club doesn't own AAPL.
+  let liveTotals = null;
+  let heldTickers = null;
+  try {
+    const sheet = await getSheetPortfolio();
+    liveTotals = {
+      totalValue: Number((sheet.totals.totalValue || 0).toFixed(0)),
+      cashValue: Number((sheet.totals.cashValue || 0).toFixed(0)),
+      holdings: sheet.holdings.length,
+    };
+    heldTickers = sheet.holdings
+      .filter((h) => !h.isCash && h.ticker)
+      .map((h) => h.ticker.toUpperCase())
+      // Also strip any broad-market ETFs the club happens to hold — those
+      // surface category news, not thesis-moving items.
+      .filter((t) => !BROAD_MARKET_TICKERS.includes(t));
+  } catch {
+    /* sheet unreachable — heldTickers stays null and we fall back to the
+       broad filter below. */
+  }
+
+  // News query: if we know the holdings, restrict to those exact tickers.
+  // If the sheet fetch failed, fall back to "any ticker that isn't a
+  // broad-market ETF and isn't null" so we at least don't regress.
+  const newsWhere = {
+    score: { gte: 8 },
+    createdAt: { gte: weekAgo },
+    ...(heldTickers && heldTickers.length > 0
+      ? { ticker: { in: heldTickers } }
+      : { ticker: { not: null, notIn: BROAD_MARKET_TICKERS } }),
+  };
+
   const [newPitches, upcomingPitches, openVotes, closedVotes, snapshots, topNews] =
     await Promise.all([
       prisma.pitch.findMany({
@@ -55,25 +89,10 @@ async function buildWeekInReviewPayload() {
         orderBy: { date: 'asc' },
         select: { date: true, totalValue: true },
       }),
-      // Highest-scored news from the past 7 days — but NOT from broad-market
-      // ETF lookups (VOO/QQQ/etc.). Those fetches use newsapi's category
-      // headlines (general market/tech news) which don't represent news about
-      // the club's actual holdings and would muddy the Week in Review.
-      //
-      // The OR clause preserves rows with a NULL ticker (legacy entries
-      // created before the ticker column existed) so pre-migration NVDA /
-      // AAPL / etc. rankings still surface.
       prisma.articleRanking.findMany({
-        where: {
-          score: { gte: 7 },
-          createdAt: { gte: weekAgo },
-          OR: [
-            { ticker: null },
-            { ticker: { notIn: BROAD_MARKET_TICKERS } },
-          ],
-        },
+        where: newsWhere,
         orderBy: { score: 'desc' },
-        take: 6,
+        take: 5,
         select: { url: true, reason: true, score: true, summary: true, ticker: true },
       }),
     ]);
@@ -93,23 +112,11 @@ async function buildWeekInReviewPayload() {
     };
   }
 
-  // Live totals for context (beta, cash, # of holdings).
-  let liveTotals = null;
-  try {
-    const sheet = await getSheetPortfolio();
-    liveTotals = {
-      totalValue: Number((sheet.totals.totalValue || 0).toFixed(0)),
-      cashValue: Number((sheet.totals.cashValue || 0).toFixed(0)),
-      holdings: sheet.holdings.length,
-    };
-  } catch {
-    /* swallow — fall through with null */
-  }
-
   return {
     asOf: now.toISOString(),
     portfolio,
     liveTotals,
+    heldTickers,
     newPitches: newPitches.slice(0, 6),
     upcomingPitches: upcomingPitches.slice(0, 4),
     openVotes: openVotes.slice(0, 4),
