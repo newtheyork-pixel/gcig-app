@@ -51,11 +51,18 @@ async function buildWeekInReviewPayload() {
        broad filter below. */
   }
 
-  // News query: if we know the holdings, restrict to those exact tickers.
-  // If the sheet fetch failed, fall back to "any ticker that isn't a
-  // broad-market ETF and isn't null" so we at least don't regress.
+  // News query: restrict to held tickers (or a safe fallback when the
+  // sheet is unreachable), then take the top-ranked items regardless of
+  // absolute score. Rationale: on quiet weeks there may not be any 8+
+  // articles — rather than silencing news entirely, we surface the most
+  // material stories available. The LLM is told (see summarizer prompt)
+  // that topNews is sorted by materiality and to prioritize the first
+  // entries, so low-score items at the bottom naturally get less airtime.
+  //
+  // Hard floor at 4 — anything below that is genuinely noise (puff
+  // pieces, ticker collisions) and shouldn't appear even on a slow week.
   const newsWhere = {
-    score: { gte: 8 },
+    score: { gte: 4 },
     createdAt: { gte: weekAgo },
     ...(heldTickers && heldTickers.length > 0
       ? { ticker: { in: heldTickers } }

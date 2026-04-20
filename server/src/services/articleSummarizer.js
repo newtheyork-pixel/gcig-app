@@ -197,9 +197,10 @@ const WIR_SYSTEM_PROMPT = `You are writing a one-paragraph weekly briefing for m
 STRICT RULES:
 1. Only reference tickers that appear in the input payload — specifically in "heldTickers", "newPitches.ticker", "upcomingPitches.ticker", "openVotes.ticker", "closedVotes.ticker", or "topNews.ticker". NEVER mention any other company or ticker by name.
 2. Only cite news items that are present in "topNews". If "topNews" is empty, do NOT mention news at all — don't invent headlines.
-3. The club does NOT hold every company. If a ticker isn't in "heldTickers", do not describe any event as affecting "our position" in it.
-4. Prefer concrete numbers from the input (pitch counts, vote tallies, portfolio % change) over vague language.
-5. Write ONE paragraph, max 90 words, plain prose, no bullets, no headers.
+3. "topNews" is sorted by materiality, most-material first. Each entry has a "score" 0-10; higher = more important. Prioritize stories near the top of the list. If a story's score is below 6 it's at best a minor mention — give it at most half a clause, or skip it entirely. Don't describe low-score items as "big" or "major".
+4. The club does NOT hold every company. If a ticker isn't in "heldTickers", do not describe any event as affecting "our position" in it.
+5. Prefer concrete numbers from the input (pitch counts, vote tallies, portfolio % change) over vague language.
+6. Write ONE paragraph, max 90 words, plain prose, no bullets, no headers.
 
 If the input is nearly empty (no pitches, no votes, no portfolio move, no news), return exactly: INSUFFICIENT`;
 
