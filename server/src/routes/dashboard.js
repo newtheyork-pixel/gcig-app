@@ -7,11 +7,11 @@ import { generateWeekInReview } from '../services/articleSummarizer.js';
 const router = Router();
 router.use(verifyJwt);
 
-// Week-in-Review cache. Regenerating this every dashboard load would burn
-// the LLM and the sheet cache too. 3-hour TTL means the narrative updates
-// a few times per day, roughly matching how often something meaningful
-// actually happens in the club.
-const WIR_TTL_MS = 3 * 60 * 60 * 1000;
+// Week-in-Review cache. The paragraph covers a rolling 7-day window and the
+// club's actual cadence is weekly meetings, so regenerating a couple of
+// times per week is plenty. 3.5 days = refresh roughly mid-week and again
+// right before the next meeting.
+const WIR_TTL_MS = 3.5 * 24 * 60 * 60 * 1000;
 const wirCache = { at: 0, text: null };
 
 // Broad-market / sector ETFs whose "news" is category headlines rather than
