@@ -160,11 +160,20 @@ function PortfolioHero({ totals, holdings, history }) {
     const yearStart = new Date(now.getFullYear(), 0, 1);
     const findOnOrBefore = (target) =>
       [...history].reverse().find((h) => h.date <= target) || history[0];
-    const weekStart = findOnOrBefore(weekAgo);
-    const yearStartPoint = findOnOrBefore(yearStart);
-    const pct = (from) =>
-      from?.value > 0 ? ((totalValue - from.value) / from.value) * 100 : null;
-    return { weekPct: pct(weekStart), ytdPct: pct(yearStartPoint) };
+    // Subtract capital infusions that landed inside the window — they
+    // aren't market returns. Matches the logic in Portfolio.jsx.
+    const pct = (from, fromDate) => {
+      if (!from || from.value <= 0) return null;
+      const cfInWindow = CASH_FLOWS.filter(
+        (cf) => cf.date > fromDate && cf.date <= now
+      ).reduce((s, cf) => s + cf.amount, 0);
+      const adjustedDelta = totalValue - cfInWindow - from.value;
+      return (adjustedDelta / from.value) * 100;
+    };
+    return {
+      weekPct: pct(findOnOrBefore(weekAgo), weekAgo),
+      ytdPct: pct(findOnOrBefore(yearStart), yearStart),
+    };
   }, [history, totalValue]);
 
   const cashPct = totalValue > 0 ? (cashValue / totalValue) * 100 : null;
