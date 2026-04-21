@@ -59,6 +59,7 @@ export default function PitchOutcomes() {
   return (
     <>
       <PageHeader
+        kicker="Performance"
         title="Coverage Outcomes"
         subtitle="How pitches and research reports that became positions have performed."
       />

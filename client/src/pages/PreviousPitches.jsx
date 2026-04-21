@@ -29,6 +29,7 @@ export default function PreviousPitches({ embedded = false } = {}) {
     <>
       {!embedded && (
         <PageHeader
+          kicker="Archive"
           title="Pitch Archive"
           subtitle="Previously delivered stock pitches and their slideshows."
         />

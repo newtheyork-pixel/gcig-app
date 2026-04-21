@@ -80,7 +80,7 @@ export default function Sidebar({ onNavigate }) {
         </div>
       </div>
 
-      <nav className="flex-1 overflow-y-auto px-3 py-3">
+      <nav className="flex-1 overflow-y-auto px-3 py-4">
         {NAV_SECTIONS.map((section, sectionIdx) => {
           const visible = section.items.filter(
             (i) =>
@@ -90,9 +90,10 @@ export default function Sidebar({ onNavigate }) {
           );
           if (visible.length === 0) return null;
           return (
-            <div key={sectionIdx} className={sectionIdx === 0 ? 'mb-1' : 'mt-4 mb-1'}>
+            <div key={sectionIdx} className={sectionIdx === 0 ? 'mb-2' : 'mt-5 mb-2'}>
               {section.header && (
-                <div className="px-3 pb-1.5 text-[10px] font-bold uppercase tracking-widest text-navy-200/60">
+                <div className="mb-2 flex items-center gap-2 px-3 text-[9px] font-semibold uppercase tracking-[0.25em] text-gold/70">
+                  <span className="h-px w-3 bg-gold/50" />
                   {section.header}
                 </div>
               )}
@@ -126,14 +127,19 @@ export default function Sidebar({ onNavigate }) {
 
       <div className="border-t border-navy-500/50 p-4">
         <div className="mb-3">
-          <div className="text-sm font-semibold truncate">{user?.name}</div>
+          <div className="text-[9px] font-semibold uppercase tracking-[0.25em] text-gold/70">
+            Signed in
+          </div>
+          <div className="mt-1 font-serif text-base font-semibold text-white truncate">
+            {user?.name}
+          </div>
           <div className="mt-1">
             <RoleBadge role={user?.role} />
           </div>
         </div>
         <button
           onClick={logout}
-          className="flex w-full items-center gap-2 rounded-lg bg-navy-500 px-3 py-2 text-sm font-medium text-white hover:bg-navy-400"
+          className="flex w-full items-center gap-2 rounded-lg border border-navy-400/40 px-3 py-2 text-sm font-medium text-navy-100 transition hover:border-gold hover:bg-gold hover:text-navy"
         >
           <LogOut className="h-4 w-4" />
           Sign out

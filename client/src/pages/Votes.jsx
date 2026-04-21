@@ -129,6 +129,7 @@ export default function Votes() {
   return (
     <>
       <PageHeader
+        kicker="Decisions"
         title="Voting"
         subtitle="Vote on pitches — general body (3 votes) + leadership (Presidents & CIO, 1 each)."
         actions={

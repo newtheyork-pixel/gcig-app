@@ -134,6 +134,7 @@ export default function Chat() {
   return (
     <>
       <PageHeader
+        kicker="Members Only"
         title="Chat"
         subtitle="Real-time messaging for the whole group and each industry pod."
       />

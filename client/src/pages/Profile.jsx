@@ -95,7 +95,7 @@ export default function Profile() {
 
   return (
     <>
-      <PageHeader title="Profile" subtitle="Your account details." />
+      <PageHeader kicker="Your Account" title="Profile" subtitle="Your account details." />
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         <Card title="Account">

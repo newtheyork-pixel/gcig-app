@@ -83,6 +83,7 @@ export default function Members({ embedded = false } = {}) {
     <>
       {!embedded && (
         <PageHeader
+          kicker="Membership"
           title="Members"
           subtitle="Manage club member accounts and roles."
           actions={

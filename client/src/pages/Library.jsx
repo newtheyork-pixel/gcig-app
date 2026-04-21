@@ -14,6 +14,7 @@ export default function Library() {
   return (
     <>
       <PageHeader
+        kicker="Research Archive"
         title="Library"
         subtitle="Searchable reference content — pitch slideshows and research reports."
       />

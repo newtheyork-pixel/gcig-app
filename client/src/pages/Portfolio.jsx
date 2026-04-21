@@ -300,10 +300,11 @@ export default function Portfolio() {
   return (
     <>
       <PageHeader
-        title="Live Portfolio"
+        kicker="The Live Book"
+        title="Portfolio"
         subtitle={
           data?.fetchedAt
-            ? `Live from Google Sheets • fetched ${format(new Date(data.fetchedAt), 'h:mm:ss a')}`
+            ? `Live from Google Sheets · fetched ${format(new Date(data.fetchedAt), 'h:mm:ss a')}`
             : 'Live from Google Sheets'
         }
         actions={
@@ -335,82 +336,35 @@ export default function Portfolio() {
       )}
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <Card>
-          <div className="text-xs uppercase tracking-wider text-navy-400">Total Value</div>
-          <div className="mt-2 text-3xl font-bold text-navy">
-            {fmtMoney(totals.totalValue)}
-          </div>
-        </Card>
-        <Card>
-          <div className="text-xs uppercase tracking-wider text-navy-400">Daily Change</div>
-          {dailyChange ? (
-            <>
-              <div
-                className={`mt-2 flex items-center gap-2 text-3xl font-bold ${
-                  dailyChange.diff >= 0 ? 'text-emerald-600' : 'text-red-600'
-                }`}
-              >
-                {dailyChange.diff >= 0 ? (
-                  <TrendingUp className="h-7 w-7" />
-                ) : (
-                  <TrendingDown className="h-7 w-7" />
-                )}
-                {fmtMoney(dailyChange.diff)}
-              </div>
-              <div
-                className={`mt-1 text-sm font-semibold ${
-                  dailyChange.diff >= 0 ? 'text-emerald-600' : 'text-red-600'
-                }`}
-              >
-                {fmtPct(dailyChange.pct)}
-              </div>
-            </>
-          ) : (
-            <div className="mt-2 text-3xl font-bold text-navy-400">—</div>
-          )}
-        </Card>
-        <Card>
-          <div className="text-xs uppercase tracking-wider text-navy-400">Total Gain/Loss</div>
-          <div
-            className={`mt-2 flex items-center gap-2 text-3xl font-bold ${
-              isUp ? 'text-emerald-600' : 'text-red-600'
-            }`}
-          >
-            {isUp ? <TrendingUp className="h-7 w-7" /> : <TrendingDown className="h-7 w-7" />}
-            {fmtMoney(lifetimeGainLoss)}
-          </div>
-          <div
-            className={`mt-1 text-sm font-semibold ${
-              isUp ? 'text-emerald-600' : 'text-red-600'
-            }`}
-          >
-            {fmtPct(lifetimeGainLossPct)}
-          </div>
-          <div className="mt-1 text-[10px] text-navy-400">
-            vs. {fmtMoney(TOTAL_INVESTED)} invested
-          </div>
-        </Card>
-        <Card>
-          <div className="text-xs uppercase tracking-wider text-navy-400">
-            Sharpe Ratio
-          </div>
-          {sharpe != null ? (
-            <>
-              <div
-                className={`mt-2 text-3xl font-bold ${
-                  sharpe >= 1 ? 'text-emerald-600' : sharpe >= 0 ? 'text-navy' : 'text-red-600'
-                }`}
-              >
-                {sharpe.toFixed(2)}
-              </div>
-              <div className="mt-1 text-xs text-navy-400">
-                Equity only • Rf = {(RISK_FREE_RATE * 100).toFixed(2)}%
-              </div>
-            </>
-          ) : (
-            <div className="mt-2 text-3xl font-bold text-navy-400">—</div>
-          )}
-        </Card>
+        <SummaryTile
+          kicker="Total Value"
+          value={fmtMoney(totals.totalValue)}
+        />
+        <SummaryTile
+          kicker="Daily Change"
+          value={dailyChange ? fmtMoney(dailyChange.diff) : '—'}
+          sub={dailyChange ? fmtPct(dailyChange.pct) : null}
+          tone={dailyChange ? (dailyChange.diff >= 0 ? 'good' : 'bad') : 'neutral'}
+          icon={dailyChange ? (dailyChange.diff >= 0 ? TrendingUp : TrendingDown) : null}
+        />
+        <SummaryTile
+          kicker="Total Gain/Loss"
+          value={fmtMoney(lifetimeGainLoss)}
+          sub={fmtPct(lifetimeGainLossPct)}
+          footnote={`vs. ${fmtMoney(TOTAL_INVESTED)} invested`}
+          tone={isUp ? 'good' : 'bad'}
+          icon={isUp ? TrendingUp : TrendingDown}
+        />
+        <SummaryTile
+          kicker="Sharpe Ratio"
+          value={sharpe != null ? sharpe.toFixed(2) : '—'}
+          footnote={
+            sharpe != null
+              ? `Equity only · Rf = ${(RISK_FREE_RATE * 100).toFixed(2)}%`
+              : null
+          }
+          tone={sharpe == null ? 'neutral' : sharpe >= 1 ? 'good' : sharpe >= 0 ? 'neutral' : 'bad'}
+        />
       </div>
 
       <div className="mt-6">
@@ -865,6 +819,33 @@ function SectorAllocation({ holdings, totalValue }) {
           </div>
         </div>
       </Card>
+    </div>
+  );
+}
+
+// Editorial summary tile — small-caps kicker, serif number, optional sub-
+// value and footnote. Used for the 4-wide row at the top of Portfolio.
+function SummaryTile({ kicker, value, sub, footnote, tone = 'neutral', icon: Icon }) {
+  const toneClass =
+    tone === 'good' ? 'text-emerald-600' : tone === 'bad' ? 'text-red-600' : 'text-navy';
+  return (
+    <div className="rounded-xl border border-navy-100 bg-white p-5 shadow-card">
+      <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.22em] text-gold-700">
+        <span className="h-px w-4 bg-gold" />
+        {kicker}
+      </div>
+      <div className={`mt-3 flex items-center gap-2 font-serif text-3xl font-semibold tabular-nums ${toneClass}`}>
+        {Icon && <Icon className="h-5 w-5" />}
+        {value}
+      </div>
+      {sub && (
+        <div className={`mt-1 text-xs font-semibold tabular-nums ${toneClass}`}>
+          {sub}
+        </div>
+      )}
+      {footnote && (
+        <div className="mt-1 text-[10px] text-navy-400">{footnote}</div>
+      )}
     </div>
   );
 }

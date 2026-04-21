@@ -123,6 +123,7 @@ export default function Industries() {
   return (
     <>
       <PageHeader
+        kicker="Sector Pods"
         title="Industries"
         subtitle="Coverage groups led by a Portfolio Manager, with members underneath."
         actions={

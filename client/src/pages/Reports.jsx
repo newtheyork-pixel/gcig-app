@@ -78,6 +78,7 @@ export default function Reports({ embedded = false } = {}) {
     <>
       {!embedded && (
         <PageHeader
+          kicker="Archive"
           title="Research Reports"
           subtitle="Library of member-authored research."
           actions={

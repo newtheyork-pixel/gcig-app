@@ -25,6 +25,7 @@ function AdvisoryAttendance() {
   return (
     <>
       <PageHeader
+        kicker="Meetings"
         title="Attendance"
         subtitle="Attendance tracking is for active club members only."
       />
@@ -49,6 +50,7 @@ function MineAttendance() {
   return (
     <>
       <PageHeader
+        kicker="Meetings"
         title="My Attendance"
         subtitle="Your attendance record across all club meetings and events."
       />
@@ -177,6 +179,7 @@ function AdminAttendance() {
   return (
     <>
       <PageHeader
+        kicker="Meetings"
         title="Attendance"
         subtitle="Mark attendance for each member at every event."
         actions={

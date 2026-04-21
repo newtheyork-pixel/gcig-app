@@ -123,6 +123,7 @@ export default function Broadcast() {
   return (
     <>
       <PageHeader
+        kicker="Communications"
         title="Broadcast"
         subtitle="Send a single email to the whole club, a specific pod, or a specific rank."
       />

@@ -253,6 +253,7 @@ export default function Calendar() {
   return (
     <>
       <PageHeader
+        kicker="Schedule"
         title="Calendar"
         subtitle="Pitches and club events on one view."
         actions={

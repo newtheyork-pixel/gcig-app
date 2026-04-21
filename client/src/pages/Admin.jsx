@@ -120,6 +120,7 @@ export default function Admin() {
   return (
     <>
       <PageHeader
+        kicker="Club Management"
         title="Admin"
         subtitle="Manage members and review security events."
       />

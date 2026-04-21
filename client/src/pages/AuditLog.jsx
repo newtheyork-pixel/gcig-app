@@ -29,6 +29,7 @@ export default function AuditLog({ embedded = false } = {}) {
     <>
       {!embedded && (
         <PageHeader
+          kicker="Security"
           title="Audit Log"
           subtitle="Security-relevant actions across the app. President only."
         />
