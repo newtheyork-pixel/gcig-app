@@ -4,6 +4,15 @@ import prisma from '../db.js';
 // every expected instance exists as a real row in the `Event` table with
 // `recurring: true`, so they show up in the calendar AND are markable
 // for attendance just like any other event.
+//
+// `ensureRecurringMeetings` is BOTH additive and destructive:
+//   - missing expected instances are created
+//   - existing recurring rows that no longer match the schedule (because
+//     we moved startDate forward, added a skipDate, or retired a title)
+//     are deleted, taking their Attendance rows with them via cascade.
+// Recurring meetings aren't editable through the UI (events.js refuses
+// both PUT and DELETE on recurring=true rows), so there are no manual
+// tweaks to preserve — the code is the source of truth.
 
 const RECURRING_MEETINGS = [
   {
@@ -14,6 +23,12 @@ const RECURRING_MEETINGS = [
     durationMinutes: 30, // 1:50 – 2:20 PM
     location: null,
     description: 'Weekly club meeting (1:50 – 2:20 PM)',
+    // First real club meeting. Anything earlier in the DB is a leftover
+    // from the initial 3-month backfill and gets pruned on startup.
+    startDate: new Date('2026-04-29T00:00:00'),
+    // One-off cancellations as YYYY-MM-DD (local). Instances on these
+    // dates are neither created nor kept.
+    skipDates: [],
   },
 ];
 
@@ -21,30 +36,46 @@ const RECURRING_MEETINGS = [
 const MONTHS_BACK = 3;
 const MONTHS_FORWARD = 12;
 
+function localDateKey(d) {
+  // YYYY-MM-DD in the server's local timezone — matches how skipDates
+  // are written by humans (no TZ math required).
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
 function buildInstances() {
   const now = new Date();
-  const from = new Date(now);
-  from.setMonth(from.getMonth() - MONTHS_BACK);
-  from.setHours(0, 0, 0, 0);
-  const to = new Date(now);
-  to.setMonth(to.getMonth() + MONTHS_FORWARD);
+  const windowStart = new Date(now);
+  windowStart.setMonth(windowStart.getMonth() - MONTHS_BACK);
+  windowStart.setHours(0, 0, 0, 0);
+  const windowEnd = new Date(now);
+  windowEnd.setMonth(windowEnd.getMonth() + MONTHS_FORWARD);
 
   const instances = [];
   for (const m of RECURRING_MEETINGS) {
-    const cursor = new Date(from);
+    // Cursor begins at whichever is later: the schedule's startDate or
+    // the rolling window's back edge.
+    const lowerBound =
+      m.startDate && m.startDate > windowStart ? new Date(m.startDate) : new Date(windowStart);
+    const cursor = new Date(lowerBound);
     cursor.setHours(m.startHour, m.startMinute, 0, 0);
     const offset = (m.dayOfWeek - cursor.getDay() + 7) % 7;
     cursor.setDate(cursor.getDate() + offset);
 
-    while (cursor <= to) {
-      instances.push({
-        title: m.title,
-        date: new Date(cursor),
-        location: m.location,
-        description: m.description,
-        durationMinutes: m.durationMinutes,
-        recurring: true,
-      });
+    const skipSet = new Set(m.skipDates || []);
+    while (cursor <= windowEnd) {
+      if (!skipSet.has(localDateKey(cursor))) {
+        instances.push({
+          title: m.title,
+          date: new Date(cursor),
+          location: m.location,
+          description: m.description,
+          durationMinutes: m.durationMinutes,
+          recurring: true,
+        });
+      }
       cursor.setDate(cursor.getDate() + 7);
     }
   }
@@ -52,32 +83,45 @@ function buildInstances() {
 }
 
 /**
- * Ensures every expected recurring meeting exists in the DB.
- * Creates missing instances; leaves existing ones untouched so manual
- * edits (e.g. adding a location) are preserved.
+ * Ensures every expected recurring meeting exists in the DB, and prunes
+ * any recurring rows that are no longer in the expected set (e.g. past
+ * phantom instances from before startDate, or cancelled skipDates).
+ * Attendance rows cascade-delete with their event per the Prisma schema.
  */
 export async function ensureRecurringMeetings() {
   const expected = buildInstances();
-  if (expected.length === 0) return;
+  const managedTitles = Array.from(new Set(RECURRING_MEETINGS.map((m) => m.title)));
+  if (managedTitles.length === 0) return;
 
-  // Find existing recurring rows in the same window for dedup.
-  const titles = Array.from(new Set(expected.map((e) => e.title)));
   const existing = await prisma.event.findMany({
     where: {
       recurring: true,
-      title: { in: titles },
+      title: { in: managedTitles },
     },
-    select: { title: true, date: true },
+    select: { id: true, title: true, date: true },
   });
 
+  const expectedKey = new Set(
+    expected.map((e) => `${e.title}::${e.date.toISOString()}`)
+  );
   const existingKey = new Set(
     existing.map((e) => `${e.title}::${new Date(e.date).toISOString()}`)
   );
 
+  // Prune: recurring rows whose (title, date) no longer matches the
+  // expected schedule. Cascades to Attendance.
+  const toDeleteIds = existing
+    .filter((e) => !expectedKey.has(`${e.title}::${new Date(e.date).toISOString()}`))
+    .map((e) => e.id);
+  if (toDeleteIds.length > 0) {
+    await prisma.event.deleteMany({ where: { id: { in: toDeleteIds } } });
+    console.log(`Pruned ${toDeleteIds.length} stale recurring meeting instance(s).`);
+  }
+
+  // Create: expected instances not yet in the DB.
   const toCreate = expected.filter(
     (e) => !existingKey.has(`${e.title}::${e.date.toISOString()}`)
   );
-
   if (toCreate.length > 0) {
     await prisma.event.createMany({ data: toCreate });
     console.log(`Ensured ${toCreate.length} new recurring meeting instance(s).`);
