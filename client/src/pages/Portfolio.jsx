@@ -68,6 +68,14 @@ const TOTAL_INVESTED =
 // Update this constant if T-bill rates shift meaningfully.
 const RISK_FREE_RATE = 0.0425;
 
+// Baseline cash ratio used for the "Adjusted Return" tile. The club
+// meets once a week, so we often sit on more cash than an always-on
+// manager would — that cash drag makes the headline number understate
+// how the actual stock picks are performing. The adjusted figure shows
+// what the whole book would return if 10% were cash and the other 90%
+// were deployed at the same blended rate as our current equity sleeve.
+const TARGET_CASH_RATIO = 0.1;
+
 function fmtMoney(n) {
   if (n == null) return '—';
   return n.toLocaleString('en-US', {
@@ -123,6 +131,42 @@ export default function Portfolio() {
   const lifetimeGainLossPct =
     lifetimeGainLoss != null ? (lifetimeGainLoss / TOTAL_INVESTED) * 100 : null;
   const isUp = (lifetimeGainLoss ?? 0) >= 0;
+
+  // Equity-only return: how the stock picks themselves are doing,
+  // completely ignoring cash drag. Computed from per-holding shares ×
+  // avg cost basis vs market value, summed across non-cash rows.
+  //
+  // Adjusted return: apply that equity return to a 90/10 book — the
+  // allocation the club would be at if we could deploy faster than
+  // once a week. Useful for "our picks are up X% but the cash pile
+  // drags the headline to Y%."
+  const equityReturn = useMemo(() => {
+    const nonCash = holdings.filter((h) => !h.isCash);
+    if (nonCash.length === 0) return null;
+    let mv = 0;
+    let cost = 0;
+    for (const h of nonCash) {
+      if (h.marketValue != null) mv += h.marketValue;
+      if (h.shares != null && h.costBasis != null) {
+        cost += h.shares * h.costBasis;
+      }
+    }
+    if (cost <= 0) return null;
+    const dollarChange = mv - cost;
+    return {
+      marketValue: mv,
+      cost,
+      dollarChange,
+      pct: (dollarChange / cost) * 100,
+    };
+  }, [holdings]);
+
+  const adjustedReturn = useMemo(() => {
+    if (!equityReturn) return null;
+    // 90% of the book at the equity's actual return, 10% at 0%.
+    const pct = (1 - TARGET_CASH_RATIO) * equityReturn.pct;
+    return { pct };
+  }, [equityReturn]);
 
   const [range, setRange] = useState('6M');
   const [selectedHolding, setSelectedHolding] = useState(null);
@@ -347,8 +391,8 @@ export default function Portfolio() {
         history={fullHistory}
       />
 
-      {/* Three supporting metrics below the hero. */}
-      <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-3">
+      {/* Four supporting metrics below the hero. */}
+      <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <SummaryTile
           kicker="Daily Change"
           value={dailyChange ? fmtMoney(dailyChange.diff) : '—'}
@@ -363,6 +407,26 @@ export default function Portfolio() {
           footnote={`vs. ${fmtMoney(TOTAL_INVESTED)} invested`}
           tone={isUp ? 'good' : 'bad'}
           icon={isUp ? TrendingUp : TrendingDown}
+        />
+        <SummaryTile
+          kicker="Adjusted Return"
+          value={adjustedReturn ? fmtPct(adjustedReturn.pct) : '—'}
+          sub={equityReturn ? `${fmtPct(equityReturn.pct)} equity-only` : null}
+          footnote="At 10% cash baseline · normalizes for weekly-meeting cash drag"
+          tone={
+            adjustedReturn == null
+              ? 'neutral'
+              : adjustedReturn.pct >= 0
+                ? 'good'
+                : 'bad'
+          }
+          icon={
+            adjustedReturn == null
+              ? null
+              : adjustedReturn.pct >= 0
+                ? TrendingUp
+                : TrendingDown
+          }
         />
         <SummaryTile
           kicker="Sharpe Ratio"

@@ -263,15 +263,40 @@ async function buildLiveContext() {
       .filter((h) => !h.isCash && h.ticker)
       .sort((a, b) => (b.marketValue || 0) - (a.marketValue || 0));
 
+    // Equity-only return + adjusted-to-10%-cash return. The club meets
+    // once a week so cash sits higher than a steady-state manager would
+    // hold — the headline return understates how the picks are actually
+    // performing. Adjusted figure normalizes to a 90/10 book.
+    let equityCost = 0;
+    let equityMV = 0;
+    for (const h of nonCash) {
+      if (h.marketValue != null) equityMV += h.marketValue;
+      if (h.shares != null && h.costBasis != null) {
+        equityCost += h.shares * h.costBasis;
+      }
+    }
+    const equityReturnPct =
+      equityCost > 0 ? ((equityMV - equityCost) / equityCost) * 100 : null;
+    const adjustedReturnPct =
+      equityReturnPct != null ? 0.9 * equityReturnPct : null;
+
     const summaryLines = [
       `- Total portfolio value: **${fmtMoney(totals.totalValue)}**`,
       `- Cash / cash equivalents: **${fmtMoney(totals.cashValue)}** (${fmtPct(
         totals.totalValue > 0 ? (totals.cashValue / totals.totalValue) * 100 : 0
       )})`,
       `- Equity positions: **${nonCash.length}**`,
-      '',
-      'Current equity holdings (ordered by market value):',
     ];
+    if (equityReturnPct != null) {
+      summaryLines.push(
+        `- Equity-only return (picks vs. cost basis): **${fmtSignedPct(equityReturnPct)}**`
+      );
+      summaryLines.push(
+        `- Adjusted return at 10% cash baseline: **${fmtSignedPct(adjustedReturnPct)}** (normalizes for weekly-meeting cash drag — what the book would return if we held the steady-state 10% cash rather than our actual idle pile)`
+      );
+    }
+    summaryLines.push('');
+    summaryLines.push('Current equity holdings (ordered by market value):');
     // Two lines per holding: identity on top, performance/pricing below.
     // Format chosen so the model can scan "which positions are up vs down"
     // at a glance and can answer "best / worst performer" questions.
