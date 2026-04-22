@@ -157,8 +157,9 @@ router.get('/', async (req, res) => {
   const lookaheadDays = 30;
   const lookaheadEnd = new Date(now.getTime() + lookaheadDays * 24 * 60 * 60 * 1000);
   // Advisory Board events are hidden from members without visibility
-  // (applied to upcoming + recent events queries below).
-  const audienceFilter = eventAudienceWhere(req.user.role);
+  // (applied to upcoming + recent events queries below). Helper checks
+  // primary role, extraRoles, and leadership exemptions.
+  const audienceFilter = eventAudienceWhere(req.user);
   const [
     nextPitch,
     upcomingEventsRaw,

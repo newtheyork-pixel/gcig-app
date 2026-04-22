@@ -28,7 +28,14 @@ export async function verifyJwt(req, res, next) {
     // all old JWTs are immediately invalid.
     const user = await prisma.user.findUnique({
       where: { id: payload.id },
-      select: { id: true, name: true, email: true, role: true, tokenVersion: true },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        role: true,
+        extraRoles: true,
+        tokenVersion: true,
+      },
     });
     if (!user) return res.status(401).json({ error: 'User not found' });
     if ((payload.v ?? 0) !== (user.tokenVersion ?? 0)) {
@@ -39,6 +46,7 @@ export async function verifyJwt(req, res, next) {
       name: user.name,
       email: user.email,
       role: user.role,
+      extraRoles: user.extraRoles || [],
       isSuperAdmin: isSuperAdminEmail(user.email),
     };
     next();

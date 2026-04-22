@@ -6,11 +6,31 @@ import { verifyJwt, requireExecutive } from '../middleware/auth.js';
 const router = Router();
 router.use(verifyJwt);
 
-// Advisory roles (Advisory Board, Faculty Advisor) aren't part of the regular
-// meeting attendance. We exclude them everywhere attendance is tracked so they
-// don't show up in the matrix or get counted against percentages.
+// Advisory roles (Advisory Board, Faculty Advisor). Members can hold these
+// as their PRIMARY role OR carry them as extraRoles (e.g. a President who
+// also serves on the advisory board). Both count for audience gating.
 const ADVISORY_ROLES = ['AdvisoryBoardMember', 'FacultyAdvisory'];
+
+// For the regular (all-members) attendance roster we want to exclude anyone
+// whose PRIMARY role is advisory-only, but keep Presidents / PMs who happen
+// to also sit on the advisory board — they still attend regular meetings.
 const ATTENDEE_WHERE = { role: { notIn: ADVISORY_ROLES } };
+
+// For advisory events, the roster is "anyone with advisory in primary OR
+// extra roles". Prisma `hasSome` covers the extras side.
+const ADVISORY_ROSTER_WHERE = {
+  OR: [
+    { role: { in: ADVISORY_ROLES } },
+    { extraRoles: { hasSome: ADVISORY_ROLES } },
+  ],
+};
+
+function isAdvisoryUser(target) {
+  if (!target) return false;
+  if (ADVISORY_ROLES.includes(target.role)) return true;
+  const extras = target.extraRoles || [];
+  return extras.some((r) => ADVISORY_ROLES.includes(r));
+}
 
 // Full matrix — President only.
 // Only show events from 3 months ago through 2 weeks from now —
@@ -53,9 +73,7 @@ router.get('/event/:id', requireExecutive, async (req, res) => {
   if (!event) return res.status(404).json({ error: 'Event not found' });
 
   const userWhere =
-    event.audience === 'advisory'
-      ? { role: { in: ADVISORY_ROLES } }
-      : ATTENDEE_WHERE;
+    event.audience === 'advisory' ? ADVISORY_ROSTER_WHERE : ATTENDEE_WHERE;
 
   const [users, records] = await Promise.all([
     prisma.user.findMany({
@@ -110,7 +128,7 @@ router.post('/', requireExecutive, async (req, res) => {
   const [target, event] = await Promise.all([
     prisma.user.findUnique({
       where: { id: Number(userId) },
-      select: { role: true },
+      select: { role: true, extraRoles: true },
     }),
     prisma.event.findUnique({
       where: { id: Number(eventId) },
@@ -118,14 +136,17 @@ router.post('/', requireExecutive, async (req, res) => {
     }),
   ]);
   if (!event) return res.status(404).json({ error: 'Event not found' });
-  const isAdvisoryUser = target && ADVISORY_ROLES.includes(target.role);
+  const targetIsAdvisory = isAdvisoryUser(target);
   if (event.audience === 'advisory') {
-    if (!isAdvisoryUser) {
+    if (!targetIsAdvisory) {
       return res.status(400).json({
         error: 'Only Advisory Board / Faculty Advisors attend Advisory Board events',
       });
     }
-  } else if (isAdvisoryUser) {
+  } else if (target && ADVISORY_ROLES.includes(target.role)) {
+    // Only refuse regular-event marking when the user is advisory-PRIMARY.
+    // Leadership who also has advisory as an extraRole still attends
+    // regular meetings.
     return res.status(400).json({
       error: 'Advisory Board and Faculty Advisors do not have attendance tracked for regular events',
     });

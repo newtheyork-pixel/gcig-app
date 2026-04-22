@@ -5,29 +5,35 @@ import { verifyJwt, requireExecutive } from '../middleware/auth.js';
 const router = Router();
 router.use(verifyJwt);
 
-// Who can see Advisory Board events: the Advisory Board itself, Faculty
-// Advisors, and the operational leadership (Presidents + CIO) who schedule
-// and run them. Every other member sees only audience='all' events.
-const ADVISORY_VISIBLE_ROLES = new Set([
-  'AdvisoryBoardMember',
-  'FacultyAdvisory',
-  'President',
-  'CIO',
-]);
+// Who can see Advisory Board events:
+//   - Anyone with an advisory role (primary OR extra):
+//     AdvisoryBoardMember, FacultyAdvisory
+//   - Operational leadership (Presidents + CIO) who schedule and run them
+// Everyone else sees only audience='all' events.
+const ADVISORY_ROLES = ['AdvisoryBoardMember', 'FacultyAdvisory'];
+const LEADERSHIP_ROLES = ['President', 'CIO'];
 
-export function canSeeAdvisoryEvents(role) {
-  return ADVISORY_VISIBLE_ROLES.has(role);
+export function canSeeAdvisoryEvents(user) {
+  // Back-compat: accept either a full user object or a bare role string.
+  if (typeof user === 'string') {
+    return ADVISORY_ROLES.includes(user) || LEADERSHIP_ROLES.includes(user);
+  }
+  if (!user) return false;
+  if (LEADERSHIP_ROLES.includes(user.role)) return true;
+  if (ADVISORY_ROLES.includes(user.role)) return true;
+  const extras = user.extraRoles || [];
+  return extras.some((r) => ADVISORY_ROLES.includes(r));
 }
 
 // Prisma `where` fragment that hides advisory events from members who
 // shouldn't see them. Callers spread this into their own where clause.
-export function eventAudienceWhere(role) {
-  return canSeeAdvisoryEvents(role) ? {} : { audience: 'all' };
+export function eventAudienceWhere(user) {
+  return canSeeAdvisoryEvents(user) ? {} : { audience: 'all' };
 }
 
 router.get('/', async (req, res) => {
   const events = await prisma.event.findMany({
-    where: eventAudienceWhere(req.user.role),
+    where: eventAudienceWhere(req.user),
     orderBy: { date: 'desc' },
   });
   res.json(events);
@@ -39,7 +45,7 @@ router.get('/:id', async (req, res) => {
   if (!event) return res.status(404).json({ error: 'Not found' });
   // Advisory events are invisible to members who don't have visibility.
   // Return 404 (not 403) so we don't leak the existence of the event.
-  if (event.audience === 'advisory' && !canSeeAdvisoryEvents(req.user.role)) {
+  if (event.audience === 'advisory' && !canSeeAdvisoryEvents(req.user)) {
     return res.status(404).json({ error: 'Not found' });
   }
   res.json(event);
