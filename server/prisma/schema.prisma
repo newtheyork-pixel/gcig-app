@@ -208,6 +208,10 @@ model Event {
   description     String?
   durationMinutes Int          @default(60)
   recurring       Boolean      @default(false)
+  // Audience scope. 'all' = visible to every member (default);
+  // 'advisory' = tagged as an Advisory Board event. Used by the
+  // Calendar filter button. Extend with other audiences later if needed.
+  audience        String       @default("all")
   attendance      Attendance[]
   createdAt       DateTime     @default(now())
 }
