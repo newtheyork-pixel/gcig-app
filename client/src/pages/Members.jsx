@@ -12,6 +12,7 @@ import EditorialMasthead from '../components/EditorialMasthead.jsx';
 const ROLES = [
   'President',
   'CIO',
+  'ChiefOfCommunication',
   'SeniorPortfolioManager',
   'PortfolioManager',
   'SeniorAnalyst',

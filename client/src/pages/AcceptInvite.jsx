@@ -7,10 +7,14 @@ import Button from '../components/Button.jsx';
 const ROLE_LABELS = {
   President: 'President',
   CIO: 'CIO',
+  ChiefOfCommunication: 'Chief of Communication',
   SeniorPortfolioManager: 'Senior Portfolio Manager',
   PortfolioManager: 'Portfolio Manager',
   SeniorAnalyst: 'Senior Analyst',
+  Analyst: 'Analyst',
   JuniorAnalyst: 'Junior Analyst',
+  AdvisoryBoardMember: 'Advisory Board Member',
+  FacultyAdvisory: 'Faculty Advisor',
 };
 
 export default function AcceptInvite() {

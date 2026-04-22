@@ -10,6 +10,11 @@ datasource db {
 enum Role {
   President
   CIO
+  // Comms/PR officer. Not part of the investment hierarchy. Attendance
+  // is NOT tracked for this role (see ATTENDANCE_EXEMPT_ROLES in
+  // routes/attendance.js) — they don't attend regular club meetings
+  // in a counted capacity.
+  ChiefOfCommunication
   SeniorPortfolioManager
   PortfolioManager
   SeniorAnalyst

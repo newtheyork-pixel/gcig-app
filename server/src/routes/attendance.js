@@ -11,13 +11,21 @@ router.use(verifyJwt);
 // also serves on the advisory board). Both count for audience gating.
 const ADVISORY_ROLES = ['AdvisoryBoardMember', 'FacultyAdvisory'];
 
-// For the regular (all-members) attendance roster we want to exclude anyone
-// whose PRIMARY role is advisory-only, but keep Presidents / PMs who happen
-// to also sit on the advisory board — they still attend regular meetings.
-const ATTENDEE_WHERE = { role: { notIn: ADVISORY_ROLES } };
+// Roles that sit entirely outside attendance. Advisory roles have their own
+// attendance at advisory-tagged events, but Chief of Communication doesn't
+// attend meetings in a counted capacity at all. Anyone whose PRIMARY role is
+// in this set is invisible to the attendance UI and their /mine endpoint
+// returns an opt-out payload instead of a 0% card.
+const ATTENDANCE_EXEMPT_ROLES = [...ADVISORY_ROLES, 'ChiefOfCommunication'];
+
+// Regular-event roster: exclude everyone whose PRIMARY role is attendance-
+// exempt. Leadership (Presidents/PMs) who happen to carry advisory as an
+// extraRole still attend regular meetings, so we only filter on primary.
+const ATTENDEE_WHERE = { role: { notIn: ATTENDANCE_EXEMPT_ROLES } };
 
 // For advisory events, the roster is "anyone with advisory in primary OR
-// extra roles". Prisma `hasSome` covers the extras side.
+// extra roles". Prisma `hasSome` covers the extras side. Chief of
+// Communication is NOT included here — they're exempt from all attendance.
 const ADVISORY_ROSTER_WHERE = {
   OR: [
     { role: { in: ADVISORY_ROLES } },
@@ -35,6 +43,8 @@ function isAdvisoryUser(target) {
 // Full matrix — President only.
 // Only show events from 3 months ago through 2 weeks from now —
 // no one needs to mark attendance for meetings months in the future.
+// Advisory-audience events are excluded: they have their own roster
+// (Advisory Board + Faculty) and shouldn't dilute the club-wide stat.
 router.get('/', requireExecutive, async (_req, res) => {
   const now = new Date();
   const from = new Date(now);
@@ -42,19 +52,23 @@ router.get('/', requireExecutive, async (_req, res) => {
   const to = new Date(now);
   to.setDate(to.getDate() + 14);
 
-  const [users, events, records] = await Promise.all([
+  const [users, events] = await Promise.all([
     prisma.user.findMany({
       where: ATTENDEE_WHERE,
       select: { id: true, name: true, role: true },
       orderBy: { name: 'asc' },
     }),
     prisma.event.findMany({
-      where: { date: { gte: from, lte: to } },
+      where: { date: { gte: from, lte: to }, audience: 'all' },
       select: { id: true, title: true, date: true },
       orderBy: { date: 'asc' },
     }),
-    prisma.attendance.findMany(),
   ]);
+  // Scope attendance records to just the events in the matrix — keeps any
+  // advisory-event records out of the Club Attendance % calculation.
+  const records = await prisma.attendance.findMany({
+    where: { eventId: { in: events.map((e) => e.id) } },
+  });
   res.json({ users, events, records });
 });
 
@@ -65,7 +79,7 @@ router.get('/', requireExecutive, async (_req, res) => {
 // Audience handling:
 //   'advisory' — return ONLY Advisory Board / Faculty Advisory members.
 //                Regular members don't attend these meetings.
-//   'all' (default) — return every non-advisory operational member, same
+//   'all' (default) — return every non-exempt operational member, same
 //                     as the club-wide attendance matrix.
 router.get('/event/:id', requireExecutive, async (req, res) => {
   const eventId = Number(req.params.id);
@@ -90,9 +104,9 @@ router.get('/event/:id', requireExecutive, async (req, res) => {
 
 // Current user's own record + percentage
 router.get('/mine', async (req, res) => {
-  // Advisory roles aren't tracked — return a clear opt-out response instead
-  // of an empty 0% card that looks like a bad attendance record.
-  if (ADVISORY_ROLES.includes(req.user.role)) {
+  // Attendance-exempt roles aren't tracked — return a clear opt-out response
+  // instead of an empty 0% card that looks like a bad attendance record.
+  if (ATTENDANCE_EXEMPT_ROLES.includes(req.user.role)) {
     return res.json({
       exempt: true,
       records: [],
@@ -116,7 +130,7 @@ router.get('/mine', async (req, res) => {
 
 // Upsert one attendance mark. The user-role gate matches the event audience:
 //   advisory event  → only advisory users are valid attendees
-//   regular event   → only non-advisory users are valid attendees
+//   regular event   → only non-exempt users are valid attendees
 router.post('/', requireExecutive, async (req, res) => {
   const { userId, eventId, status } = req.body || {};
   if (!userId || !eventId || !status) {
@@ -143,12 +157,12 @@ router.post('/', requireExecutive, async (req, res) => {
         error: 'Only Advisory Board / Faculty Advisors attend Advisory Board events',
       });
     }
-  } else if (target && ADVISORY_ROLES.includes(target.role)) {
-    // Only refuse regular-event marking when the user is advisory-PRIMARY.
-    // Leadership who also has advisory as an extraRole still attends
+  } else if (target && ATTENDANCE_EXEMPT_ROLES.includes(target.role)) {
+    // Refuse regular-event marking when the user's PRIMARY role is attendance-
+    // exempt. Leadership who also has advisory as an extraRole still attends
     // regular meetings.
     return res.status(400).json({
-      error: 'Advisory Board and Faculty Advisors do not have attendance tracked for regular events',
+      error: 'Attendance is not tracked for this role',
     });
   }
   const record = await prisma.attendance.upsert({
@@ -166,19 +180,21 @@ router.get('/export.csv', requireExecutive, async (_req, res) => {
   const to = new Date(now);
   to.setDate(to.getDate() + 14);
 
-  const [users, events, records] = await Promise.all([
+  const [users, events] = await Promise.all([
     prisma.user.findMany({
       where: ATTENDEE_WHERE,
       select: { id: true, name: true, role: true },
       orderBy: { name: 'asc' },
     }),
     prisma.event.findMany({
-      where: { date: { gte: from, lte: to } },
+      where: { date: { gte: from, lte: to }, audience: 'all' },
       select: { id: true, title: true, date: true },
       orderBy: { date: 'asc' },
     }),
-    prisma.attendance.findMany(),
   ]);
+  const records = await prisma.attendance.findMany({
+    where: { eventId: { in: events.map((e) => e.id) } },
+  });
 
   const recordMap = new Map();
   for (const r of records) {

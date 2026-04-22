@@ -31,6 +31,7 @@ const CLIENT_ROLE_RANK = {
   SeniorAnalyst: 6,
   Analyst: 5,
   JuniorAnalyst: 4,
+  ChiefOfCommunication: 2,
   AdvisoryBoardMember: 1,
   FacultyAdvisory: 1,
 };

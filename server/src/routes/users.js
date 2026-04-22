@@ -17,6 +17,7 @@ const router = Router();
 const ROLES = [
   'President',
   'CIO',
+  'ChiefOfCommunication',
   'SeniorPortfolioManager',
   'PortfolioManager',
   'SeniorAnalyst',
@@ -96,6 +97,7 @@ router.post('/', requireExecutive, async (req, res) => {
   const ROLE_LABELS = {
     President: 'President',
     CIO: 'CIO',
+    ChiefOfCommunication: 'Chief of Communication',
     SeniorPortfolioManager: 'Senior Portfolio Manager',
     PortfolioManager: 'Portfolio Manager',
     SeniorAnalyst: 'Senior Analyst',

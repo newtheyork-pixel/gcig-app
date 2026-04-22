@@ -107,8 +107,10 @@ export function requireExecutive(req, res, next) {
 
 // Operational permission hierarchy (higher number = more power).
 // Advisory Board Members and Faculty Advisors sit OUTSIDE the operational chain
-// — they are observers with no edit rights. They get the lowest operational
-// rank so permission gates treat them as view-only.
+// — they are observers with no edit rights. Chief of Communication is a
+// non-investment officer role (comms/PR) that also sits outside the analyst
+// chain. All three get low ranks so permission gates treat them as view-only
+// for investment-tier actions.
 export const ROLE_RANK = {
   President: 10,
   CIO: 9,
@@ -117,6 +119,7 @@ export const ROLE_RANK = {
   SeniorAnalyst: 6,
   Analyst: 5,
   JuniorAnalyst: 4,
+  ChiefOfCommunication: 2,
   AdvisoryBoardMember: 1,
   FacultyAdvisory: 1,
 };
