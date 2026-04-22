@@ -5,8 +5,31 @@ import { verifyJwt, requireExecutive } from '../middleware/auth.js';
 const router = Router();
 router.use(verifyJwt);
 
-router.get('/', async (_req, res) => {
-  const events = await prisma.event.findMany({ orderBy: { date: 'desc' } });
+// Who can see Advisory Board events: the Advisory Board itself, Faculty
+// Advisors, and the operational leadership (Presidents + CIO) who schedule
+// and run them. Every other member sees only audience='all' events.
+const ADVISORY_VISIBLE_ROLES = new Set([
+  'AdvisoryBoardMember',
+  'FacultyAdvisory',
+  'President',
+  'CIO',
+]);
+
+export function canSeeAdvisoryEvents(role) {
+  return ADVISORY_VISIBLE_ROLES.has(role);
+}
+
+// Prisma `where` fragment that hides advisory events from members who
+// shouldn't see them. Callers spread this into their own where clause.
+export function eventAudienceWhere(role) {
+  return canSeeAdvisoryEvents(role) ? {} : { audience: 'all' };
+}
+
+router.get('/', async (req, res) => {
+  const events = await prisma.event.findMany({
+    where: eventAudienceWhere(req.user.role),
+    orderBy: { date: 'desc' },
+  });
   res.json(events);
 });
 
@@ -14,6 +37,11 @@ router.get('/:id', async (req, res) => {
   const id = Number(req.params.id);
   const event = await prisma.event.findUnique({ where: { id } });
   if (!event) return res.status(404).json({ error: 'Not found' });
+  // Advisory events are invisible to members who don't have visibility.
+  // Return 404 (not 403) so we don't leak the existence of the event.
+  if (event.audience === 'advisory' && !canSeeAdvisoryEvents(req.user.role)) {
+    return res.status(404).json({ error: 'Not found' });
+  }
   res.json(event);
 });
 

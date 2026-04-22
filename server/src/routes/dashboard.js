@@ -4,6 +4,7 @@ import { verifyJwt } from '../middleware/auth.js';
 import { getSheetPortfolio } from '../services/sheetPortfolio.js';
 import { generateWeekInReview } from '../services/articleSummarizer.js';
 import { getNewsForTicker } from '../services/news.js';
+import { eventAudienceWhere } from './events.js';
 
 const router = Router();
 router.use(verifyJwt);
@@ -151,10 +152,13 @@ async function buildWeekInReviewPayload() {
   };
 }
 
-router.get('/', async (_req, res) => {
+router.get('/', async (req, res) => {
   const now = new Date();
   const lookaheadDays = 30;
   const lookaheadEnd = new Date(now.getTime() + lookaheadDays * 24 * 60 * 60 * 1000);
+  // Advisory Board events are hidden from members without visibility
+  // (applied to upcoming + recent events queries below).
+  const audienceFilter = eventAudienceWhere(req.user.role);
   const [
     nextPitch,
     upcomingEventsRaw,
@@ -168,7 +172,7 @@ router.get('/', async (_req, res) => {
       orderBy: { date: 'asc' },
     }),
     prisma.event.findMany({
-      where: { date: { gte: now, lte: lookaheadEnd } },
+      where: { date: { gte: now, lte: lookaheadEnd }, ...audienceFilter },
       orderBy: { date: 'asc' },
       take: 10,
     }),
@@ -179,7 +183,11 @@ router.get('/', async (_req, res) => {
       include: { industry: { select: { name: true } } },
     }),
     prisma.pitch.findMany({ orderBy: { createdAt: 'desc' }, take: 3 }),
-    prisma.event.findMany({ orderBy: { createdAt: 'desc' }, take: 3 }),
+    prisma.event.findMany({
+      where: audienceFilter,
+      orderBy: { createdAt: 'desc' },
+      take: 3,
+    }),
     prisma.report.findMany({ orderBy: { createdAt: 'desc' }, take: 3 }),
   ]);
 
