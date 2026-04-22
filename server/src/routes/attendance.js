@@ -39,19 +39,32 @@ router.get('/', requireExecutive, async (_req, res) => {
 });
 
 // Attendance for a single event — President only.
-// Returns all members plus an object { userId: status } for existing records.
+// Returns the attendee roster for the event's audience + an object
+// { userId: status } of existing records.
+//
+// Audience handling:
+//   'advisory' — return ONLY Advisory Board / Faculty Advisory members.
+//                Regular members don't attend these meetings.
+//   'all' (default) — return every non-advisory operational member, same
+//                     as the club-wide attendance matrix.
 router.get('/event/:id', requireExecutive, async (req, res) => {
   const eventId = Number(req.params.id);
-  const [event, users, records] = await Promise.all([
-    prisma.event.findUnique({ where: { id: eventId } }),
+  const event = await prisma.event.findUnique({ where: { id: eventId } });
+  if (!event) return res.status(404).json({ error: 'Event not found' });
+
+  const userWhere =
+    event.audience === 'advisory'
+      ? { role: { in: ADVISORY_ROLES } }
+      : ATTENDEE_WHERE;
+
+  const [users, records] = await Promise.all([
     prisma.user.findMany({
-      where: ATTENDEE_WHERE,
+      where: userWhere,
       select: { id: true, name: true, role: true },
       orderBy: { name: 'asc' },
     }),
     prisma.attendance.findMany({ where: { eventId } }),
   ]);
-  if (!event) return res.status(404).json({ error: 'Event not found' });
   const byUser = {};
   for (const r of records) byUser[r.userId] = r.status;
   res.json({ event, users, records: byUser });
@@ -83,7 +96,9 @@ router.get('/mine', async (req, res) => {
   res.json({ records, total, present, excused, percentage: pct });
 });
 
-// Upsert one attendance mark
+// Upsert one attendance mark. The user-role gate matches the event audience:
+//   advisory event  → only advisory users are valid attendees
+//   regular event   → only non-advisory users are valid attendees
 router.post('/', requireExecutive, async (req, res) => {
   const { userId, eventId, status } = req.body || {};
   if (!userId || !eventId || !status) {
@@ -92,14 +107,27 @@ router.post('/', requireExecutive, async (req, res) => {
   if (!['Present', 'Absent', 'Excused'].includes(status)) {
     return res.status(400).json({ error: 'Invalid status' });
   }
-  // Refuse to create attendance rows for advisory-role users.
-  const target = await prisma.user.findUnique({
-    where: { id: Number(userId) },
-    select: { role: true },
-  });
-  if (target && ADVISORY_ROLES.includes(target.role)) {
+  const [target, event] = await Promise.all([
+    prisma.user.findUnique({
+      where: { id: Number(userId) },
+      select: { role: true },
+    }),
+    prisma.event.findUnique({
+      where: { id: Number(eventId) },
+      select: { audience: true },
+    }),
+  ]);
+  if (!event) return res.status(404).json({ error: 'Event not found' });
+  const isAdvisoryUser = target && ADVISORY_ROLES.includes(target.role);
+  if (event.audience === 'advisory') {
+    if (!isAdvisoryUser) {
+      return res.status(400).json({
+        error: 'Only Advisory Board / Faculty Advisors attend Advisory Board events',
+      });
+    }
+  } else if (isAdvisoryUser) {
     return res.status(400).json({
-      error: 'Advisory Board and Faculty Advisors do not have attendance tracked',
+      error: 'Advisory Board and Faculty Advisors do not have attendance tracked for regular events',
     });
   }
   const record = await prisma.attendance.upsert({

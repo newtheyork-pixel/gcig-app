@@ -40,9 +40,17 @@ export default function EventAttendance({ eventId }) {
   if (!data) return <div className="text-sm text-navy-400">Loading members…</div>;
 
   const marked = Object.keys(data.records).length;
+  const isAdvisory = data.event?.audience === 'advisory';
 
   return (
     <div>
+      {isAdvisory && (
+        <div className="mb-3 rounded-lg border border-gold-200 bg-gold-100/40 px-3 py-2 text-[11px] text-navy">
+          <span className="font-semibold">Advisory Board event.</span> Roster
+          below includes only Advisory Board members and Faculty Advisors.
+        </div>
+      )}
+
       <div className="mb-3 flex items-center justify-between">
         <div className="text-xs font-semibold uppercase tracking-wider text-navy-400">
           Attendance ({marked} / {data.users.length} marked)

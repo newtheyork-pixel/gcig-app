@@ -67,10 +67,6 @@ export default function Calendar() {
   const [eventModalOpen, setEventModalOpen] = useState(false);
   const [eventForm, setEventForm] = useState(emptyEventForm());
 
-  // Audience filter — toggles the calendar view between "all events" and
-  // just the ones tagged as Advisory Board meetings.
-  const [audienceFilter, setAudienceFilter] = useState('all');
-
   async function loadPitches() {
     const { data } = await api.get('/pitches');
     setPitches(data);
@@ -115,60 +111,35 @@ export default function Calendar() {
     const evtEvents = events.map((e) => {
       const start = new Date(e.date);
       const durationMs = (e.durationMinutes ?? 60) * 60 * 1000;
-      const audience = e.audience || 'all';
       return {
         id: `event-${e.id}`,
-        title: audience === 'advisory' ? `★ ${e.title}` : e.title,
+        title: e.title,
         start,
         end: new Date(start.getTime() + durationMs),
-        resource: { type: 'event', data: e, audience },
+        resource: { type: 'event', data: e, audience: e.audience || 'all' },
       };
     });
-    const merged = [...pitchEvents, ...evtEvents];
-    // Apply audience filter. "Advisory Only" hides pitches + non-advisory
-    // events so the calendar shows just Advisory Board meetings.
-    if (audienceFilter === 'advisory') {
-      return merged.filter(
-        (e) => e.resource?.type === 'event' && e.resource?.audience === 'advisory'
-      );
-    }
-    return merged;
-  }, [pitches, events, audienceFilter]);
+    return [...pitchEvents, ...evtEvents];
+  }, [pitches, events]);
 
-  // ── Styling: pitches = gold, advisory = burgundy outline,
-  // regular events = navy ──
+  // ── Styling: pitches = gold, events = navy ──
   function eventPropGetter(calEvent) {
-    const type = calEvent.resource?.type;
-    const audience = calEvent.resource?.audience;
-    if (type === 'pitch') {
-      return {
-        style: {
-          backgroundColor: '#C9A84C',
-          color: '#1B2A4A',
-          borderRadius: 4,
-          border: 'none',
-          fontWeight: 600,
-        },
-      };
-    }
-    if (audience === 'advisory') {
-      return {
-        style: {
-          backgroundColor: '#9B7F2E', // darker gold to stand out
-          color: '#FFFDF5',
-          borderRadius: 4,
-          border: '1px solid #C9A84C',
-          fontWeight: 600,
-        },
-      };
-    }
+    const isPitch = calEvent.resource?.type === 'pitch';
     return {
-      style: {
-        backgroundColor: '#1B2A4A',
-        color: 'white',
-        borderRadius: 4,
-        border: 'none',
-      },
+      style: isPitch
+        ? {
+            backgroundColor: '#C9A84C',
+            color: '#1B2A4A',
+            borderRadius: 4,
+            border: 'none',
+            fontWeight: 600,
+          }
+        : {
+            backgroundColor: '#1B2A4A',
+            color: 'white',
+            borderRadius: 4,
+            border: 'none',
+          },
     };
   }
 
@@ -313,52 +284,17 @@ export default function Calendar() {
       />
 
       <Card>
-        <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-          <div className="flex flex-wrap items-center gap-4 text-xs text-navy-400">
-            <span className="inline-flex items-center gap-1.5">
-              <span className="inline-block h-3 w-3 rounded bg-gold" />
-              <Presentation className="h-3 w-3" />
-              Pitch
-            </span>
-            <span className="inline-flex items-center gap-1.5">
-              <span className="inline-block h-3 w-3 rounded bg-navy" />
-              <CalendarDays className="h-3 w-3" />
-              Event
-            </span>
-            <span className="inline-flex items-center gap-1.5">
-              <span
-                className="inline-block h-3 w-3 rounded"
-                style={{ backgroundColor: '#9B7F2E', border: '1px solid #C9A84C' }}
-              />
-              ★ Advisory Board
-            </span>
-          </div>
-
-          {/* Audience filter pills — All events / Advisory only. */}
-          <div className="flex rounded-full border border-navy-100 bg-white p-0.5 text-[10px] font-semibold uppercase tracking-[0.15em]">
-            <button
-              type="button"
-              onClick={() => setAudienceFilter('all')}
-              className={`rounded-full px-3 py-1 transition ${
-                audienceFilter === 'all'
-                  ? 'bg-navy text-white'
-                  : 'text-navy-400 hover:text-navy'
-              }`}
-            >
-              All Events
-            </button>
-            <button
-              type="button"
-              onClick={() => setAudienceFilter('advisory')}
-              className={`rounded-full px-3 py-1 transition ${
-                audienceFilter === 'advisory'
-                  ? 'bg-gold text-navy'
-                  : 'text-navy-400 hover:text-navy'
-              }`}
-            >
-              ★ Advisory Only
-            </button>
-          </div>
+        <div className="mb-3 flex flex-wrap items-center gap-4 text-xs text-navy-400">
+          <span className="inline-flex items-center gap-1.5">
+            <span className="inline-block h-3 w-3 rounded bg-gold" />
+            <Presentation className="h-3 w-3" />
+            Pitch
+          </span>
+          <span className="inline-flex items-center gap-1.5">
+            <span className="inline-block h-3 w-3 rounded bg-navy" />
+            <CalendarDays className="h-3 w-3" />
+            Event
+          </span>
         </div>
         {/* Mobile: agenda list. Desktop: full BigCalendar grid. */}
         <div className="md:hidden">
@@ -678,9 +614,8 @@ export default function Calendar() {
               <span>
                 <span className="font-medium">Advisory Board event</span>
                 <span className="mt-0.5 block text-xs text-navy-400">
-                  Tag this as an Advisory Board-specific meeting. Shown with a
-                  star on the calendar and filterable via the "Advisory Only"
-                  toggle.
+                  When checked, only Advisory Board members and Faculty
+                  Advisors appear in the attendance sheet for this event.
                 </span>
               </span>
             </label>
