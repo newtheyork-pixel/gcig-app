@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Navigate } from 'react-router-dom';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import {
   Bot,
   Send,
@@ -151,8 +153,9 @@ export default function AiChat() {
             <div>
               <div className="font-semibold text-navy">Current portfolio</div>
               <div>
-                Live holdings, cash position, and sector mix from the Google
-                Sheet (cached ~60s).
+                Holdings, cash position, sector mix, and per-position
+                performance (total return, YTD, daily change) — pulled
+                from the Google Sheet and refreshed at most once per minute.
               </div>
             </div>
           </div>
@@ -258,6 +261,82 @@ export default function AiChat() {
   );
 }
 
+// Tailwind classes mapped per markdown element. Kept inline so we don't
+// have to fight @tailwindcss/typography's defaults — our bubbles are
+// tight, styled, and shouldn't inherit a generic prose theme.
+const MD_COMPONENTS = {
+  p: ({ children }) => <p className="mb-2 last:mb-0">{children}</p>,
+  strong: ({ children }) => <strong className="font-semibold">{children}</strong>,
+  em: ({ children }) => <em className="italic">{children}</em>,
+  ul: ({ children }) => (
+    <ul className="mb-2 ml-4 list-disc space-y-1 last:mb-0 [&_ul]:mt-1 [&_ul]:mb-0">
+      {children}
+    </ul>
+  ),
+  ol: ({ children }) => (
+    <ol className="mb-2 ml-4 list-decimal space-y-1 last:mb-0 [&_ol]:mt-1 [&_ol]:mb-0">
+      {children}
+    </ol>
+  ),
+  li: ({ children }) => <li className="leading-relaxed">{children}</li>,
+  h1: ({ children }) => (
+    <h3 className="mb-2 mt-2 font-serif text-base font-semibold first:mt-0">
+      {children}
+    </h3>
+  ),
+  h2: ({ children }) => (
+    <h3 className="mb-2 mt-2 font-serif text-base font-semibold first:mt-0">
+      {children}
+    </h3>
+  ),
+  h3: ({ children }) => (
+    <h4 className="mb-1.5 mt-2 font-serif text-sm font-semibold first:mt-0">
+      {children}
+    </h4>
+  ),
+  h4: ({ children }) => (
+    <h4 className="mb-1 mt-1.5 font-serif text-sm font-semibold first:mt-0">
+      {children}
+    </h4>
+  ),
+  code: ({ inline, children }) =>
+    inline ? (
+      <code className="rounded bg-black/10 px-1 py-0.5 font-mono text-[12px]">
+        {children}
+      </code>
+    ) : (
+      <code className="font-mono text-[12px]">{children}</code>
+    ),
+  pre: ({ children }) => (
+    <pre className="mb-2 overflow-x-auto rounded-lg bg-black/10 p-2 text-[12px] last:mb-0">
+      {children}
+    </pre>
+  ),
+  a: ({ href, children }) => (
+    <a
+      href={href}
+      target="_blank"
+      rel="noreferrer"
+      className="underline decoration-gold underline-offset-2 hover:text-gold"
+    >
+      {children}
+    </a>
+  ),
+  blockquote: ({ children }) => (
+    <blockquote className="my-2 border-l-2 border-gold/50 pl-3 italic opacity-90">
+      {children}
+    </blockquote>
+  ),
+  hr: () => <hr className="my-3 border-t border-current opacity-20" />,
+  table: ({ children }) => (
+    <div className="mb-2 overflow-x-auto last:mb-0">
+      <table className="text-xs">{children}</table>
+    </div>
+  ),
+  th: ({ children }) => <th className="px-2 py-1 text-left font-semibold">{children}</th>,
+  td: ({ children }) => <td className="px-2 py-1">{children}</td>,
+};
+
 function MessageBubble({ message }) {
   const isUser = message.role === 'user';
   return (
@@ -272,12 +351,23 @@ function MessageBubble({ message }) {
       <div className={`max-w-[85%] ${isUser ? 'text-right' : ''}`}>
         <div
           className={`inline-block rounded-2xl px-4 py-2.5 text-sm leading-relaxed ${
-            isUser
-              ? 'bg-navy text-white'
-              : 'bg-navy-50 text-navy'
+            isUser ? 'bg-navy text-white' : 'bg-navy-50 text-navy'
           }`}
         >
-          <div className="whitespace-pre-wrap break-words">{message.content}</div>
+          {/* User messages we render as plain text (no hidden formatting
+              tricks), assistant messages go through markdown so bold,
+              lists, headings, etc. render properly. */}
+          {isUser ? (
+            <div className="whitespace-pre-wrap break-words text-left">
+              {message.content}
+            </div>
+          ) : (
+            <div className="break-words text-left">
+              <ReactMarkdown remarkPlugins={[remarkGfm]} components={MD_COMPONENTS}>
+                {message.content}
+              </ReactMarkdown>
+            </div>
+          )}
         </div>
         <div className="mt-1 px-1 text-[10px] uppercase tracking-wider text-navy-300">
           {isUser ? 'You' : 'Assistant'} · {formatTime(message.at)}
