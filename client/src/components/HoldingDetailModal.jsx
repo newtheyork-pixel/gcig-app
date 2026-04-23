@@ -55,6 +55,8 @@ export default function HoldingDetailModal({ holding, onClose }) {
   const { isSuperAdmin } = useAuth();
   const [info, setInfo] = useState(null);
   const [coverage, setCoverage] = useState(null);
+  const [earnings, setEarnings] = useState(null); // { covered, date, hour, epsEstimate, ... } or null
+  const [consensus, setConsensus] = useState(null); // { covered, strongBuy, buy, hold, sell, ... } or null
   const [lots, setLots] = useState([]);
   const [news, setNews] = useState(null);
   const [newsError, setNewsError] = useState('');
@@ -85,6 +87,8 @@ export default function HoldingDetailModal({ holding, onClose }) {
     setError('');
     setInfo(null);
     setCoverage(null);
+    setEarnings(null);
+    setConsensus(null);
     setLots([]);
     setNews(null);
     setNewsError('');
@@ -131,11 +135,23 @@ export default function HoldingDetailModal({ holding, onClose }) {
         .then(({ data }) => data)
         .catch(() => ({ pitches: [], reports: [] })),
       loadLots(),
-    ]).then(([infoData, coverageData, lotsData]) => {
+      // Earnings + consensus are best-effort — swallow errors so a
+      // Finnhub hiccup doesn't break the whole modal.
+      api
+        .get(`/holdings/${encodeURIComponent(ticker)}/earnings`)
+        .then(({ data }) => data)
+        .catch(() => null),
+      api
+        .get(`/holdings/${encodeURIComponent(ticker)}/consensus`)
+        .then(({ data }) => data)
+        .catch(() => null),
+    ]).then(([infoData, coverageData, lotsData, earningsData, consensusData]) => {
       if (cancelled) return;
       setInfo(infoData);
       setCoverage(coverageData);
       setLots(lotsData);
+      setEarnings(earningsData);
+      setConsensus(consensusData);
       setLoading(false);
 
       // News is fired AFTER the info call resolves so we can pass the
@@ -474,6 +490,17 @@ export default function HoldingDetailModal({ holding, onClose }) {
             article={readerArticle}
             onClose={() => setReaderArticle(null)}
           />
+
+          {/* Next earnings — compact inline banner above the stats grid so
+              it's the first thing a user sees when opening a holding. */}
+          {earnings?.covered && earnings.date && (
+            <NextEarningsBanner earnings={earnings} />
+          )}
+
+          {/* Analyst consensus (Street view). Only shown when Finnhub has
+              coverage — index ETFs and thinly-followed names come back
+              uncovered and we simply hide the block. */}
+          {consensus?.covered && <ConsensusBar consensus={consensus} />}
 
           {/* Stats grid */}
           <div className="grid grid-cols-2 gap-x-6 gap-y-3 sm:grid-cols-3">
@@ -1227,5 +1254,165 @@ function ArticleReaderModal({ article, onClose }) {
         )}
       </div>
     </Modal>
+  );
+}
+
+// ─── Next Earnings banner ─────────────────────────────────────────────
+// "NOC reports Thursday Apr 29 · After close · EPS est $6.48"
+// Counts days so the user can see urgency at a glance. Hours Finnhub
+// returns: 'bmo' = before market open, 'amc' = after market close,
+// 'dmh' = during market hours.
+
+function earningsHourLabel(hour) {
+  if (hour === 'bmo') return 'Before open';
+  if (hour === 'amc') return 'After close';
+  if (hour === 'dmh') return 'Intraday';
+  return null;
+}
+
+function daysUntil(yyyyMmDd) {
+  if (!yyyyMmDd) return null;
+  const target = new Date(`${yyyyMmDd}T16:00:00Z`);
+  const now = new Date();
+  const diffMs = target - now;
+  return Math.round(diffMs / (24 * 60 * 60 * 1000));
+}
+
+function NextEarningsBanner({ earnings }) {
+  const d = daysUntil(earnings.date);
+  const when =
+    d == null
+      ? earnings.date
+      : d === 0
+        ? 'today'
+        : d === 1
+          ? 'tomorrow'
+          : d > 1
+            ? `in ${d} days`
+            : 'date passed';
+  const hourLabel = earningsHourLabel(earnings.hour);
+  // Color the chip when earnings are close — within a week gets the
+  // gold attention treatment, further out is navy-on-cream.
+  const soon = d != null && d <= 7 && d >= 0;
+  const chipClass = soon
+    ? 'border-gold bg-gold-100 text-navy'
+    : 'border-navy-100 bg-navy-50 text-navy';
+  const formatted = (() => {
+    try {
+      return new Date(`${earnings.date}T12:00:00Z`).toLocaleDateString('en-US', {
+        weekday: 'short',
+        month: 'short',
+        day: 'numeric',
+      });
+    } catch {
+      return earnings.date;
+    }
+  })();
+  return (
+    <div className={`rounded-lg border px-3 py-2 text-xs ${chipClass}`}>
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+        <span className="text-[10px] font-semibold uppercase tracking-[0.18em] text-gold-700">
+          Next Earnings
+        </span>
+        <span className="font-semibold">
+          {formatted} · {when}
+        </span>
+        {hourLabel && <span className="text-navy-500">· {hourLabel}</span>}
+        {earnings.epsEstimate != null && (
+          <span className="text-navy-500">
+            · EPS est{' '}
+            <span className="font-semibold text-navy">
+              ${Number(earnings.epsEstimate).toFixed(2)}
+            </span>
+          </span>
+        )}
+        {earnings.quarter && earnings.year && (
+          <span className="text-navy-400">
+            · Q{earnings.quarter} {earnings.year}
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─── Analyst Consensus bar ────────────────────────────────────────────
+// Segmented bar + headline ratio, plus a "trend vs 3 months ago" chip
+// when we have prior data. The bar uses emerald → gold → rose so the
+// sentiment reads at a glance.
+
+function ConsensusBar({ consensus }) {
+  const { strongBuy, buy, hold, sell, strongSell, total, bullishShare, prior } =
+    consensus;
+  if (total === 0) return null;
+  const segs = [
+    { n: strongBuy, label: 'Strong Buy', cls: 'bg-emerald-600' },
+    { n: buy, label: 'Buy', cls: 'bg-emerald-400' },
+    { n: hold, label: 'Hold', cls: 'bg-gold' },
+    { n: sell, label: 'Sell', cls: 'bg-rose-400' },
+    { n: strongSell, label: 'Strong Sell', cls: 'bg-rose-600' },
+  ];
+  const bullPct =
+    bullishShare != null ? `${Math.round(bullishShare * 100)}% bullish` : null;
+  let trend = null;
+  if (
+    prior &&
+    prior.bullishShare != null &&
+    bullishShare != null &&
+    prior.total > 0
+  ) {
+    const delta = bullishShare - prior.bullishShare;
+    const arrow = delta > 0.01 ? '▲' : delta < -0.01 ? '▼' : '•';
+    const tone =
+      delta > 0.01 ? 'text-emerald-600' : delta < -0.01 ? 'text-rose-600' : 'text-navy-400';
+    trend = (
+      <span className={`text-[11px] font-semibold ${tone}`}>
+        {arrow} {Math.abs(delta * 100).toFixed(0)}pp vs 3mo ago
+      </span>
+    );
+  }
+  return (
+    <div className="rounded-lg border border-navy-100 bg-white px-3 py-3">
+      <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <span className="text-[10px] font-semibold uppercase tracking-[0.18em] text-gold-700">
+            Analyst Consensus
+          </span>
+          <span className="text-[11px] text-navy-400">
+            {total} analyst{total === 1 ? '' : 's'} · {consensus.period}
+          </span>
+        </div>
+        <div className="flex items-center gap-3">
+          {bullPct && (
+            <span className="text-xs font-semibold text-navy">{bullPct}</span>
+          )}
+          {trend}
+        </div>
+      </div>
+      {/* Segmented sentiment bar */}
+      <div className="flex h-2 w-full overflow-hidden rounded-full bg-navy-50">
+        {segs.map((s, i) =>
+          s.n > 0 ? (
+            <span
+              key={i}
+              className={s.cls}
+              style={{ width: `${(s.n / total) * 100}%` }}
+              title={`${s.label}: ${s.n}`}
+            />
+          ) : null
+        )}
+      </div>
+      {/* Readable counts below the bar */}
+      <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-navy-500">
+        {segs.map((s, i) =>
+          s.n > 0 ? (
+            <span key={i}>
+              <span className={`inline-block h-2 w-2 rounded-full ${s.cls}`} />{' '}
+              <span className="font-semibold text-navy">{s.n}</span> {s.label}
+            </span>
+          ) : null
+        )}
+      </div>
+    </div>
   );
 }

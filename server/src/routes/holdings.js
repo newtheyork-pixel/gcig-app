@@ -118,6 +118,11 @@ import {
   detectThesisDrift,
   checkThesisAgainstNews,
 } from '../services/riskCommentary.js';
+import {
+  getUpcomingEarnings,
+  getUpcomingEarningsBatch,
+  getAnalystConsensus,
+} from '../services/marketData.js';
 
 const router = Router();
 
@@ -589,6 +594,70 @@ router.get('/history', async (_req, res) => {
     take: 365,
   });
   res.json(snapshots);
+});
+
+// Upcoming earnings for every held equity ticker (next 60 days). Pulled
+// from Finnhub with a 12h per-ticker cache, then filtered + sorted so
+// the client can render a clean "next up" list.
+router.get('/earnings', async (_req, res) => {
+  try {
+    const sheet = await getSheetPortfolio();
+    const tickers = sheet.holdings
+      .filter((h) => !h.isCash && h.ticker)
+      .map((h) => h.ticker.toUpperCase());
+    if (tickers.length === 0) return res.json({ upcoming: [] });
+
+    const byTicker = await getUpcomingEarningsBatch(tickers, { daysAhead: 60 });
+    // Flatten to a sorted list — soonest first. Include the company name
+    // alongside the ticker so clients don't need to re-lookup.
+    const holdingByTicker = new Map(
+      sheet.holdings
+        .filter((h) => !h.isCash && h.ticker)
+        .map((h) => [h.ticker.toUpperCase(), h])
+    );
+    const upcoming = Object.entries(byTicker)
+      .map(([ticker, row]) => {
+        const h = holdingByTicker.get(ticker);
+        return {
+          ticker,
+          name: h?.name || ticker,
+          sector: h?.sector || null,
+          date: row.date, // 'YYYY-MM-DD'
+          hour: row.hour || null, // 'bmo' | 'amc' | 'dmh' | null
+          epsEstimate: row.epsEstimate ?? null,
+          revenueEstimate: row.revenueEstimate ?? null,
+          quarter: row.quarter ?? null,
+          year: row.year ?? null,
+        };
+      })
+      .sort((a, b) => a.date.localeCompare(b.date));
+
+    res.json({ upcoming });
+  } catch (err) {
+    console.error('earnings fetch failed:', err.message);
+    res.status(502).json({ error: 'Failed to fetch earnings calendar' });
+  }
+});
+
+// Analyst consensus for a single ticker. Latest row + ~3-month prior so
+// the client can show a "current + trend" chip.
+router.get('/:ticker/consensus', async (req, res) => {
+  const ticker = normalizeTicker(req.params.ticker);
+  if (!ticker) return res.status(400).json({ error: 'Ticker required' });
+  const data = await getAnalystConsensus(ticker);
+  if (!data) return res.json({ ticker, covered: false });
+  res.json({ ticker, covered: true, ...data });
+});
+
+// Single-ticker earnings lookup — convenience for the holding detail modal
+// so it doesn't have to fetch the whole portfolio's earnings just to show
+// one row.
+router.get('/:ticker/earnings', async (req, res) => {
+  const ticker = normalizeTicker(req.params.ticker);
+  if (!ticker) return res.status(400).json({ error: 'Ticker required' });
+  const row = await getUpcomingEarnings(ticker);
+  if (!row) return res.json({ ticker, covered: false });
+  res.json({ ticker, covered: true, ...row });
 });
 
 // ── Investment thesis per ticker ──────────────────────────────────────

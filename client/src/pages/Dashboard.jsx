@@ -67,11 +67,29 @@ export default function Dashboard() {
   const [quotes, setQuotes] = useState(null);
   const [history, setHistory] = useState([]);
 
+  const [earnings, setEarnings] = useState(null); // { upcoming: [...] }
+
   useEffect(() => {
     api.get('/dashboard').then((r) => setDashboard(r.data)).catch(() => setDashboard({}));
     api.get('/holdings/quotes').then((r) => setQuotes(r.data)).catch(() => setQuotes(null));
     api.get('/holdings/history').then((r) => setHistory(r.data || [])).catch(() => setHistory([]));
+    api.get('/holdings/earnings').then((r) => setEarnings(r.data)).catch(() => setEarnings(null));
   }, []);
+
+  // Soonest upcoming earnings within the next 30 days — surfaces as a
+  // spotlight card when relevant so pitchers don't walk into a pitch
+  // the day before a holding reports.
+  const nextEarnings = useMemo(() => {
+    const list = earnings?.upcoming || [];
+    if (list.length === 0) return null;
+    const now = new Date();
+    const cutoff = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
+    const upcoming = list
+      .map((e) => ({ ...e, dateObj: new Date(`${e.date}T12:00:00Z`) }))
+      .filter((e) => e.dateObj >= now && e.dateObj <= cutoff)
+      .sort((a, b) => a.dateObj - b.dateObj);
+    return upcoming[0] || null;
+  }, [earnings]);
 
   const firstName = user?.name?.split(' ')[0] || '';
 
@@ -108,6 +126,7 @@ export default function Dashboard() {
         nextPitch={dashboard?.nextPitch}
         holdingsCount={quotes?.holdings?.length ?? dashboard?.holdingsCount}
         upcomingCount={dashboard?.upcomingEvents?.length ?? 0}
+        nextEarnings={nextEarnings}
       />
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-[1.1fr_1fr]">
@@ -420,11 +439,18 @@ function DayInReview({ text, generatedAt }) {
   );
 }
 
-// ─── Spotlight row (three compact editorial cards) ──────────────────────
+// ─── Spotlight row (three or four compact editorial cards) ─────────────
+// A fourth "Next Earnings" card slides in when any held ticker reports
+// in the next 30 days — keeps the dashboard lean on quiet weeks.
 
-function SpotlightRow({ nextPitch, holdingsCount, upcomingCount }) {
+function SpotlightRow({ nextPitch, holdingsCount, upcomingCount, nextEarnings }) {
+  const hasEarnings = !!nextEarnings;
+  // Static class names — Tailwind can't JIT dynamic interpolations.
+  const gridClass = hasEarnings
+    ? 'grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4'
+    : 'grid grid-cols-1 gap-4 md:grid-cols-3';
   return (
-    <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+    <div className={gridClass}>
       <SpotlightCard
         to="/calendar"
         label="Next Pitch"
@@ -436,6 +462,26 @@ function SpotlightRow({ nextPitch, holdingsCount, upcomingCount }) {
             : 'Check the calendar for upcoming sessions'
         }
       />
+      {hasEarnings && (
+        <SpotlightCard
+          to="/portfolio"
+          label="Next Earnings"
+          icon={Sparkles}
+          primary={nextEarnings.ticker}
+          secondary={`${format(
+            new Date(`${nextEarnings.date}T12:00:00Z`),
+            'EEE, MMM d'
+          )}${
+            nextEarnings.hour === 'bmo'
+              ? ' · Before open'
+              : nextEarnings.hour === 'amc'
+                ? ' · After close'
+                : nextEarnings.hour === 'dmh'
+                  ? ' · Intraday'
+                  : ''
+          }`}
+        />
+      )}
       <SpotlightCard
         to="/portfolio"
         label="Active Holdings"

@@ -4,6 +4,10 @@ import { fileURLToPath } from 'node:url';
 import prisma from '../db.js';
 import { getSheetPortfolio } from '../services/sheetPortfolio.js';
 import { getNewsForTicker } from '../services/news.js';
+import {
+  getUpcomingEarningsBatch,
+  getAnalystConsensus,
+} from '../services/marketData.js';
 
 // Broad-market ETFs whose "news" is category headlines rather than
 // company-specific reporting. Excluded from the News section — they'd
@@ -211,9 +215,15 @@ async function buildLiveContext() {
     (t) => !BROAD_MARKET_TICKERS.includes(t)
   );
 
-  const [thesesRes, pitchHistoryRes, closedVotesForHoldingsRes, newsRes] =
-    heldTickers.length > 0
-      ? await Promise.allSettled([
+  const [
+    thesesRes,
+    pitchHistoryRes,
+    closedVotesForHoldingsRes,
+    newsRes,
+    earningsRes,
+    consensusRes,
+  ] = heldTickers.length > 0
+    ? await Promise.allSettled([
           prisma.holdingThesis.findMany({
             where: { ticker: { in: heldTickers } },
             select: {
@@ -272,12 +282,29 @@ async function buildLiveContext() {
               },
             });
           })(),
+          // Earnings calendar — batched across all held tickers. Each
+          // ticker has its own 12h cache, so this is cheap once warm.
+          getUpcomingEarningsBatch(heldTickers, { daysAhead: 45 }),
+          // Analyst consensus — per-ticker 24h cache. Map keyed by
+          // ticker, same shape as the batch earnings response.
+          (async () => {
+            const rows = await Promise.all(
+              heldTickers.map((t) => getAnalystConsensus(t))
+            );
+            const out = {};
+            heldTickers.forEach((t, i) => {
+              if (rows[i]) out[t] = rows[i];
+            });
+            return out;
+          })(),
         ])
       : [
           { status: 'fulfilled', value: [] },
           { status: 'fulfilled', value: [] },
           { status: 'fulfilled', value: [] },
           { status: 'fulfilled', value: [] },
+          { status: 'fulfilled', value: {} },
+          { status: 'fulfilled', value: {} },
         ];
 
   const thesisByTicker = new Map();
@@ -302,6 +329,17 @@ async function buildLiveContext() {
       closedVotesByTicker.get(key).push(v);
     }
   }
+  // Earnings calendar + analyst consensus per ticker. Both come back
+  // as plain objects keyed by uppercase ticker; missing tickers stay
+  // absent so lookups are "hasOwnProperty or not there".
+  const earningsByTicker =
+    earningsRes && earningsRes.status === 'fulfilled' && earningsRes.value
+      ? earningsRes.value
+      : {};
+  const consensusByTicker =
+    consensusRes && consensusRes.status === 'fulfilled' && consensusRes.value
+      ? consensusRes.value
+      : {};
 
   // Portfolio summary + full holdings block with company names.
   let portfolioBlock = '_Portfolio data unavailable (sheet unreachable)._';
@@ -407,9 +445,20 @@ async function buildLiveContext() {
       const theses = thesisByTicker.get(ticker);
       const pitches = pitchesByTicker.get(ticker) || [];
       const votes = closedVotesByTicker.get(ticker) || [];
-      // Only render an intel block if we actually have club-sourced content
-      // on the ticker — no point dumping empty scaffolding.
-      if (!theses && pitches.length === 0 && votes.length === 0) continue;
+      const earnings = earningsByTicker[ticker];
+      const consensus = consensusByTicker[ticker];
+      // Render a block if we have ANY club-sourced content (thesis,
+      // pitch, vote) OR market-data context (earnings, consensus) —
+      // otherwise skip so we don't dump empty scaffolding.
+      if (
+        !theses &&
+        pitches.length === 0 &&
+        votes.length === 0 &&
+        !earnings &&
+        !consensus
+      ) {
+        continue;
+      }
 
       const lines = [];
       const label = h.name && h.name !== h.ticker ? `${h.ticker} — ${h.name}` : h.ticker;
@@ -440,6 +489,43 @@ async function buildLiveContext() {
         const synth = v.synthesis ? ` — ${truncate(v.synthesis, 260)}` : '';
         lines.push(
           `  - Last vote: ${v.title || 'vote'} closed ${fmtDate(v.closedAt)}${synth}${extra}`
+        );
+      }
+      if (earnings) {
+        const hourBit =
+          earnings.hour === 'bmo'
+            ? ' (before open)'
+            : earnings.hour === 'amc'
+              ? ' (after close)'
+              : earnings.hour === 'dmh'
+                ? ' (intraday)'
+                : '';
+        const estBit =
+          earnings.epsEstimate != null
+            ? `, EPS est $${Number(earnings.epsEstimate).toFixed(2)}`
+            : '';
+        const qBit =
+          earnings.quarter && earnings.year
+            ? `, Q${earnings.quarter} ${earnings.year}`
+            : '';
+        lines.push(
+          `  - Next earnings: ${earnings.date}${hourBit}${estBit}${qBit}`
+        );
+      }
+      if (consensus && consensus.total > 0) {
+        const bullPct = consensus.bullishShare != null
+          ? ` (${Math.round(consensus.bullishShare * 100)}% bullish)`
+          : '';
+        const trendBit =
+          consensus.prior && consensus.prior.bullishShare != null
+            ? (() => {
+                const d = consensus.bullishShare - consensus.prior.bullishShare;
+                if (Math.abs(d) < 0.01) return '';
+                return `, ${d > 0 ? 'up' : 'down'} ${Math.abs(d * 100).toFixed(0)}pp vs 3mo ago`;
+              })()
+            : '';
+        lines.push(
+          `  - Analyst consensus (${consensus.total} analysts): ${consensus.strongBuy} strong buy, ${consensus.buy} buy, ${consensus.hold} hold, ${consensus.sell} sell, ${consensus.strongSell} strong sell${bullPct}${trendBit}`
         );
       }
       intelSections.push(lines.join('\n'));
@@ -531,6 +617,41 @@ async function buildLiveContext() {
     performanceBlock = lines.join('\n');
   }
 
+  // Upcoming earnings — sorted by date so "when's our next earnings?"
+  // is a one-glance question for the model. Derived from the same
+  // batch fetched above so there's no extra API round-trip.
+  let upcomingEarningsBlock =
+    '_No upcoming earnings on file for current holdings in the next 45 days._';
+  const earningsRows = Object.entries(earningsByTicker || {})
+    .map(([ticker, row]) => ({
+      ticker,
+      date: row.date,
+      hour: row.hour,
+      epsEstimate: row.epsEstimate,
+      quarter: row.quarter,
+      year: row.year,
+    }))
+    .filter((r) => r.date)
+    .sort((a, b) => a.date.localeCompare(b.date));
+  if (earningsRows.length > 0) {
+    upcomingEarningsBlock = earningsRows
+      .map((r) => {
+        const hour =
+          r.hour === 'bmo'
+            ? ' before open'
+            : r.hour === 'amc'
+              ? ' after close'
+              : r.hour === 'dmh'
+                ? ' intraday'
+                : '';
+        const est =
+          r.epsEstimate != null ? `, EPS est $${Number(r.epsEstimate).toFixed(2)}` : '';
+        const q = r.quarter && r.year ? `, Q${r.quarter} ${r.year}` : '';
+        return `- ${r.date}${hour} — **${r.ticker}**${est}${q}`;
+      })
+      .join('\n');
+  }
+
   // News on holdings — grouped by ticker, top 3 per ticker, score-ordered.
   // Summaries are truncated so a few long articles can't balloon the brief.
   let newsBlock =
@@ -616,6 +737,9 @@ async function buildLiveContext() {
     '',
     '### Portfolio Performance',
     performanceBlock,
+    '',
+    '### Upcoming Earnings (next 45 days, held tickers only)',
+    upcomingEarningsBlock,
     '',
     '### Holdings Intel',
     '_Per-ticker coverage from our own records. When a user asks about a_',
