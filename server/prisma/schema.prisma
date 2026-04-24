@@ -365,6 +365,24 @@ model AiChatMessage {
   @@index([sessionId, createdAt])
 }
 
+// OAuth tokens for file-storage providers (currently: OneDrive via
+// Microsoft Graph). One row per provider — we always rebind the same
+// account instead of multi-tenant. Stores the current access token +
+// refresh token; access tokens expire hourly, refresh token is the
+// long-lived credential used to mint new ones. If this row is empty,
+// uploads are unavailable until a super admin runs the OAuth flow.
+model FileProviderToken {
+  id           Int      @id @default(autoincrement())
+  provider     String   @unique // 'onedrive'
+  accessToken  String
+  refreshToken String
+  expiresAt    DateTime
+  scope        String?
+  email        String?  // Which account the tokens are bound to — displayed in admin.
+  updatedAt    DateTime @updatedAt
+  createdAt    DateTime @default(now())
+}
+
 // LLM-generated priority tag for a news article, keyed by URL. Lets us skip
 // re-ranking articles we've already classified — articles don't change after
 // publish, so the classification is stable. One row per unique URL. `model`

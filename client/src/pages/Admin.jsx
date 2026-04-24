@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react';
-import { RefreshCw, Sparkles } from 'lucide-react';
-import api from '../api/client.js';
+import { useEffect, useRef, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
+import { RefreshCw, Sparkles, Cloud, Upload, Unplug } from 'lucide-react';
+import api, { API_BASE } from '../api/client.js';
 import PageHeader from '../components/PageHeader.jsx';
 import Card from '../components/Card.jsx';
 import { useAuth } from '../context/AuthContext.jsx';
@@ -132,8 +133,9 @@ export default function Admin() {
         title="Admin"
         subtitle="Manage members and review security events."
       />
-      <div className="mb-4">
+      <div className="mb-4 grid gap-4 md:grid-cols-2">
         <LlmStatusCard />
+        {isSuperAdmin && <OneDriveCard />}
       </div>
       <div className="mb-6 flex gap-6 border-b border-navy-100">
         {tabs.map((t) => (
@@ -310,6 +312,205 @@ function NameInferenceTable() {
           </tbody>
         </table>
       </div>
+    </Card>
+  );
+}
+
+// ─── OneDrive storage (super-admin only) ───────────────────────────────
+// Status card + Connect / Disconnect / Test-upload buttons. The Connect
+// button triggers a full-page navigation to /api/files/oauth/start —
+// Microsoft's OAuth flow demands a real redirect, not a fetch. We pass
+// the JWT via a query param for that one request because cross-origin
+// redirects can't carry the Authorization header.
+function OneDriveCard() {
+  const [status, setStatus] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [testMsg, setTestMsg] = useState('');
+  const fileInputRef = useRef(null);
+  const [searchParams, setSearchParams] = useSearchParams();
+
+  async function load() {
+    setLoading(true);
+    setError('');
+    try {
+      const { data } = await api.get('/files/status');
+      setStatus(data);
+    } catch (err) {
+      setError(err.response?.data?.error || 'Failed to load status');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    load();
+    // If we just returned from the OAuth redirect, clear the hint
+    // param and show a confirmation.
+    if (searchParams.get('onedrive') === 'connected') {
+      setTestMsg('Connected! Try a test upload below.');
+      const next = new URLSearchParams(searchParams);
+      next.delete('onedrive');
+      setSearchParams(next, { replace: true });
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function handleConnect() {
+    // Fetch the Microsoft authorize URL (JWT carried in the header),
+    // then full-page navigate so the browser follows the OAuth dance
+    // and Microsoft can redirect back to our /oauth/callback.
+    setError('');
+    try {
+      const { data } = await api.get('/files/oauth/start');
+      if (data?.url) {
+        window.location.href = data.url;
+      } else {
+        setError('No authorize URL returned');
+      }
+    } catch (err) {
+      setError(err.response?.data?.error || err.message);
+    }
+  }
+
+  async function handleDisconnect() {
+    if (!confirm('Disconnect OneDrive? You\'ll need to re-authorize to re-enable uploads.')) return;
+    try {
+      await api.post('/files/disconnect');
+      setTestMsg('');
+      await load();
+    } catch (err) {
+      setError(err.response?.data?.error || 'Disconnect failed');
+    }
+  }
+
+  function pickFile() {
+    fileInputRef.current?.click();
+  }
+
+  async function handleTestUpload(e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setTestMsg(`Uploading ${file.name}…`);
+    setError('');
+    const form = new FormData();
+    form.append('file', file);
+    try {
+      const { data } = await api.post('/files/upload', form);
+      setTestMsg(
+        `Uploaded: ${data.name} (${Math.round(data.size / 1024)} KB). Item id: ${data.itemId.slice(0, 18)}…`
+      );
+    } catch (err) {
+      setTestMsg('');
+      setError(err.response?.data?.error || 'Upload failed');
+    } finally {
+      // Reset the input so the same file can be picked again
+      e.target.value = '';
+    }
+  }
+
+  return (
+    <Card>
+      <div className="mb-3 flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <Cloud className="h-4 w-4 text-gold" />
+          <div className="text-sm font-semibold text-navy">OneDrive</div>
+        </div>
+        <button
+          onClick={load}
+          disabled={loading}
+          className="flex items-center gap-1 text-xs font-semibold text-gold-700 underline disabled:opacity-50"
+        >
+          <RefreshCw className={`h-3 w-3 ${loading ? 'animate-spin' : ''}`} />
+          {loading ? 'Checking…' : 'Refresh'}
+        </button>
+      </div>
+
+      {!status ? (
+        <div className="rounded-lg border border-navy-100 bg-white px-3 py-2 text-xs text-navy-400">
+          Loading…
+        </div>
+      ) : !status.configured ? (
+        <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+          Server env vars not set. Add{' '}
+          <code className="rounded bg-amber-100 px-1">ONEDRIVE_CLIENT_ID</code>
+          ,{' '}
+          <code className="rounded bg-amber-100 px-1">
+            ONEDRIVE_CLIENT_SECRET
+          </code>
+          , and{' '}
+          <code className="rounded bg-amber-100 px-1">
+            ONEDRIVE_REDIRECT_URI
+          </code>{' '}
+          on Render, then redeploy.
+        </div>
+      ) : !status.connected ? (
+        <div className="space-y-2">
+          <div className="rounded-lg border border-navy-100 bg-navy-50/40 px-3 py-2 text-xs text-navy-500">
+            Not connected. A super admin clicks <strong>Connect</strong> to
+            authorize against a OneDrive account. Uploads are disabled until
+            this is done.
+          </div>
+          <button
+            type="button"
+            onClick={handleConnect}
+            className="inline-flex items-center gap-1.5 rounded-lg bg-navy px-3 py-2 text-xs font-semibold text-gold hover:bg-navy-700"
+          >
+            <Cloud className="h-3.5 w-3.5" />
+            Connect OneDrive
+          </button>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-800">
+            <div className="font-semibold">Connected</div>
+            <div className="mt-0.5">
+              Account: <span className="font-mono">{status.email || '—'}</span>
+            </div>
+            <div className="mt-0.5">
+              Folder:{' '}
+              <span className="font-mono">{status.folder}</span>
+            </div>
+            <div className="mt-0.5 text-[10px] text-emerald-700">
+              Token refreshes automatically.
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <input
+              ref={fileInputRef}
+              type="file"
+              onChange={handleTestUpload}
+              className="hidden"
+            />
+            <button
+              type="button"
+              onClick={pickFile}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-navy-100 bg-white px-3 py-1.5 text-xs font-semibold text-navy hover:bg-navy-50"
+            >
+              <Upload className="h-3.5 w-3.5" />
+              Test upload
+            </button>
+            <button
+              type="button"
+              onClick={handleDisconnect}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-red-200 bg-red-50 px-3 py-1.5 text-xs font-semibold text-red-700 hover:bg-red-100"
+            >
+              <Unplug className="h-3.5 w-3.5" />
+              Disconnect
+            </button>
+          </div>
+          {testMsg && (
+            <div className="rounded-lg border border-navy-100 bg-white px-3 py-2 text-xs text-navy">
+              {testMsg}
+            </div>
+          )}
+        </div>
+      )}
+
+      {error && (
+        <div className="mt-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-800">
+          {error}
+        </div>
+      )}
     </Card>
   );
 }
