@@ -8,6 +8,8 @@ import PageHeader from '../components/PageHeader.jsx';
 import Card from '../components/Card.jsx';
 import Button from '../components/Button.jsx';
 import Modal from '../components/Modal.jsx';
+import FileUploader from '../components/FileUploader.jsx';
+import { isManagedFile, downloadFile } from '../api/fileHelpers.js';
 
 const REPORT_ROLES = ['President', 'CIO', 'SeniorPortfolioManager', 'PortfolioManager'];
 
@@ -134,15 +136,26 @@ export default function Reports({ embedded = false } = {}) {
                   )}
                 </div>
                 <div className="flex items-center gap-2">
-                  <a
-                    href={safeHref(r.fileUrl)}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="inline-flex items-center gap-1 rounded-lg border border-navy-100 px-3 py-2 text-xs font-semibold text-navy hover:bg-navy-50"
-                  >
-                    <ExternalLink className="h-3.5 w-3.5" />
-                    Open
-                  </a>
+                  {isManagedFile(r.fileUrl) ? (
+                    <button
+                      type="button"
+                      onClick={() => downloadFile(r.fileUrl, `${r.title}.pdf`).catch(() => {})}
+                      className="inline-flex items-center gap-1 rounded-lg border border-navy-100 px-3 py-2 text-xs font-semibold text-navy hover:bg-navy-50"
+                    >
+                      <ExternalLink className="h-3.5 w-3.5" />
+                      Download
+                    </button>
+                  ) : (
+                    <a
+                      href={safeHref(r.fileUrl)}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex items-center gap-1 rounded-lg border border-navy-100 px-3 py-2 text-xs font-semibold text-navy hover:bg-navy-50"
+                    >
+                      <ExternalLink className="h-3.5 w-3.5" />
+                      Open
+                    </a>
+                  )}
                   {canEdit && (
                     <button
                       onClick={() => handleDelete(r.id)}
@@ -174,20 +187,13 @@ export default function Reports({ embedded = false } = {}) {
               className="mt-1 w-full rounded-lg border border-navy-100 px-3 py-2 text-sm focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold"
             />
           </div>
-          <div>
-            <label className="block text-sm font-medium text-navy">Google Docs Link</label>
-            <input
-              type="url"
-              required
-              value={form.fileUrl}
-              onChange={(e) => setForm({ ...form, fileUrl: e.target.value })}
-              placeholder="https://docs.google.com/document/d/..."
-              className="mt-1 w-full rounded-lg border border-navy-100 px-3 py-2 text-sm focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold"
-            />
-            <p className="mt-1 text-xs text-navy-400">
-              Make sure the doc is shared so members can view it.
-            </p>
-          </div>
+          <FileUploader
+            label="Report file"
+            required
+            value={form.fileUrl}
+            onChange={(fileUrl) => setForm({ ...form, fileUrl })}
+            hint="PDF / DOCX uploaded here, or paste a Google Docs link. Uploaded files are private to members."
+          />
           {error && (
             <div className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">
               {error}

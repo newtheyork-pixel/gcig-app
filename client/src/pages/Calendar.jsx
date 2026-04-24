@@ -13,6 +13,8 @@ import Modal from '../components/Modal.jsx';
 import MemberPicker from '../components/MemberPicker.jsx';
 import EventAttendance from '../components/EventAttendance.jsx';
 import AdminOnly from '../components/AdminOnly.jsx';
+import FileUploader from '../components/FileUploader.jsx';
+import { isManagedFile, downloadFile } from '../api/fileHelpers.js';
 
 const PITCH_ROLES = ['President', 'CIO', 'SeniorPortfolioManager', 'PortfolioManager'];
 const CROSS_POD_ROLES = new Set(['President', 'CIO', 'SeniorPortfolioManager']);
@@ -375,16 +377,30 @@ export default function Calendar() {
                 <div className="text-navy">{selected.location}</div>
               </div>
             )}
-            {selected.slideshowUrl && (
-              <a
-                href={safeHref(selected.slideshowUrl)}
-                target="_blank"
-                rel="noreferrer"
-                className="inline-block text-sm font-semibold text-gold-700 underline"
-              >
-                View slideshow →
-              </a>
-            )}
+            {selected.slideshowUrl &&
+              (isManagedFile(selected.slideshowUrl) ? (
+                <button
+                  type="button"
+                  onClick={() =>
+                    downloadFile(
+                      selected.slideshowUrl,
+                      `${selected.ticker || 'pitch'}-slides`
+                    ).catch(() => {})
+                  }
+                  className="inline-block text-sm font-semibold text-gold-700 underline"
+                >
+                  Download slideshow →
+                </button>
+              ) : (
+                <a
+                  href={safeHref(selected.slideshowUrl)}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-block text-sm font-semibold text-gold-700 underline"
+                >
+                  View slideshow →
+                </a>
+              ))}
             {canEditPitches && (
               <div className="flex gap-2 pt-3 border-t border-navy-50">
                 <Button variant="outline" onClick={() => openPitchEdit(selected)}>
@@ -527,18 +543,14 @@ export default function Calendar() {
             value={pitchForm.location}
             onChange={(v) => setPitchForm({ ...pitchForm, location: v })}
           />
-          <div>
-            <label className="block text-sm font-medium text-navy">
-              Slideshow Link (Google Slides, etc.)
-            </label>
-            <input
-              type="url"
-              value={pitchForm.slideshowUrl}
-              onChange={(e) => setPitchForm({ ...pitchForm, slideshowUrl: e.target.value })}
-              placeholder="https://docs.google.com/presentation/d/..."
-              className="mt-1 w-full rounded-lg border border-navy-100 px-3 py-2 text-sm focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold"
-            />
-          </div>
+          <FileUploader
+            label="Slideshow"
+            value={pitchForm.slideshowUrl}
+            onChange={(slideshowUrl) =>
+              setPitchForm({ ...pitchForm, slideshowUrl })
+            }
+            hint="Upload a PPTX / PDF, or paste a Google Slides link. Optional."
+          />
           {pitchError && (
             <div className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">
               {pitchError}

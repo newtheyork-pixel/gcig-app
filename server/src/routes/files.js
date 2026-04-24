@@ -176,10 +176,14 @@ router.post(
         size: item.size,
         webUrl: item.webUrl,
         contentType: req.file.mimetype,
-        // Convenience — the URL clients should store in their own
-        // tables (pitch.slideshowUrl, report.fileUrl, etc.) to let
-        // the existing API layer stream the content back later.
-        appUrl: `/api/files/${encodeURIComponent(item.id)}`,
+        // Opaque reference clients store in their own tables
+        // (pitch.slideshowUrl, report.fileUrl, etc.). The `onedrive:`
+        // scheme tells the UI "this is a managed file, download via
+        // the /api/files endpoint"; bare http:// URLs keep working as
+        // external links. Using a scheme (not a path) keeps item IDs
+        // — which contain `!` and other chars — intact without
+        // URL-encoding gymnastics.
+        ref: `onedrive:${item.id}`,
       });
     } catch (err) {
       if (err.code === 'NOT_AUTHORIZED') {

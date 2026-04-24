@@ -16,6 +16,7 @@ import PageHeader from '../components/PageHeader.jsx';
 import Card from '../components/Card.jsx';
 import RoleBadge from '../components/RoleBadge.jsx';
 import EditorialMasthead from '../components/EditorialMasthead.jsx';
+import { isManagedFile, downloadFile } from '../api/fileHelpers.js';
 
 // Per-member profile. Any authed user can view any member's record —
 // the data exposed here is the same tier already on the Members page,
@@ -343,16 +344,30 @@ function ReportRow({ item: r }) {
         </div>
       </div>
       {r.fileUrl ? (
-        <a
-          href={r.fileUrl}
-          target="_blank"
-          rel="noreferrer"
-          className="inline-flex items-center gap-1 rounded-full border border-navy-100 bg-white px-2 py-0.5 text-[10px] font-semibold text-navy-500 hover:border-gold hover:text-navy"
-          title="Open the report file"
-        >
-          Open
-          <ExternalLink className="h-3 w-3" />
-        </a>
+        isManagedFile(r.fileUrl) ? (
+          <button
+            type="button"
+            onClick={() =>
+              downloadFile(r.fileUrl, `${r.title || 'report'}.pdf`).catch(() => {})
+            }
+            className="inline-flex items-center gap-1 rounded-full border border-navy-100 bg-white px-2 py-0.5 text-[10px] font-semibold text-navy-500 hover:border-gold hover:text-navy"
+            title="Download the report file"
+          >
+            Open
+            <ExternalLink className="h-3 w-3" />
+          </button>
+        ) : (
+          <a
+            href={r.fileUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex items-center gap-1 rounded-full border border-navy-100 bg-white px-2 py-0.5 text-[10px] font-semibold text-navy-500 hover:border-gold hover:text-navy"
+            title="Open the report file"
+          >
+            Open
+            <ExternalLink className="h-3 w-3" />
+          </a>
+        )
       ) : (
         <span className="inline-flex rounded-full border border-navy-100 bg-navy-50/40 px-2 py-0.5 text-[10px] font-semibold text-navy-400">
           Report
