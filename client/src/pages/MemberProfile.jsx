@@ -8,6 +8,8 @@ import {
   Presentation,
   Vote as VoteIcon,
   UserRound,
+  FileText,
+  ExternalLink,
 } from 'lucide-react';
 import api from '../api/client.js';
 import PageHeader from '../components/PageHeader.jsx';
@@ -82,14 +84,25 @@ export default function MemberProfile() {
 
   // Stats shown in the masthead strip. Attendance is suppressed for
   // exempt roles (advisory / chief of comms) so the tile doesn't
-  // misleadingly show 0%.
+  // misleadingly show 0%. "Contributions" rolls pitches + reports
+  // together because members think of them as the same kind of work.
   const stats = useMemo(() => {
     if (!profile) return [];
+    const pitchCount = profile.pitches?.length ?? 0;
+    const reportCount = profile.reports?.length ?? 0;
+    const totalContrib = pitchCount + reportCount;
+    const subParts = [];
+    if (pitchCount > 0) {
+      subParts.push(`${pitchCount} pitch${pitchCount === 1 ? '' : 'es'}`);
+    }
+    if (reportCount > 0) {
+      subParts.push(`${reportCount} report${reportCount === 1 ? '' : 's'}`);
+    }
     const out = [
       {
-        kicker: 'Pitches',
-        value: profile.pitches?.length ?? 0,
-        sub: profile.pitches?.length === 1 ? 'presentation on record' : 'presentations on record',
+        kicker: 'Contributions',
+        value: totalContrib,
+        sub: subParts.length > 0 ? subParts.join(' · ') : 'pitches and reports on record',
       },
       {
         kicker: 'Votes Cast',
@@ -195,7 +208,7 @@ export default function MemberProfile() {
       )}
 
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-[1.15fr_1fr]">
-        <PitchesCard pitches={profile.pitches} />
+        <ContributionsCard contributions={profile.contributions || []} />
         <VotesCard votes={profile.votes} />
       </div>
     </>
@@ -215,83 +228,137 @@ function BackLink({ onClick }) {
   );
 }
 
-// ─── Pitches card ─────────────────────────────────────────────────────
-// Empty-state is important here: the user who triggered this feature
-// pointed out that the AI was fabricating pitches when the Pitch table
-// was empty. An honest "no pitches yet" reads far better than a fake
-// list. Same philosophy here on the profile page.
+// ─── Contributions card ────────────────────────────────────────────────
+// Unified pitches + research reports feed. Members think of both as
+// "things I've contributed", so the profile shouldn't split them into
+// separate cards — one list, tagged by kind. Empty-state is important
+// here: the user who triggered this feature pointed out that the AI
+// was fabricating pitches when records were missing. An honest "no
+// contributions yet" reads far better than a fake list.
 
-function PitchesCard({ pitches }) {
+function ContributionsCard({ contributions }) {
   return (
     <Card>
       <div className="mb-3 flex items-center gap-2">
         <Presentation className="h-4 w-4 text-gold" />
-        <div className="text-sm font-semibold text-navy">Pitches</div>
+        <div className="text-sm font-semibold text-navy">Pitches &amp; Reports</div>
         <span className="ml-auto text-[10px] font-semibold uppercase tracking-wider text-navy-400">
-          {pitches.length} on record
+          {contributions.length} on record
         </span>
       </div>
-      {pitches.length === 0 ? (
+      {contributions.length === 0 ? (
         <div className="rounded-lg border border-dashed border-navy-100 bg-navy-50/40 px-4 py-6 text-center text-xs text-navy-400">
-          No pitches on record yet.
+          No pitches or reports on record yet.
         </div>
       ) : (
         <ul className="divide-y divide-navy-50">
-          {pitches.map((p) => {
-            // Prefer effectiveOutcome (server infers Buy when the ticker
-            // is currently held but votedOutcome was never set, and
-            // tags future-dated rows Scheduled).
-            const outcome = p.effectiveOutcome || p.votedOutcome || 'Pending';
-            const tone =
-              outcome === 'Buy'
-                ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
-                : outcome === 'NoBuy'
-                  ? 'bg-red-50 text-red-800 border-red-200'
-                  : outcome === 'Scheduled'
-                    ? 'bg-gold-100/40 text-navy border-gold-200'
-                    : 'bg-navy-50 text-navy-500 border-navy-100';
-            const tooltip = p.outcomeInferred
-              ? 'Inferred from current portfolio — ticker is held so the pitch clearly passed. Raw votedOutcome hasn\'t been set on this row.'
-              : outcome === 'Scheduled'
-                ? 'Pitch is on the calendar but hasn\'t happened yet.'
-                : undefined;
-            return (
-              <li key={p.id} className="flex items-start gap-3 py-2.5">
-                <div className="flex-shrink-0">
-                  <div className="font-serif text-lg font-semibold text-navy">
-                    {p.ticker}
-                  </div>
-                </div>
-                <div className="min-w-0 flex-1">
-                  <div className="text-xs font-semibold text-navy">
-                    {formatDate(p.date)}
-                  </div>
-                  {p.industry?.name && (
-                    <div className="mt-0.5 text-[11px] text-navy-400">
-                      {p.industry.name}
-                    </div>
-                  )}
-                </div>
-                <span
-                  title={tooltip}
-                  className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-semibold ${tone}`}
-                >
-                  {outcome}
-                  {p.outcomeInferred && (
-                    <span
-                      className="text-[9px] opacity-70"
-                      aria-label="Inferred from current holdings"
-                    >
-                      ·
-                    </span>
-                  )}
-                </span>
-              </li>
-            );
-          })}
+          {contributions.map((c) =>
+            c.kind === 'report' ? (
+              <ReportRow key={c.id} item={c} />
+            ) : (
+              <PitchRow key={c.id} item={c} />
+            )
+          )}
         </ul>
       )}
     </Card>
+  );
+}
+
+function PitchRow({ item: p }) {
+  const outcome = p.effectiveOutcome || 'Pending';
+  const tone =
+    outcome === 'Buy'
+      ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+      : outcome === 'NoBuy'
+        ? 'bg-red-50 text-red-800 border-red-200'
+        : outcome === 'Scheduled'
+          ? 'bg-gold-100/40 text-navy border-gold-200'
+          : 'bg-navy-50 text-navy-500 border-navy-100';
+  const tooltip = p.outcomeInferred
+    ? 'Inferred from current portfolio — ticker is held so the pitch clearly passed. Raw votedOutcome hasn\'t been set on this row.'
+    : outcome === 'Scheduled'
+      ? 'Pitch is on the calendar but hasn\'t happened yet.'
+      : undefined;
+  return (
+    <li className="flex items-start gap-3 py-2.5">
+      <div className="flex-shrink-0">
+        <div className="font-serif text-lg font-semibold text-navy">
+          {p.ticker}
+        </div>
+      </div>
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-1.5">
+          <span className="text-[9px] font-semibold uppercase tracking-[0.15em] text-navy-400">
+            Pitch
+          </span>
+          <span className="text-xs font-semibold text-navy">
+            {formatDate(p.date)}
+          </span>
+        </div>
+        {p.industry && (
+          <div className="mt-0.5 text-[11px] text-navy-400">{p.industry}</div>
+        )}
+      </div>
+      <span
+        title={tooltip}
+        className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-semibold ${tone}`}
+      >
+        {outcome}
+        {p.outcomeInferred && (
+          <span
+            className="text-[9px] opacity-70"
+            aria-label="Inferred from current holdings"
+          >
+            ·
+          </span>
+        )}
+      </span>
+    </li>
+  );
+}
+
+function ReportRow({ item: r }) {
+  // Reports aren't voted on, so the right-side pill is just the kind
+  // tag + optional external link to the file. Title is the main
+  // identifier — a report can be macro / thematic even without a ticker.
+  return (
+    <li className="flex items-start gap-3 py-2.5">
+      <div className="flex-shrink-0">
+        <div className="font-serif text-lg font-semibold text-navy">
+          {r.ticker || <FileText className="h-5 w-5 text-navy-300" />}
+        </div>
+      </div>
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-1.5">
+          <span className="text-[9px] font-semibold uppercase tracking-[0.15em] text-gold-700">
+            Report
+          </span>
+          <span className="text-xs font-semibold text-navy">
+            {formatDate(r.date)}
+          </span>
+        </div>
+        <div className="mt-0.5 truncate text-[11px] text-navy-500">
+          {r.title}
+        </div>
+      </div>
+      {r.fileUrl ? (
+        <a
+          href={r.fileUrl}
+          target="_blank"
+          rel="noreferrer"
+          className="inline-flex items-center gap-1 rounded-full border border-navy-100 bg-white px-2 py-0.5 text-[10px] font-semibold text-navy-500 hover:border-gold hover:text-navy"
+          title="Open the report file"
+        >
+          Open
+          <ExternalLink className="h-3 w-3" />
+        </a>
+      ) : (
+        <span className="inline-flex rounded-full border border-navy-100 bg-navy-50/40 px-2 py-0.5 text-[10px] font-semibold text-navy-400">
+          Report
+        </span>
+      )}
+    </li>
   );
 }
 

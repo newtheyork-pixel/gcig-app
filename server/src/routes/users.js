@@ -135,7 +135,10 @@ router.get('/:id/profile', async (req, res) => {
 
   // Pitches — union of structured PitchPresenter rows (new style) and
   // legacy pitcherName matches, dedup by pitch id, ordered newest first.
-  const [presenterRows, nameRows] = await Promise.all([
+  // Research Reports are authored by name (similar legacy match) and
+  // count as contributions alongside pitches — members think of a
+  // written report on MLAB the same way they think of presenting it.
+  const [presenterRows, nameRows, reportRows] = await Promise.all([
     prisma.pitchPresenter.findMany({
       where: { userId: id },
       include: {
@@ -160,6 +163,18 @@ router.get('/:id/profile', async (req, res) => {
         votedOutcome: true,
         pitcherName: true,
         industry: { select: { name: true } },
+      },
+    }),
+    prisma.report.findMany({
+      where: { author: user.name },
+      orderBy: { date: 'desc' },
+      select: {
+        id: true,
+        title: true,
+        ticker: true,
+        date: true,
+        description: true,
+        fileUrl: true,
       },
     }),
   ]);
@@ -202,6 +217,30 @@ router.get('/:id/profile', async (req, res) => {
     }
     return { ...p, effectiveOutcome, outcomeInferred };
   });
+
+  // Merged contributions feed: pitches + reports, sorted newest first.
+  // Each entry has a `kind` so the client can render the right pill
+  // and fields. Reports carry a fileUrl for download.
+  const contributions = [
+    ...pitches.map((p) => ({
+      kind: 'pitch',
+      id: `pitch-${p.id}`,
+      ticker: p.ticker,
+      date: p.date,
+      industry: p.industry?.name || null,
+      effectiveOutcome: p.effectiveOutcome,
+      outcomeInferred: p.outcomeInferred,
+    })),
+    ...reportRows.map((r) => ({
+      kind: 'report',
+      id: `report-${r.id}`,
+      ticker: r.ticker || null,
+      date: r.date,
+      title: r.title,
+      description: r.description || null,
+      fileUrl: r.fileUrl || null,
+    })),
+  ].sort((a, b) => new Date(b.date) - new Date(a.date));
 
   // Attendance summary. Exempt roles skip the whole block.
   const isExempt = ATTENDANCE_EXEMPT_ROLES.has(user.role);
@@ -253,6 +292,10 @@ router.get('/:id/profile', async (req, res) => {
     honorificName: profile.honorificName,
     industries: user.industries.map((ui) => ui.industry),
     pitches,
+    reports: reportRows,
+    // Unified pitches + reports feed — clients should prefer this over
+    // reading `pitches` + `reports` separately.
+    contributions,
     attendance,
     attendanceExempt: isExempt,
     votes: {
