@@ -7,12 +7,24 @@ import { nameProfile } from '../services/nameGender.js';
 // cookies by default). So tokens live in localStorage on the client and
 // travel in an Authorization header. The tokenVersion claim still lets us
 // invalidate every outstanding JWT instantly.
+//
+// Lifetime + rotation:
+//   - JWTs expire 24h after issue. No token can be used for more than a
+//     single day.
+//   - verifyJwt silently reissues a fresh token when the current one is
+//     past its half-life (12h) — the new token is returned via the
+//     `X-New-Token` response header, and the client's axios interceptor
+//     swaps it into localStorage. Active users never notice; inactive
+//     users get a 401 after 24h and bounce to the login page.
+const TOKEN_LIFETIME = '24h';
+const TOKEN_LIFETIME_MS = 24 * 60 * 60 * 1000;
+const TOKEN_HALFLIFE_MS = TOKEN_LIFETIME_MS / 2;
 
 export function issueJwt(user) {
   return jwt.sign(
     { id: user.id, role: user.role, v: user.tokenVersion ?? 0 },
     process.env.JWT_SECRET,
-    { expiresIn: '7d' }
+    { expiresIn: TOKEN_LIFETIME }
   );
 }
 
@@ -41,6 +53,19 @@ export async function verifyJwt(req, res, next) {
     if (!user) return res.status(401).json({ error: 'User not found' });
     if ((payload.v ?? 0) !== (user.tokenVersion ?? 0)) {
       return res.status(401).json({ error: 'Session revoked, please sign in again' });
+    }
+
+    // Silent rotation — if the JWT is past its half-life, mint a fresh
+    // one and expose it via X-New-Token. The client picks it up on its
+    // next response and continues uninterrupted. CORS allowlist for
+    // this header lives in index.js.
+    if (payload.iat && Date.now() - payload.iat * 1000 > TOKEN_HALFLIFE_MS) {
+      try {
+        const fresh = issueJwt(user);
+        res.setHeader('X-New-Token', fresh);
+      } catch {
+        /* ignore — failing to rotate shouldn't fail the request. */
+      }
     }
     // Attach honorific / pronouns derived from the first name. Lets
     // downstream services (AI Assistant, broadcast templating, etc.)

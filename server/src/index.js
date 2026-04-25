@@ -60,6 +60,11 @@ app.use(
       return cb(new Error(`CORS blocked: ${origin}`));
     },
     credentials: true,
+    // Browser JS can only read response headers that are explicitly
+    // exposed. verifyJwt sets X-New-Token when a token is being
+    // silently rotated; without this whitelist the client's axios
+    // interceptor would never see the header.
+    exposedHeaders: ['X-New-Token'],
   })
 );
 app.use(express.json({ limit: '2mb' }));
