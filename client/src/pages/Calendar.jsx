@@ -4,7 +4,6 @@ import { format, parse, startOfWeek, getDay } from 'date-fns';
 import enUS from 'date-fns/locale/en-US';
 import { Plus, Presentation, CalendarDays, Send, Utensils } from 'lucide-react';
 import api from '../api/client.js';
-import { safeHref } from '../api/safeUrl.js';
 import { useAuth } from '../context/AuthContext.jsx';
 import PageHeader from '../components/PageHeader.jsx';
 import Card from '../components/Card.jsx';
@@ -15,8 +14,9 @@ import EventAttendance from '../components/EventAttendance.jsx';
 import AdminOnly from '../components/AdminOnly.jsx';
 import FileUploader from '../components/FileUploader.jsx';
 import FileSummary from '../components/FileSummary.jsx';
+import FilePreviewModal from '../components/FilePreviewModal.jsx';
 import RequestPitchModal from '../components/RequestPitchModal.jsx';
-import { isManagedFile, downloadFile } from '../api/fileHelpers.js';
+import { isManagedFile } from '../api/fileHelpers.js';
 
 const PITCH_ROLES = ['President', 'CIO', 'SeniorPortfolioManager', 'PortfolioManager'];
 const CROSS_POD_ROLES = new Set(['President', 'CIO', 'SeniorPortfolioManager']);
@@ -72,6 +72,7 @@ export default function Calendar() {
   const [eventForm, setEventForm] = useState(emptyEventForm());
 
   const [requestPitchOpen, setRequestPitchOpen] = useState(false);
+  const [preview, setPreview] = useState(null);
   const [leaderLunch, setLeaderLunch] = useState([]);
 
   async function loadLeaderLunch() {
@@ -412,30 +413,21 @@ export default function Calendar() {
                 <div className="text-navy">{selected.location}</div>
               </div>
             )}
-            {selected.slideshowUrl &&
-              (isManagedFile(selected.slideshowUrl) ? (
-                <button
-                  type="button"
-                  onClick={() =>
-                    downloadFile(
-                      selected.slideshowUrl,
-                      `${selected.ticker || 'pitch'}-slides`
-                    ).catch(() => {})
-                  }
-                  className="inline-block text-sm font-semibold text-gold-700 underline"
-                >
-                  Download slideshow →
-                </button>
-              ) : (
-                <a
-                  href={safeHref(selected.slideshowUrl)}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="inline-block text-sm font-semibold text-gold-700 underline"
-                >
-                  View slideshow →
-                </a>
-              ))}
+            {selected.slideshowUrl && (
+              <button
+                type="button"
+                onClick={() =>
+                  setPreview({
+                    url: selected.slideshowUrl,
+                    title: `${selected.ticker || 'Pitch'} slideshow`,
+                    filename: `${selected.ticker || 'pitch'}-slides.pdf`,
+                  })
+                }
+                className="inline-block text-sm font-semibold text-gold-700 underline"
+              >
+                View slideshow →
+              </button>
+            )}
             {isManagedFile(selected.slideshowUrl) && (
               <div className="mt-2">
                 <FileSummary
@@ -683,6 +675,14 @@ export default function Calendar() {
           </div>
         </form>
       </Modal>
+      {preview && (
+        <FilePreviewModal
+          url={preview.url}
+          title={preview.title}
+          filename={preview.filename}
+          onClose={() => setPreview(null)}
+        />
+      )}
     </>
   );
 }
