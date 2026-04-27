@@ -16,7 +16,7 @@ import FileUploader from '../components/FileUploader.jsx';
 import FileSummary from '../components/FileSummary.jsx';
 import FilePreviewModal from '../components/FilePreviewModal.jsx';
 import RequestPitchModal from '../components/RequestPitchModal.jsx';
-import { isManagedFile } from '../api/fileHelpers.js';
+import { isManagedFile, openOrPreview } from '../api/fileHelpers.js';
 
 const PITCH_ROLES = ['President', 'CIO', 'SeniorPortfolioManager', 'PortfolioManager'];
 const CROSS_POD_ROLES = new Set(['President', 'CIO', 'SeniorPortfolioManager']);
@@ -417,11 +417,14 @@ export default function Calendar() {
               <button
                 type="button"
                 onClick={() =>
-                  setPreview({
-                    url: selected.slideshowUrl,
-                    title: `${selected.ticker || 'Pitch'} slideshow`,
-                    filename: `${selected.ticker || 'pitch'}-slides.pdf`,
-                  })
+                  openOrPreview(
+                    {
+                      url: selected.slideshowUrl,
+                      title: `${selected.ticker || 'Pitch'} slideshow`,
+                      filename: `${selected.ticker || 'pitch'}-slides.pdf`,
+                    },
+                    setPreview
+                  )
                 }
                 className="inline-block text-sm font-semibold text-gold-700 underline"
               >

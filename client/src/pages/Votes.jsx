@@ -12,6 +12,7 @@ import {
   Trash2,
 } from 'lucide-react';
 import api from '../api/client.js';
+import { openOrPreview } from '../api/fileHelpers.js';
 import FilePreviewModal from '../components/FilePreviewModal.jsx';
 import { useAuth } from '../context/AuthContext.jsx';
 import PageHeader from '../components/PageHeader.jsx';
@@ -399,11 +400,14 @@ function SessionDetail({ session, onBack, onRefresh, onClose, onDelete }) {
               <button
                 type="button"
                 onClick={() =>
-                  setPreview({
-                    url: session.pitch.slideshowUrl,
-                    title: `${session.pitch.ticker} slideshow`,
-                    filename: `${session.pitch.ticker}-pitch.pdf`,
-                  })
+                  openOrPreview(
+                    {
+                      url: session.pitch.slideshowUrl,
+                      title: `${session.pitch.ticker} slideshow`,
+                      filename: `${session.pitch.ticker}-pitch.pdf`,
+                    },
+                    setPreview
+                  )
                 }
                 className="text-sm font-semibold text-gold-700 underline"
               >

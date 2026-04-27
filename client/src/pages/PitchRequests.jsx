@@ -8,6 +8,7 @@ import Card from '../components/Card.jsx';
 import Button from '../components/Button.jsx';
 import RequestPitchModal from '../components/RequestPitchModal.jsx';
 import FilePreviewModal from '../components/FilePreviewModal.jsx';
+import { openOrPreview } from '../api/fileHelpers.js';
 
 const PM_RANKED = [
   'PortfolioManager',
@@ -277,11 +278,14 @@ function RequestRow({
           <button
             type="button"
             onClick={() =>
-              setPreview({
-                url: row.deckRef,
-                title: `${row.ticker} pitch deck`,
-                filename: `${row.ticker}-deck.pdf`,
-              })
+              openOrPreview(
+                {
+                  url: row.deckRef,
+                  title: `${row.ticker} pitch deck`,
+                  filename: `${row.ticker}-deck.pdf`,
+                },
+                setPreview
+              )
             }
             className="inline-flex items-center gap-1 text-xs font-semibold text-gold-700 underline"
           >

@@ -17,6 +17,7 @@ import Card from '../components/Card.jsx';
 import RoleBadge from '../components/RoleBadge.jsx';
 import EditorialMasthead from '../components/EditorialMasthead.jsx';
 import FilePreviewModal from '../components/FilePreviewModal.jsx';
+import { openOrPreview } from '../api/fileHelpers.js';
 
 // Per-member profile. Any authed user can view any member's record —
 // the data exposed here is the same tier already on the Members page,
@@ -349,11 +350,14 @@ function ReportRow({ item: r }) {
           <button
             type="button"
             onClick={() =>
-              setPreview({
-                url: r.fileUrl,
-                title: r.title || 'Report',
-                filename: `${r.title || 'report'}.pdf`,
-              })
+              openOrPreview(
+                {
+                  url: r.fileUrl,
+                  title: r.title || 'Report',
+                  filename: `${r.title || 'report'}.pdf`,
+                },
+                setPreview
+              )
             }
             className="inline-flex items-center gap-1 rounded-full border border-navy-100 bg-white px-2 py-0.5 text-[10px] font-semibold text-navy-500 hover:border-gold hover:text-navy"
             title="Open the report file"

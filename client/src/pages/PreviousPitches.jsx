@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { format } from 'date-fns';
 import { Search, FileText, Eye } from 'lucide-react';
 import api from '../api/client.js';
+import { openOrPreview } from '../api/fileHelpers.js';
 import PageHeader from '../components/PageHeader.jsx';
 import Card from '../components/Card.jsx';
 import FilePreviewModal from '../components/FilePreviewModal.jsx';
@@ -67,11 +68,14 @@ export default function PreviousPitches({ embedded = false } = {}) {
                   type="button"
                   key={p.id}
                   onClick={() =>
-                    setPreview({
-                      url: p.slideshowUrl,
-                      title: `${p.ticker} · ${presenterNames}`,
-                      filename: `${p.ticker}-pitch-${format(new Date(p.date), 'yyyy-MM-dd')}.pdf`,
-                    })
+                    openOrPreview(
+                      {
+                        url: p.slideshowUrl,
+                        title: `${p.ticker} · ${presenterNames}`,
+                        filename: `${p.ticker}-pitch-${format(new Date(p.date), 'yyyy-MM-dd')}.pdf`,
+                      },
+                      setPreview
+                    )
                   }
                   className="group flex flex-col overflow-hidden rounded-lg border border-navy-100 bg-white text-left transition hover:border-gold hover:shadow-card"
                 >

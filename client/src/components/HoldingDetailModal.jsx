@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import api from '../api/client.js';
 import { safeHref } from '../api/safeUrl.js';
+import { openOrPreview } from '../api/fileHelpers.js';
 import { useAuth } from '../context/AuthContext.jsx';
 import Modal from './Modal.jsx';
 import FilePreviewModal from './FilePreviewModal.jsx';
@@ -410,11 +411,14 @@ export default function HoldingDetailModal({ holding, onClose }) {
                         <button
                           type="button"
                           onClick={() =>
-                            setFilePreview({
-                              url: p.slideshowUrl,
-                              title: `${p.industry?.name || 'Pitch'} · ${p.presenters.join(', ')}`,
-                              filename: `${ticker}-pitch-${format(new Date(p.date), 'yyyy-MM-dd')}.pdf`,
-                            })
+                            openOrPreview(
+                              {
+                                url: p.slideshowUrl,
+                                title: `${p.industry?.name || 'Pitch'} · ${p.presenters.join(', ')}`,
+                                filename: `${ticker}-pitch-${format(new Date(p.date), 'yyyy-MM-dd')}.pdf`,
+                              },
+                              setFilePreview
+                            )
                           }
                           className="inline-flex items-center gap-1 rounded-lg border border-navy-100 px-2 py-1 text-[11px] font-semibold text-navy hover:bg-navy-50"
                         >
@@ -454,11 +458,14 @@ export default function HoldingDetailModal({ holding, onClose }) {
                       <button
                         type="button"
                         onClick={() =>
-                          setFilePreview({
-                            url: r.fileUrl,
-                            title: r.title,
-                            filename: `${r.title}.pdf`,
-                          })
+                          openOrPreview(
+                            {
+                              url: r.fileUrl,
+                              title: r.title,
+                              filename: `${r.title}.pdf`,
+                            },
+                            setFilePreview
+                          )
                         }
                         className="inline-flex items-center gap-1 rounded-lg border border-navy-100 px-2 py-1 text-[11px] font-semibold text-navy hover:bg-navy-50"
                       >

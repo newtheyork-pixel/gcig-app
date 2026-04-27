@@ -10,7 +10,7 @@ import Modal from '../components/Modal.jsx';
 import FileUploader from '../components/FileUploader.jsx';
 import FileSummary from '../components/FileSummary.jsx';
 import FilePreviewModal from '../components/FilePreviewModal.jsx';
-import { isManagedFile } from '../api/fileHelpers.js';
+import { isManagedFile, openOrPreview } from '../api/fileHelpers.js';
 
 const REPORT_ROLES = ['President', 'CIO', 'SeniorPortfolioManager', 'PortfolioManager'];
 
@@ -142,11 +142,14 @@ export default function Reports({ embedded = false } = {}) {
                     <button
                       type="button"
                       onClick={() =>
-                        setPreview({
-                          url: r.fileUrl,
-                          title: r.title,
-                          filename: `${r.title}.pdf`,
-                        })
+                        openOrPreview(
+                          {
+                            url: r.fileUrl,
+                            title: r.title,
+                            filename: `${r.title}.pdf`,
+                          },
+                          setPreview
+                        )
                       }
                       className="inline-flex items-center gap-1 rounded-lg border border-navy-100 px-3 py-2 text-xs font-semibold text-navy hover:bg-navy-50"
                     >
