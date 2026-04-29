@@ -173,6 +173,21 @@ router.post('/', requireExecutive, async (req, res) => {
   res.json(record);
 });
 
+// Wipe every attendance row for a given event. Used when an exec
+// accidentally took attendance against the wrong meeting (typically the
+// "current" pin pointed at the next week before midnight). The Event
+// row itself stays — only the per-member status records are cleared.
+router.delete('/event/:id', requireExecutive, async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) {
+    return res.status(400).json({ error: 'Bad event id' });
+  }
+  const event = await prisma.event.findUnique({ where: { id } });
+  if (!event) return res.status(404).json({ error: 'Event not found' });
+  const result = await prisma.attendance.deleteMany({ where: { eventId: id } });
+  res.json({ ok: true, cleared: result.count });
+});
+
 router.get('/export.csv', requireExecutive, async (_req, res) => {
   const now = new Date();
   const from = new Date(now);
