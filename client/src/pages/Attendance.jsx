@@ -124,12 +124,22 @@ function AdminAttendance() {
   // Pin the "Current" meeting: the next upcoming one (or today).
   // Fallback to the most recent past meeting if nothing upcoming exists.
   // Then sort everything else newest-first after the current one.
+  //
+  // Cutover happens at *midnight*, not at the meeting time — so a 7pm
+  // meeting on Wednesday stays "current" until end of day Wednesday,
+  // not the moment 7pm passes. Without this, attendance would jump to
+  // next week's meeting mid-meeting.
   const { sortedEvents, currentEventId } = useMemo(() => {
-    const now = new Date();
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
     const all = [...data.events].sort(
       (a, b) => new Date(a.date) - new Date(b.date)
     );
-    const upcoming = all.find((e) => new Date(e.date) >= now);
+    const upcoming = all.find((e) => {
+      const d = new Date(e.date);
+      d.setHours(0, 0, 0, 0);
+      return d >= todayStart;
+    });
     const currentId = upcoming?.id ?? all[all.length - 1]?.id ?? null;
     const rest = all
       .filter((e) => e.id !== currentId)
