@@ -13,6 +13,57 @@ import {
 import { TrendingUp, TrendingDown, Minus } from 'lucide-react';
 import api from '../api/client.js';
 import PageHeader from '../components/PageHeader.jsx';
+
+// Custom hover card for the CPI chart. Recharts' default tooltip lists every
+// series by dataKey, which surfaces the `hi`/`lo` band edges as raw labels
+// ("hi : 3.75%"). Here we collapse them to a single "80% band" range row and
+// hide whichever of Released / Forecast is null at this point.
+function CpiTooltip({ active, payload, label }) {
+  if (!active || !Array.isArray(payload) || payload.length === 0) return null;
+  const byKey = Object.fromEntries(
+    payload.map((p) => [p.dataKey, p.payload?.[p.dataKey]])
+  );
+  const released = byKey.yoy;
+  const forecast = byKey.forecast;
+  const lo = byKey.lo;
+  const hi = byKey.hi;
+  const fmt = (v) =>
+    v == null || !Number.isFinite(v) ? '—' : `${Number(v).toFixed(2)}%`;
+
+  return (
+    <div className="rounded-lg border border-navy-100 bg-white px-3 py-2 text-xs shadow-md">
+      <div className="font-serif text-sm font-semibold text-navy">{label}</div>
+      <div className="mt-1.5 h-px w-full bg-navy-50" />
+      <div className="mt-1.5 space-y-1">
+        {released != null && Number.isFinite(released) && (
+          <Row dot="bg-navy" label="Released" value={fmt(released)} />
+        )}
+        {forecast != null && Number.isFinite(forecast) && (
+          <Row dot="bg-gold" label="Forecast" value={fmt(forecast)} />
+        )}
+        {lo != null && hi != null && Number.isFinite(lo) && Number.isFinite(hi) && (
+          <Row
+            dot="bg-gold/40"
+            label="80% band"
+            value={`${fmt(lo)} – ${fmt(hi)}`}
+          />
+        )}
+      </div>
+    </div>
+  );
+}
+
+function Row({ dot, label, value }) {
+  return (
+    <div className="flex items-center justify-between gap-6">
+      <div className="flex items-center gap-1.5">
+        <span className={`inline-block h-2 w-2 rounded-full ${dot}`} />
+        <span className="text-navy-400">{label}</span>
+      </div>
+      <span className="font-semibold text-navy tabular-nums">{value}</span>
+    </div>
+  );
+}
 import Card from '../components/Card.jsx';
 
 // CPI forecast page. Reads from /api/cpi/forecast (latest run) and
@@ -201,16 +252,20 @@ export default function CPI() {
                 domain={['auto', 'auto']}
               />
               <Tooltip
-                formatter={(v) => (v == null ? '—' : `${Number(v).toFixed(2)}%`)}
-                contentStyle={{ fontSize: 12 }}
+                content={<CpiTooltip />}
+                cursor={{ stroke: '#C9A84C', strokeOpacity: 0.4, strokeWidth: 1 }}
               />
-              {/* 80% band as area between lo and hi */}
+              {/* 80% band as area between lo and hi. The custom tooltip
+                  reads lo/hi directly off the row, so we don't surface
+                  these as separate legend entries. */}
               <Area
                 type="monotone"
                 dataKey="hi"
                 stroke="none"
                 fill="url(#bandFill)"
                 isAnimationActive={false}
+                legendType="none"
+                name="80% band"
               />
               <Area
                 type="monotone"
@@ -218,6 +273,8 @@ export default function CPI() {
                 stroke="none"
                 fill="#FFFFFF"
                 isAnimationActive={false}
+                legendType="none"
+                name="80% band"
               />
               <Line
                 type="monotone"
