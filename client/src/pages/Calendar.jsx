@@ -46,6 +46,7 @@ function emptyEventForm() {
     location: '',
     description: '',
     audience: 'all',
+    slideshowUrl: '',
   };
 }
 
@@ -307,6 +308,8 @@ export default function Calendar() {
       location: ev.location || '',
       description: ev.description || '',
       audience: ev.audience || 'all',
+      slideshowUrl: ev.slideshowUrl || '',
+      recurring: !!ev.recurring,
     });
     setEventModalOpen(true);
     setSelected(null);
@@ -315,12 +318,18 @@ export default function Calendar() {
   async function handleEventSubmit(e) {
     e.preventDefault();
     const body = {
-      title: eventForm.title,
-      date: new Date(eventForm.date).toISOString(),
-      location: eventForm.location || null,
-      description: eventForm.description || null,
-      audience: eventForm.audience || 'all',
+      slideshowUrl: eventForm.slideshowUrl || null,
     };
+    // Recurring events: schedule fields are managed in code, only the
+    // slideshow attachment is editable. Skip the rest of the body so the
+    // server doesn't reject the update.
+    if (!eventForm.recurring) {
+      body.title = eventForm.title;
+      body.date = new Date(eventForm.date).toISOString();
+      body.location = eventForm.location || null;
+      body.description = eventForm.description || null;
+      body.audience = eventForm.audience || 'all';
+    }
     if (eventForm.id) {
       await api.put(`/events/${eventForm.id}`, body);
     } else {
@@ -647,23 +656,46 @@ export default function Calendar() {
                 <div className="whitespace-pre-wrap text-navy">{selected.description}</div>
               </div>
             )}
+            {selected.slideshowUrl && (
+              <button
+                type="button"
+                onClick={() =>
+                  openOrPreview(
+                    {
+                      url: selected.slideshowUrl,
+                      title: `${selected.title} slideshow`,
+                      filename: `${selected.title || 'event'}-slides.pdf`,
+                    },
+                    setPreview
+                  )
+                }
+                className="inline-block text-sm font-semibold text-gold-700 underline"
+              >
+                View slideshow →
+              </button>
+            )}
             {selected.recurring && (
               <div className="rounded-lg bg-gold-100 px-3 py-2 text-xs font-semibold text-gold-700">
-                Recurring weekly event — managed in code
+                Recurring weekly event — schedule managed in code (slideshow can still be attached)
               </div>
             )}
             <AdminOnly>
               <div className="border-t border-navy-50 pt-4">
                 <EventAttendance eventId={selected.id} />
               </div>
-              {!selected.recurring && canEditEvents && (
+              {canEditEvents && (
                 <div className="flex gap-2 pt-3 border-t border-navy-50">
                   <Button variant="outline" onClick={() => openEventEdit(selected)}>
                     Edit
                   </Button>
-                  <Button variant="danger" onClick={() => handleEventDelete(selected.id)}>
-                    Delete
-                  </Button>
+                  {!selected.recurring && (
+                    <Button
+                      variant="danger"
+                      onClick={() => handleEventDelete(selected.id)}
+                    >
+                      Delete
+                    </Button>
+                  )}
                 </div>
               )}
             </AdminOnly>
@@ -775,64 +807,85 @@ export default function Calendar() {
         title={eventForm.id ? 'Edit Event' : 'Add Event'}
       >
         <form onSubmit={handleEventSubmit} className="space-y-3">
+          {eventForm.recurring && (
+            <div className="rounded-lg border border-gold-200 bg-gold-100/40 px-3 py-2 text-xs text-navy">
+              <span className="font-semibold">Recurring meeting.</span> Title,
+              date, location, and audience are managed in code — only the
+              slideshow attachment is editable here.
+            </div>
+          )}
           <div>
             <label className="block text-sm font-medium text-navy">Title</label>
             <input
-              required
+              required={!eventForm.recurring}
+              disabled={eventForm.recurring}
               value={eventForm.title}
               onChange={(e) => setEventForm({ ...eventForm, title: e.target.value })}
-              className="mt-1 w-full rounded-lg border border-navy-100 px-3 py-2 text-sm focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold"
+              className="mt-1 w-full rounded-lg border border-navy-100 px-3 py-2 text-sm focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold disabled:bg-navy-50 disabled:text-navy-400"
             />
           </div>
           <div>
             <label className="block text-sm font-medium text-navy">Date & Time</label>
             <input
               type="datetime-local"
-              required
+              required={!eventForm.recurring}
+              disabled={eventForm.recurring}
               value={eventForm.date}
               onChange={(e) => setEventForm({ ...eventForm, date: e.target.value })}
-              className="mt-1 w-full rounded-lg border border-navy-100 px-3 py-2 text-sm focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold"
+              className="mt-1 w-full rounded-lg border border-navy-100 px-3 py-2 text-sm focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold disabled:bg-navy-50 disabled:text-navy-400"
             />
           </div>
           <div>
             <label className="block text-sm font-medium text-navy">Location</label>
             <input
+              disabled={eventForm.recurring}
               value={eventForm.location}
               onChange={(e) => setEventForm({ ...eventForm, location: e.target.value })}
-              className="mt-1 w-full rounded-lg border border-navy-100 px-3 py-2 text-sm focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold"
+              className="mt-1 w-full rounded-lg border border-navy-100 px-3 py-2 text-sm focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold disabled:bg-navy-50 disabled:text-navy-400"
             />
           </div>
           <div>
             <label className="block text-sm font-medium text-navy">Description</label>
             <textarea
               rows={3}
+              disabled={eventForm.recurring}
               value={eventForm.description}
               onChange={(e) => setEventForm({ ...eventForm, description: e.target.value })}
-              className="mt-1 w-full rounded-lg border border-navy-100 px-3 py-2 text-sm focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold"
+              className="mt-1 w-full rounded-lg border border-navy-100 px-3 py-2 text-sm focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold disabled:bg-navy-50 disabled:text-navy-400"
             />
           </div>
-          <div>
-            <label className="flex items-start gap-2 text-sm text-navy">
-              <input
-                type="checkbox"
-                checked={eventForm.audience === 'advisory'}
-                onChange={(e) =>
-                  setEventForm({
-                    ...eventForm,
-                    audience: e.target.checked ? 'advisory' : 'all',
-                  })
-                }
-                className="mt-1 h-4 w-4 rounded border-navy-100 text-gold focus:ring-gold"
-              />
-              <span>
-                <span className="font-medium">Advisory Board event</span>
-                <span className="mt-0.5 block text-xs text-navy-400">
-                  When checked, only Advisory Board members and Faculty
-                  Advisors appear in the attendance sheet for this event.
+          {!eventForm.recurring && (
+            <div>
+              <label className="flex items-start gap-2 text-sm text-navy">
+                <input
+                  type="checkbox"
+                  checked={eventForm.audience === 'advisory'}
+                  onChange={(e) =>
+                    setEventForm({
+                      ...eventForm,
+                      audience: e.target.checked ? 'advisory' : 'all',
+                    })
+                  }
+                  className="mt-1 h-4 w-4 rounded border-navy-100 text-gold focus:ring-gold"
+                />
+                <span>
+                  <span className="font-medium">Advisory Board event</span>
+                  <span className="mt-0.5 block text-xs text-navy-400">
+                    When checked, only Advisory Board members and Faculty
+                    Advisors appear in the attendance sheet for this event.
+                  </span>
                 </span>
-              </span>
-            </label>
-          </div>
+              </label>
+            </div>
+          )}
+          <FileUploader
+            label="Slideshow"
+            value={eventForm.slideshowUrl}
+            onChange={(slideshowUrl) =>
+              setEventForm({ ...eventForm, slideshowUrl })
+            }
+            hint="Upload a PPTX / PDF, or paste a Google Slides link. Optional."
+          />
           <div className="flex justify-end gap-2 pt-2">
             <Button variant="outline" onClick={() => setEventModalOpen(false)}>
               Cancel

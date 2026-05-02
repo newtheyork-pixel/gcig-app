@@ -292,6 +292,11 @@ model Event {
   // 'advisory' = tagged as an Advisory Board event. Used by the
   // Calendar filter button. Extend with other audiences later if needed.
   audience        String       @default("all")
+  // Optional deck attached to the event — same scheme as Pitch.slideshowUrl
+  // and Report.fileUrl: either an `onedrive:ITEM_ID` ref or a plain http(s)
+  // URL (Google Slides, etc.). All members see a "View slideshow" link
+  // when present.
+  slideshowUrl    String?
   attendance      Attendance[]
   createdAt       DateTime     @default(now())
 }
