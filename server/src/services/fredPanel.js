@@ -182,13 +182,19 @@ export async function getFredPanel({ forceFresh = false } = {}) {
   );
   for (const r of results) {
     if (r.status !== 'fulfilled') {
-      // One failed series shouldn't sink the whole panel — log and skip.
-      // The Python side validates the target is present and bails if not.
+      // Network/HTTP failure on this series — log and skip.
       console.warn('FRED panel: series fetch failed:', r.reason?.message);
       continue;
     }
     const { s, obs } = r.value;
-    seriesMaps[s.id] = toMonthEndMap(obs, s.frequency);
+    // Wrap the per-series transform in try/catch too. If a series returns
+    // unexpected obs shape (or my frequency mapping has a bug), don't sink
+    // the whole panel — drop just that one and keep going.
+    try {
+      seriesMaps[s.id] = toMonthEndMap(obs, s.frequency);
+    } catch (err) {
+      console.warn(`FRED panel: transform failed for ${s.id}:`, err.message);
+    }
   }
   if (!seriesMaps[TARGET_ID]) {
     throw new Error('FRED panel: target series CPIAUCSL missing');
