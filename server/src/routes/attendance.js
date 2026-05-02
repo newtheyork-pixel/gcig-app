@@ -85,41 +85,63 @@ router.get('/', requireExecutive, async (_req, res) => {
 //                Regular members don't attend these meetings.
 //   'all' (default) — return every non-exempt operational member, same
 //                     as the club-wide attendance matrix.
+// Compose the visible roster for an event, applying role-based defaults
+// AND super-admin overrides. Returns Sets of user ids — caller hydrates
+// them into name/role objects.
+//
+//   excludedIds = users super admin removed via × (overrides.included=false)
+//   includedIds = users super admin added via picker (overrides.included=true)
+//   recordedIds = users with an Attendance row for the event
+//
+// Final roster = (default audience − excluded) ∪ included ∪ recorded
+async function rosterIdsForEvent(event) {
+  const userWhere =
+    event.audience === 'advisory' ? ADVISORY_ROSTER_WHERE : ATTENDEE_WHERE;
+  const [defaultUsers, overrides, records] = await Promise.all([
+    prisma.user.findMany({ where: userWhere, select: { id: true } }),
+    prisma.eventRosterOverride.findMany({
+      where: { eventId: event.id },
+      select: { userId: true, included: true },
+    }),
+    prisma.attendance.findMany({
+      where: { eventId: event.id },
+      select: { userId: true },
+    }),
+  ]);
+  const excluded = new Set();
+  const included = new Set();
+  for (const o of overrides) {
+    if (o.included) included.add(o.userId);
+    else excluded.add(o.userId);
+  }
+  const ids = new Set();
+  for (const u of defaultUsers) {
+    if (!excluded.has(u.id)) ids.add(u.id);
+  }
+  for (const id of included) ids.add(id);
+  for (const r of records) {
+    // Attendance record forces inclusion only if not explicitly excluded
+    // (× also clears the record, so this rarely happens; defensive only).
+    if (!excluded.has(r.userId)) ids.add(r.userId);
+  }
+  return { ids, excluded, included };
+}
+
 router.get('/event/:id', requireExecutive, async (req, res) => {
   const eventId = Number(req.params.id);
   const event = await prisma.event.findUnique({ where: { id: eventId } });
   if (!event) return res.status(404).json({ error: 'Event not found' });
 
-  const userWhere =
-    event.audience === 'advisory' ? ADVISORY_ROSTER_WHERE : ATTENDEE_WHERE;
-
-  const [defaultUsers, records] = await Promise.all([
-    prisma.user.findMany({
-      where: userWhere,
-      select: { id: true, name: true, role: true },
-      orderBy: { name: 'asc' },
-    }),
+  const [{ ids }, records] = await Promise.all([
+    rosterIdsForEvent(event),
     prisma.attendance.findMany({ where: { eventId } }),
   ]);
 
-  // Super-admin overrides: any user with an attendance record on this event
-  // appears in the roster, even if their role normally excludes them. Lets
-  // the owner add anyone to any event without changing role configuration.
-  let users = defaultUsers;
-  const inRoster = new Set(defaultUsers.map((u) => u.id));
-  const extraIds = records
-    .map((r) => r.userId)
-    .filter((id) => !inRoster.has(id));
-  if (extraIds.length > 0) {
-    const extras = await prisma.user.findMany({
-      where: { id: { in: extraIds } },
-      select: { id: true, name: true, role: true },
-      orderBy: { name: 'asc' },
-    });
-    users = [...defaultUsers, ...extras].sort((a, b) =>
-      a.name.localeCompare(b.name)
-    );
-  }
+  const users = await prisma.user.findMany({
+    where: { id: { in: [...ids] } },
+    select: { id: true, name: true, role: true },
+    orderBy: { name: 'asc' },
+  });
 
   const byUser = {};
   for (const r of records) byUser[r.userId] = r.status;
@@ -134,25 +156,38 @@ router.get('/event/:id/addable', requireSuperAdmin, async (req, res) => {
   const event = await prisma.event.findUnique({ where: { id: eventId } });
   if (!event) return res.status(404).json({ error: 'Event not found' });
 
-  const userWhere =
-    event.audience === 'advisory' ? ADVISORY_ROSTER_WHERE : ATTENDEE_WHERE;
-  const [defaultUsers, records, allUsers] = await Promise.all([
-    prisma.user.findMany({ where: userWhere, select: { id: true } }),
-    prisma.attendance.findMany({
-      where: { eventId },
-      select: { userId: true },
-    }),
+  const [{ ids }, allUsers] = await Promise.all([
+    rosterIdsForEvent(event),
     prisma.user.findMany({
       select: { id: true, name: true, role: true },
       orderBy: { name: 'asc' },
     }),
   ]);
-  const inRoster = new Set([
-    ...defaultUsers.map((u) => u.id),
-    ...records.map((r) => r.userId),
-  ]);
-  const addable = allUsers.filter((u) => !inRoster.has(u.id));
+  const addable = allUsers.filter((u) => !ids.has(u.id));
   res.json({ users: addable });
+});
+
+// Persist a manual roster addition. Used by the "add member" picker so
+// the addition survives a reload before any status is set. Idempotent —
+// upserts an `included=true` override row.
+router.post('/event/:id/include/:userId', requireSuperAdmin, async (req, res) => {
+  const eventId = Number(req.params.id);
+  const userId = Number(req.params.userId);
+  if (!Number.isInteger(eventId) || !Number.isInteger(userId)) {
+    return res.status(400).json({ error: 'Bad eventId or userId' });
+  }
+  const [event, user] = await Promise.all([
+    prisma.event.findUnique({ where: { id: eventId } }),
+    prisma.user.findUnique({ where: { id: userId } }),
+  ]);
+  if (!event) return res.status(404).json({ error: 'Event not found' });
+  if (!user) return res.status(404).json({ error: 'User not found' });
+  await prisma.eventRosterOverride.upsert({
+    where: { eventId_userId: { eventId, userId } },
+    update: { included: true },
+    create: { eventId, userId, included: true },
+  });
+  res.json({ ok: true });
 });
 
 // Current user's own record + percentage
@@ -227,20 +262,42 @@ router.post('/', requireExecutive, async (req, res) => {
     update: { status },
     create: { userId: Number(userId), eventId: Number(eventId), status },
   });
+  // Marking a status implies the user is on the roster. If they were
+  // previously × removed, clear any "excluded" override so they don't
+  // get filtered out next load. We also write an "included" override
+  // so a non-default-audience user (e.g. a regular member marked on an
+  // advisory event) persists if their record is later cleared.
+  await prisma.eventRosterOverride.upsert({
+    where: {
+      eventId_userId: { eventId: Number(eventId), userId: Number(userId) },
+    },
+    update: { included: true },
+    create: { eventId: Number(eventId), userId: Number(userId), included: true },
+  });
   res.json(record);
 });
 
-// Remove one attendance row. Super-admin only — used by the "remove from
-// roster" button to clear a user's mark on a specific event. If the user
-// is in the default audience roster they'll reappear unmarked next load;
-// if they were a manual super-admin add they disappear from the roster.
+// Remove one user from an event's roster. Super-admin only.
+//   1. deletes any Attendance row for that (user, event), and
+//   2. writes an `included=false` override so the user stays hidden
+//      from the roster on subsequent loads, even if they're a default
+//      audience member.
+// Re-add via the "add member" picker (which flips the override to
+// included=true) or by marking attendance (which does the same).
 router.delete('/:userId/:eventId', requireSuperAdmin, async (req, res) => {
   const userId = Number(req.params.userId);
   const eventId = Number(req.params.eventId);
   if (!Number.isInteger(userId) || !Number.isInteger(eventId)) {
     return res.status(400).json({ error: 'Bad userId or eventId' });
   }
-  await prisma.attendance.deleteMany({ where: { userId, eventId } });
+  await prisma.$transaction([
+    prisma.attendance.deleteMany({ where: { userId, eventId } }),
+    prisma.eventRosterOverride.upsert({
+      where: { eventId_userId: { eventId, userId } },
+      update: { included: false },
+      create: { eventId, userId, included: false },
+    }),
+  ]);
   res.json({ ok: true });
 });
 

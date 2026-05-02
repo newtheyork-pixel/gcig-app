@@ -88,20 +88,28 @@ export default function EventAttendance({ eventId }) {
     if (addable === null) loadAddable();
   }
 
-  // Adding a member to the visible roster doesn't write a record yet —
-  // we just append them locally so the exec can flip a status. The first
-  // status flip is what creates the Attendance row server-side, which is
-  // also what makes the addition persist past a reload.
-  function addToRoster(user) {
+  // Adding a member: persist an "included" roster override server-side
+  // so the addition survives a reload even before any status is set.
+  // Locally append immediately for snappy UI; revert if the API call fails.
+  async function addToRoster(user) {
+    const prev = { users: data.users, addable };
     setData({
       ...data,
       users: [...data.users, user].sort((a, b) =>
         a.name.localeCompare(b.name)
       ),
     });
-    setAddable((prev) => (prev || []).filter((u) => u.id !== user.id));
+    setAddable((prevAddable) =>
+      (prevAddable || []).filter((u) => u.id !== user.id)
+    );
     setPickerOpen(false);
     setSearch('');
+    try {
+      await api.post(`/attendance/event/${eventId}/include/${user.id}`);
+    } catch {
+      setData({ ...data, users: prev.users });
+      setAddable(prev.addable);
+    }
   }
 
   const filteredAddable = useMemo(() => {

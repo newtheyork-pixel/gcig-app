@@ -86,6 +86,7 @@ model User {
   pitchRequests     PitchRequest[]   @relation("PitchRequestRequester")
   presidentDecisions PitchRequest[]  @relation("PitchRequestPresident")
   pmDecisions       PitchRequest[]   @relation("PitchRequestPM")
+  rosterOverrides   EventRosterOverride[]
 }
 
 // Chat channels are addressed by a simple string:
@@ -298,7 +299,27 @@ model Event {
   // when present.
   slideshowUrl    String?
   attendance      Attendance[]
+  rosterOverrides EventRosterOverride[]
   createdAt       DateTime     @default(now())
+}
+
+// Per-event roster overrides set by the super admin. Two cases:
+//   included = false → user explicitly REMOVED from the event's roster.
+//                      Shadows the role-based default audience query.
+//   included = true  → user explicitly ADDED. Persists a manual addition
+//                      from the super-admin "add member" picker even
+//                      before any attendance record is written.
+// Marking attendance on a user (POST /attendance) clears any "excluded"
+// override — they're definitely on the roster if they have a status.
+model EventRosterOverride {
+  eventId  Int
+  userId   Int
+  included Boolean
+  event    Event   @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  user     User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  updatedAt DateTime @default(now()) @updatedAt
+
+  @@id([eventId, userId])
 }
 
 model Holding {
