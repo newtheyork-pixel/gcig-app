@@ -9,11 +9,13 @@
 //
 // Series included here are ONLY the daily/weekly ones that have signal
 // for current-month CPI:
-//   - Energy: WTI, Brent, retail gas, diesel
-//   - Rates: 10y, 2y, 10y-2y spread, 10y-3m spread
+//   - Energy: WTI, Brent, heating oil, Gulf gasoline, retail gas, diesel
+//   - FX: trade-weighted USD, USD/MXN, USD/CNY, USD/JPY
+//   - Rates: 1m, 3m, 2y, 5y, 10y, 30y Treasury; spreads; prime; commercial paper
 //   - Inflation expectations: T5YIE, T10YIE, T5YIFR
-//   - Credit: HY spread
+//   - Credit: HY spread, Moody's AAA / BAA corporate yields
 //   - Labor: weekly jobless claims
+//   - Producer prices: weekly PPI gasoline
 //
 // Cached 1h on the server (these series update at most daily — refreshing
 // hourly is more than enough for a nowcaster that runs daily at most).
@@ -26,6 +28,7 @@ const DEFAULT_START = '2010-01-01';
 let cache = { at: 0, data: null };
 
 const DAILY_SERIES = [
+  // --- existing ---
   'DCOILWTICO',
   'DCOILBRENTEU',
   'DTWEXBGS',
@@ -37,12 +40,31 @@ const DAILY_SERIES = [
   'T10YIE',
   'T5YIFR',
   'BAMLH0A0HYM2',
+  // --- new high-frequency additions ---
+  // Energy (daily)
+  'MHOILNYH',     // No.2 heating oil, NY harbor — daily wholesale
+  'DGASUSGULF',   // Conventional gasoline, US Gulf Coast — daily wholesale (leads retail by 1-2 weeks)
+  // FX pairs (daily) — drive imported-goods prices
+  'DEXMXUS',      // USD/MXN — Mexico imports (auto parts, produce)
+  'DEXCHUS',      // USD/CNY — China imports (consumer goods)
+  'DEXJPUS',      // USD/JPY — Japan imports
+  // Treasury curve (daily)
+  'DGS5',         // 5y Treasury constant maturity
+  'DGS30',        // 30y Treasury constant maturity
+  'DTB3',         // 3m Treasury bill secondary market
+  'DGS1MO',       // 1m Treasury constant maturity
+  // Credit (daily)
+  'DAAA',         // Moody's seasoned AAA corporate bond yield
+  'DBAA',         // Moody's seasoned BAA corporate bond yield
+  'DCPN3M',       // 3m AA non-financial commercial paper
+  'DPRIME',       // Bank prime loan rate
 ];
 
 const WEEKLY_SERIES = [
   'GASREGW',  // retail gas, weekly
   'GASDESW',  // diesel, weekly
   'ICSA',     // initial jobless claims, weekly
+  'WPU057',   // PPI: gasoline (monthly on FRED, but tracked here for completeness; treated as low-freq panel)
 ];
 
 // FRED rate-limits with HTTP 500 (not 429) when too many concurrent

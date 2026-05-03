@@ -26,6 +26,7 @@ import prisma from '../db.js';
 import { verifyJwt } from '../middleware/auth.js';
 import { getFredPanel } from '../services/fredPanel.js';
 import { getDailyPanel } from '../services/fredDailyPanel.js';
+import { getClevelandNowcast } from '../services/clevelandNowcast.js';
 
 const router = Router();
 
@@ -108,6 +109,35 @@ router.get(
     } catch (err) {
       console.error('daily-panel failed:', err.message);
       res.status(503).json({ error: 'FRED daily fetch failed' });
+    }
+  }
+);
+
+// ── Off-platform: Cleveland Fed inflation nowcast scrape ──────────────
+// Cleveland Fed publishes their daily-updated inflation nowcast at:
+//   https://www.clevelandfed.org/indicators-and-data/inflation-nowcasting
+// The scraper hits the page's underlying static JSON feeds and returns
+// the latest headline/core MoM and YoY values for the current and next
+// months. Cached 1h server-side.
+router.get(
+  '/cleveland-nowcast',
+  verifyHmac('/api/cpi/cleveland-nowcast'),
+  async (_req, res) => {
+    try {
+      const data = await getClevelandNowcast();
+      res.json(data);
+    } catch (err) {
+      console.error('cleveland-nowcast failed:', err.message);
+      // Always return 200 with a graceful empty shape — the Python side
+      // is wired to fall back if `ok: false`.
+      res.json({
+        ok: false,
+        fetchedAt: new Date().toISOString(),
+        asOfDate: null,
+        headline: {},
+        core: {},
+        error: err.message,
+      });
     }
   }
 );
