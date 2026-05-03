@@ -27,6 +27,8 @@ import { verifyJwt } from '../middleware/auth.js';
 import { getFredPanel } from '../services/fredPanel.js';
 import { getDailyPanel } from '../services/fredDailyPanel.js';
 import { getClevelandNowcast } from '../services/clevelandNowcast.js';
+import { getZillowRent } from '../services/zillowFeed.js';
+import { getTruflationFeed } from '../services/truflationFeed.js';
 
 const router = Router();
 
@@ -136,6 +138,67 @@ router.get(
         asOfDate: null,
         headline: {},
         core: {},
+        error: err.message,
+      });
+    }
+  }
+);
+
+// ── Off-platform: Zillow ZORI rent feed ───────────────────────────────
+// Zillow's Observed Rent Index is a leading indicator for BLS shelter
+// (which lags by 6-12 months). The Python nowcaster uses lag-0/6/12 of
+// YoY as features. On Zillow scrape failure the service falls back to
+// Case-Shiller home prices as a (weaker) proxy and sets
+// `usedFallback: true`. Cached 6h server-side.
+router.get(
+  '/zillow-rent',
+  verifyHmac('/api/cpi/zillow-rent'),
+  async (_req, res) => {
+    try {
+      const data = await getZillowRent();
+      res.json(data);
+    } catch (err) {
+      console.error('zillow-rent failed:', err.message);
+      // Always return 200 with a graceful empty shape — the Python side
+      // is wired to fall back if `ok: false`.
+      res.json({
+        ok: false,
+        fetchedAt: new Date().toISOString(),
+        source: null,
+        usedFallback: false,
+        history: [],
+        error: err.message,
+      });
+    }
+  }
+);
+
+// ── Off-platform: Truflation US CPI daily feed scrape ─────────────────
+// Truflation publishes a daily-updated, blockchain-verified US inflation
+// index. Their data supposedly leads the BLS headline CPI by ~30 days, so
+// it's a strong candidate as a feature in our nowcaster. We hit their
+// public Nuxt-proxied endpoints (no key required) and return YoY%,
+// computed MoM%, and the recent history. Cached 1h.
+router.get(
+  '/truflation',
+  verifyHmac('/api/cpi/truflation'),
+  async (_req, res) => {
+    try {
+      const data = await getTruflationFeed();
+      res.json(data);
+    } catch (err) {
+      console.error('truflation failed:', err.message);
+      // Always return 200 with a graceful empty shape — the Python side
+      // is wired to fall back if `ok: false`.
+      res.json({
+        ok: false,
+        fetchedAt: new Date().toISOString(),
+        asOfDate: null,
+        yoy: null,
+        mom: null,
+        history: [],
+        seriesYoy: {},
+        seriesLevel: {},
         error: err.message,
       });
     }
