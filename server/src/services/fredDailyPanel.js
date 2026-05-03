@@ -56,10 +56,18 @@ async function fetchSeries(seriesId) {
   const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
   try {
     const res = await fetch(url, { signal: controller.signal });
-    if (!res.ok) throw new Error(`FRED ${seriesId} responded ${res.status}`);
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      console.warn(`daily-panel ${seriesId}: HTTP ${res.status} body="${body.slice(0, 200)}"`);
+      throw new Error(`FRED ${seriesId} responded ${res.status}`);
+    }
     const data = await res.json();
     const obs = Array.isArray(data?.observations) ? data.observations : [];
+    console.log(`daily-panel ${seriesId}: OK ${obs.length} obs`);
     return obs;
+  } catch (err) {
+    console.warn(`daily-panel ${seriesId}: EXCEPTION ${err.message}`);
+    throw err;
   } finally {
     clearTimeout(timer);
   }
