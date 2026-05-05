@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
@@ -19,8 +20,13 @@ class NormalizedMessage:
 def _parse_ts(s: str | None) -> datetime:
     if not s:
         return datetime.now(timezone.utc).replace(tzinfo=None)
-    # AISStream format: "2026-05-04 12:34:56.789 +0000 UTC"
+    # AISStream timestamps come as e.g. "2026-05-04 12:34:56.789 +0000"
+    # or "...978011581 +0000" (nanosecond precision) and historically
+    # also with a trailing " UTC" tag. Python's %f only accepts up to
+    # six fractional digits, so truncate anything beyond that, and
+    # strip the legacy " UTC" suffix.
     s = s.replace(" UTC", "").strip()
+    s = re.sub(r"(\.\d{6})\d+", r"\1", s)
     for fmt in ("%Y-%m-%d %H:%M:%S.%f %z", "%Y-%m-%d %H:%M:%S %z"):
         try:
             return datetime.strptime(s, fmt).astimezone(timezone.utc).replace(tzinfo=None)
