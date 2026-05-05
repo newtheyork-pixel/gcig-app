@@ -28,6 +28,7 @@ import MemberProfile from './pages/MemberProfile.jsx';
 import Landing from './pages/Landing.jsx';
 import PitchRequests from './pages/PitchRequests.jsx';
 import CPI from './pages/CPI.jsx';
+import Tankers from './pages/Tankers.jsx';
 
 export default function App() {
   const { loading } = useAuth();
@@ -75,6 +76,7 @@ export default function App() {
         <Route path="/votes" element={<Votes />} />
         <Route path="/industries" element={<Industries />} />
         <Route path="/cpi" element={<CPI />} />
+        <Route path="/tankers" element={<Tankers />} />
         <Route path="/attendance" element={<Attendance />} />
         <Route path="/chat" element={<Chat />} />
         <Route path="/broadcast" element={<Broadcast />} />
