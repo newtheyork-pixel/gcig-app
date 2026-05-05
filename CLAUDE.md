@@ -40,7 +40,14 @@ both services on push.
   `FileProviderToken` table.
 - **External APIs**: Finnhub (free tier — earnings, analyst consensus,
   news), SEC EDGAR (no key), FRED (free w/ key), Google Sheets
-  (portfolio mirror).
+  (portfolio mirror), AISStream (free websocket — Persian Gulf
+  tanker tracking; consumed only on the Windows server, never
+  proxied through Render).
+- **Off-platform pipeline (Tanker Tracker)**: `sea_tracker/` Python
+  package runs on Thomas's Windows server. Collector is a 24/7 NSSM
+  service; `enrich + signals + publish-signals` is a daily Task
+  Scheduler entry; `publish-snapshot` runs every 2 min. All HMAC-
+  signed POSTs to `gcig-api`. Setup docs at `sea_tracker/README.md`.
 
 ---
 
@@ -117,6 +124,18 @@ If something feels weird with auth on Safari, check that order in
 - `client/src/pages/MemberProfile.jsx` — `PitchRow` renders pitch
   outcome chips. Approved (vote yes, not yet held) shows as green
   "Voted Yes" pill.
+- `server/src/routes/sea.js` — HMAC ingest + JWT reads for the
+  Tanker Tracker. Mirrors `cpi.js`. Off-platform Python publisher
+  lives in `sea_tracker/` and runs on the Windows server.
+  `SEA_INGEST_SECRET` env var on Render must match the value in
+  `C:\sea_tracker\.env` on the server.
+- `sea_tracker/` — Persian Gulf AIS pipeline. `collect` (websocket),
+  `enrich`, `signals`, `publish-signals`, `publish-snapshot` CLI
+  commands. DuckDB on disk; one writer (collect), many readers.
+  Setup steps + NSSM/Task-Scheduler config in `sea_tracker/README.md`.
+- `client/src/pages/Tankers.jsx` + `client/src/pages/tankers/*` —
+  /tankers page. Polls `/api/sea/latest` every 30s; signal panel +
+  MapLibre vessel map + click-to-detail drawer.
 - `server/prisma/schema.prisma` — full schema. Migrations in
   `server/prisma/migrations/`.
 
