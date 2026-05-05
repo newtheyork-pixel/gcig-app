@@ -10,21 +10,13 @@ const SIZE_COLORS = {
   unknown: '#9CA3AF',
 };
 
-// Free OpenStreetMap raster style. Comes with a sensible attribution
-// requirement which MapLibre renders automatically.
-const RASTER_STYLE = {
-  version: 8,
-  sources: {
-    osm: {
-      type: 'raster',
-      tiles: ['https://tile.openstreetmap.org/{z}/{x}/{y}.png'],
-      tileSize: 256,
-      attribution: '© OpenStreetMap contributors',
-      maxzoom: 19,
-    },
-  },
-  layers: [{ id: 'osm', type: 'raster', source: 'osm' }],
-};
+// OpenFreeMap is a free, no-key, no-rate-limit, OSM-derived vector
+// tile host. We use the "positron" light style — neutral background
+// so the gold/navy vessel + terminal markers read clearly. Direct
+// OSM raster tiles tend to fail under any real load (their public
+// server has UA filtering and aggressive rate limits) and can leave
+// the map blank in production.
+const STYLE_URL = 'https://tiles.openfreemap.org/styles/positron';
 
 export default function VesselMap({ snapshot, onVesselClick }) {
   const containerRef = useRef(null);
@@ -40,7 +32,7 @@ export default function VesselMap({ snapshot, onVesselClick }) {
     if (!containerRef.current) return undefined;
     const map = new maplibregl.Map({
       container: containerRef.current,
-      style: RASTER_STYLE,
+      style: STYLE_URL,
       center: [52.5, 26.5],
       zoom: 5,
       attributionControl: { compact: true },
