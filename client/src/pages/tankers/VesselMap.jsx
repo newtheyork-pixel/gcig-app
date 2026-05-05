@@ -10,6 +10,25 @@ const SIZE_COLORS = {
   unknown: '#9CA3AF',
 };
 
+// Rough approximation of the Persian Gulf zone where contributing
+// terrestrial AIS receivers are sparse — Iranian coastal waters and
+// the Iraqi/Kuwaiti head. Vessels sitting at Iranian terminals or
+// loitering in the inner north Gulf don't appear in this feed until
+// they sail outward into Strait of Hormuz coverage. Drawing the gap
+// is more honest than letting members assume the empty area is empty
+// water. Polygon is intentionally coarse — receiver coverage is not
+// publicly mapped, and a tighter shape would imply false precision.
+const COVERAGE_GAP_POLYGON = [[
+  [47.6, 30.5],
+  [56.4, 27.0],
+  [56.4, 26.5],
+  [54.5, 26.6],
+  [52.0, 27.3],
+  [49.5, 28.3],
+  [48.0, 29.6],
+  [47.6, 30.5],
+]];
+
 // OpenFreeMap is a free, no-key, no-rate-limit, OSM-derived vector
 // tile host. We use the "positron" light style — neutral background
 // so the gold/navy vessel + terminal markers read clearly. Direct
@@ -43,6 +62,36 @@ export default function VesselMap({ snapshot, onVesselClick }) {
       map.addSource('vessels', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
       map.addSource('trails', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
       map.addSource('terminals', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+      map.addSource('coverage-gap', {
+        type: 'geojson',
+        data: {
+          type: 'Feature',
+          geometry: { type: 'Polygon', coordinates: COVERAGE_GAP_POLYGON },
+          properties: {},
+        },
+      });
+
+      // Drawn first so trails / vessels / terminals all sit above it.
+      map.addLayer({
+        id: 'coverage-gap-fill',
+        type: 'fill',
+        source: 'coverage-gap',
+        paint: {
+          'fill-color': '#1B2A4A',
+          'fill-opacity': 0.08,
+        },
+      });
+      map.addLayer({
+        id: 'coverage-gap-outline',
+        type: 'line',
+        source: 'coverage-gap',
+        paint: {
+          'line-color': '#1B2A4A',
+          'line-width': 1.2,
+          'line-opacity': 0.5,
+          'line-dasharray': [3, 3],
+        },
+      });
 
       map.addLayer({
         id: 'trails-line',
@@ -137,9 +186,25 @@ export default function VesselMap({ snapshot, onVesselClick }) {
   }, [snapshot]);
 
   return (
-    <div
-      ref={containerRef}
-      className="h-[600px] w-full rounded-2xl border border-navy/10 shadow-sm"
-    />
+    <div className="relative">
+      <div
+        ref={containerRef}
+        className="h-[600px] w-full rounded-2xl border border-navy/10 shadow-sm"
+      />
+      <div className="pointer-events-none absolute bottom-3 left-3 max-w-[260px] rounded-lg border border-navy/10 bg-white/90 px-3 py-2 text-xs text-navy/70 shadow-sm backdrop-blur-sm">
+        <div className="flex items-center gap-2">
+          <span
+            aria-hidden
+            className="inline-block h-3 w-5 border border-dashed border-navy/50"
+            style={{ backgroundColor: 'rgba(27,42,74,0.08)' }}
+          />
+          <span className="font-medium text-navy">Limited AIS coverage</span>
+        </div>
+        <p className="mt-1 leading-snug">
+          Iranian coast and inner north Gulf — terrestrial receivers don't reach.
+          Vessels here only appear once they sail into strait coverage.
+        </p>
+      </div>
+    </div>
   );
 }
