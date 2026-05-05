@@ -1,0 +1,19 @@
+# Copy this file to `config.toml` next to the sea_tracker package on the
+# Windows server and fill in the placeholders. Do NOT commit config.toml.
+
+[aisstream]
+api_key = "REPLACE_ME_AISSTREAM_KEY"
+
+# Persian Gulf bbox. Edit only if you know what you are doing —
+# signals.py constants assume these bounds.
+[bbox]
+lat_min = 23.5
+lat_max = 30.5
+lon_min = 47.5
+lon_max = 57.5
+
+# Windows-style paths. Use forward slashes; pathlib handles them.
+[storage]
+db_path     = "C:/sea_tracker/data/sea.duckdb"
+parquet_dir = "C:/sea_tracker/data/parquet"
+log_dir     = "C:/sea_tracker/logs"
