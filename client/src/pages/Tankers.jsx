@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { RefreshCw } from 'lucide-react';
 import { getLatestSnapshot } from '../api/sea';
+import DerivedPanel from './tankers/DerivedPanel';
 import SignalPanel from './tankers/SignalPanel';
 import VesselMap from './tankers/VesselMap';
 import VesselDrawer from './tankers/VesselDrawer';
@@ -87,6 +88,7 @@ export default function Tankers() {
 
       {snapshot && (
         <>
+          <DerivedPanel derived={snapshot.derived} />
           <SignalPanel signals={snapshot.signals} />
           <VesselMap snapshot={snapshot} onVesselClick={setSelectedVessel} />
           <VesselDrawer vessel={selectedVessel} onClose={() => setSelectedVessel(null)} />

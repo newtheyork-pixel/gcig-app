@@ -11,11 +11,12 @@ seconds even when the bbox holds a thousand vessels.
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import duckdb
 
+from sea_tracker.derived import compute_all as _compute_derived
 from sea_tracker.geo import TERMINALS
 from sea_tracker.rdp import thin_trail
 
@@ -159,9 +160,12 @@ def build_snapshot(
         for n, c, clat, clon, r in TERMINALS
     ]
 
+    derived = _compute_derived(con, day=datetime.now(timezone.utc).date())
+
     return {
         "bbox": [bbox[0], bbox[1], bbox[2], bbox[3]],
         "vessels": vessels,
         "terminals": terminals,
         "signals": _latest_signal_values(con),
+        "derived": derived,
     }
