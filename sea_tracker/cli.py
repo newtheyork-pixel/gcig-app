@@ -317,6 +317,49 @@ def sar_download(
     console.print(f"downloaded {path} ({size_mb:.1f} MB)")
 
 
+@app.command("sar-detect-one")
+def sar_detect_one(
+    scene_id: str = typer.Argument(..., help="Scene UUID (must already be downloaded)."),
+    config: Path = typer.Option(Path("config.toml"), "--config", "-c"),
+    out_dir: Path = typer.Option(
+        Path("C:/sea_tracker/sar"),
+        "--out-dir",
+        help="Where downloaded GRD products live.",
+    ),
+) -> None:
+    """Detect ships in a single already-downloaded scene and print
+    a summary. Doesn't persist — use `sar-detect` for the orchestrated
+    end-to-end pipeline that writes to sar_detections."""
+    from sea_tracker.sar import (
+        SarDetection,
+        detect_ships_in_zip,
+        filter_tanker_class,
+    )
+
+    cfg = load_config(config)
+    _setup_logging(cfg.log_dir, "sar")
+    zip_path = out_dir / f"{scene_id}.SAFE.zip"
+    if not zip_path.exists():
+        console.print(f"[red]scene not on disk: {zip_path}[/red]")
+        console.print("Run sar-download first.")
+        raise typer.Exit(code=1)
+
+    raw = detect_ships_in_zip(zip_path, cfg.bbox, scene_id=scene_id)
+    marked = filter_tanker_class(raw)
+    tankers = [d for d in marked if d.likely_tanker]
+    console.print(f"total detections in bbox: {len(marked)}")
+    console.print(f"  tanker-class (>=180 m): {len(tankers)}")
+    console.print(f"  smaller hulls:          {len(marked) - len(tankers)}")
+    if marked:
+        console.print("\nfirst 8 detections:")
+        for d in marked[:8]:
+            tag = "TANKER" if d.likely_tanker else "small "
+            console.print(
+                f"  {tag} lat={d.lat:.4f} lon={d.lon:.4f} "
+                f"length={int(d.length_m)}m width={int(d.width_m)}m area={int(d.intensity)}px"
+            )
+
+
 @app.command("sar-detect")
 def sar_detect(
     config: Path = typer.Option(Path("config.toml"), "--config", "-c"),

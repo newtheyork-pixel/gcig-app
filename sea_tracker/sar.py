@@ -218,7 +218,190 @@ def download_scene(scene: SarScene, out_dir: Path) -> Path:
     return out_path
 
 
-# ── Stage 3: CFAR ship detection ─────────────────────────────────────
+# ── Stage 3: ship detection on a downloaded scene ────────────────────
+#
+# Approach: per-tile median + scaled MAD threshold, then connected-
+# component clustering. Simpler than full 2D CFAR but highly effective
+# on Sentinel-1 GRD imagery — ships are bright point sources on a
+# locally-uniform sea background. MAD scaled by 1.4826 makes it ≈ σ
+# for a normal noise model, so threshold = median + k × σ_robust.
+#
+# Why per-tile rather than per-image: SAR backscatter varies a lot
+# across an IW swath (incidence-angle gradient, near/far range,
+# patches of different sea state). A global threshold misses ships
+# in low-backscatter regions and floods false positives in high-
+# backscatter regions. Per-tile (4096 px ≈ 40 km) statistics adapt.
+#
+# Land filtering: not implemented in this pass. Coastline and ports
+# will produce false-positive clusters. We rely on the bbox filter
+# to drop most land hits and the area filter to drop islands. Future
+# work: use the OSM coastline shape file to mask land pixels before
+# detection.
+
+import zipfile as _zipfile
+import xml.etree.ElementTree as _ET
+
+
+def _resolve_safe_paths(zip_path: Path) -> tuple[str, str, str]:
+    """Return (vv_tiff_inside_zip, vv_annotation_inside_zip, root_safe)."""
+    with _zipfile.ZipFile(zip_path) as z:
+        names = z.namelist()
+    vv_tiff = next(
+        n for n in names
+        if "/measurement/" in n and "vv" in n.lower() and n.endswith(".tiff")
+    )
+    vv_anno = next(
+        n for n in names
+        if "/annotation/" in n
+        and "/calibration/" not in n
+        and "/rfi/" not in n
+        and not n.rsplit("/", 1)[-1].startswith("rfi-")
+        and "vv" in n.lower()
+        and n.endswith(".xml")
+    )
+    return vv_tiff, vv_anno, names[0].split("/", 1)[0]
+
+
+def _load_gcps(zip_path: Path, anno_xml: str) -> list[tuple[float, float, float, float]]:
+    """Return [(pixel, line, lat, lon), ...] from the annotation XML."""
+    with _zipfile.ZipFile(zip_path) as z:
+        with z.open(anno_xml) as f:
+            tree = _ET.parse(f)
+    gcps = []
+    for pt in tree.iter("geolocationGridPoint"):
+        gcps.append((
+            float(pt.find("pixel").text),
+            float(pt.find("line").text),
+            float(pt.find("latitude").text),
+            float(pt.find("longitude").text),
+        ))
+    if not gcps:
+        raise RuntimeError(f"no GCPs in annotation {anno_xml}")
+    return gcps
+
+
+def _make_pixel_to_latlon(gcps: list[tuple[float, float, float, float]]):
+    """Return a callable f(px, py) -> (lat, lon)."""
+    import numpy as np
+    from scipy.interpolate import LinearNDInterpolator
+    pts = np.array([(g[0], g[1]) for g in gcps])
+    lats = np.array([g[2] for g in gcps])
+    lons = np.array([g[3] for g in gcps])
+    lat_i = LinearNDInterpolator(pts, lats)
+    lon_i = LinearNDInterpolator(pts, lons)
+    def f(px, py):
+        return float(lat_i(px, py)), float(lon_i(px, py))
+    return f
+
+
+def _detect_in_tile(
+    arr,
+    *,
+    k_sigma: float = 5.0,
+    min_area: int = 3,
+    max_area: int = 5000,
+):
+    """Threshold + connected components in a single tile.
+
+    Returns list of (cy, cx, area, length_px, width_px) in tile-local
+    coordinates. Caller adds tile offset to get image-global coords.
+    """
+    import numpy as np
+    from scipy.ndimage import label, find_objects
+
+    a = arr.astype(np.float32)
+    med = float(np.median(a))
+    mad = float(np.median(np.abs(a - med)))
+    if mad < 1e-6:
+        return []  # blank tile (off-edge or degenerate)
+    threshold = med + k_sigma * 1.4826 * mad
+    mask = a > threshold
+    labeled, _n = label(mask)
+    out = []
+    for i, sl in enumerate(find_objects(labeled)):
+        if sl is None:
+            continue
+        comp = labeled[sl] == (i + 1)
+        area = int(comp.sum())
+        if area < min_area or area > max_area:
+            continue
+        ys, xs = np.where(comp)
+        cy = sl[0].start + float(ys.mean())
+        cx = sl[1].start + float(xs.mean())
+        length_px = sl[0].stop - sl[0].start
+        width_px = sl[1].stop - sl[1].start
+        out.append((cy, cx, area, length_px, width_px))
+    return out
+
+
+def detect_ships_in_zip(
+    zip_path: Path,
+    bbox: tuple[float, float, float, float],
+    *,
+    scene_id: str | None = None,
+    acquired_at: datetime | None = None,
+    tile: int = 4096,
+    k_sigma: float = 5.0,
+) -> list[SarDetection]:
+    """Run ship detection over a downloaded .SAFE.zip GRD product.
+
+    Streams the scene tile-by-tile via /vsizip so we never load all
+    519 megapixels at once. Each detection is geocoded via the
+    annotation XML's GCPs and filtered to `bbox`. Returns a list
+    of `SarDetection` with `likely_tanker=False` — call
+    `filter_tanker_class` to mark hulls >= 180 m.
+    """
+    import numpy as np
+    import rasterio
+
+    lat_min, lat_max, lon_min, lon_max = bbox
+    vv_tiff, vv_anno, _root = _resolve_safe_paths(zip_path)
+    gcps = _load_gcps(zip_path, vv_anno)
+    pixel_to_latlon = _make_pixel_to_latlon(gcps)
+
+    if scene_id is None:
+        scene_id = zip_path.stem.replace(".SAFE", "")
+    if acquired_at is None:
+        acquired_at = datetime.now(timezone.utc)
+
+    vsizip = f"/vsizip/{zip_path}/{vv_tiff}"
+    detections: list[SarDetection] = []
+    with rasterio.open(vsizip) as ds:
+        H, W = ds.height, ds.width
+        logger.info("sar: scanning %dx%d (%.0f MP) in %dpx tiles",
+                    W, H, W * H / 1e6, tile)
+        for row_off in range(0, H, tile):
+            row_end = min(row_off + tile, H)
+            for col_off in range(0, W, tile):
+                col_end = min(col_off + tile, W)
+                arr = ds.read(
+                    1,
+                    window=((row_off, row_end), (col_off, col_end)),
+                )
+                if arr.size == 0:
+                    continue
+                hits = _detect_in_tile(arr, k_sigma=k_sigma)
+                for cy, cx, area, length_px, width_px in hits:
+                    px = col_off + cx
+                    py = row_off + cy
+                    lat, lon = pixel_to_latlon(px, py)
+                    if not (np.isfinite(lat) and np.isfinite(lon)):
+                        continue
+                    if not (lat_min <= lat <= lat_max and lon_min <= lon <= lon_max):
+                        continue
+                    detections.append(SarDetection(
+                        scene_id=scene_id,
+                        detected_at=acquired_at,
+                        lat=lat,
+                        lon=lon,
+                        length_m=float(max(length_px, width_px) * 10),
+                        width_m=float(min(length_px, width_px) * 10),
+                        intensity=float(area),
+                        likely_tanker=False,
+                    ))
+    logger.info("sar: %d detections in %s", len(detections), scene_id)
+    return detections
+
 
 def detect_ships(
     scene_path: Path,
@@ -228,14 +411,12 @@ def detect_ships(
     guard_window: int = 7,
     train_window: int = 21,
 ) -> list[SarDetection]:
-    """Run a 2D Constant-False-Alarm-Rate detector across the scene.
-
-    Returns one `SarDetection` per detected hull, geocoded to lat/lon.
-    Land pixels are masked using the SAR product's incidence-angle
-    band (sea pixels have a characteristic distribution; land is
-    skipped).
-    """
-    raise NotImplementedError("Stage 3: CFAR detection — not built yet")
+    """Compatibility shim — orchestrator calls this name. Routes to
+    `detect_ships_in_zip`. The pfa/guard/train kwargs from the
+    original CFAR signature are accepted but unused; the
+    implementation is the simpler median+MAD detector that performs
+    well on GRD imagery for our use case."""
+    return detect_ships_in_zip(scene_path, bbox)
 
 
 # ── Stage 4: Tanker-class filter ─────────────────────────────────────
