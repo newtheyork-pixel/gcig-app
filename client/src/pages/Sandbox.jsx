@@ -1296,6 +1296,13 @@ function RecentEssaysView({ recent, recentError, openingId, onOpen, onNew }) {
 
 function RecentCard({ a, opening, onClick }) {
   const conf = (a.confidence || '').toLowerCase();
+  // Some models return a composite grade like "B+/85/91/91" (rubric
+  // component scores). The avatar circle is 48px — too small for the
+  // full string. Pull a short representative token: prefer a letter
+  // grade, fall back to the first numeric, fall back to the first
+  // few chars of whatever was given.
+  const shortGrade = shortenGrade(a.grade) || (a.numeric_grade != null ? String(a.numeric_grade) : null) || '—';
+  const showFullGrade = a.grade && a.grade !== shortGrade;
   return (
     <button
       type="button"
@@ -1307,11 +1314,12 @@ function RecentCard({ a, opening, onClick }) {
       onMouseLeave={(e) => (e.currentTarget.style.background = C.surface)}
     >
       <div
-        className="w-12 h-12 rounded-xl flex items-center justify-center flex-shrink-0"
+        className="w-12 h-12 rounded-xl flex items-center justify-center flex-shrink-0 overflow-hidden"
         style={{ background: C.accentSoft }}
+        title={showFullGrade ? a.grade : undefined}
       >
-        <span className="text-sm font-semibold" style={{ color: C.accent }}>
-          {a.grade || '—'}
+        <span className="text-sm font-semibold leading-none truncate px-1" style={{ color: C.accent }}>
+          {shortGrade}
         </span>
       </div>
       <div className="min-w-0 flex-1">
@@ -1337,6 +1345,11 @@ function RecentCard({ a, opening, onClick }) {
             {a.mode === 'rag' ? `rag · ${a.examples_used}` : 'cold start'}
           </span>
         </div>
+        {showFullGrade && (
+          <div className="text-[11px] mt-0.5 font-mono" style={{ color: C.textFaint }}>
+            grade · {a.grade}
+          </div>
+        )}
         {a.preview && (
           <p className="mt-1 text-xs leading-relaxed line-clamp-2" style={{ color: C.textMute }}>
             {a.preview}
@@ -1353,6 +1366,22 @@ function RecentCard({ a, opening, onClick }) {
         : <ChevronRight size={16} className="mt-1.5 flex-shrink-0" style={{ color: 'rgba(255,255,255,0.20)' }} />}
     </button>
   );
+}
+
+// Squeeze a possibly-composite grade string ("B+", "92", "A-/85/91/91",
+// "4/5", "92/100") down to a short token suitable for a 48-px avatar.
+// Letter grade wins if present, otherwise the leading numeric, otherwise
+// the first 4 chars. Returns null on empty input so the caller can fall
+// through to other defaults.
+function shortenGrade(s) {
+  if (!s) return null;
+  const str = String(s).trim();
+  if (!str) return null;
+  const letter = str.match(/^[A-F][+\-]?/i);
+  if (letter) return letter[0].toUpperCase();
+  const num = str.match(/^\d{1,3}/);
+  if (num) return num[0];
+  return str.slice(0, 4);
 }
 
 function fmtAgo(iso) {
