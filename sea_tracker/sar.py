@@ -297,9 +297,9 @@ def _make_pixel_to_latlon(gcps: list[tuple[float, float, float, float]]):
 def _detect_in_tile(
     arr,
     *,
-    k_sigma: float = 5.0,
-    min_area: int = 3,
-    max_area: int = 5000,
+    k_sigma: float = 8.0,
+    min_area: int = 10,
+    max_area: int = 2000,
 ):
     """Threshold + connected components in a single tile.
 
@@ -341,7 +341,8 @@ def detect_ships_in_zip(
     scene_id: str | None = None,
     acquired_at: datetime | None = None,
     tile: int = 4096,
-    k_sigma: float = 5.0,
+    k_sigma: float = 8.0,
+    min_length_m: float = 50.0,
 ) -> list[SarDetection]:
     """Run ship detection over a downloaded .SAFE.zip GRD product.
 
@@ -389,12 +390,18 @@ def detect_ships_in_zip(
                         continue
                     if not (lat_min <= lat <= lat_max and lon_min <= lon <= lon_max):
                         continue
+                    length_m = float(max(length_px, width_px) * 10)
+                    if length_m < min_length_m:
+                        # Drops most speckle/wave/small-fishing-vessel noise.
+                        # 50 m floor matches a small coaster — the smallest
+                        # commercial vessel we care about for oil flow.
+                        continue
                     detections.append(SarDetection(
                         scene_id=scene_id,
                         detected_at=acquired_at,
                         lat=lat,
                         lon=lon,
-                        length_m=float(max(length_px, width_px) * 10),
+                        length_m=length_m,
                         width_m=float(min(length_px, width_px) * 10),
                         intensity=float(area),
                         likely_tanker=False,
