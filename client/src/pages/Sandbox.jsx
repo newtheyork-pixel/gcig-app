@@ -12,7 +12,7 @@
 
 import { Navigate, useNavigate } from 'react-router-dom';
 import { X, Upload, FileText, BookOpen, Loader2, AlertCircle, GraduationCap, Check } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useAuth } from '../context/AuthContext.jsx';
 import api from '../api/client.js';
 
@@ -74,6 +74,7 @@ export default function Sandbox() {
 function GradePredictor() {
   const [health, setHealth] = useState(null);
   const [healthError, setHealthError] = useState(null);
+  const [teachers, setTeachers] = useState([]);
 
   // Probe /health on mount so the panel can show which provider is
   // active (local Ollama vs OpenAI fallback) and surface a friendly
@@ -88,6 +89,17 @@ function GradePredictor() {
       });
     return () => { alive = false; };
   }, []);
+
+  // Pull the per-teacher corpus counts so the predict panel can tell
+  // the user "Anna Grafton: 3 prior examples — RAG will use them" the
+  // moment they finish typing, before they even click Predict.
+  const refreshTeachers = useCallback(() => {
+    api
+      .get('/sandbox/grade-predictor/teachers')
+      .then((r) => setTeachers(Array.isArray(r.data) ? r.data : []))
+      .catch(() => setTeachers([]));
+  }, []);
+  useEffect(() => { refreshTeachers(); }, [refreshTeachers]);
 
   const llmDown = health && !health.active;
 
@@ -114,12 +126,18 @@ function GradePredictor() {
             : <>OpenAI · <code>{health.openai?.model}</code> · {health.openai?.latencyMs}ms</>}
         </div>
       )}
-      <PredictPanel />
+      {teachers.length > 0 && (
+        <div className="rounded-xl border border-navy/10 bg-white p-3 text-xs text-navy/70">
+          <span className="font-semibold text-navy">Corpus:</span>{' '}
+          {teachers.map((t) => `${t.name} (${t.examples})`).join(' · ')}
+        </div>
+      )}
+      <PredictPanel teachers={teachers} onSaved={refreshTeachers} />
     </div>
   );
 }
 
-function PredictPanel() {
+function PredictPanel({ teachers, onSaved }) {
   const [essay, setEssay] = useState('');
   const [rubric, setRubric] = useState('');
   const [teacher, setTeacher] = useState('');
@@ -127,6 +145,12 @@ function PredictPanel() {
   const [error, setError] = useState(null);
   const [result, setResult] = useState(null);
   const [meta, setMeta] = useState(null);
+
+  // Match what the user typed against the corpus, case-insensitively,
+  // so "anna grafton" finds the row tagged "Anna Grafton".
+  const known = teachers?.find(
+    (t) => t.name.toLowerCase() === teacher.trim().toLowerCase()
+  );
   // Comments extracted from an uploaded .docx (Word review comments).
   // Surfaced as a chip on the essay card and pre-fed into the
   // SaveActualFeedback panel once the prediction renders.
@@ -247,11 +271,19 @@ function PredictPanel() {
               value={teacher}
               onChange={(e) => setTeacher(e.target.value)}
               placeholder="e.g. Dr. Hsu"
+              list="known-teachers"
               className="mt-1 w-full rounded-lg border border-navy/15 px-3 py-2 text-sm focus:border-gold focus:outline-none"
             />
-            <p className="mt-1 text-[11px] text-navy/50">
-              Per-teacher RAG comes later. For now, every prediction is cold-start.
-            </p>
+            <datalist id="known-teachers">
+              {teachers?.map((t) => <option key={t.name} value={t.name} />)}
+            </datalist>
+            {teacher.trim() && (
+              <p className="mt-1 text-[11px] text-navy/50">
+                {known
+                  ? `${known.examples} prior example${known.examples === 1 ? '' : 's'} from this teacher — RAG will use the most recent 3.`
+                  : 'No prior examples for this teacher yet — cold-start prediction.'}
+              </p>
+            )}
           </div>
           <div>
             <label className="text-xs font-medium uppercase tracking-wider text-navy/60">Assignment rubric</label>
@@ -289,6 +321,7 @@ function PredictPanel() {
           initialFeedback={formatExtractedComments(docComments)}
           fileRef={docFileRef}
           fileUrl={docFileUrl}
+          onSaved={onSaved}
         />
       )}
     </>
@@ -309,6 +342,7 @@ function SaveActualFeedback({
   initialFeedback,
   fileRef,
   fileUrl,
+  onSaved,
 }) {
   const [feedback, setFeedback] = useState(initialFeedback || '');
   const [grade, setGrade] = useState('');
@@ -350,6 +384,10 @@ function SaveActualFeedback({
       setSavedFileUrl(data.essayFileUrl || null);
       setFeedback('');
       setGrade('');
+      // Bump the corpus count visible in the parent so the next
+      // prediction's "N prior examples" hint is accurate without a
+      // page reload.
+      onSaved?.();
     } catch (e) {
       setError(e.response?.data?.error || e.message || String(e));
     } finally {
@@ -463,6 +501,13 @@ function ResultPanel({ loading, result, meta, essay }) {
           <div className="text-[11px] uppercase tracking-wider text-navy/50">Predicted grade</div>
           <div className="mt-1 text-3xl font-semibold text-navy">{result.grade || '—'}</div>
         </div>
+        {meta && (
+          <div className="text-right text-[11px] text-navy/50">
+            {meta.examples_used > 0
+              ? <>RAG · grounded in {meta.examples_used} of {meta.examples_available} prior example{meta.examples_available === 1 ? '' : 's'}</>
+              : 'Cold-start prediction'}
+          </div>
+        )}
       </header>
 
       {result.overall_feedback && (

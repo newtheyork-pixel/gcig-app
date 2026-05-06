@@ -83,6 +83,51 @@ function truncate(text, maxChars) {
   return s.slice(0, maxChars - 50) + ' […truncated…]';
 }
 
+// Per-teacher RAG: when the user names a teacher we already have prior
+// examples for, inject those examples into the prompt so the model
+// imitates that teacher's voice, comment density, and grade distribution.
+// Each prior example contributes (student essay → teacher's comments →
+// grade given) so the model has a tight stimulus-response pattern to
+// mirror. Truncations are deliberately generous on the comments side
+// (those carry the teaching style) and tighter on the essay (just
+// enough context to ground the comments).
+function buildRagPrompt({ essay, teacher, rubric, examples }) {
+  const parts = [];
+  parts.push(
+    `You are predicting how the teacher named ${teacher} would grade a ` +
+      `student essay. You have ${examples.length} prior example` +
+      `${examples.length === 1 ? '' : 's'} of how this teacher grades. ` +
+      `Match their style, comment density, vocabulary, and grade ` +
+      `distribution — your job is to mimic this specific teacher, not ` +
+      `to give your own opinion.`
+  );
+  parts.push(`\n--- PRIOR EXAMPLES OF ${teacher.toUpperCase()}'S GRADING ---`);
+  examples.forEach((ex, i) => {
+    parts.push(
+      `\n=== EXAMPLE ${i + 1} ===\n` +
+        `STUDENT ESSAY:\n${truncate(ex.essay, 2500)}\n\n` +
+        `TEACHER'S COMMENTS / FEEDBACK:\n${truncate(ex.feedback, 2000)}\n\n` +
+        `GRADE GIVEN: ${ex.grade}`
+    );
+  });
+  if (rubric) {
+    parts.push(`\n--- RUBRIC FOR THE NEW ESSAY ---\n${truncate(rubric, 3000)}`);
+  }
+  parts.push(`\n--- NEW ESSAY TO GRADE ---\n${truncate(essay, 8000)}`);
+  parts.push(
+    '\n--- TASK ---\n' +
+      "Produce a grade prediction for the new essay in this teacher's style. " +
+      'Output ONLY a JSON object with these keys (no prose before or after):\n' +
+      '  "line_by_line": array of {"quote": "<short verbatim phrase from the essay>", "comment": "<margin note in this teacher\'s voice>"}\n' +
+      '  "overall_feedback": string — 2-4 sentences in the teacher\'s voice\n' +
+      '  "grade": string — match the format the teacher used in the examples (letter grade, percent, X/Y, etc.)\n' +
+      '  "rubric_breakdown": object mapping rubric criterion → score + one-sentence reason, or null if no rubric was given\n' +
+      'Aim for 6-15 line_by_line entries depending on essay length. ' +
+      'Quote phrases that actually appear in the essay verbatim. Do not invent passages.'
+  );
+  return parts.join('\n');
+}
+
 function buildColdStartPrompt({ essay, teacher, rubric }) {
   const parts = [];
   if (teacher) {
@@ -132,6 +177,11 @@ function extractJson(raw) {
   }
 }
 
+// How many prior examples we inject into the RAG prompt. Plenty for the
+// 32K-token context on qwen2.5:7b once each example is truncated, and
+// small enough to keep the prediction fast.
+const RAG_TOP_K = 3;
+
 router.post('/grade-predictor/predict', async (req, res) => {
   const { essay, teacher, rubric } = req.body || {};
   if (!essay || typeof essay !== 'string' || essay.trim().length < 20) {
@@ -140,11 +190,43 @@ router.post('/grade-predictor/predict', async (req, res) => {
       .json({ error: 'essay is required (at least 20 characters)' });
   }
 
-  const prompt = buildColdStartPrompt({
-    essay,
-    teacher: typeof teacher === 'string' ? teacher.trim() : '',
-    rubric: typeof rubric === 'string' ? rubric.trim() : '',
-  });
+  const cleanTeacher = typeof teacher === 'string' ? teacher.trim() : '';
+  const cleanRubric = typeof rubric === 'string' ? rubric.trim() : '';
+
+  // Retrieve prior examples for this teacher. Case-insensitive match so
+  // "Anna Grafton" and "anna grafton" share a corpus instead of starting
+  // separate ones. Most-recent-first is the simplest "relevance" we can
+  // serve before we have an embedding store; with a small N per teacher
+  // it's also a perfectly fine proxy for "what did this teacher value
+  // most recently".
+  let examples = [];
+  let examplesAvailable = 0;
+  if (cleanTeacher) {
+    const where = { teacher: { equals: cleanTeacher, mode: 'insensitive' } };
+    examplesAvailable = await prisma.gradePredictorExample.count({ where });
+    if (examplesAvailable > 0) {
+      examples = await prisma.gradePredictorExample.findMany({
+        where,
+        orderBy: { createdAt: 'desc' },
+        take: RAG_TOP_K,
+        select: { id: true, essay: true, feedback: true, grade: true },
+      });
+    }
+  }
+
+  const prompt =
+    examples.length > 0
+      ? buildRagPrompt({
+          essay,
+          teacher: cleanTeacher,
+          rubric: cleanRubric,
+          examples,
+        })
+      : buildColdStartPrompt({
+          essay,
+          teacher: cleanTeacher,
+          rubric: cleanRubric,
+        });
 
   const content = await llmChat({
     messages: [
@@ -171,18 +253,23 @@ router.post('/grade-predictor/predict', async (req, res) => {
   }
 
   const parsed = extractJson(content);
+  const usedExampleIds = examples.map((e) => e.id);
   if (!parsed) {
     return res.json({
       result: { _parse_error: 'Model did not return parseable JSON', _raw: content },
-      examples_used: 0,
-      examples_available: 0,
+      examples_used: examples.length,
+      examples_available: examplesAvailable,
+      used_example_ids: usedExampleIds,
+      mode: examples.length > 0 ? 'rag' : 'cold-start',
     });
   }
 
   res.json({
     result: parsed,
-    examples_used: 0,
-    examples_available: 0,
+    examples_used: examples.length,
+    examples_available: examplesAvailable,
+    used_example_ids: usedExampleIds,
+    mode: examples.length > 0 ? 'rag' : 'cold-start',
   });
 });
 
