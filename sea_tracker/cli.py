@@ -317,6 +317,22 @@ def sar_download(
     console.print(f"downloaded {path} ({size_mb:.1f} MB)")
 
 
+@app.command("sar-clear")
+def sar_clear(
+    config: Path = typer.Option(Path("config.toml"), "--config", "-c"),
+) -> None:
+    """Wipe the sar_detections table. Use before reprocessing a
+    different region so the map only shows current detections."""
+    cfg = load_config(config)
+    con = _open_db(cfg)
+    try:
+        n = con.execute("SELECT COUNT(*) FROM sar_detections").fetchone()[0]
+        con.execute("DELETE FROM sar_detections")
+        console.print(f"deleted {n} rows from sar_detections")
+    finally:
+        con.close()
+
+
 @app.command("sar-detect-one")
 def sar_detect_one(
     scene_id: str = typer.Argument(..., help="Scene UUID (must already be downloaded)."),
@@ -325,6 +341,11 @@ def sar_detect_one(
         Path("C:/sea_tracker/sar"),
         "--out-dir",
         help="Where downloaded GRD products live.",
+    ),
+    bbox: str = typer.Option(
+        "",
+        "--bbox", "-b",
+        help="Restrict detection to lat_min,lat_max,lon_min,lon_max (defaults to config bbox).",
     ),
 ) -> None:
     """Detect ships in a single already-downloaded scene and print
@@ -344,7 +365,17 @@ def sar_detect_one(
         console.print("Run sar-download first.")
         raise typer.Exit(code=1)
 
-    raw = detect_ships_in_zip(zip_path, cfg.bbox, scene_id=scene_id)
+    if bbox:
+        parts = [float(x) for x in bbox.split(",")]
+        if len(parts) != 4:
+            console.print("[red]--bbox must be lat_min,lat_max,lon_min,lon_max[/red]")
+            raise typer.Exit(code=1)
+        active_bbox = (parts[0], parts[1], parts[2], parts[3])
+        console.print(f"using custom bbox: {active_bbox}")
+    else:
+        active_bbox = cfg.bbox
+
+    raw = detect_ships_in_zip(zip_path, active_bbox, scene_id=scene_id)
     marked = filter_tanker_class(raw)
     tankers = [d for d in marked if d.likely_tanker]
     console.print(f"total detections in bbox: {len(marked)}")
