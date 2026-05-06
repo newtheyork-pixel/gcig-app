@@ -96,9 +96,15 @@ function logFailure(provider, result) {
   }
 }
 
-export async function llmChat({ messages, temperature, jsonMode } = {}) {
+export async function llmChat({ messages, temperature, jsonMode, timeoutMs } = {}) {
   if (!Array.isArray(messages) || messages.length === 0) return null;
-  const timeoutMs = Number(process.env.LOCAL_LLM_TIMEOUT_MS) || DEFAULT_TIMEOUT_MS;
+  // Per-call override beats the env-var default. Some routes (grade
+  // predictor over a multi-page essay) intrinsically need much longer
+  // than the 25s default that suits short summarization calls.
+  const effectiveTimeoutMs =
+    Number(timeoutMs) ||
+    Number(process.env.LOCAL_LLM_TIMEOUT_MS) ||
+    DEFAULT_TIMEOUT_MS;
 
   // Provider 1: local Ollama. Preferred because it's free and private.
   if (process.env.LOCAL_LLM_URL) {
@@ -109,7 +115,7 @@ export async function llmChat({ messages, temperature, jsonMode } = {}) {
       messages,
       temperature,
       jsonMode,
-      timeoutMs,
+      timeoutMs: effectiveTimeoutMs,
     });
     if (local.ok && local.content) return local.content;
     logFailure('local', local);
@@ -125,7 +131,7 @@ export async function llmChat({ messages, temperature, jsonMode } = {}) {
       messages,
       temperature,
       jsonMode,
-      timeoutMs,
+      timeoutMs: effectiveTimeoutMs,
     });
     if (openai.ok && openai.content) return openai.content;
     logFailure('openai', openai);

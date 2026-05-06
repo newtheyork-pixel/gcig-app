@@ -104,6 +104,10 @@ router.post('/grade-predictor/predict', async (req, res) => {
     ],
     temperature: 0.4,
     jsonMode: true,
+    // Generating line-by-line JSON over a multi-page essay is intrinsically
+    // slow on a 7B local model; the global 25s default in llmChat is for
+    // short-summary calls and trips here.
+    timeoutMs: 4 * 60 * 1000,
   });
 
   if (!content) {
