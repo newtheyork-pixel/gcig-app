@@ -15,6 +15,7 @@ const STATUS_STYLES = {
   anomaly:      { bar: 'bg-red-500',     label: 'Anomaly',    pill: 'text-red-700 bg-red-50 border-red-200' },
   warming_up:   { bar: 'bg-navy/20',     label: 'Warming up', pill: 'text-navy/60 bg-navy/5 border-navy/10' },
   no_outbound:  { bar: 'bg-navy/20',     label: 'No outbound', pill: 'text-navy/60 bg-navy/5 border-navy/10' },
+  latest_reading: { bar: 'bg-navy/40',   label: 'Latest reading', pill: 'text-navy/70 bg-navy/5 border-navy/15' },
 };
 
 export default function DerivedCard({ title, valueText, footnote, status, subtle }) {

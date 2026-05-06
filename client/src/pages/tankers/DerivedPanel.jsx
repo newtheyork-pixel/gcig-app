@@ -80,11 +80,13 @@ export default function DerivedPanel({ derived }) {
         valueText={sarStrait.value === null || sarStrait.value === undefined ? '—' : `${sarStrait.value}`}
         subtle={
           sarStrait.asOf
-            ? `${sarStrait.all_count || 0} total radar returns · last pass ${relTime(sarStrait.asOf)}`
+            ? (sarStrait.baseline_n >= 7
+                ? `vs ${fmt(sarStrait.baseline_mean, 0)} avg over ${sarStrait.baseline_n} prior passes (${sarStrait.z >= 0 ? '+' : ''}${fmt(sarStrait.z, 1)}σ)`
+                : `${sarStrait.all_count || 0} total radar returns · last pass ${relTime(sarStrait.asOf)} · need ${7 - sarStrait.baseline_n} more passes for baseline`)
             : 'No SAR scene processed yet'
         }
         footnote="Tanker-class hulls in the Hormuz chokepoint at the latest Sentinel-1 pass"
-        status={sarStrait.status === 'no_detections' ? 'warming_up' : (sarStrait.status || 'warming_up')}
+        status={sarStrait.status || 'warming_up'}
       />
 
       {/* SAR Iran Activity */}
@@ -93,11 +95,13 @@ export default function DerivedPanel({ derived }) {
         valueText={sarIran.value === null || sarIran.value === undefined ? '—' : `${sarIran.value}`}
         subtle={
           sarIran.asOf
-            ? `${sarIran.all_count || 0} total radar returns · last pass ${relTime(sarIran.asOf)}`
+            ? (sarIran.baseline_n >= 7
+                ? `vs ${fmt(sarIran.baseline_mean, 0)} avg over ${sarIran.baseline_n} prior passes (${sarIran.z >= 0 ? '+' : ''}${fmt(sarIran.z, 1)}σ)`
+                : `${sarIran.all_count || 0} total radar returns · last pass ${relTime(sarIran.asOf)} · need ${7 - sarIran.baseline_n} more passes for baseline`)
             : 'No SAR scene processed yet'
         }
         footnote="Tanker-class hulls along Iran's south coast — the AIS-blind zone"
-        status={sarIran.status === 'no_detections' ? 'warming_up' : (sarIran.status || 'warming_up')}
+        status={sarIran.status || 'warming_up'}
       />
     </div>
   );

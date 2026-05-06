@@ -266,15 +266,18 @@ def _sar_zone_count(
     con: duckdb.DuckDBPyConnection,
     *,
     bbox: tuple[float, float, float, float],
+    baseline_days: int = 30,
+    min_baseline_scenes: int = 7,
 ) -> dict[str, Any]:
-    """Count SAR detections (and tanker-class subset) in the bbox,
-    from the most recent scene that intersected it. Returns the
-    scene's acquisition timestamp so the UI can show "X hours ago"
-    freshness.
+    """Tanker-class SAR detections in `bbox` at the latest pass, with
+    a baseline z-score IFF we have at least `min_baseline_scenes`
+    prior scenes covering this zone.
 
-    Different from the live-AIS chokepoint count because SAR is a
-    snapshot per pass, not continuous tracking — we report what
-    showed up in the imagery, not a 24 h transit total.
+    Until we hit the baseline floor, status is `latest_reading` —
+    a deliberately-neutral pill so the UI doesn't pretend "58 ships =
+    Normal" when we have nothing to compare against. After the
+    baseline kicks in, we flag deviations: |z|>2 = anomaly,
+    |z|>1 = watch.
     """
     lat_min, lat_max, lon_min, lon_max = bbox
     latest = con.execute(
@@ -296,6 +299,9 @@ def _sar_zone_count(
             "scene_id": None,
             "asOf": None,
             "status": "warming_up",
+            "baseline_mean": None,
+            "baseline_n": 0,
+            "z": None,
         }
     scene_id, acquired_at = latest
     counts = con.execute(
@@ -312,13 +318,56 @@ def _sar_zone_count(
     ).fetchone()
     tankers = int(counts[0] or 0)
     total = int(counts[1] or 0)
+
+    # Baseline: tanker counts from prior scenes (excluding the latest)
+    # in the same zone, looking back `baseline_days`.
+    cutoff = (acquired_at if acquired_at else datetime.now(timezone.utc)) - timedelta(days=baseline_days)
+    baseline_rows = con.execute(
+        """
+        SELECT SUM(CASE WHEN likely_tanker THEN 1 ELSE 0 END) AS t
+        FROM sar_detections
+        WHERE lat BETWEEN ? AND ?
+          AND lon BETWEEN ? AND ?
+          AND scene_id != ?
+          AND detected_at >= ?
+        GROUP BY scene_id
+        """,
+        [lat_min, lat_max, lon_min, lon_max, scene_id, cutoff],
+    ).fetchall()
+    history = [int(r[0] or 0) for r in baseline_rows]
+
+    z: float | None = None
+    baseline_mean: float | None = None
+    if len(history) >= min_baseline_scenes:
+        baseline_mean = statistics.fmean(history)
+        sd = statistics.pstdev(history) if len(history) > 1 else 0.0
+        if sd > 0:
+            z = (tankers - baseline_mean) / sd
+        else:
+            z = 0.0
+        if z is not None and z <= -2:
+            status = "stalled"
+        elif z is not None and z <= -1:
+            status = "below_normal"
+        elif z is not None and z >= 2:
+            status = "anomaly"
+        else:
+            status = "ok"
+    else:
+        # Not enough scenes to claim "normal" or "anomalous". Honest
+        # neutral label — just a number.
+        status = "latest_reading"
+
     return {
         "value": tankers,
         "tanker_count": tankers,
         "all_count": total,
         "scene_id": scene_id,
         "asOf": acquired_at.isoformat() + "Z" if acquired_at else None,
-        "status": "ok" if tankers > 0 else "no_detections",
+        "status": status,
+        "baseline_mean": round(baseline_mean, 1) if baseline_mean is not None else None,
+        "baseline_n": len(history),
+        "z": round(z, 2) if z is not None else None,
     }
 
 
