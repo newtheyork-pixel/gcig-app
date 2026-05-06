@@ -117,6 +117,26 @@ def init_schema(con: duckdb.DuckDBPyConnection) -> None:
             PRIMARY KEY (gap_start, detection_method)
         );
     """)
+    # Sentinel-1 SAR ship detections. Populated by the sar.py
+    # pipeline; visualised on the React map as a separate layer.
+    # Idempotent on (scene_id, lat, lon) — the same hull seen twice
+    # in one scene shouldn't double-count.
+    con.execute("""
+        CREATE TABLE IF NOT EXISTS sar_detections (
+            scene_id      TEXT NOT NULL,
+            detected_at   TIMESTAMP NOT NULL,
+            lat           DOUBLE NOT NULL,
+            lon           DOUBLE NOT NULL,
+            length_m      DOUBLE,
+            width_m       DOUBLE,
+            intensity     DOUBLE,
+            likely_tanker BOOLEAN,
+            PRIMARY KEY (scene_id, lat, lon)
+        );
+    """)
+    con.execute(
+        "CREATE INDEX IF NOT EXISTS idx_sar_detected_at ON sar_detections(detected_at);"
+    )
     con.execute(
         "INSERT INTO schema_meta(version) VALUES (?) ON CONFLICT DO NOTHING",
         [SCHEMA_VERSION],

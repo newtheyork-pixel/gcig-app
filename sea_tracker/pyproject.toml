@@ -13,6 +13,13 @@ dependencies = [
     "pandas>=2.2",
     "plotly>=5.24",
     "requests>=2.32",
+    # Sentinel-1 SAR ship-detection pipeline. Heavy native deps —
+    # rasterio brings GDAL via wheel on Windows, scipy gives us the
+    # convolution stencils for CFAR. Pinned conservatively.
+    "pystac-client>=0.7",
+    "rasterio>=1.3",
+    "scipy>=1.13",
+    "shapely>=2.0",
 ]
 
 [project.optional-dependencies]

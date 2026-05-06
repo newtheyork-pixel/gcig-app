@@ -247,5 +247,46 @@ def publish_snapshot(
         con.close()
 
 
+@app.command("sar-detect")
+def sar_detect(
+    config: Path = typer.Option(Path("config.toml"), "--config", "-c"),
+    out_dir: Path = typer.Option(
+        Path("C:/sea_tracker/sar"),
+        "--out-dir",
+        help="Where to cache downloaded GRD products.",
+    ),
+) -> None:
+    """Run the Sentinel-1 SAR ship-detection pipeline once.
+
+    Looks for new scenes covering the bbox in the last 14 days,
+    downloads, detects ships, and persists to sar_detections.
+    Designed to run daily from Task Scheduler — most invocations
+    find no new scene and return quickly. Requires CDSE_USERNAME /
+    CDSE_PASSWORD in the environment (Copernicus Data Space
+    credentials). Stage-1 scaffolding: every step beyond the
+    catalog query raises NotImplementedError until the full
+    pipeline is in.
+    """
+    from sea_tracker.sar import run_once, _missing_credentials
+
+    cfg = load_config(config)
+    _setup_logging(cfg.log_dir, "sar")
+    missing = _missing_credentials()
+    if missing:
+        console.print(f"[red]Missing env var: {missing}[/red]")
+        console.print(
+            "Register at https://dataspace.copernicus.eu/ and add CDSE_USERNAME "
+            "and CDSE_PASSWORD to C:/sea_tracker/.env"
+        )
+        raise typer.Exit(code=1)
+    con = _open_db(cfg)
+    try:
+        out_dir.mkdir(parents=True, exist_ok=True)
+        result = run_once(con, bbox=cfg.bbox, out_dir=out_dir)
+        console.print(result)
+    finally:
+        con.close()
+
+
 if __name__ == "__main__":
     app()
