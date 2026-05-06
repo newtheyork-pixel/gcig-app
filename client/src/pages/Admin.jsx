@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Navigate, useSearchParams } from 'react-router-dom';
+import { Navigate, useNavigate, useSearchParams } from 'react-router-dom';
 import { RefreshCw, Sparkles, Cloud, Upload, Unplug } from 'lucide-react';
 import api, { API_BASE } from '../api/client.js';
 import PageHeader from '../components/PageHeader.jsx';
@@ -111,6 +111,7 @@ function LlmStatusCard() {
 
 export default function Admin() {
   const { isAdmin, isExecutive, isSuperAdmin } = useAuth();
+  const navigate = useNavigate();
 
   // Page-level gate. Everything under /admin is for the executive tier
   // or above — if a non-executive user lands here via a direct URL,
@@ -160,7 +161,15 @@ export default function Admin() {
         {tabs.map((t) => (
           <button
             key={t.id}
-            onClick={() => setTab(t.id)}
+            onClick={() => {
+              if (t.id === 'sandbox') {
+                // Sandbox lives at /sandbox (full-screen, outside Layout) —
+                // clicking the tab navigates rather than rendering inline.
+                navigate('/sandbox');
+              } else {
+                setTab(t.id);
+              }
+            }}
             className={`relative pb-3 font-serif text-lg font-semibold transition ${
               tab === t.id
                 ? 'text-navy'
@@ -178,27 +187,12 @@ export default function Admin() {
         <AuditLog embedded />
       ) : tab === 'inference' && isSuperAdmin ? (
         <NameInferenceTable />
-      ) : tab === 'sandbox' && isSuperAdmin ? (
-        <SandboxPanel />
       ) : tab === 'participation' && isAdmin ? (
         <Participation embedded />
       ) : (
         <Members embedded />
       )}
     </>
-  );
-}
-
-// ─── Sandbox (super-admin only) ────────────────────────────────────────
-// Intentionally blank. Scratchpad for in-progress work that needs the
-// app's auth + layout but isn't ready for its own page or sidebar
-// entry yet. Wire whatever you're testing here, then promote to a
-// real page when it's done.
-function SandboxPanel() {
-  return (
-    <div className="rounded-lg border border-navy-100 bg-white p-8 text-sm text-navy-400">
-      Sandbox — super-admin only. Add test components here.
-    </div>
   );
 }
 
