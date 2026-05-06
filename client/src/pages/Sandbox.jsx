@@ -385,6 +385,7 @@ function EditorView({
   uploading, onUpload, docComments, docFileUrl, onSubmit, onBack, error,
 }) {
   const [rubricExpanded, setRubricExpanded] = useState(false);
+  const fileInputRef = useRef(null);
 
   const wordCount = useMemo(() => (essay.trim() ? essay.trim().split(/\s+/).length : 0), [essay]);
   const canSubmit = essay.trim().length > 50;
@@ -482,21 +483,32 @@ function EditorView({
           </div>
 
           <div className="flex items-center gap-2">
-            <label
-              className="h-9 px-3 rounded-lg text-xs font-medium flex items-center gap-1.5 cursor-pointer transition-colors"
+            {/* Upload control. Using a button + ref + truly hidden input
+                rather than the label-wraps-input pattern; on macOS Safari
+                the latter sometimes leaves the native picker's Upload
+                button disabled even after a file is selected. The
+                accept filter is a single extension token for the same
+                reason — adding the MIME type alongside .docx made the
+                picker pickier in practice, not more permissive. */}
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={uploading}
+              className="h-9 px-3 rounded-lg text-xs font-medium flex items-center gap-1.5 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               style={{ background: C.surface, color: C.textMute, border: `1px solid ${C.border}` }}
-              onMouseEnter={(e) => (e.currentTarget.style.background = C.surfaceHover)}
+              onMouseEnter={(e) => !uploading && (e.currentTarget.style.background = C.surfaceHover)}
               onMouseLeave={(e) => (e.currentTarget.style.background = C.surface)}
             >
               {uploading ? <Loader2 size={12} className="animate-spin" /> : <Upload size={12} />}
               {uploading ? 'Parsing…' : 'Upload .docx'}
-              <input
-                type="file"
-                accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-                onChange={onUpload}
-                className="hidden"
-              />
-            </label>
+            </button>
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept=".docx"
+              onChange={onUpload}
+              style={{ display: 'none' }}
+            />
             <button
               type="button"
               disabled={!canSubmit}
