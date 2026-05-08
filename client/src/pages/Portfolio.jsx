@@ -294,70 +294,39 @@ export default function Portfolio() {
     return null;
   }, [data, fullHistory]);
 
-  // Annualized Sharpe — paired real / adjusted off the same daily Δ-total
-  // series:
-  //   - sharpeReal: standard mean-of-daily-return × 252, with daily return
-  //     measured against total_yesterday so cash drag sits in the
-  //     denominator. The "actual experience" ratio.
-  //   - sharpeAdjusted: numerator swapped to use the Adjusted Return tile's
-  //     lifetime % (annualized by trading days in the sample). Volatility is
-  //     measured against equity_yesterday — the drag-free sleeve. So the
-  //     two Sharpes share the "Adjusted Return × Real Return" relationship
-  //     in the numerator and only differ in the denominator's basis.
-  // Cash flows (infusions / withdrawals) are subtracted from the daily Δ
-  // either way so they don't masquerade as performance.
-  const sharpePair = useMemo(() => {
-    if (fullHistory.length < 20) return { real: null, adjusted: null };
-    const realReturns = [];
-    const adjustedReturns = [];
+  // Annualized Sharpe. Numerator comes from the Adjusted Return tile's
+  // lifetime % (annualized by trading days in the sample) so the headline
+  // return on the page matches what's in the Sharpe ratio. Volatility is
+  // measured off equity-base daily returns — drag-free, consistent with
+  // the adjusted framing. Cash flows are subtracted from the daily Δ so
+  // infusions don't masquerade as performance.
+  const sharpe = useMemo(() => {
+    if (fullHistory.length < 20 || !adjustedReturn) return null;
+    const dailyReturns = [];
     for (let i = 1; i < fullHistory.length; i++) {
       const prev = fullHistory[i - 1];
       const curr = fullHistory[i];
       const day = curr.date.getDay();
       if (day === 0 || day === 6) continue;
+      if (prev.equity <= 0) continue;
       const cfOnDay = CASH_FLOWS.filter(
         (cf) => cf.date.toISOString().slice(0, 10) === curr.date.toISOString().slice(0, 10)
       ).reduce((s, cf) => s + cf.amount, 0);
       const dollarChange = curr.value - cfOnDay - prev.value;
-      if (prev.value > 0) realReturns.push(dollarChange / prev.value);
-      if (prev.equity > 0) adjustedReturns.push(dollarChange / prev.equity);
+      dailyReturns.push(dollarChange / prev.equity);
     }
-
-    // Real: standard mean-of-daily annualized.
-    let real = null;
-    if (realReturns.length >= 10) {
-      const mean = realReturns.reduce((a, b) => a + b, 0) / realReturns.length;
-      const variance =
-        realReturns.reduce((s, r) => s + (r - mean) ** 2, 0) /
-        realReturns.length;
-      const std = Math.sqrt(variance);
-      if (std > 0) {
-        real = (mean * 252 - RISK_FREE_RATE) / (std * Math.sqrt(252));
-      }
-    }
-
-    // Adjusted: numerator from the Adjusted Return tile's lifetime %, scaled
-    // to annual by trading days in the sample. Denominator uses the equity-
-    // base daily returns so vol reflects the deployed sleeve.
-    let adjusted = null;
-    if (adjustedReturns.length >= 10 && adjustedReturn) {
-      const mean =
-        adjustedReturns.reduce((a, b) => a + b, 0) / adjustedReturns.length;
-      const variance =
-        adjustedReturns.reduce((s, r) => s + (r - mean) ** 2, 0) /
-        adjustedReturns.length;
-      const std = Math.sqrt(variance);
-      if (std > 0) {
-        const annualReturn =
-          (adjustedReturn.pct / 100) * (252 / adjustedReturns.length);
-        adjusted = (annualReturn - RISK_FREE_RATE) / (std * Math.sqrt(252));
-      }
-    }
-
-    return { real, adjusted };
+    if (dailyReturns.length < 10) return null;
+    const mean = dailyReturns.reduce((a, b) => a + b, 0) / dailyReturns.length;
+    const variance =
+      dailyReturns.reduce((s, r) => s + (r - mean) ** 2, 0) /
+      dailyReturns.length;
+    const std = Math.sqrt(variance);
+    if (std === 0) return null;
+    const annualReturn =
+      (adjustedReturn.pct / 100) * (252 / dailyReturns.length);
+    const annualStd = std * Math.sqrt(252);
+    return (annualReturn - RISK_FREE_RATE) / annualStd;
   }, [fullHistory, adjustedReturn]);
-  const sharpeReal = sharpePair.real;
-  const sharpeAdjusted = sharpePair.adjusted;
 
   // Change between first and last point in the visible range, on equity base.
   // Dollar change = total change minus any capital infusions in range.
@@ -440,8 +409,8 @@ export default function Portfolio() {
         history={fullHistory}
       />
 
-      {/* Six supporting metrics below the hero, paired real/adjusted. */}
-      <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+      {/* Five supporting metrics below the hero. */}
+      <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
         <SummaryTile
           kicker="Daily Change"
           value={dailyChange ? fmtMoney(dailyChange.diff) : '—'}
@@ -503,31 +472,13 @@ export default function Portfolio() {
         />
         <SummaryTile
           kicker="Sharpe Ratio"
-          value={sharpeReal != null ? sharpeReal.toFixed(2) : '—'}
+          value={sharpe != null ? sharpe.toFixed(2) : '—'}
           footnote={
-            sharpeReal != null
-              ? `Whole book · Rf = ${(RISK_FREE_RATE * 100).toFixed(2)}%`
+            sharpe != null
+              ? `Equity sleeve · Rf = ${(RISK_FREE_RATE * 100).toFixed(2)}%`
               : null
           }
-          tone={sharpeReal == null ? 'neutral' : sharpeReal >= 1 ? 'good' : sharpeReal >= 0 ? 'neutral' : 'bad'}
-        />
-        <SummaryTile
-          kicker="Adjusted Sharpe"
-          value={sharpeAdjusted != null ? sharpeAdjusted.toFixed(2) : '—'}
-          footnote={
-            sharpeAdjusted != null
-              ? `Equity sleeve only · Rf = ${(RISK_FREE_RATE * 100).toFixed(2)}%`
-              : null
-          }
-          tone={
-            sharpeAdjusted == null
-              ? 'neutral'
-              : sharpeAdjusted >= 1
-                ? 'good'
-                : sharpeAdjusted >= 0
-                  ? 'neutral'
-                  : 'bad'
-          }
+          tone={sharpe == null ? 'neutral' : sharpe >= 1 ? 'good' : sharpe >= 0 ? 'neutral' : 'bad'}
         />
       </div>
 
