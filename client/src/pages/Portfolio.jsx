@@ -171,18 +171,25 @@ export default function Portfolio() {
   // Average cash sleeve we've actually carried, day by day. The club only
   // meets weekly, so the book usually holds a meaningful idle balance — this
   // measures it instead of pretending we run a 5%-cash target.
+  //
+  // Skip snapshots without a recorded cashValue (older rows predate the
+  // cash-tracking column); fullHistory coerces those to 0, which would
+  // drag the average toward zero and lie about how heavy the cash sleeve
+  // actually runs.
   const avgCashRatio = useMemo(() => {
-    if (fullHistory.length === 0) return null;
+    if (history.length === 0) return null;
     let sum = 0;
     let count = 0;
-    for (const snap of fullHistory) {
-      if (snap.value > 0) {
-        sum += snap.cash / snap.value;
-        count++;
-      }
+    for (const snap of history) {
+      if (snap.cashValue == null) continue;
+      const total = Number(snap.totalValue);
+      const cash = Number(snap.cashValue);
+      if (!(total > 0)) continue;
+      sum += cash / total;
+      count++;
     }
     return count > 0 ? sum / count : null;
-  }, [fullHistory]);
+  }, [history]);
 
   // Adjusted return: take the equity sleeve's actual return and apply it to
   // a book weighted by the cash level we've historically run, with the cash
