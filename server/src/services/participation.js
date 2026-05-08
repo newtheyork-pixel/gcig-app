@@ -45,10 +45,11 @@ export async function computeParticipation(prisma) {
   });
 
   // Aggregate attendance rows per user. Only Present counts toward the
-  // score; Absent and Excused both count against it. Excused is no longer
-  // neutral — the club wants the rate to reflect actual presence in the
-  // room, so a legitimate excuse still pulls the percentage down.
-  // Rate = Present / (Present + Absent + Excused).
+  // score; Absent and Excused both pull it down, but Excused is half-
+  // weighted — two excuses equal one missed meeting. The intent is to
+  // reward people who show up, while still acknowledging that a
+  // documented conflict isn't the same as a no-show.
+  // Rate = Present / (Present + Absent + 0.5 × Excused).
   const attendanceRows = await prisma.attendance.groupBy({
     by: ['userId', 'status'],
     _count: { _all: true },
@@ -83,7 +84,7 @@ export async function computeParticipation(prisma) {
     if (rank <= EXCLUDE_RANK_AT_OR_BELOW) continue;
 
     const att = attByUser.get(u.id) || { present: 0, excused: 0, absent: 0, total: 0 };
-    const counted = att.present + att.absent + att.excused;
+    const counted = att.present + att.absent + 0.5 * att.excused;
     const attendanceRate = counted > 0 ? att.present / counted : 0;
 
     const pitchCount = pitchByUser.get(u.id) || 0;

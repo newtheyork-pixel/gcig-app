@@ -141,12 +141,12 @@ export default function Participation({ embedded = false }) {
         <div className="mt-4 flex items-start gap-2 rounded-lg bg-navy-50 px-3 py-2 text-[11px] text-navy-400">
           <Info className="h-3 w-3 mt-0.5 shrink-0" />
           <div>
-            Rate = Present / (Present + Absent + Excused). Excused
-            absences still count against the rate — only physical
-            presence in the room earns credit. Pitches come from the
-            presenter table (assignments), capped at {weights.pitchCap}{' '}
-            for score purposes. Advisory, Faculty, and Chief of
-            Communication roles are excluded from the ranking.
+            Rate = Present / (Present + Absent + ½ × Excused). Excused
+            absences are half-weighted — two excuses count as one missed
+            meeting. Pitches come from the presenter table
+            (assignments), capped at {weights.pitchCap} for score
+            purposes. Advisory, Faculty, and Chief of Communication
+            roles are excluded from the ranking.
           </div>
         </div>
       </Card>
