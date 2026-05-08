@@ -68,14 +68,6 @@ const TOTAL_INVESTED =
 // Update this constant if T-bill rates shift meaningfully.
 const RISK_FREE_RATE = 0.0425;
 
-// Baseline cash ratio used for the "Adjusted Return" tile. The club
-// meets once a week, so we often sit on more cash than an always-on
-// manager would — that cash drag makes the headline number understate
-// how the actual stock picks are performing. The adjusted figure shows
-// what the whole book would return if 5% were cash and the other 95%
-// were deployed at the same blended rate as our current equity sleeve.
-const TARGET_CASH_RATIO = 0.05;
-
 function fmtMoney(n) {
   if (n == null) return '—';
   return n.toLocaleString('en-US', {
@@ -135,11 +127,6 @@ export default function Portfolio() {
   // Equity-only return: how the stock picks themselves are doing,
   // completely ignoring cash drag. Computed from per-holding shares ×
   // avg cost basis vs market value, summed across non-cash rows.
-  //
-  // Adjusted return: apply that equity return to a 95/5 book — the
-  // allocation the club would be at if we could deploy faster than
-  // once a week. Useful for "our picks are up X% but the cash pile
-  // drags the headline to Y%."
   const equityReturn = useMemo(() => {
     const nonCash = holdings.filter((h) => !h.isCash);
     if (nonCash.length === 0) return null;
@@ -161,13 +148,6 @@ export default function Portfolio() {
     };
   }, [holdings]);
 
-  const adjustedReturn = useMemo(() => {
-    if (!equityReturn) return null;
-    // 95% of the book at the equity's actual return, 5% at 0%.
-    const pct = (1 - TARGET_CASH_RATIO) * equityReturn.pct;
-    return { pct };
-  }, [equityReturn]);
-
   const [range, setRange] = useState('6M');
   const [selectedHolding, setSelectedHolding] = useState(null);
 
@@ -187,6 +167,33 @@ export default function Portfolio() {
       }),
     [history]
   );
+
+  // Average cash sleeve we've actually carried, day by day. The club only
+  // meets weekly, so the book usually holds a meaningful idle balance — this
+  // measures it instead of pretending we run a 5%-cash target.
+  const avgCashRatio = useMemo(() => {
+    if (fullHistory.length === 0) return null;
+    let sum = 0;
+    let count = 0;
+    for (const snap of fullHistory) {
+      if (snap.value > 0) {
+        sum += snap.cash / snap.value;
+        count++;
+      }
+    }
+    return count > 0 ? sum / count : null;
+  }, [fullHistory]);
+
+  // Adjusted return: take the equity sleeve's actual return and apply it to
+  // a book weighted by the cash level we've historically run, with the cash
+  // sleeve itself treated as flat. Answers "what would the blended number
+  // look like at our typical cash drag?" — without the fiction of a target
+  // we don't actually hold to.
+  const adjustedReturn = useMemo(() => {
+    if (!equityReturn || avgCashRatio == null) return null;
+    const pct = (1 - avgCashRatio) * equityReturn.pct;
+    return { pct, cashRatio: avgCashRatio };
+  }, [equityReturn, avgCashRatio]);
 
   // Filter by selected range.
   const chartData = useMemo(() => {
@@ -391,8 +398,8 @@ export default function Portfolio() {
         history={fullHistory}
       />
 
-      {/* Four supporting metrics below the hero. */}
-      <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      {/* Five supporting metrics below the hero. */}
+      <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
         <SummaryTile
           kicker="Daily Change"
           value={dailyChange ? fmtMoney(dailyChange.diff) : '—'}
@@ -409,10 +416,34 @@ export default function Portfolio() {
           icon={isUp ? TrendingUp : TrendingDown}
         />
         <SummaryTile
+          kicker="Real Return"
+          value={lifetimeGainLossPct != null ? fmtPct(lifetimeGainLossPct) : '—'}
+          sub={lifetimeGainLoss != null ? fmtMoney(lifetimeGainLoss) : null}
+          footnote="Actual book return · cash drag included"
+          tone={
+            lifetimeGainLoss == null
+              ? 'neutral'
+              : lifetimeGainLoss >= 0
+                ? 'good'
+                : 'bad'
+          }
+          icon={
+            lifetimeGainLoss == null
+              ? null
+              : lifetimeGainLoss >= 0
+                ? TrendingUp
+                : TrendingDown
+          }
+        />
+        <SummaryTile
           kicker="Adjusted Return"
           value={adjustedReturn ? fmtPct(adjustedReturn.pct) : '—'}
           sub={equityReturn ? `${fmtPct(equityReturn.pct)} equity-only` : null}
-          footnote="At 5% cash baseline · normalizes for weekly-meeting cash drag"
+          footnote={
+            adjustedReturn
+              ? `At ${(adjustedReturn.cashRatio * 100).toFixed(1)}% avg cash · normalizes for weekly-meeting cash drag`
+              : 'Normalizes for weekly-meeting cash drag'
+          }
           tone={
             adjustedReturn == null
               ? 'neutral'
@@ -897,7 +928,7 @@ function SectorAllocation({ holdings, totalValue }) {
 }
 
 // Editorial summary tile — small-caps kicker, serif number, optional sub-
-// value and footnote. Used for the 4-wide row at the top of Portfolio.
+// value and footnote. Used for the wide metric row at the top of Portfolio.
 function SummaryTile({ kicker, value, sub, footnote, tone = 'neutral', icon: Icon }) {
   const toneClass =
     tone === 'good' ? 'text-emerald-600' : tone === 'bad' ? 'text-red-600' : 'text-navy';
