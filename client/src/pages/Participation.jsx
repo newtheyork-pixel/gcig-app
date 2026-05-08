@@ -119,7 +119,7 @@ export default function Participation({ embedded = false }) {
                       {r.attendance.ratePct}%
                       <div className="text-[10px] text-navy-400">
                         {r.attendance.present}/
-                        {r.attendance.present + r.attendance.absent}
+                        {r.attendance.present + r.attendance.absent + r.attendance.excused}
                         {r.attendance.excused > 0 && (
                           <> · {r.attendance.excused} excused</>
                         )}
@@ -141,8 +141,9 @@ export default function Participation({ embedded = false }) {
         <div className="mt-4 flex items-start gap-2 rounded-lg bg-navy-50 px-3 py-2 text-[11px] text-navy-400">
           <Info className="h-3 w-3 mt-0.5 shrink-0" />
           <div>
-            Rate = Present / (Present + Absent). Excused absences are
-            neutral — they don't help or hurt. Pitches come from the
+            Rate = Present / (Present + Absent + Excused). Excused
+            absences still count against the rate — only physical
+            presence in the room earns credit. Pitches come from the
             presenter table (assignments), capped at {weights.pitchCap}{' '}
             for score purposes. Advisory, Faculty, and Chief of
             Communication roles are excluded from the ranking.
