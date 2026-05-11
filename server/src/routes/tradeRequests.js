@@ -25,6 +25,7 @@ import { Router } from 'express';
 import prisma from '../db.js';
 import { verifyJwt, requireExecutive } from '../middleware/auth.js';
 import { computeTally } from './votes.js';
+import { getSheetPortfolio } from '../services/sheetPortfolio.js';
 import {
   isConfigured,
   sendBundledTradeEnvelope,
@@ -86,6 +87,36 @@ router.get('/', requireExecutive, async (_req, res, next) => {
       },
     });
     res.json(rows);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// GET /api/trade-requests/position/:ticker — current shares held of a
+// ticker, read from the Google Sheet that mirrors the brokerage account.
+// Used by the Sell-to-cover line so we can warn an exec who's about to
+// over-sell. Returns { ticker, shares, price, marketValue }; if the
+// ticker isn't held, shares = 0.
+router.get('/position/:ticker', requireExecutive, async (req, res, next) => {
+  try {
+    const ticker = String(req.params.ticker || '').toUpperCase().trim();
+    if (!ticker) return res.status(400).json({ error: 'ticker required' });
+    let sheet;
+    try {
+      sheet = await getSheetPortfolio();
+    } catch (err) {
+      return res.status(502).json({ error: `Portfolio sheet unavailable: ${err.message}` });
+    }
+    const holding = sheet.holdings.find(
+      (h) => String(h.ticker || '').toUpperCase() === ticker
+    );
+    res.json({
+      ticker,
+      shares: holding?.shares ?? 0,
+      price: holding?.price ?? null,
+      marketValue: holding?.marketValue ?? null,
+      held: !!holding,
+    });
   } catch (err) {
     next(err);
   }

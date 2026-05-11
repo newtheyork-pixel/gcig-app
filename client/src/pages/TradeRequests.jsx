@@ -255,7 +255,7 @@ function RequestRow({ tr, refreshing, onRefresh }) {
 
 // ── Composer ──────────────────────────────────────────────────────────
 
-const DEFAULT_SELL_TICKER = 'SPY';
+const DEFAULT_SELL_TICKER = 'VOO';
 // Cushion added to the default cover amount. Trades aren't instant — by the
 // time the broker fills, both the Buy legs and the SPY sell can drift on
 // us, so we ask for a bit more than the bare buy total. $1,000 has been
@@ -277,6 +277,10 @@ function Composer({ open, onClose, onCreated }) {
   const [sellMode, setSellMode] = useState('cover');
   const [sellShares, setSellShares] = useState('');
   const [sellCoverAmount, setSellCoverAmount] = useState('');
+  // Current shares held of `sellTicker`, read from the portfolio sheet. We
+  // pull it whenever Sell-to-cover is enabled so the exec can see the
+  // VOO/SPY/etc. position and we can warn before the envelope goes out.
+  const [sellPosition, setSellPosition] = useState({ status: 'idle' });
   const [note, setNote] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
@@ -330,6 +334,38 @@ function Composer({ open, onClose, onCreated }) {
     // successful fetch and re-fire for every still-loading entry.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedIds, eligible, sellEnabled, sellTicker]);
+
+  // Read the current Sell-ticker position from the portfolio sheet so the
+  // exec can see what's held + we can warn before the envelope goes out
+  // for more shares than we own. Re-fires on ticker change.
+  useEffect(() => {
+    if (!sellEnabled || !sellTicker) {
+      setSellPosition({ status: 'idle' });
+      return;
+    }
+    const t = sellTicker.toUpperCase();
+    setSellPosition({ status: 'loading', ticker: t });
+    let cancelled = false;
+    api
+      .get(`/trade-requests/position/${encodeURIComponent(t)}`)
+      .then((res) => {
+        if (cancelled) return;
+        setSellPosition({
+          status: 'ok',
+          ticker: t,
+          shares: Number(res.data?.shares) || 0,
+          price: res.data?.price ?? null,
+          marketValue: res.data?.marketValue ?? null,
+          held: !!res.data?.held,
+        });
+      })
+      .catch(() => {
+        if (!cancelled) setSellPosition({ status: 'error', ticker: t });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [sellEnabled, sellTicker]);
 
   // Compute per-line preview rows.
   const lines = useMemo(() => {
@@ -409,11 +445,27 @@ function Composer({ open, onClose, onCreated }) {
   const buyTotal = lines.buys.reduce((s, b) => s + (b.totalCost || 0), 0);
   const sellTotal = lines.sellLine?.totalCost || 0;
   const netCash = sellTotal - buyTotal;
+
+  // Over-sell guard. If we'd be selling more shares than the sheet says we
+  // own, block the send and surface the gap. Only kicks in once both the
+  // intended sell shares and the held position are known.
+  const heldShares =
+    sellPosition.status === 'ok' &&
+    sellPosition.ticker === (sellTicker || '').toUpperCase()
+      ? sellPosition.shares
+      : null;
+  const oversell =
+    sellEnabled &&
+    lines.sellLine?.shares != null &&
+    heldShares != null &&
+    lines.sellLine.shares > heldShares;
+
   const allLinesReady =
     lines.buys.length > 0 &&
     lines.buys.every((b) => b.shares != null && b.totalCost != null) &&
     (!sellEnabled ||
-      (lines.sellLine?.shares != null && lines.sellLine?.totalCost != null));
+      (lines.sellLine?.shares != null && lines.sellLine?.totalCost != null)) &&
+    !oversell;
 
   function toggleSession(id) {
     setSelectedIds((prev) => {
@@ -646,6 +698,81 @@ function Composer({ open, onClose, onCreated }) {
                       </span>{' '}
                       = ${lines.sellLine.totalCost?.toFixed(2)}
                     </>
+                  )}
+                </div>
+              )}
+              {/* Sheet-portfolio position readout. Lets the exec eyeball
+                  what's owned vs. what we're about to sell, and hard-stops
+                  the send if shares-to-sell would go negative. */}
+              {sellPosition.status === 'loading' && (
+                <div className="text-xs text-navy-400">
+                  Pulling current {sellPosition.ticker} position…
+                </div>
+              )}
+              {sellPosition.status === 'error' && (
+                <div className="text-xs text-red-700">
+                  Couldn't pull current position from the portfolio sheet.
+                </div>
+              )}
+              {sellPosition.status === 'ok' && (
+                <div
+                  className={`rounded-md border px-2 py-1.5 text-xs ${
+                    oversell
+                      ? 'border-red-200 bg-red-50 text-red-800'
+                      : 'border-navy-100 bg-navy-50 text-navy'
+                  }`}
+                >
+                  {sellPosition.held ? (
+                    <>
+                      Current position:{' '}
+                      <span className="font-semibold">
+                        {Number(sellPosition.shares).toLocaleString()} share
+                        {sellPosition.shares === 1 ? '' : 's'}
+                      </span>{' '}
+                      of {sellPosition.ticker}
+                      {sellPosition.marketValue != null && (
+                        <>
+                          {' '}
+                          (≈ $
+                          {Number(sellPosition.marketValue).toLocaleString(
+                            undefined,
+                            { maximumFractionDigits: 0 }
+                          )}
+                          )
+                        </>
+                      )}
+                      {lines.sellLine?.shares != null && (
+                        <>
+                          {' '}
+                          · after sell:{' '}
+                          <span className="font-semibold">
+                            {Math.max(
+                              0,
+                              sellPosition.shares - lines.sellLine.shares
+                            ).toLocaleString()}
+                          </span>
+                        </>
+                      )}
+                      {oversell && (
+                        <div className="mt-1 font-semibold">
+                          ⚠ This would sell{' '}
+                          {(
+                            lines.sellLine.shares - sellPosition.shares
+                          ).toLocaleString()}{' '}
+                          more share
+                          {lines.sellLine.shares - sellPosition.shares === 1
+                            ? ''
+                            : 's'}{' '}
+                          than we own. Lower the cover amount or pick a
+                          different ticker.
+                        </div>
+                      )}
+                    </>
+                  ) : (
+                    <span className="font-semibold text-red-700">
+                      ⚠ The portfolio sheet doesn't show a {sellPosition.ticker}{' '}
+                      position. Double-check the ticker.
+                    </span>
                   )}
                 </div>
               )}
