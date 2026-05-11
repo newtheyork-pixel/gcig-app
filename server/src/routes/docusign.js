@@ -19,6 +19,7 @@ import {
   sendTradeConfirmationEnvelope,
   getEnvelope,
   getKeyDiagnostics,
+  bankApiCalls,
 } from '../services/docusign.js';
 
 const router = Router();
@@ -316,5 +317,23 @@ router.get('/diagnose', verifyJwt, requireExecutive, (_req, res) => {
     privateKey: getKeyDiagnostics(),
   });
 });
+
+// POST /api/docusign/bank-calls?count=25 — fire N successful read calls to
+// DocuSign's account-info endpoint. Used to clear the 20-call threshold
+// DocuSign requires before approving a go-live submission. Admin-only.
+router.post(
+  '/bank-calls',
+  verifyJwt,
+  requireExecutive,
+  async (req, res, next) => {
+    try {
+      const count = Number(req.query.count) || Number(req.body?.count) || 25;
+      const result = await bankApiCalls(count);
+      res.json(result);
+    } catch (err) {
+      next(err);
+    }
+  }
+);
 
 export default router;

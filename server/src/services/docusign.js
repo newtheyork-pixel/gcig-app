@@ -325,6 +325,29 @@ export async function sendTradeConfirmationEnvelope({
   return resp.json();
 }
 
+// Bank successful API calls toward DocuSign's go-live threshold. Hits a
+// cheap account-info endpoint `count` times. Returns a result for each
+// call so the caller can show progress. Admin-only — the route guards it.
+export async function bankApiCalls(count) {
+  const n = Math.min(Math.max(Number(count) || 0, 1), 50);
+  const accessToken = await getAccessToken();
+  const url = `${API_BASE}/v2.1/accounts/${ACCOUNT_ID}`;
+  const results = [];
+  for (let i = 0; i < n; i++) {
+    const t0 = Date.now();
+    try {
+      const resp = await fetch(url, {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+      results.push({ ok: resp.ok, status: resp.status, ms: Date.now() - t0 });
+    } catch (err) {
+      results.push({ ok: false, error: err.message, ms: Date.now() - t0 });
+    }
+  }
+  const ok = results.filter((r) => r.ok).length;
+  return { requested: n, succeeded: ok, failed: n - ok, results };
+}
+
 // Optional helper: poll a single envelope's status. Mostly useful for the
 // admin "refresh" button — the Connect webhook is the primary state source.
 export async function getEnvelope(envelopeId) {

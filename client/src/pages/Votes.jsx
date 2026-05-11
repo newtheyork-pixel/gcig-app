@@ -628,6 +628,8 @@ function DocusignPanel({ session, canSend, sending, error, onSend, onRefresh }) 
   const [diag, setDiag] = useState(null);
   const [diagLoading, setDiagLoading] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [banking, setBanking] = useState(false);
+  const [bankResult, setBankResult] = useState(null);
 
   async function runDiagnose() {
     setDiagLoading(true);
@@ -638,6 +640,19 @@ function DocusignPanel({ session, canSend, sending, error, onSend, onRefresh }) 
       setDiag({ error: err.response?.data?.error || err.message });
     } finally {
       setDiagLoading(false);
+    }
+  }
+
+  async function bankCalls() {
+    setBanking(true);
+    setBankResult(null);
+    try {
+      const { data } = await api.post('/docusign/bank-calls?count=25');
+      setBankResult(data);
+    } catch (err) {
+      setBankResult({ error: err.response?.data?.error || err.message });
+    } finally {
+      setBanking(false);
     }
   }
 
@@ -677,6 +692,14 @@ function DocusignPanel({ session, canSend, sending, error, onSend, onRefresh }) 
           >
             {diagLoading ? 'Checking…' : 'Run diagnose'}
           </button>
+          <button
+            type="button"
+            onClick={bankCalls}
+            disabled={banking}
+            className="text-xs font-semibold text-navy-400 underline hover:text-navy"
+          >
+            {banking ? 'Banking…' : 'Bank 25 API calls'}
+          </button>
         </div>
         {error && (
           <div className="mt-2 text-xs font-semibold text-red-700">{error}</div>
@@ -685,6 +708,13 @@ function DocusignPanel({ session, canSend, sending, error, onSend, onRefresh }) 
           <pre className="mt-3 max-h-80 overflow-auto rounded-md bg-navy-50 p-2 text-[11px] leading-snug text-navy">
             {JSON.stringify(diag, null, 2)}
           </pre>
+        )}
+        {bankResult && (
+          <div className="mt-2 rounded-md bg-emerald-50 p-2 text-xs text-emerald-800">
+            {bankResult.error
+              ? `Failed: ${bankResult.error}`
+              : `Banked ${bankResult.succeeded}/${bankResult.requested} calls (${bankResult.failed} failed). Check DocuSign's API Activity counter in ~1 min.`}
+          </div>
         )}
       </div>
     );
