@@ -18,6 +18,7 @@ import {
   isConfigured,
   sendTradeConfirmationEnvelope,
   getEnvelope,
+  getKeyDiagnostics,
 } from '../services/docusign.js';
 
 const router = Router();
@@ -294,5 +295,26 @@ router.get(
     }
   }
 );
+
+// GET /api/docusign/diagnose — non-secret metadata about the configured
+// integration. Admin-only. Used to debug PEM parsing without ever leaking
+// the key itself.
+router.get('/diagnose', verifyJwt, requireExecutive, (_req, res) => {
+  res.json({
+    configured: isConfigured(),
+    envVars: {
+      DOCUSIGN_INTEGRATION_KEY: !!process.env.DOCUSIGN_INTEGRATION_KEY,
+      DOCUSIGN_USER_ID: !!process.env.DOCUSIGN_USER_ID,
+      DOCUSIGN_ACCOUNT_ID: !!process.env.DOCUSIGN_ACCOUNT_ID,
+      DOCUSIGN_TEMPLATE_ID: !!process.env.DOCUSIGN_TEMPLATE_ID,
+      DOCUSIGN_WEBHOOK_HMAC_KEY: !!process.env.DOCUSIGN_WEBHOOK_HMAC_KEY,
+      DOCUSIGN_OAUTH_BASE: process.env.DOCUSIGN_OAUTH_BASE || '(default)',
+      DOCUSIGN_API_BASE: process.env.DOCUSIGN_API_BASE || '(default)',
+      DOCUSIGN_SIGNER_ROLE_NAME:
+        process.env.DOCUSIGN_SIGNER_ROLE_NAME || '(default President)',
+    },
+    privateKey: getKeyDiagnostics(),
+  });
+});
 
 export default router;

@@ -55,34 +55,123 @@ export function isConfigured() {
   );
 }
 
+// Tolerant PEM normalizer. PaaS env-var UIs mangle multi-line values in
+// different ways:
+//   • Some preserve real newlines.
+//   • Some collapse them and require literal "\n" escape sequences.
+//   • Some strip newlines entirely, leaving a header + base64 blob + footer
+//     all run together.
+//   • Some inject CRLF.
+// Here we accept any of those and reconstruct a clean PEM that
+// jsonwebtoken / OpenSSL will parse.
 function normalizePrivateKey(raw) {
-  // Render and most other dashboards don't preserve real newlines in env
-  // values, so engineers typically paste the PEM with "\n" between lines.
-  // Accept either form.
-  return String(raw || '').replace(/\\n/g, '\n');
+  let s = String(raw || '').trim();
+  // Literal "\n" → real newline.
+  s = s.replace(/\\n/g, '\n');
+  // CRLF / CR → LF.
+  s = s.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+
+  // If the key has no newlines at all (everything is one blob), rebuild PEM
+  // format by re-wrapping the base64 body at 64 chars between header/footer.
+  if (!s.includes('\n')) {
+    const headerMatch = s.match(/-----BEGIN [A-Z 0-9]+-----/);
+    const footerMatch = s.match(/-----END [A-Z 0-9]+-----/);
+    if (headerMatch && footerMatch) {
+      const header = headerMatch[0];
+      const footer = footerMatch[0];
+      const body = s
+        .slice(s.indexOf(header) + header.length, s.indexOf(footer))
+        .replace(/\s/g, '');
+      const wrapped = body.match(/.{1,64}/g)?.join('\n') ?? body;
+      s = `${header}\n${wrapped}\n${footer}`;
+    }
+  }
+  return s;
+}
+
+// Cheap shape check on the env var. Returns either { ok: true, key } or
+// { ok: false, reason }. We expose the reason via the /diagnose route so an
+// admin can see what's wrong without ever surfacing the key itself.
+function inspectPrivateKey() {
+  const raw = process.env.DOCUSIGN_PRIVATE_KEY;
+  if (!raw) return { ok: false, reason: 'DOCUSIGN_PRIVATE_KEY is unset' };
+  const key = normalizePrivateKey(raw);
+  if (!/-----BEGIN .*PRIVATE KEY-----/.test(key)) {
+    return { ok: false, reason: 'Missing PEM header line', key };
+  }
+  if (!/-----END .*PRIVATE KEY-----/.test(key)) {
+    return { ok: false, reason: 'Missing PEM footer line', key };
+  }
+  if (key.split('\n').length < 3) {
+    return { ok: false, reason: 'PEM has fewer than 3 lines', key };
+  }
+  return { ok: true, key };
+}
+
+// Public: metadata about the configured key with no key material leaked.
+// Used by the /api/docusign/diagnose admin route.
+export function getKeyDiagnostics() {
+  const raw = process.env.DOCUSIGN_PRIVATE_KEY;
+  if (!raw) return { configured: false };
+  const inspected = inspectPrivateKey();
+  const key = inspected.key || '';
+  return {
+    configured: true,
+    rawLength: raw.length,
+    normalizedLength: key.length,
+    rawHasRealNewlines: raw.includes('\n'),
+    rawHasLiteralBackslashN: /\\n/.test(raw),
+    rawHasCRLF: raw.includes('\r'),
+    normalizedLineCount: key.split('\n').length,
+    hasBeginMarker: /-----BEGIN .*PRIVATE KEY-----/.test(key),
+    hasEndMarker: /-----END .*PRIVATE KEY-----/.test(key),
+    valid: inspected.ok,
+    reason: inspected.reason || null,
+  };
 }
 
 async function fetchAccessToken() {
   const integrationKey = process.env.DOCUSIGN_INTEGRATION_KEY;
   const userId = process.env.DOCUSIGN_USER_ID;
-  const privateKey = normalizePrivateKey(process.env.DOCUSIGN_PRIVATE_KEY);
-  if (!integrationKey || !userId || !privateKey) {
+  if (!integrationKey || !userId || !process.env.DOCUSIGN_PRIVATE_KEY) {
     throw Object.assign(new Error('DocuSign not configured'), { status: 503 });
   }
+  const inspected = inspectPrivateKey();
+  if (!inspected.ok) {
+    throw Object.assign(
+      new Error(
+        `DOCUSIGN_PRIVATE_KEY is malformed (${inspected.reason}). Hit /api/docusign/diagnose for details.`
+      ),
+      { status: 500 }
+    );
+  }
+  const privateKey = inspected.key;
 
   const now = Math.floor(Date.now() / 1000);
-  const assertion = jwt.sign(
-    {
-      iss: integrationKey,
-      sub: userId,
-      aud: OAUTH_BASE,
-      iat: now,
-      exp: now + 3600,
-      scope: 'signature impersonation',
-    },
-    privateKey,
-    { algorithm: 'RS256' }
-  );
+  let assertion;
+  try {
+    assertion = jwt.sign(
+      {
+        iss: integrationKey,
+        sub: userId,
+        aud: OAUTH_BASE,
+        iat: now,
+        exp: now + 3600,
+        scope: 'signature impersonation',
+      },
+      privateKey,
+      { algorithm: 'RS256' }
+    );
+  } catch (err) {
+    // jsonwebtoken's "secretOrPrivateKey must be an asymmetric key" is
+    // particularly opaque; surface it with a hint at the diagnose route.
+    throw Object.assign(
+      new Error(
+        `JWT sign failed (${err.message}). Hit /api/docusign/diagnose to inspect the parsed key.`
+      ),
+      { status: 500 }
+    );
+  }
 
   const resp = await fetch(`https://${OAUTH_BASE}/oauth/token`, {
     method: 'POST',
