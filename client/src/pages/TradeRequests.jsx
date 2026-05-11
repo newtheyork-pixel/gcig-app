@@ -44,6 +44,17 @@ export default function TradeRequests({ embedded = false } = {}) {
     }
   }
 
+  async function deleteOne(tr) {
+    const warning = tr.docusignEnvelopeId
+      ? `Delete Approval #${tr.id}? The DocuSign envelope was already sent — ` +
+        `deleting it here only removes the record on this site. Void the ` +
+        `envelope itself in DocuSign if it shouldn't sit in signers' inboxes.`
+      : `Delete Approval #${tr.id}?`;
+    if (!window.confirm(warning)) return;
+    await api.delete(`/trade-requests/${tr.id}`);
+    await loadRequests();
+  }
+
   if (!isExecutive) {
     return (
       <>
@@ -110,6 +121,7 @@ export default function TradeRequests({ embedded = false } = {}) {
               tr={tr}
               refreshing={refreshing === tr.id}
               onRefresh={() => refreshOne(tr.id)}
+              onDelete={() => deleteOne(tr)}
             />
           ))
         )}
@@ -129,7 +141,7 @@ export default function TradeRequests({ embedded = false } = {}) {
 
 // ── List row ──────────────────────────────────────────────────────────
 
-function RequestRow({ tr, refreshing, onRefresh }) {
+function RequestRow({ tr, refreshing, onRefresh, onDelete }) {
   const status = tr.docusignStatus || 'draft';
   const tone =
     status === 'completed'
@@ -237,17 +249,27 @@ function RequestRow({ tr, refreshing, onRefresh }) {
             </span>
           </div>
         </div>
-        {tr.docusignEnvelopeId && (
+        <div className="flex shrink-0 flex-col items-end gap-2">
+          {tr.docusignEnvelopeId && (
+            <button
+              type="button"
+              onClick={onRefresh}
+              disabled={refreshing}
+              className="flex items-center gap-1 text-xs font-semibold text-navy-400 underline hover:text-navy"
+            >
+              <RefreshCw className={`h-3 w-3 ${refreshing ? 'animate-spin' : ''}`} />
+              {refreshing ? 'Refreshing' : 'Refresh'}
+            </button>
+          )}
           <button
             type="button"
-            onClick={onRefresh}
-            disabled={refreshing}
-            className="flex shrink-0 items-center gap-1 text-xs font-semibold text-navy-400 underline hover:text-navy"
+            onClick={onDelete}
+            className="flex items-center gap-1 text-xs font-semibold text-red-600 underline hover:text-red-800"
           >
-            <RefreshCw className={`h-3 w-3 ${refreshing ? 'animate-spin' : ''}`} />
-            {refreshing ? 'Refreshing' : 'Refresh'}
+            <Trash2 className="h-3 w-3" />
+            Delete
           </button>
-        )}
+        </div>
       </div>
     </Card>
   );

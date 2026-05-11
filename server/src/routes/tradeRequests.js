@@ -452,20 +452,17 @@ router.get('/:id/refresh', requireExecutive, async (req, res, next) => {
   }
 });
 
-// DELETE /api/trade-requests/:id — drop a request. Only allowed before the
-// envelope has gone out: once a TradeRequest has a docusignEnvelopeId, the
-// claim on its sessions is permanent (audit trail) and the envelope itself
-// can only be voided via DocuSign.
+// DELETE /api/trade-requests/:id — drop a request. Allowed regardless of
+// envelope state; the UI gates this behind a confirm dialog. Deleting a
+// request whose envelope is still active in DocuSign does NOT void the
+// envelope — the exec needs to void it themselves from the DocuSign UI.
+// The cascade on TradeRequestItem releases the linked Buy sessions back
+// into the eligible-buys picker.
 router.delete('/:id', requireExecutive, async (req, res, next) => {
   try {
     const id = Number(req.params.id);
     const tr = await prisma.tradeRequest.findUnique({ where: { id } });
     if (!tr) return res.status(404).json({ error: 'Not found' });
-    if (tr.docusignEnvelopeId) {
-      return res.status(409).json({
-        error: "Can't delete — envelope was already sent. Void it in DocuSign first.",
-      });
-    }
     await prisma.tradeRequest.delete({ where: { id } });
     res.json({ ok: true });
   } catch (err) {
