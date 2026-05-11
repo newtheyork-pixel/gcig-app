@@ -32,6 +32,7 @@
 //                             just signs.
 
 import jwt from 'jsonwebtoken';
+import crypto from 'node:crypto';
 
 const OAUTH_BASE = process.env.DOCUSIGN_OAUTH_BASE || 'account.docusign.com';
 const API_BASE =
@@ -90,9 +91,11 @@ function normalizePrivateKey(raw) {
   return `${header}\n${wrapped}\n${footer}`;
 }
 
-// Cheap shape check on the env var. Returns either { ok: true, key } or
-// { ok: false, reason }. We expose the reason via the /diagnose route so an
-// admin can see what's wrong without ever surfacing the key itself.
+// Inspect the env-var key. We do shape checks AND attempt Node's own
+// `crypto.createPrivateKey` — which returns far more specific errors than
+// jsonwebtoken's "must be an asymmetric key" wrapper. We expose the result
+// via the /diagnose route so an admin can see what's wrong without ever
+// surfacing the key material itself.
 function inspectPrivateKey() {
   const raw = process.env.DOCUSIGN_PRIVATE_KEY;
   if (!raw) return { ok: false, reason: 'DOCUSIGN_PRIVATE_KEY is unset' };
@@ -106,7 +109,16 @@ function inspectPrivateKey() {
   if (key.split('\n').length < 3) {
     return { ok: false, reason: 'PEM has fewer than 3 lines', key };
   }
-  return { ok: true, key };
+  try {
+    const parsed = crypto.createPrivateKey(key);
+    return { ok: true, key, keyType: parsed.asymmetricKeyType };
+  } catch (err) {
+    return {
+      ok: false,
+      reason: `OpenSSL rejected the key: ${err.message}`,
+      key,
+    };
+  }
 }
 
 // Public: metadata about the configured key with no key material leaked.
@@ -128,6 +140,19 @@ export function getKeyDiagnostics() {
     hasEndMarker: /-----END .*PRIVATE KEY-----/.test(key),
     valid: inspected.ok,
     reason: inspected.reason || null,
+    keyType: inspected.keyType || null,
+    // Surface a tiny fingerprint of the body so the admin can verify they
+    // pasted the right key without seeing it. First/last 4 base64 chars of
+    // the body — same idea as `ssh-keygen -lf`.
+    bodyFingerprint: (() => {
+      const key = inspected.key || '';
+      const body = key
+        .replace(/-----BEGIN [^-]+-----/, '')
+        .replace(/-----END [^-]+-----/, '')
+        .replace(/\s/g, '');
+      if (body.length < 16) return null;
+      return `${body.slice(0, 4)}…${body.slice(-4)} (${body.length} chars)`;
+    })(),
   };
 }
 
