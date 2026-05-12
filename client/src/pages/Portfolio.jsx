@@ -130,11 +130,20 @@ export default function Portfolio() {
   const totals = data?.totals || {};
   const holdings = data?.holdings || [];
 
+  // YTD cash interest earned on the BDA + FGTXX sleeves. Held in
+  // accounts outside the brokerage, so it isn't reflected in the
+  // sheet's totalValue — but it's real money the club earned, so we
+  // fold it into the lifetime return number below.
+  const cashInterestEarned = Number(cashYield?.totalInterest) || 0;
+
   // Recompute Total Gain/Loss against the actual capital invested (starting
   // $100k + every infusion) so per-position cost-basis rounding in the sheet
-  // doesn't throw off the top-line number.
-  const lifetimeGainLoss =
+  // doesn't throw off the top-line number. Adds the off-sheet cash interest
+  // on top so the headline number reflects all earnings, not just equity P/L.
+  const equityGainLoss =
     totals.totalValue != null ? totals.totalValue - TOTAL_INVESTED : null;
+  const lifetimeGainLoss =
+    equityGainLoss != null ? equityGainLoss + cashInterestEarned : null;
   const lifetimeGainLossPct =
     lifetimeGainLoss != null ? (lifetimeGainLoss / TOTAL_INVESTED) * 100 : null;
   const isUp = (lifetimeGainLoss ?? 0) >= 0;
@@ -827,13 +836,19 @@ export default function Portfolio() {
                           <td
                             className={`py-3 pr-4 text-right tabular-nums font-semibold ${
                               h.isCash
-                                ? 'text-navy-400'
+                                ? cashInterestEarned > 0
+                                  ? 'text-emerald-600'
+                                  : 'text-navy-400'
                                 : up
                                 ? 'text-emerald-600'
                                 : 'text-red-600'
                             }`}
                           >
-                            {h.isCash ? '—' : fmtMoney(h.dollarReturn)}
+                            {h.isCash
+                              ? cashInterestEarned > 0
+                                ? fmtMoney(cashInterestEarned, { cents: true })
+                                : '—'
+                              : fmtMoney(h.dollarReturn)}
                           </td>
                           <td
                             className={`py-3 pr-4 text-right tabular-nums font-semibold ${
@@ -912,6 +927,15 @@ export default function Portfolio() {
             Positions and prices are read live from the club's Google Sheet. To
             add or remove a position, edit the sheet directly. Tap any
             holding to see company details.
+            {cashInterestEarned > 0 && (
+              <>
+                {' '}Total return includes{' '}
+                <span className="font-semibold text-navy">
+                  {fmtMoney(cashInterestEarned, { cents: true })}
+                </span>{' '}
+                of off-sheet cash interest (BDA + FGTXX, see card below).
+              </>
+            )}
           </div>
         </Card>
 
