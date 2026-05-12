@@ -19,7 +19,6 @@ import {
   Activity,
   Ship,
   ClipboardList,
-  BarChart3,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext.jsx';
 import RoleBadge from './RoleBadge.jsx';
@@ -39,7 +38,6 @@ const NAV_SECTIONS = [
       { to: '/chat', label: 'Chat', icon: MessageSquare },
       { to: '/broadcast', label: 'Broadcast', icon: Megaphone, executiveOnly: true },
       { to: '/attendance', label: 'Attendance', icon: ClipboardCheck, hideForAdvisory: true },
-      { to: '/participation', label: 'Participation', icon: BarChart3, pmOrAbove: true },
       { to: '/president-review', label: 'President Review', icon: ClipboardList },
     ],
   },
@@ -59,7 +57,7 @@ const NAV_SECTIONS = [
   },
   {
     items: [
-      { to: '/admin', label: 'Admin', icon: ShieldAlert, executiveOnly: true },
+      { to: '/admin', label: 'Admin', icon: ShieldAlert, pmOrAbove: true },
       { to: '/ai-chat', label: 'AI Assistant', icon: Bot },
     ],
   },

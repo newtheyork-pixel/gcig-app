@@ -7,6 +7,7 @@ import Card from '../components/Card.jsx';
 import { useAuth } from '../context/AuthContext.jsx';
 import Members from './Members.jsx';
 import AuditLog from './AuditLog.jsx';
+import Participation from './Participation.jsx';
 import TradeRequests from './TradeRequests.jsx';
 
 function ProviderRow({ label, data }) {
@@ -110,27 +111,24 @@ function LlmStatusCard() {
 }
 
 export default function Admin() {
-  const { isAdmin, isExecutive, isSuperAdmin } = useAuth();
+  const { isAdmin, isExecutive, isPmOrAbove, isSuperAdmin } = useAuth();
 
-  // Page-level gate. Everything under /admin is for the executive tier
-  // or above — if a non-executive user lands here via a direct URL,
-  // bounce them to the dashboard. Server-side routes are also gated,
-  // but this prevents them from seeing scaffolding (PageHeader, tab
-  // strip) that would suggest the page exists.
-  if (!isExecutive && !isSuperAdmin) {
+  // Page-level gate. Portfolio Managers and above can land here so they
+  // can reach the Participation ranking; the per-tab gates below keep
+  // them out of the executive-only tools. Everyone below PM is bounced.
+  if (!isPmOrAbove && !isSuperAdmin) {
     return <Navigate to="/dashboard" replace />;
   }
 
   // Tab visibility:
-  //   Members — always shown (every executive can see the roster).
+  //   Members / Trade Approval — executive (President / CIO) only.
+  //   Participation — PM and above, so PMs can use the ranking without
+  //     being granted the rest of Admin.
   //   Audit Log / Name Inference — super admin only.
-  // Participation moved out to its own /participation page (PM and
-  // above) so PMs can use it without seeing the rest of Admin.
   const tabs = [
-    { id: 'members', label: 'Members' },
-    // Trade Approval is exec-tier: bundled DocuSign envelopes spanning
-    // multiple closed Buy votes (and an optional Sell-to-cover line).
-    { id: 'trade-requests', label: 'Trade Approval' },
+    ...(isExecutive ? [{ id: 'members', label: 'Members' }] : []),
+    ...(isPmOrAbove ? [{ id: 'participation', label: 'Participation' }] : []),
+    ...(isExecutive ? [{ id: 'trade-requests', label: 'Trade Approval' }] : []),
     ...(isSuperAdmin
       ? [
           { id: 'audit', label: 'Audit Log' },
@@ -138,7 +136,7 @@ export default function Admin() {
         ]
       : []),
   ];
-  const [tab, setTab] = useState('members');
+  const [tab, setTab] = useState(() => tabs[0]?.id || 'participation');
 
   // The status cards are sensitive (LLM provider config / OneDrive
   // tokens) so they're gated tighter than the page itself. CIOs who
@@ -180,11 +178,13 @@ export default function Admin() {
         <AuditLog embedded />
       ) : tab === 'inference' && isSuperAdmin ? (
         <NameInferenceTable />
-      ) : tab === 'trade-requests' ? (
+      ) : tab === 'participation' && isPmOrAbove ? (
+        <Participation embedded />
+      ) : tab === 'trade-requests' && isExecutive ? (
         <TradeRequests embedded />
-      ) : (
+      ) : isExecutive ? (
         <Members embedded />
-      )}
+      ) : null}
     </>
   );
 }
