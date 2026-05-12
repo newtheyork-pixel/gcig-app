@@ -92,7 +92,7 @@ export default function CashInterestCard({
             {fmtMoney(totalInterest, { cents: true })}
           </div>
           <div className="mt-1 text-[10px] uppercase tracking-wider text-navy-300">
-            {daysSimulated} {daysSimulated === 1 ? 'day' : 'days'} · ending {fmtMoney(combinedEndingValue, { cents: true })}
+            {daysSimulated} {daysSimulated === 1 ? 'day' : 'days'}
           </div>
         </div>
       </div>
