@@ -346,6 +346,20 @@ Hit-rate stats count `Approved` toward Voted Yes too.
 
 ---
 
+## Known issues (open)
+
+- **GSAM Daily Rates PDF returns HTTP 403 from Render (May '26)**: the
+  scraper in `server/src/services/gsamRates.js` works fine from a
+  laptop (with `Accept: application/pdf` + a realistic User-Agent) but
+  fails with 403 when called from the deployed API on Render. GSAM is
+  rate-limiting / geo-filtering datacenter egress IPs. The dashboard's
+  "Refresh today's yield" button surfaces the error inline. SEC N-MFP3
+  backfill is the working historical source and is unaffected.
+  Possible fixes when you get to it: route the request through an
+  Akamai or Cloudflare worker, send a fuller browser-like header set,
+  or scrape an alternate downstream mirror. Cron schedule will keep
+  retrying and failing nightly until this is resolved.
+
 ## Recent fixes / playbook notes
 
 - **Safari "click anywhere kicks me out" (May '26)**: root cause was

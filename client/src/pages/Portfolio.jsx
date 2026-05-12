@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { Fragment, useEffect, useMemo, useState } from 'react';
 import { format, subDays, subMonths, subYears, startOfYear } from 'date-fns';
 import {
   AreaChart,
@@ -19,7 +19,9 @@ import Card from '../components/Card.jsx';
 import Button from '../components/Button.jsx';
 import HoldingDetailModal from '../components/HoldingDetailModal.jsx';
 import RiskPanel from '../components/RiskPanel.jsx';
+import CashInterestCard from '../components/CashInterestCard.jsx';
 import { useAuth } from '../context/AuthContext.jsx';
+import { ChevronDown, ChevronRight } from 'lucide-react';
 
 // Operational ranks for the client-side PM+ gate. Mirrors server ROLE_RANK;
 // the server is still the source of truth (betas endpoint requires the role).
@@ -83,12 +85,17 @@ function fmtPct(n) {
 }
 
 export default function Portfolio() {
-  const { user } = useAuth();
+  const { user, isPmOrAbove, isSuperAdmin } = useAuth();
   const canSeeRisk = (CLIENT_ROLE_RANK[user?.role] || 0) >= 7;
   const [data, setData] = useState(null);
   const [history, setHistory] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  // YTD cash-interest simulation (BDA + FGTXX). Fetched alongside the
+  // holdings so we can show the per-sleeve breakdown inline when the
+  // user clicks the CASH row, plus the summary card below the table.
+  const [cashYield, setCashYield] = useState(null);
+  const [cashExpanded, setCashExpanded] = useState(false);
 
   async function load() {
     setLoading(true);
@@ -108,8 +115,16 @@ export default function Portfolio() {
     }
   }
 
+  function reloadCashYield() {
+    return api
+      .get('/holdings/cash-yield')
+      .then((r) => setCashYield(r.data))
+      .catch(() => setCashYield(null));
+  }
+
   useEffect(() => {
     load();
+    reloadCashYield();
   }, []);
 
   const totals = data?.totals || {};
@@ -623,14 +638,23 @@ export default function Portfolio() {
                 const marketValue =
                   h.marketValue ??
                   (h.shares != null && h.price != null ? h.shares * h.price : null);
+                const hasCashBreakdown = h.isCash && cashYield;
                 return (
+                  <Fragment key={h.ticker}>
                   <button
-                    key={h.ticker}
-                    onClick={() => !h.isCash && setSelectedHolding(h)}
-                    disabled={h.isCash}
+                    onClick={() => {
+                      if (h.isCash) {
+                        if (hasCashBreakdown) setCashExpanded((v) => !v);
+                      } else {
+                        setSelectedHolding(h);
+                      }
+                    }}
+                    disabled={h.isCash && !hasCashBreakdown}
                     className={`w-full rounded-lg border border-navy-100 px-3 py-3 text-left transition ${
                       h.isCash
-                        ? 'bg-gold-100/40 cursor-default'
+                        ? hasCashBreakdown
+                          ? 'bg-gold-100/40 active:bg-gold-100/70'
+                          : 'bg-gold-100/40 cursor-default'
                         : 'bg-white active:bg-navy-50'
                     }`}
                   >
@@ -674,7 +698,39 @@ export default function Portfolio() {
                         </span>
                       </div>
                     )}
+                    {hasCashBreakdown && (
+                      <div className="mt-2 text-[10px] uppercase tracking-wider text-navy-400">
+                        {cashExpanded ? 'Hide breakdown' : 'Tap to show breakdown'}
+                      </div>
+                    )}
                   </button>
+                  {hasCashBreakdown && cashExpanded && (
+                    <>
+                      <CashSubCard
+                        ticker="BDA"
+                        name="GS Bank USA Deposit"
+                        balance={cashYield.bdaEndingBalance}
+                        interest={cashYield.bdaTotalInterest}
+                        rate={
+                          cashYield.bdaApy != null
+                            ? `${(cashYield.bdaApy * 100).toFixed(2)}%`
+                            : '—'
+                        }
+                      />
+                      <CashSubCard
+                        ticker="FGTXX"
+                        name="GS FS Government MMF"
+                        balance={cashYield.fgtxxEndingBalance}
+                        interest={cashYield.fgtxxTotalInterest}
+                        rate={
+                          cashYield.fgtxxLatestYield != null
+                            ? `${cashYield.fgtxxLatestYield.toFixed(2)}%`
+                            : '—'
+                        }
+                      />
+                    </>
+                  )}
+                  </Fragment>
                 );
               })}
               <div className="mt-3 flex items-center justify-between rounded-lg border-2 border-navy-100 px-3 py-3 text-sm">
@@ -716,59 +772,110 @@ export default function Portfolio() {
                     const marketValue =
                       h.marketValue ??
                       (h.shares != null && h.price != null ? h.shares * h.price : null);
+                    const hasCashBreakdown = h.isCash && cashYield;
                     return (
-                      <tr
-                        key={h.ticker}
-                        onClick={() => !h.isCash && setSelectedHolding(h)}
-                        className={`${h.isCash ? 'bg-gold-100/40' : 'cursor-pointer hover:bg-navy-50/60'}`}
-                      >
-                        <td className="py-3 pr-4">
-                          <div className="font-bold text-navy">{h.ticker}</div>
-                          <div className="text-xs text-navy-400 truncate max-w-[220px]">
-                            {h.name}
-                          </div>
-                        </td>
-                        <td className="py-3 pr-4 text-xs text-navy-400">
-                          {h.sector || '—'}
-                        </td>
-                        <td className="py-3 pr-4 text-right tabular-nums">
-                          {h.isCash ? '—' : h.shares ?? '—'}
-                        </td>
-                        <td className="py-3 pr-4 text-right tabular-nums">
-                          {h.isCash ? '—' : fmtMoney(h.costBasis)}
-                        </td>
-                        <td className="py-3 pr-4 text-right tabular-nums">
-                          {h.isCash ? '—' : fmtMoney(h.price)}
-                        </td>
-                        <td className="py-3 pr-4 text-right tabular-nums font-semibold">
-                          {fmtMoney(marketValue)}
-                        </td>
-                        <td className="py-3 pr-4 text-right tabular-nums text-navy-400">
-                          {h.portfolioPct != null ? `${h.portfolioPct.toFixed(2)}%` : '—'}
-                        </td>
-                        <td
-                          className={`py-3 pr-4 text-right tabular-nums font-semibold ${
+                      <Fragment key={h.ticker}>
+                        <tr
+                          onClick={() => {
+                            if (h.isCash) {
+                              if (hasCashBreakdown) setCashExpanded((v) => !v);
+                            } else {
+                              setSelectedHolding(h);
+                            }
+                          }}
+                          className={`${
                             h.isCash
-                              ? 'text-navy-400'
-                              : up
-                              ? 'text-emerald-600'
-                              : 'text-red-600'
+                              ? hasCashBreakdown
+                                ? 'bg-gold-100/40 cursor-pointer hover:bg-gold-100/70'
+                                : 'bg-gold-100/40'
+                              : 'cursor-pointer hover:bg-navy-50/60'
                           }`}
                         >
-                          {h.isCash ? '—' : fmtMoney(h.dollarReturn)}
-                        </td>
-                        <td
-                          className={`py-3 pr-4 text-right tabular-nums font-semibold ${
-                            h.isCash
-                              ? 'text-navy-400'
-                              : up
-                              ? 'text-emerald-600'
-                              : 'text-red-600'
-                          }`}
-                        >
-                          {h.isCash ? '—' : fmtPct(h.percentReturn)}
-                        </td>
-                      </tr>
+                          <td className="py-3 pr-4">
+                            <div className="flex items-center gap-1 font-bold text-navy">
+                              {hasCashBreakdown && (
+                                cashExpanded ? (
+                                  <ChevronDown className="h-3.5 w-3.5 text-navy-400" />
+                                ) : (
+                                  <ChevronRight className="h-3.5 w-3.5 text-navy-400" />
+                                )
+                              )}
+                              {h.ticker}
+                            </div>
+                            <div className="text-xs text-navy-400 truncate max-w-[220px]">
+                              {h.name}
+                            </div>
+                          </td>
+                          <td className="py-3 pr-4 text-xs text-navy-400">
+                            {h.sector || '—'}
+                          </td>
+                          <td className="py-3 pr-4 text-right tabular-nums">
+                            {h.isCash ? '—' : h.shares ?? '—'}
+                          </td>
+                          <td className="py-3 pr-4 text-right tabular-nums">
+                            {h.isCash ? '—' : fmtMoney(h.costBasis)}
+                          </td>
+                          <td className="py-3 pr-4 text-right tabular-nums">
+                            {h.isCash ? '—' : fmtMoney(h.price)}
+                          </td>
+                          <td className="py-3 pr-4 text-right tabular-nums font-semibold">
+                            {fmtMoney(marketValue)}
+                          </td>
+                          <td className="py-3 pr-4 text-right tabular-nums text-navy-400">
+                            {h.portfolioPct != null ? `${h.portfolioPct.toFixed(2)}%` : '—'}
+                          </td>
+                          <td
+                            className={`py-3 pr-4 text-right tabular-nums font-semibold ${
+                              h.isCash
+                                ? 'text-navy-400'
+                                : up
+                                ? 'text-emerald-600'
+                                : 'text-red-600'
+                            }`}
+                          >
+                            {h.isCash ? '—' : fmtMoney(h.dollarReturn)}
+                          </td>
+                          <td
+                            className={`py-3 pr-4 text-right tabular-nums font-semibold ${
+                              h.isCash
+                                ? 'text-navy-400'
+                                : up
+                                ? 'text-emerald-600'
+                                : 'text-red-600'
+                            }`}
+                          >
+                            {h.isCash ? '—' : fmtPct(h.percentReturn)}
+                          </td>
+                        </tr>
+                        {hasCashBreakdown && cashExpanded && (
+                          <>
+                            <CashSubRow
+                              ticker="BDA"
+                              name="GS Bank USA Deposit"
+                              sector="Cash and Cash Equivalents"
+                              balance={cashYield.bdaEndingBalance}
+                              interest={cashYield.bdaTotalInterest}
+                              rate={
+                                cashYield.bdaApy != null
+                                  ? `${(cashYield.bdaApy * 100).toFixed(2)}%`
+                                  : '—'
+                              }
+                            />
+                            <CashSubRow
+                              ticker="FGTXX"
+                              name="GS FS Government MMF — Institutional"
+                              sector="Cash and Cash Equivalents"
+                              balance={cashYield.fgtxxEndingBalance}
+                              interest={cashYield.fgtxxTotalInterest}
+                              rate={
+                                cashYield.fgtxxLatestYield != null
+                                  ? `${cashYield.fgtxxLatestYield.toFixed(2)}%`
+                                  : '—'
+                              }
+                            />
+                          </>
+                        )}
+                      </Fragment>
                     );
                   })}
                 </tbody>
@@ -807,6 +914,15 @@ export default function Portfolio() {
             holding to see company details.
           </div>
         </Card>
+
+        {cashYield && cashYield.daysSimulated > 0 && (
+          <CashInterestCard
+            data={cashYield}
+            canRefresh={isPmOrAbove}
+            canBackfill={isSuperAdmin}
+            onReload={reloadCashYield}
+          />
+        )}
       </div>
 
       <HoldingDetailModal
@@ -814,6 +930,57 @@ export default function Portfolio() {
         onClose={() => setSelectedHolding(null)}
       />
     </>
+  );
+}
+
+// Inline sub-row rendered under the CASH row when the user expands it.
+// Sits inside the same <tbody> as the rest of the holdings table, so it
+// inherits the column widths and divider styling — the only deltas are
+// a slightly lighter background and the indented ticker chevron.
+function CashSubRow({ ticker, name, sector, balance, interest, rate }) {
+  return (
+    <tr className="bg-gold-100/15">
+      <td className="py-2 pr-4 pl-6">
+        <div className="font-semibold text-navy">↳ {ticker}</div>
+        <div className="text-xs text-navy-400 truncate max-w-[220px]">{name}</div>
+      </td>
+      <td className="py-2 pr-4 text-xs text-navy-400">{sector || '—'}</td>
+      <td className="py-2 pr-4 text-right tabular-nums">—</td>
+      <td className="py-2 pr-4 text-right tabular-nums">—</td>
+      <td className="py-2 pr-4 text-right tabular-nums">—</td>
+      <td className="py-2 pr-4 text-right tabular-nums font-semibold">
+        {fmtMoney(balance, { cents: true })}
+      </td>
+      <td className="py-2 pr-4 text-right tabular-nums text-navy-400">—</td>
+      <td className="py-2 pr-4 text-right tabular-nums text-navy-400">
+        {fmtMoney(interest, { cents: true })}
+      </td>
+      <td className="py-2 pr-4 text-right tabular-nums text-navy-400">{rate}</td>
+    </tr>
+  );
+}
+
+// Mobile equivalent — compact card with the same fields the sub-row
+// shows on desktop.
+function CashSubCard({ ticker, name, balance, interest, rate }) {
+  return (
+    <div className="ml-3 rounded-lg border border-navy-100 bg-gold-100/15 px-3 py-2">
+      <div className="flex items-baseline justify-between gap-3">
+        <div className="min-w-0">
+          <div className="font-semibold text-navy">↳ {ticker}</div>
+          <div className="truncate text-[11px] text-navy-400">{name}</div>
+        </div>
+        <div className="text-right tabular-nums">
+          <div className="font-semibold text-navy">
+            {fmtMoney(balance, { cents: true })}
+          </div>
+          <div className="text-[10px] text-navy-400">{rate}</div>
+        </div>
+      </div>
+      <div className="mt-1 text-[11px] text-navy-400">
+        interest YTD {fmtMoney(interest, { cents: true })}
+      </div>
+    </div>
   );
 }
 

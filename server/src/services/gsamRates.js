@@ -13,6 +13,17 @@ const PDF_URL =
 // Without an Accept: application/pdf header, GSAM's web layer serves
 // an AEM HTML viewer wrapper instead of the actual PDF. With it, we
 // get the raw bytes.
+//
+// KNOWN ISSUE — May 2026: this endpoint returns HTTP 403 when called
+// from Render's egress IPs, even though the same request succeeds from
+// a local laptop. GSAM is rate-limiting or geo/IP-filtering datacenter
+// ranges. Until we find a workaround, the dashboard's "Refresh today's
+// yield" button surfaces the 403 verbatim and falls back to the most
+// recent stored yield. Fix candidates: proxy through an Akamai/CF
+// worker, send a more browser-like header set, or scrape from a
+// downstream mirror (Vanguard publishes a similar daily sheet that
+// indexes GS yields). The SEC N-MFP3 backfill is unaffected — that's
+// served directly by EDGAR with a generous UA policy.
 async function downloadPdf() {
   const res = await fetch(PDF_URL, {
     headers: {
