@@ -425,7 +425,11 @@ export default function Portfolio() {
       {/* Full-width editorial hero — big AUM + since-inception in a navy
           gradient card, same vibe as the Dashboard hero but page-scoped. */}
       <PortfolioHero
-        totalValue={totals.totalValue}
+        totalValue={
+          totals.totalValue != null
+            ? totals.totalValue + cashInterestEarned
+            : totals.totalValue
+        }
         lifetimeGainLoss={lifetimeGainLoss}
         lifetimeGainLossPct={lifetimeGainLossPct}
         cashValue={totals.cashValue}
@@ -748,7 +752,11 @@ export default function Portfolio() {
                 </span>
                 <div className="text-right">
                   <div className="font-bold text-navy tabular-nums">
-                    {fmtMoney(totals.totalValue)}
+                    {fmtMoney(
+                      totals.totalValue != null
+                        ? totals.totalValue + cashInterestEarned
+                        : totals.totalValue
+                    )}
                   </div>
                   <div
                     className={`text-xs font-semibold ${isUp ? 'text-emerald-600' : 'text-red-600'}`}
@@ -900,7 +908,11 @@ export default function Portfolio() {
                       Total ({holdings.length} positions)
                     </td>
                     <td className="py-3 pr-4 text-right font-bold text-navy tabular-nums">
-                      {fmtMoney(totals.totalValue)}
+                      {fmtMoney(
+                        totals.totalValue != null
+                          ? totals.totalValue + cashInterestEarned
+                          : totals.totalValue
+                      )}
                     </td>
                     <td />
                     <td
