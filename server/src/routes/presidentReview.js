@@ -6,20 +6,15 @@ import { auditReq } from '../services/audit.js';
 const router = Router();
 router.use(verifyJwt);
 
-// Nine statements rated 1-5 (Strongly Disagree -> Strongly Agree). Keyed
-// by q1..q9 in the stored JSON so the question wording can evolve without
-// touching the schema; the prompts themselves are the source of truth and
-// are shipped to the client alongside the form.
+// Three statements rated 1-5 (Strongly Disagree -> Strongly Agree).
+// Keyed by q1..qN in the stored JSON so the wording can evolve without
+// touching the schema; the prompts themselves are the source of truth
+// and are shipped to the client alongside the form.
 export const QUESTIONS = [
-  { id: 'q1', text: "Ran meetings effectively and used members' time well" },
-  { id: 'q2', text: 'Communicated clearly and on time (emails, announcements, group chats)' },
-  { id: 'q3', text: 'Followed through on commitments and deadlines' },
-  { id: 'q4', text: 'Was responsive when I had questions or ideas' },
-  { id: 'q5', text: 'Made members feel included and heard' },
-  { id: 'q6', text: 'Encouraged participation from people across experience levels' },
-  { id: 'q7', text: "Set a positive tone for the club's culture" },
-  { id: 'q8', text: 'Handled disagreements or pushback constructively' },
-  { id: 'q9', text: 'Helped me grow or learn something this year' },
+  { id: 'q1', text: 'Overall, my experience working with them this year was positive' },
+  { id: 'q2', text: 'They ran the role efficiently and kept things moving' },
+  { id: 'q3', text: 'They put in real effort and commitment across the year' },
+  { id: 'q4', text: 'Under their leadership, the club has been managed well' },
 ];
 
 const QUESTION_IDS = QUESTIONS.map((q) => q.id);

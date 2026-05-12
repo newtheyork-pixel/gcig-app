@@ -152,8 +152,10 @@ If something feels weird with auth on Safari, check that order in
   filtered out of the picker.
 - `server/src/routes/presidentReview.js` + `client/src/pages/PresidentReview.jsx` —
   end-of-year president performance review. Members rate each
-  President 1-5 on 9 statements (Strongly Disagree → Strongly Agree)
-  with an optional free-form comment. One row per reviewer × president
+  President 1-5 on a short list of statements (Strongly Disagree →
+  Strongly Agree) with an optional free-form comment. Current set is
+  four statements covering overall experience, efficiency, effort, and
+  whether the club is well-managed under their leadership. One row per reviewer × president
   × cycle (academic year e.g. `2025-2026`); resubmits upsert. Question
   list lives in the route file as `QUESTIONS` and is shipped to the
   client via `GET /api/president-review/config`. `GET /results` is

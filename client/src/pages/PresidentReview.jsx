@@ -129,7 +129,7 @@ export default function PresidentReview() {
     const draft = drafts[presidentId];
     if (!draft) return;
     if (!isComplete(presidentId)) {
-      setToast({ kind: 'error', text: 'Please answer all nine questions before submitting.' });
+      setToast({ kind: 'error', text: 'Please answer every question before submitting.' });
       return;
     }
     setSavingId(presidentId);
@@ -338,7 +338,7 @@ export default function PresidentReview() {
                   <div className="flex items-center justify-end gap-2 pt-1">
                     {!complete && (
                       <span className="text-xs text-navy-400">
-                        Answer all nine to submit
+                        Answer every question to submit
                       </span>
                     )}
                     <Button
@@ -365,7 +365,7 @@ export default function PresidentReview() {
 
 // Results view. One card per president: overall mean, per-question mean
 // with a 1-5 bar, plus an expandable list of every individual response
-// (reviewer, their nine ratings, optional comment, submitted date).
+// (reviewer, their ratings, optional comment, submitted date).
 // Super-admin only — gating happens at the API.
 function ResultsView({ results, loading, error, onRefresh }) {
   if (loading) {
@@ -485,7 +485,7 @@ function ResultsView({ results, loading, error, onRefresh }) {
 }
 
 // Per-president expandable list of every submitted review, with the
-// reviewer's name, their nine ratings rendered as compact pills, and any
+// reviewer's name, their ratings rendered as compact pills, and any
 // free-form comment they left. Collapsed by default so the aggregate
 // stays the headline; one click opens the whole roll.
 function IndividualResponses({ questions, responses }) {
@@ -558,7 +558,10 @@ function IndividualResponseRow({ questions, response }) {
         )}
       </div>
 
-      <div className="grid grid-cols-9 gap-1">
+      <div
+        className="grid gap-1"
+        style={{ gridTemplateColumns: `repeat(${Math.max(questions.length, 1)}, minmax(0, 1fr))` }}
+      >
         {questions.map((q, idx) => {
           const v = ratings[q.id];
           const has = Number.isInteger(v);
