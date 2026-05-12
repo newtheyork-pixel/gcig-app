@@ -124,6 +124,8 @@ import {
   getAnalystConsensus,
 } from '../services/marketData.js';
 import { getRecentFilings } from '../services/secFilings.js';
+import { computeCashInterest } from '../services/cashInterest.js';
+import { scrapeAndStoreDailyRates } from '../services/gsamRates.js';
 
 const router = Router();
 
@@ -856,6 +858,39 @@ router.get('/thesis-drift', requireRole('PortfolioManager'), async (_req, res) =
   } catch (err) {
     console.error('thesis-drift failed:', err.message);
     res.json({ alerts: [] });
+  }
+});
+
+// YTD interest earned on the club's cash position, split between the
+// FGTXX money-market sleeve and the Bank USA deposit sleeve. Open to
+// every logged-in member — the cash sleeve isn't sensitive and the
+// numbers are useful context for the dashboard.
+router.get('/cash-yield', async (_req, res) => {
+  try {
+    const data = await computeCashInterest();
+    // Strip the verbose per-day series for the default response; clients
+    // that want the daily breakdown can pass ?series=1.
+    const { series, ...summary } = data;
+    if (_req.query.series === '1') {
+      return res.json({ ...summary, series });
+    }
+    return res.json(summary);
+  } catch (err) {
+    console.error('cash-yield failed:', err.message);
+    res.status(500).json({ error: 'Failed to compute cash interest' });
+  }
+});
+
+// Manual trigger so an admin can force a re-scrape if the cron missed
+// a day or the PDF was published late. The daily cron handles the
+// happy path; this is the "fix it now" button.
+router.post('/cash-yield/refresh', requireRole('PortfolioManager'), async (_req, res) => {
+  try {
+    const rows = await scrapeAndStoreDailyRates(['FGTXX']);
+    res.json({ scraped: rows.length, latest: rows[0] || null });
+  } catch (err) {
+    console.error('gsam scrape failed:', err.message);
+    res.status(502).json({ error: err.message || 'Scrape failed' });
   }
 });
 

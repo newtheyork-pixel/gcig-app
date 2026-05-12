@@ -75,6 +75,10 @@ export default function Dashboard() {
   // FRED macro snapshot. Cheap (1h server cache). Hidden when
   // FRED_API_KEY isn't configured — endpoint returns configured: false.
   const [macro, setMacro] = useState(null);
+  // YTD interest earned by the cash position — FGTXX sleeve + Bank USA
+  // sleeve. Cheap (DB-only join). Hidden silently on error so the rest
+  // of the dashboard renders if the scrape hasn't run yet.
+  const [cashYield, setCashYield] = useState(null);
 
   useEffect(() => {
     api.get('/dashboard').then((r) => setDashboard(r.data)).catch(() => setDashboard({}));
@@ -82,6 +86,7 @@ export default function Dashboard() {
     api.get('/holdings/history').then((r) => setHistory(r.data || [])).catch(() => setHistory([]));
     api.get('/holdings/earnings').then((r) => setEarnings(r.data)).catch(() => setEarnings(null));
     api.get('/dashboard/macro').then((r) => setMacro(r.data)).catch(() => setMacro(null));
+    api.get('/holdings/cash-yield').then((r) => setCashYield(r.data)).catch(() => setCashYield(null));
     // DIR runs in parallel with the dashboard request. On cache miss
     // it can take 10-30s; on cache hit it's instant. The page
     // renders without waiting either way.
@@ -134,6 +139,10 @@ export default function Dashboard() {
 
       {macro?.configured && macro.indicators?.length > 0 && (
         <MacroStrip macro={macro} />
+      )}
+
+      {cashYield && cashYield.daysCounted > 0 && (
+        <CashInterestCard data={cashYield} />
       )}
 
       {/* DIR text comes from its own endpoint; on the very first load
@@ -498,6 +507,94 @@ function MacroStrip({ macro }) {
           );
         })}
       </div>
+    </div>
+  );
+}
+
+function CashInterestCard({ data }) {
+  const {
+    ytdFgtxxInterest,
+    ytdBankInterest,
+    ytdTotalInterest,
+    currentFgtxxBalance,
+    currentBankBalance,
+    latestFgtxxYield,
+    latestFgtxxYieldDate,
+    bankApy,
+    daysCounted,
+  } = data || {};
+
+  const yieldDateLabel = latestFgtxxYieldDate
+    ? format(new Date(latestFgtxxYieldDate), 'MMM d')
+    : null;
+
+  return (
+    <div className="rounded-2xl border border-navy-100 bg-white p-5 shadow-card md:p-7">
+      <div className="mb-4 flex flex-wrap items-baseline justify-between gap-3">
+        <div>
+          <div className="text-[10px] font-semibold uppercase tracking-[0.25em] text-gold-700">
+            Cash position
+          </div>
+          <div className="mt-1 font-serif text-2xl font-semibold text-navy">
+            Interest earned · YTD
+          </div>
+        </div>
+        <div className="text-right">
+          <div className="font-serif text-3xl font-semibold text-navy tabular-nums">
+            {fmtMoney(ytdTotalInterest, { cents: true })}
+          </div>
+          <div className="mt-1 text-[10px] uppercase tracking-wider text-navy-300">
+            across {daysCounted} {daysCounted === 1 ? 'day' : 'days'}
+          </div>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+        <SleeveTile
+          accent="gold"
+          label="FGTXX · GS Government MMF"
+          interest={ytdFgtxxInterest}
+          balance={currentFgtxxBalance}
+          rate={
+            latestFgtxxYield != null
+              ? `${latestFgtxxYield.toFixed(2)}% · 7-day`
+              : '—'
+          }
+          asOf={yieldDateLabel ? `as of ${yieldDateLabel}` : null}
+        />
+        <SleeveTile
+          accent="navy"
+          label="Bank USA Deposit"
+          interest={ytdBankInterest}
+          balance={currentBankBalance}
+          rate={bankApy != null ? `${(bankApy * 100).toFixed(2)}% · APY` : '—'}
+          asOf="flat sweep rate"
+        />
+      </div>
+    </div>
+  );
+}
+
+function SleeveTile({ accent, label, interest, balance, rate, asOf }) {
+  const dot = accent === 'gold' ? 'bg-gold' : 'bg-navy';
+  return (
+    <div className="rounded-xl border border-navy-100 bg-[#FAFBFE] px-4 py-3">
+      <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-navy-400">
+        <span className={`h-1.5 w-1.5 rounded-full ${dot}`} />
+        <span className="truncate">{label}</span>
+      </div>
+      <div className="mt-2 flex items-baseline justify-between gap-3">
+        <div className="font-serif text-xl font-semibold text-navy tabular-nums">
+          {fmtMoney(interest, { cents: true })}
+        </div>
+        <div className="text-right text-[11px] tabular-nums text-navy-400">
+          <div>bal {fmtMoney(balance)}</div>
+          <div>{rate}</div>
+        </div>
+      </div>
+      {asOf && (
+        <div className="mt-1 text-[10px] text-navy-300">{asOf}</div>
+      )}
     </div>
   );
 }

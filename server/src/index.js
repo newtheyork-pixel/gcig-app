@@ -33,6 +33,7 @@ import presidentReviewRoutes from './routes/presidentReview.js';
 import { ensureRecurringMeetings } from './services/recurringMeetings.js';
 import cron from 'node-cron';
 import { regenerate as regenerateDayInReview } from './services/dayInReview.js';
+import { scrapeAndStoreDailyRates } from './services/gsamRates.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -160,6 +161,26 @@ cron.schedule(
       })
       .catch((err) => {
         console.error('[cron] day-in-review failed:', err.message);
+      });
+  },
+  { timezone: 'America/New_York' }
+);
+
+// GSAM publishes the Daily Rates PDF each weekday evening (the rate
+// sheet itself is dated as-of the prior business day's close). Scraping
+// at 9pm ET catches the most recent publication without thrashing if
+// the file goes up late. Weekends fail gracefully — the PDF is just
+// yesterday's, so the upsert is a no-op.
+cron.schedule(
+  '0 21 * * *',
+  () => {
+    console.log('[cron] gsam-rates: scraping daily rate sheet');
+    scrapeAndStoreDailyRates(['FGTXX'])
+      .then((rows) => {
+        console.log(`[cron] gsam-rates: stored ${rows.length} row(s)`);
+      })
+      .catch((err) => {
+        console.error('[cron] gsam-rates failed:', err.message);
       });
   },
   { timezone: 'America/New_York' }

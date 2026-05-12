@@ -471,6 +471,28 @@ model PortfolioSnapshot {
   cashValue  Float?
 }
 
+// Daily yield snapshot for a Goldman Sachs money market fund. Scraped
+// once a day from the GSAM Daily Rates PDF. We store the trio of yields
+// the PDF publishes plus the dividend factor (the most precise way to
+// accrue per-day interest on a 2a-7 fund); the cash-interest calc keys
+// off `sevenDayCurrentYield` and falls back to `dividendFactor * 365`
+// when the yield column is missing.
+model MmfYieldSnapshot {
+  id                     Int      @id @default(autoincrement())
+  ticker                 String
+  // Effective date as reported on the rate sheet, not the scrape time.
+  // We dedupe per (ticker, date) so a re-scrape just refreshes the row.
+  date                   DateTime
+  sevenDayCurrentYield   Float?
+  sevenDayEffectiveYield Float?
+  oneDayYield            Float?
+  dividendFactor         Float?
+  scrapedAt              DateTime @default(now())
+
+  @@unique([ticker, date])
+  @@index([ticker, date])
+}
+
 // A single purchase lot for a ticker. We may buy the same stock at different
 // times and prices; tracking each lot gives us an exact cost basis instead
 // of relying on the sheet's rounded avg cost column.
