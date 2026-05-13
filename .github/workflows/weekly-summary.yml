@@ -1,0 +1,56 @@
+name: Weekly Website Summary
+
+# Runs at 9:00 AM EDT (13:00 UTC) every Monday.
+# Also runnable manually from the Actions tab.
+on:
+  schedule:
+    - cron: '0 13 * * 1'
+  workflow_dispatch:
+
+jobs:
+  summary:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Build weekly summary
+        id: build
+        run: |
+          SINCE=$(date -d '7 days ago' '+%Y-%m-%d')
+          TODAY=$(date '+%B %d, %Y')
+          WEEK_AGO=$(date -d '7 days ago' '+%B %d, %Y')
+
+          LOG=$(git log --since="$SINCE" \
+            --pretty=format:"%ad - %s" \
+            --date=format:"%a %b %d")
+
+          if [ -z "$LOG" ]; then
+            BODY="Hi - no changes were made to the GCIG website between $WEEK_AGO and $TODAY."
+          else
+            BODY="Hi - here is what changed on the GCIG website between $WEEK_AGO and $TODAY:
+
+$LOG
+
+This is an automated weekly summary."
+          fi
+
+          echo "body<<EOF" >> $GITHUB_OUTPUT
+          echo "$BODY" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+          echo "subject=GCIG Weekly Update: $WEEK_AGO - $TODAY" >> $GITHUB_OUTPUT
+
+      - name: Send email
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.gmail.com
+          server_port: 465
+          username: ${{ secrets.MAIL_USER }}
+          password: ${{ secrets.MAIL_PASS }}
+          subject: ${{ steps.build.outputs.subject }}
+          to: solinick@gcschool.org
+          from: GCIG Updates <${{ secrets.MAIL_USER }}>
+          body: ${{ steps.build.outputs.body }}
