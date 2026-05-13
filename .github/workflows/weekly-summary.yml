@@ -47,5 +47,5 @@ jobs:
           password: ${{ secrets.MAIL_PASS }}
           subject: ${{ steps.build.outputs.subject }}
           to: solinick@gcschool.org
-          from: GCIG Updates <${{ secrets.MAIL_USER }}>
+          from: GCIG Updates <sjo53@georgetown.edu>
           body: ${{ steps.build.outputs.body }}
