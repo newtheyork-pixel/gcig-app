@@ -50,9 +50,12 @@ async function fetchSeries(seriesId, limit = 2) {
 }
 
 // CPI is published monthly. Pull 13 months descending so we have the
-// latest reading + a 12-month-prior reading to compute YoY.
+// latest reading + a 12-month-prior reading to compute YoY. CPIAUCNS
+// (Not Seasonally Adjusted) is the series BLS headlines in the press
+// release, so the dashboard number matches whatever members see on
+// CNBC the morning of release.
 async function buildCpiYoY() {
-  const obs = await fetchSeries('CPIAUCSL', 13);
+  const obs = await fetchSeries('CPIAUCNS', 13);
   if (obs.length < 13) return null;
   // Some recent observations come back with value '.', meaning "not
   // yet published". Skip past those to find the latest real value.
@@ -76,7 +79,7 @@ async function buildCpiYoY() {
   if (!Number.isFinite(latestVal) || !Number.isFinite(yearAgoVal)) return null;
   const yoy = ((latestVal - yearAgoVal) / yearAgoVal) * 100;
   return {
-    id: 'CPIAUCSL',
+    id: 'CPIAUCNS',
     label: 'CPI YoY',
     unit: '%',
     value: yoy.toFixed(2),

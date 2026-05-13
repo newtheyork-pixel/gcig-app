@@ -27,8 +27,12 @@ class Series:
     label: str
 
 
-# Target — what we predict.
-TARGET = Series("CPIAUCSL", "CPI All-Items SA")
+# Target — what we predict. CPIAUCNS (Not Seasonally Adjusted) is the
+# series BLS headlines in the monthly press release, so members can
+# compare our forecast to whatever number CNBC quotes that morning.
+# The SA variant (CPIAUCSL) is more model-friendly but doesn't match
+# the public headline; subcomponent decomposition handles seasonality.
+TARGET = Series("CPIAUCNS", "CPI All-Items NSA")
 
 # Subcomponents — used by the hierarchical forecaster, not by the
 # default macro feature set. Aggregating component forecasts (Food,

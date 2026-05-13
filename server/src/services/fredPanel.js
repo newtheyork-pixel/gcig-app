@@ -13,7 +13,7 @@
 //   {
 //     fetchedAt: "2026-04-30T...",
 //     monthEnd:  ["2005-01-31", ...],          // ISO date strings
-//     series:    { CPIAUCSL: [..], DCOILWTICO: [..], ... }   // aligned arrays
+//     series:    { CPIAUCNS: [..], DCOILWTICO: [..], ... }   // aligned arrays
 //   }
 
 const FRED_BASE = 'https://api.stlouisfed.org/fred';
@@ -24,10 +24,12 @@ let cache = { at: 0, data: null };
 
 // Mirror of the Python fred.py series list — this is the SOURCE OF TRUTH.
 // If you change one side you must change the other.
-const TARGET_ID = 'CPIAUCSL';
+const TARGET_ID = 'CPIAUCNS';
 const SERIES = [
-  // Headline target
-  { id: 'CPIAUCSL',     frequency: 'M' },
+  // Headline target — Not Seasonally Adjusted so it matches the BLS
+  // press headline. Subcomponents below are still SA; the forecaster
+  // mixes them for hierarchical decomposition.
+  { id: 'CPIAUCNS',     frequency: 'M' },
   // CPI subcomponents — for hierarchical aggregation.
   { id: 'CPIUFDSL',     frequency: 'M' }, // Food
   { id: 'CPIENGSL',     frequency: 'M' }, // Energy
@@ -197,7 +199,7 @@ export async function getFredPanel({ forceFresh = false } = {}) {
     }
   }
   if (!seriesMaps[TARGET_ID]) {
-    throw new Error('FRED panel: target series CPIAUCSL missing');
+    throw new Error(`FRED panel: target series ${TARGET_ID} missing`);
   }
   const { monthEnd, series } = alignPanel(seriesMaps);
   const data = {
