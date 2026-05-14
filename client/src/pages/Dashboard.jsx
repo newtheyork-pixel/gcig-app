@@ -88,7 +88,7 @@ export default function Dashboard() {
     api.get('/holdings/earnings').then((r) => setEarnings(r.data)).catch(() => setEarnings(null));
     api.get('/dashboard/macro').then((r) => setMacro(r.data)).catch(() => setMacro(null));
     api
-      .get('/holdings/cash-yield', { params: { series: 1 } })
+      .get('/holdings/cash-yield')
       .then((r) => setCashYield(r.data))
       .catch(() => setCashYield(null));
     // DIR runs in parallel with the dashboard request. On cache miss
@@ -119,61 +119,19 @@ export default function Dashboard() {
 
   const firstName = user?.name?.split(' ')[0] || '';
 
-  // Pre-compute a sorted list of (date, cumulativeInterest) so each
-  // history snapshot can be lifted by the cash interest earned through
-  // that date — same convention as the headline number. Binary search
-  // keeps the per-point cost O(log N).
-  const interestCumulative = useMemo(() => {
-    const series = cashYield?.series;
-    if (!Array.isArray(series) || series.length === 0) return null;
-    const sorted = series
-      .map((s) => ({
-        ts: new Date(s.date).getTime(),
-        delta: Number(s.bdaInterest || 0) + Number(s.fgtxxInterest || 0),
-      }))
-      .sort((a, b) => a.ts - b.ts);
-    let running = 0;
-    for (const row of sorted) {
-      running += row.delta;
-      row.cum = running;
-    }
-    return sorted;
-  }, [cashYield]);
-
-  function interestThrough(date) {
-    if (!interestCumulative) return 0;
-    const target = date.getTime();
-    let lo = 0;
-    let hi = interestCumulative.length - 1;
-    let best = -1;
-    while (lo <= hi) {
-      const mid = (lo + hi) >> 1;
-      if (interestCumulative[mid].ts <= target) {
-        best = mid;
-        lo = mid + 1;
-      } else {
-        hi = mid - 1;
-      }
-    }
-    return best === -1 ? 0 : interestCumulative[best].cum;
-  }
-
-  // History in JS dates. Each snapshot is lifted by the cash interest
-  // earned through that date so the sparkline reflects what the fund
-  // would have looked like with the off-sheet BDA + FGTXX sleeves
-  // included. Older snapshots (pre-simulation start) carry zero
-  // interest, which is correct.
+  // History in JS dates. The server-side /holdings/history endpoint
+  // already lifts each snapshot's totalValue (and cashValue) by the
+  // cumulative BDA + FGTXX interest earned through that date, so the
+  // sparkline carries the off-sheet cash sleeves automatically — no
+  // client-side overlay needed.
   const normalizedHistory = useMemo(
     () =>
-      (history || []).map((s) => {
-        const date = new Date(s.date);
-        return {
-          date,
-          value: Number(s.totalValue || 0) + interestThrough(date),
-          cash: Number(s.cashValue || 0),
-        };
-      }),
-    [history, interestCumulative]
+      (history || []).map((s) => ({
+        date: new Date(s.date),
+        value: Number(s.totalValue || 0),
+        cash: Number(s.cashValue || 0),
+      })),
+    [history]
   );
 
   return (

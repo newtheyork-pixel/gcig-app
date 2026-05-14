@@ -124,7 +124,7 @@ import {
   getAnalystConsensus,
 } from '../services/marketData.js';
 import { getRecentFilings } from '../services/secFilings.js';
-import { computeCashInterest } from '../services/cashInterest.js';
+import { computeCashInterest, SIMULATION_START } from '../services/cashInterest.js';
 import { scrapeAndStoreDailyRates } from '../services/gsamRates.js';
 import { backfillFgtxxFromEdgar } from '../services/secNmfp.js';
 
@@ -597,6 +597,48 @@ router.get('/history', async (_req, res) => {
     orderBy: { date: 'asc' },
     take: 365,
   });
+
+  // The sheet has never tracked the off-sheet BDA + FGTXX interest accrual —
+  // it only mirrors the brokerage. So every historical snapshot's totalValue
+  // is short by however much cash interest had compounded by that date. Layer
+  // the cumulative accrual back on now so the Performance chart agrees with
+  // the Total Gain/Loss tile (which already folds in `cashInterestEarned`).
+  //
+  // The interest is cash, not equity — so we add it to BOTH totalValue and
+  // cashValue. Equity = totalValue - cashValue is unchanged, which keeps the
+  // Sharpe/drag math honest.
+  try {
+    const { series } = await computeCashInterest();
+    if (series.length > 0) {
+      const cumByIso = new Map();
+      let running = 0;
+      for (const day of series) {
+        running += (day.bdaInterest || 0) + (day.fgtxxInterest || 0);
+        cumByIso.set(day.date.toISOString().slice(0, 10), running);
+      }
+      const simDates = [...cumByIso.keys()].sort();
+      let simIdx = 0;
+      let cumAtIdx = 0;
+      const adjusted = snapshots.map((s) => {
+        const snapIso = s.date.toISOString().slice(0, 10);
+        while (simIdx < simDates.length && simDates[simIdx] <= snapIso) {
+          cumAtIdx = cumByIso.get(simDates[simIdx]);
+          simIdx++;
+        }
+        const accrued = s.date < SIMULATION_START ? 0 : cumAtIdx;
+        return {
+          ...s,
+          totalValue: s.totalValue + accrued,
+          cashValue: s.cashValue != null ? s.cashValue + accrued : null,
+          cashInterestAccrued: accrued,
+        };
+      });
+      return res.json(adjusted);
+    }
+  } catch (err) {
+    console.warn('history: cash-interest overlay failed, returning raw snapshots:', err.message);
+  }
+
   res.json(snapshots);
 });
 

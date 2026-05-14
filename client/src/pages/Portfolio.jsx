@@ -299,10 +299,17 @@ export default function Portfolio() {
   // Daily change on equity (invested capital) — cash parked isn't "performance."
   // Dollar change = total change (cash contributes ~0 to day-over-day movement).
   // Percent = dollar change / yesterday's equity base.
+  //
+  // The server lifts each historical snapshot by cumulative BDA + FGTXX
+  // interest, so snap.value carries interest-through-yesterday. The live
+  // total from /quotes is the raw sheet, so we lift it the same way before
+  // diffing — otherwise the daily delta would absorb a full day of
+  // back-dated cash interest and look badly negative.
   const dailyChange = useMemo(() => {
     if (!data || fullHistory.length < 2) return null;
-    const todayTotal = data.totals?.totalValue;
-    if (todayTotal == null) return null;
+    const liveTotal = data.totals?.totalValue;
+    if (liveTotal == null) return null;
+    const todayTotal = liveTotal + cashInterestEarned;
     const todayIso = new Date().toISOString().slice(0, 10);
     for (let i = fullHistory.length - 1; i >= 0; i--) {
       const snap = fullHistory[i];
@@ -316,7 +323,7 @@ export default function Portfolio() {
       return { diff, pct };
     }
     return null;
-  }, [data, fullHistory]);
+  }, [data, fullHistory, cashInterestEarned]);
 
   // Annualized Sharpe. Numerator comes from the Adjusted Return tile's
   // lifetime % (annualized by trading days in the sample) so the headline
