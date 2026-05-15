@@ -2,7 +2,7 @@ import { Router } from 'express';
 import rateLimit from 'express-rate-limit';
 import { verifyJwt, requireExecutive } from '../middleware/auth.js';
 import { llmChat } from '../services/llm.js';
-import { getHistory } from '../services/priceHistory.js';
+import { getHistory, getMovers } from '../services/priceHistory.js';
 
 // Terminal — AI-driven endpoints that back the /terminal workstation.
 // Quote/news/fundamentals data is reused from /api/holdings/* (already
@@ -67,6 +67,20 @@ router.get('/chart/:ticker', async (req, res) => {
     if (err.status === 404) return res.status(404).json({ error: 'Ticker not found' });
     console.error(`terminal/chart(${raw}) failed:`, err.message);
     res.status(502).json({ error: 'Chart fetch failed' });
+  }
+});
+
+// MOVR — biggest close-to-close movers across the tickers we cache.
+// Pure cache read (no upstream call on this path), so it's cheap and
+// safe to hit often. The universe grows as members chart tickers via
+// GP and the nightly price-cache cron keeps it warm.
+router.get('/movers', async (req, res) => {
+  try {
+    const data = await getMovers({ limit: req.query.limit });
+    res.json(data);
+  } catch (err) {
+    console.error('terminal/movers failed:', err.message);
+    res.status(502).json({ error: 'Movers fetch failed' });
   }
 });
 

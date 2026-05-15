@@ -397,6 +397,78 @@
   color: var(--term-fg);
 }
 
+/* MOVR — side-by-side gainers / losers ranking tables */
+[data-theme='terminal'] .term-movers {
+  display: flex;
+  gap: 18px;
+  flex-wrap: wrap;
+}
+
+[data-theme='terminal'] .term-movers-col {
+  flex: 1 1 280px;
+  min-width: 0;
+}
+
+[data-theme='terminal'] .term-movers-title {
+  color: var(--term-fg);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--term-border);
+  margin-bottom: 4px;
+}
+
+[data-theme='terminal'] .term-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+[data-theme='terminal'] .term-table th {
+  color: var(--term-fg-dim);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-weight: 500;
+  font-size: 10px;
+  text-align: left;
+  padding: 3px 6px;
+  border-bottom: 1px solid var(--term-border);
+}
+
+[data-theme='terminal'] .term-table td {
+  padding: 3px 6px;
+  border-bottom: 1px dotted var(--term-border);
+  color: var(--term-white);
+}
+
+[data-theme='terminal'] .term-table .num,
+[data-theme='terminal'] .term-table th.num {
+  text-align: right;
+}
+
+[data-theme='terminal'] .term-table .rank {
+  color: var(--term-fg-muted);
+}
+
+[data-theme='terminal'] .term-table .sym {
+  color: var(--term-fg);
+  font-weight: 700;
+}
+
+[data-theme='terminal'] .term-table tbody tr:hover td {
+  background: var(--term-bg-panel-hover);
+}
+
+[data-theme='terminal'] .term-table .num.pos {
+  color: var(--term-positive);
+}
+
+[data-theme='terminal'] .term-table .num.neg {
+  color: var(--term-negative);
+}
+
 /* BI (chat) panel */
 [data-theme='terminal'] .term-chat {
   display: flex;
