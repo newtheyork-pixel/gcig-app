@@ -15,6 +15,14 @@ const CONSENSUS_TTL_MS = 24 * 60 * 60 * 1000; // 24h
 const earningsCache = new Map(); // ticker → { at, data }
 const consensusCache = new Map(); // ticker → { at, data }
 
+// Peer sets barely move; quote-level snapshots want intraday-ish
+// freshness. A PEER load is focus + N peers, so the 15m snapshot
+// cache keeps repeated loads (and overlap with DES) off the budget.
+const PEERS_TTL_MS = 24 * 60 * 60 * 1000; // 24h
+const SNAPSHOT_TTL_MS = 15 * 60 * 1000; // 15m
+const peersCache = new Map(); // ticker → { at, data: string[] }
+const snapshotCache = new Map(); // ticker → { at, data }
+
 async function finnhubFetch(url) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), DEFAULT_TIMEOUT_MS);
@@ -166,5 +174,88 @@ export async function getAnalystConsensus(ticker) {
     data = null;
   }
   consensusCache.set(upper, { at: Date.now(), data });
+  return data;
+}
+
+// Finnhub /stock/peers — companies it groups in the same sub-industry
+// as the symbol. Free tier, 60 rpm; the set is stable, so a 24h cache
+// keeps this off the budget. Returns an uppercased ticker array
+// (Finnhub lists the symbol itself first); empty array on miss, which
+// is normal for ETFs and thinly-covered names.
+export async function getPeers(ticker) {
+  const key = process.env.FINNHUB_API_KEY;
+  if (!key || !ticker) return [];
+  const upper = String(ticker).toUpperCase();
+
+  const cached = peersCache.get(upper);
+  if (cached && Date.now() - cached.at < PEERS_TTL_MS) return cached.data;
+
+  const url =
+    `${FINNHUB_BASE}/stock/peers?symbol=${encodeURIComponent(upper)}` +
+    `&token=${encodeURIComponent(key)}`;
+
+  let data = [];
+  try {
+    const json = await finnhubFetch(url);
+    if (Array.isArray(json)) {
+      data = json
+        .map((t) => String(t || '').toUpperCase())
+        .filter((t) => /^[A-Z0-9.\-]{1,10}$/.test(t));
+    }
+  } catch (err) {
+    console.warn(`peers(${upper}) failed:`, err.message);
+    data = [];
+  }
+  peersCache.set(upper, { at: Date.now(), data });
+  return data;
+}
+
+// Compact one-ticker snapshot for the PEER grid — just the comparison
+// columns. Same Finnhub call set as the holding-detail fetch (quote +
+// profile2 + metric); profile/metric failures degrade to blanks
+// rather than sinking the row. Null only if the quote itself is
+// missing (unknown symbol). 15m cache shared across loads.
+export async function getPeerSnapshot(ticker) {
+  const key = process.env.FINNHUB_API_KEY;
+  if (!key || !ticker) return null;
+  const upper = String(ticker).toUpperCase();
+
+  const cached = snapshotCache.get(upper);
+  if (cached && Date.now() - cached.at < SNAPSHOT_TTL_MS) return cached.data;
+
+  let data = null;
+  try {
+    const tok = encodeURIComponent(key);
+    const sym = encodeURIComponent(upper);
+    const [q, profile, metric] = await Promise.all([
+      finnhubFetch(`${FINNHUB_BASE}/quote?symbol=${sym}&token=${tok}`),
+      finnhubFetch(`${FINNHUB_BASE}/stock/profile2?symbol=${sym}&token=${tok}`).catch(() => ({})),
+      finnhubFetch(`${FINNHUB_BASE}/stock/metric?symbol=${sym}&metric=all&token=${tok}`).catch(() => ({})),
+    ]);
+    // Finnhub returns c=0 for unknown symbols.
+    if (q && q.c) {
+      const m = metric?.metric || {};
+      const prev = q.pc || null;
+      data = {
+        ticker: upper,
+        name: profile?.name || upper,
+        price: q.c,
+        changePct: prev ? (q.c - prev) / prev : null,
+        marketCap:
+          profile?.marketCapitalization != null
+            ? profile.marketCapitalization * 1e6
+            : null,
+        trailingPE: m.peBasicExclExtraTTM ?? m.peInclExtraTTM ?? null,
+        forwardPE: m.peNormalizedAnnual ?? null,
+        dividendYield:
+          m.currentDividendYieldTTM != null ? m.currentDividendYieldTTM / 100 : null,
+        beta: m.beta ?? null,
+      };
+    }
+  } catch (err) {
+    console.warn(`peerSnapshot(${upper}) failed:`, err.message);
+    data = null;
+  }
+  snapshotCache.set(upper, { at: Date.now(), data });
   return data;
 }

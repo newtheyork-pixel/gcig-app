@@ -461,6 +461,17 @@
   background: var(--term-bg-panel-hover);
 }
 
+/* PEER pins the focused ticker on row 1 — tint it so the comparison
+   anchor reads at a glance. */
+[data-theme='terminal'] .term-table tbody tr.focus td {
+  background: rgba(255, 176, 0, 0.08);
+  border-bottom-color: var(--term-fg-muted);
+}
+
+[data-theme='terminal'] .term-table tbody tr.focus .sym {
+  color: var(--term-fg);
+}
+
 [data-theme='terminal'] .term-table .num.pos {
   color: var(--term-positive);
 }

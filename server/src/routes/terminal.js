@@ -4,6 +4,7 @@ import { verifyJwt, requireExecutive } from '../middleware/auth.js';
 import { llmChat } from '../services/llm.js';
 import { getHistory } from '../services/priceHistory.js';
 import { getPortfolioMovers } from '../services/sheetPortfolio.js';
+import { getPeers, getPeerSnapshot } from '../services/marketData.js';
 
 // Terminal — AI-driven endpoints that back the /terminal workstation.
 // Quote/news/fundamentals data is reused from /api/holdings/* (already
@@ -84,6 +85,56 @@ router.get('/movers', async (_req, res) => {
   } catch (err) {
     console.error('terminal/movers failed:', err.message);
     res.status(502).json({ error: 'Portfolio unavailable — could not read the positions sheet.' });
+  }
+});
+
+// PEER — sector peer comparison for the focused ticker. Finnhub's peer
+// set (free tier), then a compact fundamentals snapshot for the focus
+// plus up to 6 peers, fetched a few at a time so a single load never
+// bursts the 60 rpm budget. Snapshots cache 15m; a peer that fails
+// just renders blank cells rather than failing the panel. An empty
+// peer set (common for ETFs) still returns the focus row with a flag.
+router.get('/peers/:ticker', async (req, res) => {
+  const raw = String(req.params.ticker || '').trim().toUpperCase();
+  if (!raw || !/^[A-Z0-9.\-]{1,10}$/.test(raw)) {
+    return res.status(400).json({ error: 'Invalid ticker' });
+  }
+  try {
+    const list = await getPeers(raw);
+    const peers = [...new Set(list)].filter((t) => t !== raw).slice(0, 6);
+    const symbols = [raw, ...peers];
+
+    // Small concurrency window — never fire all snapshots at once.
+    const snaps = [];
+    const POOL = 4;
+    for (let i = 0; i < symbols.length; i += POOL) {
+      const batch = symbols.slice(i, i + POOL);
+      snaps.push(...(await Promise.all(batch.map((s) => getPeerSnapshot(s)))));
+    }
+
+    const rows = symbols.map((s, i) => {
+      const snap = snaps[i];
+      return {
+        ticker: s,
+        isFocus: s === raw,
+        name: snap?.name || s,
+        price: snap?.price ?? null,
+        changePct: snap?.changePct ?? null,
+        marketCap: snap?.marketCap ?? null,
+        trailingPE: snap?.trailingPE ?? null,
+        forwardPE: snap?.forwardPE ?? null,
+        dividendYield: snap?.dividendYield ?? null,
+        beta: snap?.beta ?? null,
+      };
+    });
+
+    if (peers.length === 0 && rows[0]?.price == null) {
+      return res.status(404).json({ error: 'No data for this ticker' });
+    }
+    res.json({ ticker: raw, count: peers.length, rows });
+  } catch (err) {
+    console.error(`terminal/peers(${raw}) failed:`, err.message);
+    res.status(502).json({ error: 'Peer comparison failed' });
   }
 });
 

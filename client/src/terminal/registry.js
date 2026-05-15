@@ -9,6 +9,7 @@ import News from './functions/News.jsx';
 import BloombergIntelligence from './functions/BloombergIntelligence.jsx';
 import Help from './functions/Help.jsx';
 import Movers from './functions/Movers.jsx';
+import Peers from './functions/Peers.jsx';
 import ComingSoon from './functions/ComingSoon.jsx';
 
 export const FUNCTIONS = [
@@ -48,7 +49,7 @@ export const FUNCTIONS = [
     component: Help,
   },
   { id: 'FA', label: 'Financial Analysis', help: 'Multi-year fundamentals deep dive.', requires: 'ticker', component: ComingSoon },
-  { id: 'PEER', label: 'Peers', help: 'Sector peer comparison table.', requires: 'ticker', component: ComingSoon },
+  { id: 'PEER', label: 'Peers', help: 'Sector peer comparison table.', requires: 'ticker', component: Peers },
   { id: 'WEI', label: 'World Indices', help: 'Global index snapshot.', requires: null, component: ComingSoon },
   { id: 'TOP', label: 'Top News', help: 'Market-wide top headlines.', requires: null, component: ComingSoon },
   { id: 'MOVR', label: 'Movers', help: 'Day\'s biggest gainers and losers.', requires: null, component: Movers },
