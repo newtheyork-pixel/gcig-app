@@ -2,6 +2,7 @@ import { Router } from 'express';
 import rateLimit from 'express-rate-limit';
 import { verifyJwt, requireExecutive } from '../middleware/auth.js';
 import { llmChat } from '../services/llm.js';
+import { getHistory } from '../services/priceHistory.js';
 
 // Terminal — AI-driven endpoints that back the /terminal workstation.
 // Quote/news/fundamentals data is reused from /api/holdings/* (already
@@ -43,6 +44,30 @@ const KNOWN_FUNCTIONS = [
 
 router.get('/functions', (_req, res) => {
   res.json({ functions: KNOWN_FUNCTIONS });
+});
+
+// Chart history. Reads from the PriceBar cache (services/priceHistory.js)
+// which lazy-backfills 5y on first sighting of a ticker and tops up daily
+// via the price-cache cron. Falls back to a direct Yahoo proxy if the
+// cache layer throws unexpectedly so a single bad row doesn't kill GP.
+router.get('/chart/:ticker', async (req, res) => {
+  const raw = String(req.params.ticker || '').trim().toUpperCase();
+  if (!raw || !/^[A-Z0-9.\-]{1,12}$/.test(raw)) {
+    return res.status(400).json({ error: 'Invalid ticker' });
+  }
+  const range = String(req.query.range || '6mo');
+  if (!/^(1mo|3mo|6mo|1y|2y|5y|10y|ytd|max)$/.test(range)) {
+    return res.status(400).json({ error: 'Invalid range' });
+  }
+  try {
+    const bars = await getHistory(raw, range);
+    const points = bars.map((b) => ({ t: new Date(b.date).getTime(), close: b.close }));
+    res.json({ ticker: raw, range, interval: '1d', points, _source: 'cache' });
+  } catch (err) {
+    if (err.status === 404) return res.status(404).json({ error: 'Ticker not found' });
+    console.error(`terminal/chart(${raw}) failed:`, err.message);
+    res.status(502).json({ error: 'Chart fetch failed' });
+  }
 });
 
 // AI brief for a single panel. Body: { ticker, function, context }
