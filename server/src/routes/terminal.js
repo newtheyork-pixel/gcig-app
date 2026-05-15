@@ -156,7 +156,10 @@ router.post('/annotate', async (req, res) => {
       content:
         'You are the AI annotation layer inside a Bloomberg-style terminal at GCIG, a student investment fund. ' +
         'For the panel and data below, write a 2–4 sentence brief that adds insight, not restatement. ' +
-        'Be concrete: cite numbers from the context when relevant. No bullet lists. No disclaimers. ' +
+        'Be concrete: cite numbers from the context when relevant. ' +
+        'IMPORTANT: Use ONLY the exact figures provided in the panel data. Never estimate, round differently, or invent numbers. ' +
+        'If a value is missing from the data, do not guess it. ' +
+        'No bullet lists. No disclaimers. ' +
         'If the context is empty or the data is missing, write a single line: "Data unavailable."',
     },
     {

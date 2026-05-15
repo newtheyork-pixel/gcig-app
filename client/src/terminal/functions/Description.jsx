@@ -62,12 +62,12 @@ export default function Description({ ticker }) {
     const context = [
       `Name: ${info.name || ticker}`,
       info.sector ? `Sector: ${info.sector}` : null,
-      info.price != null ? `Price: ${info.price}` : null,
-      info.previousClose != null ? `Prev close: ${info.previousClose}` : null,
-      info.marketCap != null ? `Market cap: ${info.marketCap}` : null,
-      info.trailingPE != null ? `P/E: ${info.trailingPE}` : null,
+      info.price != null ? `Price: $${fmt.price(info.price)}` : null,
+      info.previousClose != null ? `Prev close: $${fmt.price(info.previousClose)}` : null,
+      info.marketCap != null ? `Market cap: $${fmt.bigMoney(info.marketCap)}` : null,
+      info.trailingPE != null ? `P/E: ${fmt.ratio(info.trailingPE)}` : null,
       info.dividendYield != null ? `Dividend yield: ${(info.dividendYield * 100).toFixed(2)}%` : null,
-      info.fiftyTwoWeekLow != null ? `52w range: ${info.fiftyTwoWeekLow} – ${info.fiftyTwoWeekHigh}` : null,
+      info.fiftyTwoWeekLow != null ? `52w range: $${fmt.price(info.fiftyTwoWeekLow)} – $${fmt.price(info.fiftyTwoWeekHigh)}` : null,
       info.summary ? `Business: ${info.summary.slice(0, 1200)}` : null,
     ]
       .filter(Boolean)
