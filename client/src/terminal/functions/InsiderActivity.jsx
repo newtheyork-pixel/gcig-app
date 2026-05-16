@@ -257,8 +257,8 @@ export default function InsiderActivity({ ticker }) {
                 dot={false}
                 isAnimationActive={false}
               />
-              <Scatter dataKey="buyY" isAnimationActive={false} shape={BuyShape} />
-              <Scatter dataKey="sellY" isAnimationActive={false} shape={SellShape} />
+              <Scatter name="Buy" dataKey="buyY" isAnimationActive={false} shape={BuyShape} />
+              <Scatter name="Sell" dataKey="sellY" isAnimationActive={false} shape={SellShape} />
             </ComposedChart>
           </ResponsiveContainer>
         </div>
