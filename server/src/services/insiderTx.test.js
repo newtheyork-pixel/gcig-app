@@ -41,3 +41,67 @@ test('normalizeFinnhub falls back to filingDate when transactionDate absent', ()
   ]);
   assert.equal(row.date, '2025-06-01');
 });
+
+import { parseForm4Xml, roleFromRelationship } from './insiderTx.js';
+
+const FORM4_FIXTURE = `<?xml version="1.0"?>
+<ownershipDocument>
+  <reportingOwner>
+    <reportingOwnerId><rptOwnerName>Huang Jen-Hsun</rptOwnerName></reportingOwnerId>
+    <reportingOwnerRelationship>
+      <isDirector>1</isDirector>
+      <isOfficer>1</isOfficer>
+      <officerTitle>President and CEO</officerTitle>
+      <isTenPercentOwner>0</isTenPercentOwner>
+    </reportingOwnerRelationship>
+  </reportingOwner>
+  <nonDerivativeTable>
+    <nonDerivativeTransaction>
+      <transactionDate><value>2026-05-14</value></transactionDate>
+      <transactionCoding><transactionCode>S</transactionCode></transactionCoding>
+      <transactionAmounts>
+        <transactionShares><value>100000</value></transactionShares>
+        <transactionPricePerShare><value>123.45</value></transactionPricePerShare>
+      </transactionAmounts>
+    </nonDerivativeTransaction>
+    <nonDerivativeTransaction>
+      <transactionDate><value>2026-05-13</value></transactionDate>
+      <transactionCoding><transactionCode>P</transactionCode></transactionCoding>
+      <transactionAmounts>
+        <transactionShares><value>2000</value></transactionShares>
+        <transactionPricePerShare><value>120.00</value></transactionPricePerShare>
+      </transactionAmounts>
+    </nonDerivativeTransaction>
+  </nonDerivativeTable>
+</ownershipDocument>`;
+
+test('roleFromRelationship prefers officer title, then director, then 10%', () => {
+  assert.equal(
+    roleFromRelationship('<isDirector>1</isDirector><isOfficer>1</isOfficer><officerTitle>CFO</officerTitle>'),
+    'CFO'
+  );
+  assert.equal(roleFromRelationship('<isDirector>1</isDirector><isOfficer>0</isOfficer>'), 'Director');
+  assert.equal(roleFromRelationship('<isTenPercentOwner>1</isTenPercentOwner>'), '10% Owner');
+  assert.equal(roleFromRelationship('<isOfficer>1</isOfficer>'), 'Officer');
+  assert.equal(roleFromRelationship(''), null);
+});
+
+test('parseForm4Xml extracts owner, role, and each transaction', () => {
+  const rows = parseForm4Xml(FORM4_FIXTURE);
+  assert.equal(rows.length, 2);
+  assert.equal(rows[0].name, 'Huang Jen-Hsun');
+  assert.equal(rows[0].role, 'President and CEO');
+  assert.equal(rows[0].date, '2026-05-14');
+  assert.equal(rows[0].code, 'S');
+  assert.equal(rows[0].isSell, true);
+  assert.equal(rows[0].shares, 100000);
+  assert.equal(rows[0].price, 123.45);
+  assert.equal(rows[0].value, 12345000);
+  assert.equal(rows[1].code, 'P');
+  assert.equal(rows[1].isBuy, true);
+});
+
+test('parseForm4Xml returns [] on garbage', () => {
+  assert.deepEqual(parseForm4Xml('not xml'), []);
+  assert.deepEqual(parseForm4Xml(''), []);
+});
