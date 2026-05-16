@@ -114,3 +114,44 @@ export function parseBoard(sections) {
     };
   });
 }
+
+const NUM = (s) => Number(String(s).replace(/[,$]/g, ''));
+
+// SCT canonical column order: Salary, Bonus, Stock, Option, (Non-equity
+// + change + other collapsed), Total. We read the named-officer row as:
+// <Name> <Title> <Year> n1 n2 n3 n4 n5 ... <Total = last/largest>.
+// Robust to extra trailing columns by treating the LAST number as Total.
+// Built from TOKEN so all-caps heading words (SUMMARY, COMPENSATION) and
+// period-terminated abbreviations (Corp.) can never start a name match.
+const COMP_ROW_RE = new RegExp(
+  `(${TOKEN}(?:\\s+(?:[A-Z]\\.|${TOKEN})){1,3})\\s+(Chief [A-Za-z ]+Officer|President|General Counsel|Executive Chairman)\\s+(\\d{4})\\s+([\\d,]+(?:\\s+[\\d,]+){3,7})`,
+  'g'
+);
+
+export function parseComp(sections) {
+  const text = sections?.comp || '';
+  const rows = [];
+  let m;
+  COMP_ROW_RE.lastIndex = 0;
+  while ((m = COMP_ROW_RE.exec(text)) !== null) {
+    const nums = m[4].trim().split(/\s+/).map(NUM).filter((n) => Number.isFinite(n));
+    if (nums.length < 4) continue;
+    const total = nums[nums.length - 1];
+    if (!total) continue;
+    const [salary, , stock, option] = nums;
+    const pct = (v) => (v == null ? null : Math.round((v / total) * 100));
+    rows.push({
+      name: m[1].replace(/\s+/g, ' ').trim(),
+      title: m[2].trim(),
+      total,
+      salaryPct: pct(salary),
+      stockPct: pct(stock),
+      optionPct: pct(option),
+      otherPct: Math.max(
+        0,
+        100 - [salary, stock, option].reduce((a, v) => a + Math.round(((v || 0) / total) * 100), 0)
+      ),
+    });
+  }
+  return { rows };
+}

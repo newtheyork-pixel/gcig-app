@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseLeadership, parseBoard } from './governanceParsers.js';
+import { parseLeadership, parseBoard, parseComp } from './governanceParsers.js';
 
 const SECTIONS = {
   execBios:
@@ -112,4 +112,24 @@ test('parseBoard excludes lowercase connector fragments from otherBoards', () =>
   // "also advises several private startups" (lowercase, no "committee"
   // keyword) would wrongly be captured as an other board.
   assert.deepEqual(js.otherBoards, ['Globex Corporation']);
+});
+
+const COMP_SECTION = {
+  comp:
+    'SUMMARY COMPENSATION TABLE ' +
+    'Jane A. Doe Chief Executive Officer 2025 1,000,000 0 5,000,000 3,000,000 1,000,000 10,000,000 ' +
+    'John B. Smith Chief Financial Officer 2025 600,000 0 1,400,000 0 0 2,000,000',
+};
+
+test('parseComp derives pay-mix percentages from the SCT', () => {
+  const { rows } = parseComp(COMP_SECTION);
+  const jane = rows.find((r) => /Jane A\. Doe/.test(r.name));
+  assert.equal(jane.total, 10000000);
+  assert.equal(jane.salaryPct, 10);
+  assert.equal(jane.stockPct, 50);
+  assert.equal(jane.optionPct, 30);
+});
+
+test('parseComp returns empty rows on missing section', () => {
+  assert.deepEqual(parseComp({}), { rows: [] });
 });
