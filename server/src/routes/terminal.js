@@ -3,7 +3,9 @@ import rateLimit from 'express-rate-limit';
 import { verifyJwt, requireExecutive } from '../middleware/auth.js';
 import { llmChat } from '../services/llm.js';
 import { getHistory } from '../services/priceHistory.js';
-import { getPortfolioMovers } from '../services/sheetPortfolio.js';
+import { getPortfolioMovers, getSheetPortfolio } from '../services/sheetPortfolio.js';
+import { getProxyStatement } from '../services/proxyStatement.js';
+import { parseLeadership, parseBoard, parseComp, buildNetwork } from '../services/governanceParsers.js';
 import { getPeers, getPeerSnapshot } from '../services/marketData.js';
 import { getNewsForTicker } from '../services/news.js';
 import { getWorldIndices, REGION_ORDER } from '../services/worldIndices.js';
@@ -40,6 +42,7 @@ const KNOWN_FUNCTIONS = [
   { id: 'FA', label: 'Financial Analysis', summary: 'Multi-year fundamentals deep dive.' },
   { id: 'PEER', label: 'Peers', summary: 'Sector peer comparison table.' },
   { id: 'INSDR', label: 'Insider Activity', summary: 'Form 4 insider buys/sells overlaid on the price chart.' },
+  { id: 'MGMT', label: 'Management & Board', summary: 'CEO, executives, board, compensation, and interlocking-board network from the latest DEF 14A.' },
   { id: 'BI', label: 'Bloomberg Intelligence', summary: 'Free-form research chat with workspace context.' },
   { id: 'WEI', label: 'World Equity Indices', summary: 'Global index snapshot.' },
   { id: 'TOP', label: 'Top News', summary: 'Market-wide top headlines.' },
@@ -90,6 +93,35 @@ router.get('/insiders/:ticker', async (req, res) => {
   } catch (err) {
     console.error(`terminal/insiders(${raw}) failed:`, err.message);
     res.status(502).json({ error: 'Insider data unavailable' });
+  }
+});
+
+// MGMT — leadership, board, comp and interlocking-board network for a
+// ticker, all from its latest DEF 14A. Every section is best-effort
+// and independently nullable; an unparseable proxy is a normal 200.
+router.get('/governance/:ticker', async (req, res) => {
+  const raw = String(req.params.ticker || '').trim().toUpperCase();
+  if (!raw || !/^[A-Z0-9.\-]{1,12}$/.test(raw)) {
+    return res.status(400).json({ error: 'Invalid ticker' });
+  }
+  try {
+    const proxy = await getProxyStatement(raw);
+    const { ceo, execs } = parseLeadership(proxy.sections);
+    const board = parseBoard(proxy.sections);
+    const comp = parseComp(proxy.sections);
+    let holdings = [];
+    try {
+      const hp = await getSheetPortfolio();
+      const arr = Array.isArray(hp) ? hp : (hp?.holdings || []);
+      holdings = arr.map((h) => ({ ticker: h.ticker || '', name: h.name || '' }));
+    } catch {
+      holdings = [];
+    }
+    const network = buildNetwork(raw, board, holdings);
+    res.json({ ticker: raw, asOf: proxy.filedAt, source: proxy._source, ceo, execs, board, comp, network });
+  } catch (err) {
+    console.error(`terminal/governance(${raw}) failed:`, err.message);
+    res.status(502).json({ error: 'Governance data unavailable' });
   }
 });
 
