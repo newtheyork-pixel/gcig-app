@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseLeadership, parseBoard, parseComp } from './governanceParsers.js';
+import { parseLeadership, parseBoard, parseComp, buildNetwork } from './governanceParsers.js';
 
 const SECTIONS = {
   execBios:
@@ -162,4 +162,25 @@ test('parseComp skips rows with too few numbers or zero total', () => {
       'Jane A. Doe President 2025 0 0 0 0 0 0',
   });
   assert.deepEqual(b.rows, []); // total (last number) is 0 → skipped
+});
+
+test('buildNetwork links directors whose other boards are also fund holdings', () => {
+  const board = [
+    { name: 'Maria Lopez', otherBoards: ['Globex Corporation', 'Initech Inc'] },
+    { name: 'David Chen', otherBoards: ['Soylent Corp'] },
+  ];
+  const holdings = [
+    { ticker: 'GLBX', name: 'Globex Corporation' },
+    { ticker: 'INIT', name: 'Initech Inc' },
+    { ticker: 'AAPL', name: 'Apple Inc' },
+  ];
+  const n = buildNetwork('FOCUS', board, holdings);
+  const pairs = n.edges.map((e) => `${e.person}|${e.a}|${e.b}`).sort();
+  assert.deepEqual(pairs, ['Maria Lopez|FOCUS|GLBX', 'Maria Lopez|FOCUS|INIT'].sort());
+  assert.ok(n.nodes.includes('FOCUS') && n.nodes.includes('GLBX'));
+});
+
+test('buildNetwork empty when no overlap / bad input', () => {
+  assert.deepEqual(buildNetwork('X', [], []), { nodes: [], edges: [] });
+  assert.deepEqual(buildNetwork('X', null, null), { nodes: [], edges: [] });
 });

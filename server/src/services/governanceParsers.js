@@ -166,3 +166,38 @@ export function parseComp(sections) {
   }
   return { rows };
 }
+
+// Interlocking directorates, bounded to the fund's own holdings: a
+// director of the focus company who also sits on the board of another
+// name the fund holds is an edge focus<->thatHolding. Name match is
+// loose (case-insensitive substring either direction) — proxy company
+// names rarely match the sheet exactly.
+function holdingFor(name, holdings) {
+  const n = String(name || '').toLowerCase().replace(/[.,]/g, '').trim();
+  if (!n) return null;
+  for (const h of holdings) {
+    const hn = String(h.name || '').toLowerCase().replace(/[.,]/g, '').trim();
+    if (hn && (hn.includes(n) || n.includes(hn))) return h.ticker;
+  }
+  return null;
+}
+
+export function buildNetwork(focusTicker, board, holdings) {
+  const f = String(focusTicker || '').toUpperCase();
+  if (!f || !Array.isArray(board) || !Array.isArray(holdings)) {
+    return { nodes: [], edges: [] };
+  }
+  const nodes = new Set();
+  const edges = [];
+  for (const d of board) {
+    for (const ob of d?.otherBoards || []) {
+      const tk = holdingFor(ob, holdings);
+      if (tk && tk !== f) {
+        nodes.add(f);
+        nodes.add(tk);
+        edges.push({ person: d.name, a: f, b: tk });
+      }
+    }
+  }
+  return { nodes: [...nodes], edges };
+}
