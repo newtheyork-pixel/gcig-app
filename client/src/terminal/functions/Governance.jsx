@@ -175,7 +175,7 @@ export default function Governance({ ticker }) {
       )}
 
       <div style={{ color: 'var(--term-fg-muted)', fontSize: 11 }}>
-        Parsed best-effort from the latest DEF 14A · fields may be partial for some filers.
+        Best-effort DEF 14A parsing. Large multi-section proxies (common for big-cap names) may show empty Leadership/Board/Comp tabs — structure-aware parsing is a planned follow-up.
       </div>
     </div>
   );

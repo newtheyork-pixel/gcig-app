@@ -86,7 +86,14 @@ export async function getRecentFilings(ticker, { limit = 10 } = {}) {
   const upper = String(ticker || '').toUpperCase();
   if (!upper) return [];
 
-  const cached = filingsCache.get(upper);
+  // The cache key includes the effective cap so a limit-25 warm (e.g.
+  // INSDR's SEC fallback) can't satisfy — or poison — a limit-150 read
+  // (proxyStatement's DEF 14A search). Each caller's cap gets its own
+  // entry; they never collide.
+  const cap = Math.max(25, limit);
+  const cacheKey = `${upper}:${cap}`;
+
+  const cached = filingsCache.get(cacheKey);
   if (cached && Date.now() - cached.at < FILINGS_TTL_MS) {
     return cached.data.slice(0, limit);
   }
@@ -95,7 +102,7 @@ export async function getRecentFilings(ticker, { limit = 10 } = {}) {
   if (!info) {
     // Cache the negative result so we don't keep retrying the lookup
     // for unknown tickers (e.g. cash labels, illiquid foreign issues).
-    filingsCache.set(upper, { at: Date.now(), data: [] });
+    filingsCache.set(cacheKey, { at: Date.now(), data: [] });
     return [];
   }
 
@@ -108,8 +115,8 @@ export async function getRecentFilings(ticker, { limit = 10 } = {}) {
       // Store enough to satisfy the caller's limit (default 25). Active
       // large-caps push annual filings like DEF 14A well past the first 25
       // rows behind constant 8-Ks/Form 4s, so MGMT needs a deeper window.
-      const cap = Math.min(r.accessionNumber.length, Math.max(25, limit));
-      for (let i = 0; i < cap; i++) {
+      const storedCap = Math.min(r.accessionNumber.length, cap);
+      for (let i = 0; i < storedCap; i++) {
         const accession = r.accessionNumber[i];
         if (!accession) continue;
         const accessionNoDashes = accession.replace(/-/g, '');
@@ -136,7 +143,7 @@ export async function getRecentFilings(ticker, { limit = 10 } = {}) {
     console.warn(`SEC filings(${upper}) failed:`, err.message);
   }
 
-  filingsCache.set(upper, { at: Date.now(), data: filings });
+  filingsCache.set(cacheKey, { at: Date.now(), data: filings });
   return filings.slice(0, limit);
 }
 

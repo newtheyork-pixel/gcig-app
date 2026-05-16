@@ -164,3 +164,4 @@ never-throws contract of `worldIndices.js`/`insiderTx.js`.
   patterns and accepts partial recall — acceptable for the bounded
   Network use.
 - `KNOWN_FUNCTIONS`/registry ordering: place `MGMT` adjacent to `INSDR`.
+- VERIFIED LIMITATION (post-build, live smoke AAPL/KO 2026): splitSections anchors on TOC/cross-reference occurrences in large multi-section proxies, so Leadership/Board/Comp render empty for many large-cap filers. Positional heuristics were empirically shown insufficient; the real fix is structure-aware section/table detection (column-header signature for the SCT; "Name, age NN" record-density for directors; split on HTML structure before flattening) — a dedicated follow-up sub-project, not a tweak.

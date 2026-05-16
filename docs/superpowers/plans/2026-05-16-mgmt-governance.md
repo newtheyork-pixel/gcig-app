@@ -1070,3 +1070,7 @@ Report raw output. Honest: `src:"sec"` + section keys → spine works; `src:null
 **3. Type consistency:** Section keys (`board`, `dirComp`, `execBios`, `comp`) are produced by `splitSections` (Task 2) and consumed by parsers: `parseLeadership` reads `execBios` (T3), `parseBoard` reads `board` (T4), `parseComp` reads `comp` (T5) — all match. Payload `{ticker,asOf,source,ceo,execs,board,comp,network}` defined in Task 7, consumed verbatim in Task 8. `network` shape `{nodes,edges:[{person,a,b}]}` consistent T6↔T8. `comp` shape `{rows:[{name,title,total,salaryPct,stockPct,optionPct,otherPct}]}` consistent T5↔T8. `dirComp` section is split but unused by v1 parsers — acceptable (director-pay is not in scope; no task claims it).
 
 No issues found.
+
+## Open items
+
+- VERIFIED LIMITATION (post-build, live smoke AAPL/KO 2026): splitSections anchors on TOC/cross-reference occurrences in large multi-section proxies, so Leadership/Board/Comp render empty for many large-cap filers. Positional heuristics were empirically shown insufficient; the real fix is structure-aware section/table detection (column-header signature for the SCT; "Name, age NN" record-density for directors; split on HTML structure before flattening) — a dedicated follow-up sub-project, not a tweak.
