@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import api from '../../api/client.js';
 
 // MGMT — leadership / board / comp / network from the latest DEF 14A.
@@ -18,6 +18,7 @@ export default function Governance({ ticker }) {
   useEffect(() => {
     if (!ticker) return;
     let cancelled = false;
+    setTab('Leadership');
     setLoading(true);
     setErr(null);
     setData(null);
@@ -116,38 +117,44 @@ export default function Governance({ ticker }) {
           )}
 
           {tab === 'Board' && (
-            <table className="term-table">
-              <thead><tr><th>Director</th><th className="num">Age</th><th className="num">Since</th><th>Committees</th><th>Other public boards</th></tr></thead>
-              <tbody>
-                {(data.board || []).map((d, i) => (
-                  <tr key={i}>
-                    <td className="sym">{d.name}</td>
-                    <td className="num">{dash(d.age)}</td>
-                    <td className="num">{dash(d.since)}</td>
-                    <td>{d.committees?.length ? d.committees.join(', ') : '—'}</td>
-                    <td>{d.otherBoards?.length ? d.otherBoards.join(', ') : '—'}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            <div>
+              <table className="term-table">
+                <thead><tr><th>Director</th><th className="num">Age</th><th className="num">Since</th><th>Committees</th><th>Other public boards</th></tr></thead>
+                <tbody>
+                  {(data.board || []).map((d, i) => (
+                    <tr key={i}>
+                      <td className="sym">{d.name}</td>
+                      <td className="num">{dash(d.age)}</td>
+                      <td className="num">{dash(d.since)}</td>
+                      <td>{d.committees?.length ? d.committees.join(', ') : '—'}</td>
+                      <td>{d.otherBoards?.length ? d.otherBoards.join(', ') : '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {(data.board || []).length === 0 && <div className="term-loading">No board data parsed.</div>}
+            </div>
           )}
 
           {tab === 'Comp' && (
-            <table className="term-table">
-              <thead><tr><th>Name</th><th className="num">Salary%</th><th className="num">Stock%</th><th className="num">Option%</th><th className="num">Other%</th><th className="num">Total</th></tr></thead>
-              <tbody>
-                {(data.comp?.rows || []).map((r, i) => (
-                  <tr key={i}>
-                    <td className="sym">{r.name}</td>
-                    <td className="num">{dash(r.salaryPct)}</td>
-                    <td className="num">{dash(r.stockPct)}</td>
-                    <td className="num">{dash(r.optionPct)}</td>
-                    <td className="num">{dash(r.otherPct)}</td>
-                    <td className="num">{r.total == null ? '—' : `$${Number(r.total).toLocaleString()}`}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            <div>
+              <table className="term-table">
+                <thead><tr><th>Name</th><th className="num">Salary%</th><th className="num">Stock%</th><th className="num">Option%</th><th className="num">Other%</th><th className="num">Total</th></tr></thead>
+                <tbody>
+                  {(data.comp?.rows || []).map((r, i) => (
+                    <tr key={i}>
+                      <td className="sym">{r.name}</td>
+                      <td className="num">{dash(r.salaryPct)}</td>
+                      <td className="num">{dash(r.stockPct)}</td>
+                      <td className="num">{dash(r.optionPct)}</td>
+                      <td className="num">{dash(r.otherPct)}</td>
+                      <td className="num">{r.total == null ? '—' : `$${Number(r.total).toLocaleString()}`}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {(data.comp?.rows || []).length === 0 && <div className="term-loading">No compensation data parsed.</div>}
+            </div>
           )}
 
           {tab === 'Network' && (
