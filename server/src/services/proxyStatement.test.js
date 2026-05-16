@@ -86,7 +86,7 @@ test('getProxyStatement parses + caches a found proxy', async () => {
   const a = await getProxyStatement('AAA', opts);
   const b = await getProxyStatement('AAA', opts);
   assert.equal(b._source, 'sec');
-  assert.deepEqual(b, a);
+  assert.strictEqual(b, a); // cache returns the same payload reference
   assert.equal(a._source, 'sec');
   assert.match(a.sections.board, /Jane Doe age 55/);
   assert.equal(docCalls, 1);
