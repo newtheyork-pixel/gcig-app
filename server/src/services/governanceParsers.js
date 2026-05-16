@@ -138,8 +138,22 @@ export function parseComp(sections) {
     if (nums.length < 4) continue;
     const total = nums[nums.length - 1];
     if (!total) continue;
+    // SCT canonical order is Salary, Bonus, Stock, Option, NonEquity,
+    // Pension, AllOther, Total. htmlToText drops $0/— cells, so a row
+    // with <6 numbers can no longer be positionally trusted — emit the
+    // total but null the mix rather than fabricate (e.g. optionPct=100).
+    const safePcts = nums.length >= 6;
     const [salary, , stock, option] = nums;
-    const pct = (v) => (v == null ? null : Math.round((v / total) * 100));
+    const pct = (v) =>
+      safePcts && v != null ? Math.round((v / total) * 100) : null;
+    const otherPct = safePcts
+      ? Math.max(
+          0,
+          Math.round(
+            ((total - (salary || 0) - (stock || 0) - (option || 0)) / total) * 100
+          )
+        )
+      : null;
     rows.push({
       name: m[1].replace(/\s+/g, ' ').trim(),
       title: m[2].trim(),
@@ -147,10 +161,7 @@ export function parseComp(sections) {
       salaryPct: pct(salary),
       stockPct: pct(stock),
       optionPct: pct(option),
-      otherPct: Math.max(
-        0,
-        100 - [salary, stock, option].reduce((a, v) => a + Math.round(((v || 0) / total) * 100), 0)
-      ),
+      otherPct,
     });
   }
   return { rows };

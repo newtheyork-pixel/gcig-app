@@ -133,3 +133,33 @@ test('parseComp derives pay-mix percentages from the SCT', () => {
 test('parseComp returns empty rows on missing section', () => {
   assert.deepEqual(parseComp({}), { rows: [] });
 });
+
+test('parseComp nulls the mix (keeps total) when SCT cells collapsed (<6 numbers)', () => {
+  // Bonus + Option + NonEquity were $0 and vanished from the text:
+  // only Salary, Stock, AllOther, Total survive (4 numbers).
+  const { rows } = parseComp({
+    comp:
+      'SUMMARY COMPENSATION TABLE ' +
+      'Jane A. Doe Chief Executive Officer 2025 1,000,000 5,000,000 200,000 6,200,000',
+  });
+  const jane = rows.find((r) => /Jane A\. Doe/.test(r.name));
+  assert.ok(jane, 'row should still be emitted');
+  assert.equal(jane.total, 6200000);          // total still trustworthy
+  assert.equal(jane.salaryPct, null);          // mix not fabricated
+  assert.equal(jane.stockPct, null);
+  assert.equal(jane.optionPct, null);
+  assert.equal(jane.otherPct, null);
+});
+
+test('parseComp skips rows with too few numbers or zero total', () => {
+  const a = parseComp({
+    comp: 'SUMMARY COMPENSATION TABLE Jane A. Doe President 2025 1,000 2,000',
+  });
+  assert.deepEqual(a.rows, []); // 2 numbers < the {3,7} repetition floor → no match
+  const b = parseComp({
+    comp:
+      'SUMMARY COMPENSATION TABLE ' +
+      'Jane A. Doe President 2025 0 0 0 0 0 0',
+  });
+  assert.deepEqual(b.rows, []); // total (last number) is 0 → skipped
+});
