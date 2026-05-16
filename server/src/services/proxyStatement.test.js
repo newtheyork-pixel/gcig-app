@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { pickLatestDef14A } from './proxyStatement.js';
+import { pickLatestDef14A, htmlToText, splitSections, getProxyStatement, _resetProxyCache } from './proxyStatement.js';
 
 const FILINGS = [
   { accessionNumber: '0000000000-26-000002', form: 'DEFA14A', filingDate: '2026-04-02', primaryDocument: 'extra.htm', url: 'https://x/extra.htm' },
@@ -30,4 +30,47 @@ test('xsl strip handles realistic segment and leaves raw URLs unchanged', () => 
     { form: 'DEF 14A', filingDate: '2026-01-01', url: 'https://www.sec.gov/Archives/edgar/data/320193/000/p.htm' },
   ]);
   assert.equal(raw.url, 'https://www.sec.gov/Archives/edgar/data/320193/000/p.htm');
+});
+
+test('htmlToText strips tags, decodes entities, collapses space', () => {
+  const t = htmlToText('<div>Board&nbsp;of <b>Directors</b></div><p>Jane&amp;Co</p><script>x()</script>');
+  assert.equal(t, 'Board of Directors Jane&Co');
+});
+
+test('splitSections buckets text by heading keywords', () => {
+  const text =
+    'ELECTION OF DIRECTORS Jane Doe age 55 director since 2019. ' +
+    'DIRECTOR COMPENSATION fees earned 100000. ' +
+    'EXECUTIVE OFFICERS John Smith President. ' +
+    'SUMMARY COMPENSATION TABLE Salary Bonus Stock Awards.';
+  const s = splitSections(text);
+  assert.match(s.board, /Jane Doe age 55/);
+  assert.match(s.execBios, /John Smith President/);
+  assert.match(s.comp, /Salary Bonus Stock Awards/);
+});
+
+test('getProxyStatement returns stub when no DEF 14A (never throws)', async () => {
+  _resetProxyCache();
+  const r = await getProxyStatement('NOPE', { filingsFetch: async () => [] });
+  assert.equal(r._source, null);
+  assert.deepEqual(r.sections, {});
+});
+
+test('getProxyStatement parses + caches a found proxy', async () => {
+  _resetProxyCache();
+  let docCalls = 0;
+  const opts = {
+    filingsFetch: async () => [
+      { form: 'DEF 14A', filingDate: '2026-03-15', url: 'https://x/p.htm' },
+    ],
+    docFetch: async () => {
+      docCalls++;
+      return '<h1>ELECTION OF DIRECTORS</h1><p>Jane Doe age 55</p>';
+    },
+  };
+  const a = await getProxyStatement('AAA', opts);
+  const b = await getProxyStatement('AAA', opts);
+  assert.equal(a._source, 'sec');
+  assert.match(a.sections.board, /Jane Doe age 55/);
+  assert.equal(docCalls, 1);
 });
