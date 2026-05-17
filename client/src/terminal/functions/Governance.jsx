@@ -7,6 +7,20 @@ import api from '../../api/client.js';
 const TABS = ['Leadership', 'Board', 'Comp', 'Network'];
 const dash = (v) => (v == null || v === '' ? '—' : v);
 
+// Bespoke-card big-caps (AMZN, KO) parse a full Comp table but an
+// empty Leadership tab, so always opening on Leadership made the
+// panel look broken. Land on the first tab that has something;
+// fall back to Leadership so the empty-state copy is unchanged
+// when nothing parsed at all.
+const preferredTab = (d) => {
+  if (!d) return 'Leadership';
+  if (d.ceo || d.execs?.length) return 'Leadership';
+  if (d.board?.length) return 'Board';
+  if (d.comp?.rows?.length) return 'Comp';
+  if (d.network?.edges?.length) return 'Network';
+  return 'Leadership';
+};
+
 export default function Governance({ ticker }) {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -26,7 +40,9 @@ export default function Governance({ ticker }) {
     api
       .get(`/terminal/governance/${encodeURIComponent(ticker)}`)
       .then(({ data: d }) => {
-        if (!cancelled) setData(d);
+        if (cancelled) return;
+        setData(d);
+        setTab(preferredTab(d));
       })
       .catch((e) => {
         if (!cancelled) setErr(e.response?.data?.error || e.message || 'Failed to load');
@@ -61,12 +77,57 @@ export default function Governance({ ticker }) {
       return;
     }
     setBriefLoading(true);
-    const ctx = [
-      data.ceo ? `CEO: ${data.ceo.name} (${dash(data.ceo.title)}), age ${dash(data.ceo.age)}, since ${dash(data.ceo.since)}` : null,
-      `Board: ${(data.board || []).length} directors`,
-      (data.comp?.rows || []).map((r) => `${r.name} pay: ${dash(r.salaryPct)}% sal / ${dash(r.stockPct)}% stk / ${dash(r.optionPct)}% opt`).join('; '),
-      (data.network?.edges || []).length ? `Shared boards with holdings: ${data.network.edges.map((e) => `${e.person} ${e.a}-${e.b}`).join(', ')}` : null,
-    ].filter(Boolean).join('\n');
+    // Lead with whatever we actually parsed, not what we wish we had.
+    // The big-cap proxies (AMZN, KO) give us a clean Summary Comp
+    // table — six officers with real dollar totals — but no
+    // salary/stock/option split, so every pay percentage is null.
+    // The old builder sent only those percentages plus a literal
+    // "Board: 0 directors"; the model read an all-dashes context as
+    // missing data and the grounding rule fired "Data unavailable."
+    // Send the names and totals we have; fold in the pay mix only
+    // when it exists, and never emit a zero-count line that reads
+    // as absence.
+    const ceoLine = data.ceo
+      ? `CEO: ${data.ceo.name} (${dash(data.ceo.title)})` +
+        (data.ceo.since ? `, since ${data.ceo.since}` : '') +
+        (data.ceo.age ? `, age ${data.ceo.age}` : '')
+      : null;
+    const execLine = data.execs?.length
+      ? `Executives: ${data.execs.map((e) => `${e.name} (${dash(e.title)})`).join('; ')}`
+      : null;
+    const boardLine = data.board?.length
+      ? `Board: ${data.board
+          .map(
+            (d) =>
+              d.name +
+              (d.since ? ` since ${d.since}` : '') +
+              (d.otherBoards?.length ? ` [also: ${d.otherBoards.join(', ')}]` : '')
+          )
+          .join('; ')}`
+      : null;
+    const compLine = data.comp?.rows?.length
+      ? `Named-officer compensation (latest DEF 14A): ${data.comp.rows
+          .map((r) => {
+            const mix = [
+              r.salaryPct == null ? null : `${r.salaryPct}% salary`,
+              r.stockPct == null ? null : `${r.stockPct}% stock`,
+              r.optionPct == null ? null : `${r.optionPct}% options`,
+              r.otherPct == null ? null : `${r.otherPct}% other`,
+            ].filter(Boolean);
+            return (
+              `${r.name} — ${dash(r.title)}` +
+              (r.total == null ? '' : `, total $${Number(r.total).toLocaleString()}`) +
+              (mix.length ? ` (${mix.join(', ')})` : '')
+            );
+          })
+          .join('; ')}`
+      : null;
+    const networkLine = data.network?.edges?.length
+      ? `Shared boards with holdings: ${data.network.edges.map((e) => `${e.person} ${e.a}-${e.b}`).join(', ')}`
+      : null;
+    const ctx = [ceoLine, execLine, boardLine, compLine, networkLine]
+      .filter(Boolean)
+      .join('\n');
     api
       .post('/terminal/annotate', { ticker, function: 'MGMT', context: ctx })
       .then(({ data: r }) => { if (!cancelled) setBrief(r.brief || ''); })
