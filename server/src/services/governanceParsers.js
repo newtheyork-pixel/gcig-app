@@ -2,6 +2,7 @@
 // returns structured, per-field-nullable data. Pure, never throws.
 // DEF 14A prose is irregular; these favor recall and return null for
 // anything they can't confidently extract — the panel shows "—".
+import { parseHtml, tableRows, findTableBySignature, headerMap } from './htmlExtract.js';
 
 const TITLES = [
   'Chief Executive Officer', 'Chief Financial Officer', 'Chief Operating Officer',
@@ -115,54 +116,58 @@ export function parseBoard(sections) {
   });
 }
 
-const NUM = (s) => Number(String(s).replace(/[,$]/g, ''));
+const toNum = (s) => {
+  const n = Number(String(s == null ? '' : s).replace(/[^0-9.-]/g, ''));
+  return Number.isFinite(n) ? n : null;
+};
 
-// SCT canonical column order: Salary, Bonus, Stock, Option, (Non-equity
-// + change + other collapsed), Total. We read the named-officer row as:
-// <Name> <Title> <Year> n1 n2 n3 n4 n5 ... <Total = last/largest>.
-// Robust to extra trailing columns by treating the LAST number as Total.
-// Built from TOKEN so all-caps heading words (SUMMARY, COMPENSATION) and
-// period-terminated abbreviations (Corp.) can never start a name match.
-const COMP_ROW_RE = new RegExp(
-  `(${TOKEN}(?:\\s+(?:[A-Z]\\.|${TOKEN})){1,3})\\s+(Chief [A-Za-z ]+Officer|President|General Counsel|Executive Chairman)\\s+(\\d{4})\\s+([\\d,]+(?:\\s+[\\d,]+){3,7})`,
-  'g'
-);
+// Summary Compensation Table, found by header signature anywhere in the
+// DOM (TOC-proof). Requires a name column in the signature so a
+// table-of-contents/narrative table can't false-positive. Columns are
+// read by header index (not position) so blank/extra columns don't
+// misalign the mix.
+const SCT_SIG = (cells) => {
+  const j = cells.join(' | ').toLowerCase();
+  return (
+    /salary/.test(j) &&
+    /\btotal\b/.test(j) &&
+    /name|principal position/.test(j) &&
+    [/bonus/, /stock award/, /option award/, /non-?equity/].filter((re) => re.test(j)).length >= 2
+  );
+};
 
-export function parseComp(sections) {
-  const text = sections?.comp || '';
+export function parseComp(html) {
+  const root = parseHtml(html);
+  const table = findTableBySignature(root, SCT_SIG);
+  if (!table) return { rows: [] };
+  const all = tableRows(table);
+  const hIdx = all.findIndex((cells) => SCT_SIG(cells));
+  if (hIdx < 0) return { rows: [] };
+  const h = headerMap(all[hIdx]);
+  if (h.name === undefined || h.total === undefined) return { rows: [] };
+
   const rows = [];
-  let m;
-  COMP_ROW_RE.lastIndex = 0;
-  while ((m = COMP_ROW_RE.exec(text)) !== null) {
-    const nums = m[4].trim().split(/\s+/).map(NUM).filter((n) => Number.isFinite(n));
-    if (nums.length < 4) continue;
-    const total = nums[nums.length - 1];
+  const seen = new Set();
+  for (let i = hIdx + 1; i < all.length; i++) {
+    const c = all[i];
+    const nameCell = (c[h.name] || '').trim();
+    if (!nameCell || /^name|director|^total$/i.test(nameCell)) continue;
+    const total = toNum(c[h.total]);
     if (!total) continue;
-    // SCT canonical order is Salary, Bonus, Stock, Option, NonEquity,
-    // Pension, AllOther, Total. htmlToText drops $0/— cells, so a row
-    // with <6 numbers can no longer be positionally trusted — emit the
-    // total but null the mix rather than fabricate (e.g. optionPct=100).
-    const safePcts = nums.length >= 6;
-    const [salary, , stock, option] = nums;
-    const pct = (v) =>
-      safePcts && v != null ? Math.round((v / total) * 100) : null;
-    const otherPct = safePcts
-      ? Math.max(
-          0,
-          Math.round(
-            ((total - (salary || 0) - (stock || 0) - (option || 0)) / total) * 100
-          )
-        )
+    const m = nameCell.match(/^(.*?)(Chief Executive Officer|Chief [A-Za-z ]+Officer|President|General Counsel|Executive Chairman)\b.*$/);
+    const name = (m ? m[1] : nameCell).replace(/\s+/g, ' ').trim().replace(/[,;]$/, '');
+    const title = m ? m[2].trim() : '';
+    if (!name || seen.has(name)) continue; // first (latest year) row per officer
+    seen.add(name);
+    const salary = h.salary !== undefined ? toNum(c[h.salary]) : null;
+    const stock = h.stock !== undefined ? toNum(c[h.stock]) : null;
+    const option = h.option !== undefined ? toNum(c[h.option]) : null;
+    const haveCols = [salary, stock, option].filter((v) => v != null).length >= 2;
+    const pct = (v) => (haveCols && v != null ? Math.round((v / total) * 100) : null);
+    const otherPct = haveCols
+      ? Math.max(0, Math.round(((total - (salary || 0) - (stock || 0) - (option || 0)) / total) * 100))
       : null;
-    rows.push({
-      name: m[1].replace(/\s+/g, ' ').trim(),
-      title: m[2].trim(),
-      total,
-      salaryPct: pct(salary),
-      stockPct: pct(stock),
-      optionPct: pct(option),
-      otherPct,
-    });
+    rows.push({ name, title, total, salaryPct: pct(salary), stockPct: pct(stock), optionPct: pct(option), otherPct });
   }
   return { rows };
 }

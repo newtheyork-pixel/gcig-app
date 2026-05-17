@@ -114,54 +114,39 @@ test('parseBoard excludes lowercase connector fragments from otherBoards', () =>
   assert.deepEqual(js.otherBoards, ['Globex Corporation']);
 });
 
-const COMP_SECTION = {
-  comp:
-    'SUMMARY COMPENSATION TABLE ' +
-    'Jane A. Doe Chief Executive Officer 2025 1,000,000 0 5,000,000 3,000,000 1,000,000 10,000,000 ' +
-    'John B. Smith Chief Financial Officer 2025 600,000 0 1,400,000 0 0 2,000,000',
-};
+const COMP_HTML = `<html><body>
+<div>TABLE OF CONTENTS Executive Compensation ... 50 Summary Compensation Table ... 64</div>
+<table><tr><td><table>
+ <tr><td>Name and Principal Position</td><td>Year</td><td>Salary ($)</td><td>Bonus ($)</td><td>Stock Awards ($)</td><td>Option Awards ($)</td><td>Non-Equity ($)</td><td>Total ($)</td></tr>
+ <tr><td>Jane A. Doe Chief Executive Officer</td><td>2025</td><td>1,000,000</td><td>0</td><td>5,000,000</td><td>3,000,000</td><td>1,000,000</td><td>10,000,000</td></tr>
+ <tr><td>John B. Smith Chief Financial Officer</td><td>2025</td><td>600,000</td><td>0</td><td>1,400,000</td><td>0</td><td>0</td><td>2,000,000</td></tr>
+</table></td></tr></table>
+</body></html>`;
 
-test('parseComp derives pay-mix percentages from the SCT', () => {
-  const { rows } = parseComp(COMP_SECTION);
+test('parseComp finds the SCT (nested in a layout table) by header signature and derives pay mix', () => {
+  const { rows } = parseComp(COMP_HTML);
   const jane = rows.find((r) => /Jane A\. Doe/.test(r.name));
+  assert.ok(jane, 'Jane row parsed');
   assert.equal(jane.total, 10000000);
   assert.equal(jane.salaryPct, 10);
   assert.equal(jane.stockPct, 50);
   assert.equal(jane.optionPct, 30);
+  assert.equal(jane.otherPct, 10);
+  assert.match(jane.title, /Chief Executive Officer/);
+  assert.equal(jane.name, 'Jane A. Doe');
 });
 
-test('parseComp returns empty rows on missing section', () => {
-  assert.deepEqual(parseComp({}), { rows: [] });
+test('parseComp ignores a TOC/narrative table lacking a name column', () => {
+  const html = `<html><body><table>
+   <tr><td>Summary Compensation Table</td><td>Salary discussion and total pay philosophy</td></tr>
+  </table></body></html>`;
+  assert.deepEqual(parseComp(html), { rows: [] });
 });
 
-test('parseComp nulls the mix (keeps total) when SCT cells collapsed (<6 numbers)', () => {
-  // Bonus + Option + NonEquity were $0 and vanished from the text:
-  // only Salary, Stock, AllOther, Total survive (4 numbers).
-  const { rows } = parseComp({
-    comp:
-      'SUMMARY COMPENSATION TABLE ' +
-      'Jane A. Doe Chief Executive Officer 2025 1,000,000 5,000,000 200,000 6,200,000',
-  });
-  const jane = rows.find((r) => /Jane A\. Doe/.test(r.name));
-  assert.ok(jane, 'row should still be emitted');
-  assert.equal(jane.total, 6200000);          // total still trustworthy
-  assert.equal(jane.salaryPct, null);          // mix not fabricated
-  assert.equal(jane.stockPct, null);
-  assert.equal(jane.optionPct, null);
-  assert.equal(jane.otherPct, null);
-});
-
-test('parseComp skips rows with too few numbers or zero total', () => {
-  const a = parseComp({
-    comp: 'SUMMARY COMPENSATION TABLE Jane A. Doe President 2025 1,000 2,000',
-  });
-  assert.deepEqual(a.rows, []); // 2 numbers < the {3,7} repetition floor → no match
-  const b = parseComp({
-    comp:
-      'SUMMARY COMPENSATION TABLE ' +
-      'Jane A. Doe President 2025 0 0 0 0 0 0',
-  });
-  assert.deepEqual(b.rows, []); // total (last number) is 0 → skipped
+test('parseComp empty/garbage → { rows: [] } (never throws)', () => {
+  assert.deepEqual(parseComp(''), { rows: [] });
+  assert.deepEqual(parseComp('<p>no table here</p>'), { rows: [] });
+  assert.deepEqual(parseComp(null), { rows: [] });
 });
 
 test('buildNetwork links directors whose other boards are also fund holdings', () => {
