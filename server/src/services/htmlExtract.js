@@ -60,12 +60,42 @@ export function findTableBySignature(root, predicate) {
   return best;
 }
 
+// Same predicate, but every match in document order (not just the
+// deepest). Deepest-wins is right when the only ambiguity is a layout
+// wrapper around one data table; it's wrong when several genuine
+// tables satisfy a loose signature — a notice-prose blob and a post-
+// roster governance-highlights table can both look board-ish, and the
+// last one isn't the roster. Callers that need to disambiguate pick
+// among these themselves. Returns [{ table, rows, hIdx }] with hIdx
+// the first row satisfying `predicate`.
+export function findTablesBySignature(root, predicate) {
+  if (!root) return [];
+  const out = [];
+  for (const t of root.querySelectorAll('table')) {
+    const rows = tableRows(t);
+    const hIdx = rows.findIndex((cells) => {
+      try { return predicate(cells); } catch { return false; }
+    });
+    if (hIdx >= 0) out.push({ table: t, rows, hIdx });
+  }
+  return out;
+}
+
 // Given a header row (array of cell text), map logical column → index by
 // loose label match. Returns { name, year, salary, bonus, stock,
 // option, nonequity, total, age, since, committees, otherboards } with
 // any found index (others undefined).
 const COL_PATTERNS = {
-  name: /^name\b|principal position|^director$|^nominee$/i,
+  // Issuers label the name column every which way: "Name", "Name
+  // and Principal Position" (the SCT), "Nominee's Name", "Name of
+  // Nominee", "Director Name". Anchoring to "^name" missed all but
+  // the first two. Match the word name OR nominee anywhere in the
+  // header, plus the legacy "principal position"/bare "Director".
+  // It stays a header discriminator: a value cell ("Gary Owens",
+  // "$1,000", "2024") carries neither word, and "Director Since" /
+  // "Year First Elected Director" deliberately don't match here so
+  // they keep mapping to `since`, not collapsing onto name.
+  name: /\bname\b|\bnominee\b|principal position|^director$/i,
   year: /^year$/i,
   salary: /salary/i,
   bonus: /^bonus/i,

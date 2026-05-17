@@ -4,7 +4,7 @@
 // approach the table-of-contents kept defeating). Per-field-nullable,
 // pure, never throws; recall over precision, "—" for anything not
 // confidently extractable.
-import { parseHtml, cellText, tableRows, findTableBySignature, headerMap, locateSectionText } from './htmlExtract.js';
+import { parseHtml, cellText, tableRows, findTableBySignature, findTablesBySignature, headerMap, locateSectionText } from './htmlExtract.js';
 
 // One name-token rule for the leadership parser. The first alternative
 // covers ordinary mixed-case words ("Doe", "DeLuca"); the second covers
@@ -73,51 +73,83 @@ const BOARD_SIG = (cells) => {
 // dedicated column; committees from its column or row text. If no such
 // table exists, fall back to per-director record blocks in the located
 // "Election of Directors" section text.
+// A matched header row that's actually a header: at least a couple of
+// real label cells, every cell short, no checkmark glyph, no
+// sentence-length blob. This is what separates the real nominee
+// roster from the three other things the loose BOARD_SIG snags — the
+// notice-prose table (one ~3,000-char cell), the post-roster
+// "Corporate Governance Highlights" checkmark grid, and the
+// zero-width-space (U+200B) layout scaffolding some large-caps use to
+// position bio cards. A blank/glyph "header" is never a roster, so we
+// require this rather than merely prefer it: a no-header table parses
+// to phantom directors (zero-width names, titles read as people),
+// and returning [] is the honest best-effort answer there.
+function looksLikeHeaderRow(cells) {
+  if (!cells || !cells.length) return false;
+  const real = cells.filter(
+    (c) => String(c || '').replace(/[​\s]/g, '').length > 0
+  );
+  if (real.length < 2) return false;
+  return cells.every((c) => {
+    const t = String(c || '');
+    return t.length <= 60 && !/[✓✔�]/.test(t);
+  });
+}
+
 export function parseBoard(html) {
   const root = parseHtml(html);
-  const table = findTableBySignature(root, BOARD_SIG);
+  // Deepest-wins picked whichever board-ish table came last in the
+  // document — for a small/mid-cap that's the post-roster governance
+  // checkmark table, not the roster. Take every BOARD_SIG match and
+  // keep the one whose header genuinely exposes a name column; among
+  // those, prefer a clean header row over a prose/glyph blob.
+  const picked =
+    findTablesBySignature(root, BOARD_SIG)
+      .map((cand) => ({ ...cand, h: headerMap(cand.rows[cand.hIdx]) }))
+      .find(
+        (cand) =>
+          cand.h.name !== undefined && looksLikeHeaderRow(cand.rows[cand.hIdx])
+      ) || null;
   const out = [];
-  if (table) {
-    const all = tableRows(table);
-    const hIdx = all.findIndex((cells) => BOARD_SIG(cells));
-    if (hIdx >= 0) {
-      const h = headerMap(all[hIdx]);
-      if (h.name !== undefined) {
-        for (let i = hIdx + 1; i < all.length; i++) {
-          const c = all[i];
-          const name = (c[h.name] || '').replace(/\s+/g, ' ').trim();
-          // Age optional (no Age column on many large-caps); strip
-          // footnote refs by taking the first digit run.
-          const age =
-            h.age !== undefined
-              ? Number((String(c[h.age] || '').match(/\d+/) || [''])[0])
-              : null;
-          const ageValid =
-            age === null || (Number.isFinite(age) && age >= 18 && age <= 100);
-          if (!name || /^name$|^director$/i.test(name) || !ageValid) continue;
-          const since =
-            h.since !== undefined
-              ? Number((String(c[h.since] || '').match(/\b(19|20)\d{2}\b/) || [])[0]) || null
-              : null;
-          const committees =
-            h.committees !== undefined
-              ? COMMITTEE_NAMES.filter((cm) => new RegExp(cm, 'i').test(c[h.committees] || ''))
-              : COMMITTEE_NAMES.filter((cm) => new RegExp(`${cm}\\s+Committee`, 'i').test(c.join(' ')));
-          const otherBoards =
-            h.otherboards !== undefined
-              ? (c[h.otherboards] || '')
-                  .split(/;|,(?![^()]*\))/)
-                  .map((s) => s.replace(/\s+/g, ' ').trim().replace(/[.;]$/, ''))
-                  .filter((s) => s.length > 2 && /^[A-Z]/.test(s) && !/committee|none\b/i.test(s))
-              : [];
-          out.push({
-            name,
-            age,
-            since,
-            committees,
-            otherBoards: [...new Set(otherBoards)],
-          });
-        }
+  if (picked) {
+    const all = picked.rows;
+    const hIdx = picked.hIdx;
+    const h = picked.h;
+    if (h.name !== undefined) {
+      for (let i = hIdx + 1; i < all.length; i++) {
+        const c = all[i];
+        const name = (c[h.name] || '').replace(/\s+/g, ' ').trim();
+        // Age optional (no Age column on many large-caps); strip
+        // footnote refs by taking the first digit run.
+        const age =
+          h.age !== undefined
+            ? Number((String(c[h.age] || '').match(/\d+/) || [''])[0])
+            : null;
+        const ageValid =
+          age === null || (Number.isFinite(age) && age >= 18 && age <= 100);
+        if (!name || /^name$|^director$/i.test(name) || !ageValid) continue;
+        const since =
+          h.since !== undefined
+            ? Number((String(c[h.since] || '').match(/\b(19|20)\d{2}\b/) || [])[0]) || null
+            : null;
+        const committees =
+          h.committees !== undefined
+            ? COMMITTEE_NAMES.filter((cm) => new RegExp(cm, 'i').test(c[h.committees] || ''))
+            : COMMITTEE_NAMES.filter((cm) => new RegExp(`${cm}\\s+Committee`, 'i').test(c.join(' ')));
+        const otherBoards =
+          h.otherboards !== undefined
+            ? (c[h.otherboards] || '')
+                .split(/;|,(?![^()]*\))/)
+                .map((s) => s.replace(/\s+/g, ' ').trim().replace(/[.;]$/, ''))
+                .filter((s) => s.length > 2 && /^[A-Z]/.test(s) && !/committee|none\b/i.test(s))
+            : [];
+        out.push({
+          name,
+          age,
+          since,
+          committees,
+          otherBoards: [...new Set(otherBoards)],
+        });
       }
     }
     if (out.length) return out;

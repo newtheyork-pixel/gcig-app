@@ -52,5 +52,33 @@ for (const f of files) {
         `${f}: comp row name "${r.name}" carries title/footnote contamination`
       );
     }
+
+    // The conventional small/mid-cap recall floor. MLAB is a
+    // textbook director roster — a real <table>, "Nominee's Name"
+    // header, seven rows. AAPL/AMZN/KO ship their boards as bio
+    // cards (Board legitimately empty there), so without a plain-
+    // table fixture nothing would notice parseBoard going dark on
+    // the ordinary case. Assert the full roster reads, with the
+    // year a numeric `since` (the parser stores Number, not the
+    // raw cell string).
+    if (/^MLAB-/.test(f)) {
+      const names = board.map((d) => d.name.replace(/\s+/g, ' ').trim());
+      assert.equal(
+        board.length,
+        7,
+        `MLAB: expected 7 directors from the nominee roster, got ${board.length} (${JSON.stringify(names)})`
+      );
+      for (const want of ['John Sullivan', 'Gary Owens', 'Mark Capone']) {
+        assert.ok(
+          names.includes(want),
+          `MLAB: roster missing "${want}" (got ${JSON.stringify(names)})`
+        );
+      }
+      const sinceOf = (nm) =>
+        board.find((d) => d.name.replace(/\s+/g, ' ').trim() === nm)?.since;
+      assert.equal(sinceOf('John Sullivan'), 2009, 'MLAB: John Sullivan since');
+      assert.equal(sinceOf('Gary Owens'), 2017, 'MLAB: Gary Owens since');
+      assert.equal(sinceOf('Mark Capone'), 2024, 'MLAB: Mark Capone since');
+    }
   });
 }
