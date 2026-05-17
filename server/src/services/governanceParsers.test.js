@@ -206,3 +206,17 @@ test('parseComp: real name/title split (VP before C-title) and footnote-safe tot
   assert.match(cfo.title, /Chief Financial Officer/); // NOT "President"
   assert.equal(cfo.total, 2000000);
 });
+
+test('parseBoard fallback handles middle-initial names ("Jane A. Doe, age 60,")', () => {
+  const b = parseBoard(`<html><body><h2>Election of Directors</h2>
+   <p>Jane A. Doe, age 60, has served as a director since 2014.</p>
+   <p>Robert K. Smith, 58, director since June 2019.</p></body></html>`);
+  const j = b.find((d) => d.name === 'Jane A. Doe');
+  assert.ok(j, 'middle-initial + "age NN" form matched');
+  assert.equal(j.age, 60);
+  assert.equal(j.since, 2014);
+  const r = b.find((d) => d.name === 'Robert K. Smith');
+  assert.ok(r, 'middle-initial + bare "NN," form matched');
+  assert.equal(r.age, 58);
+  assert.equal(r.since, 2019);
+});

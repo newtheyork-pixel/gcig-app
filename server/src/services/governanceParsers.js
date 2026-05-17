@@ -125,7 +125,7 @@ export function parseBoard(html) {
               : [];
           out.push({
             name,
-            age: Number.isFinite(age) ? age : null,
+            age,
             since,
             committees,
             otherBoards: [...new Set(otherBoards)],
@@ -141,7 +141,7 @@ export function parseBoard(html) {
     cellText(root);
   const TOKEN = "[A-Z](?:[a-z][A-Za-z'-]*|'[A-Z][a-z][A-Za-z'-]*)";
   const HEAD = new RegExp(
-    `(${TOKEN}(?:\\s+${TOKEN}){1,3})` +
+    `(${TOKEN}(?:\\s+(?:[A-Z]\\.|${TOKEN})){1,3})` +
       `(?:,\\s*age\\s*(\\d{2})|,\\s*(\\d{2})(?=\\s*,)|\\s*\\(age\\s*(\\d{2})\\))`,
     'g'
   );
