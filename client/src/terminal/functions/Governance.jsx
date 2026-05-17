@@ -42,6 +42,24 @@ export default function Governance({ ticker }) {
   useEffect(() => {
     if (!ticker || !data) return;
     let cancelled = false;
+    const hasData =
+      !!data.ceo ||
+      (data.execs || []).length > 0 ||
+      (data.board || []).length > 0 ||
+      (data.comp?.rows || []).length > 0 ||
+      (data.network?.edges || []).length > 0;
+    // Never ask the model to summarize empty governance data — with no
+    // facts it confabulates ("the board stands without any directors").
+    // State the truth plainly instead; no LLM call.
+    if (!hasData) {
+      setBriefLoading(false);
+      setBrief(
+        data.source == null
+          ? 'No DEF 14A retrieved for this ticker.'
+          : 'DEF 14A retrieved, but its structure could not be parsed (common for large multi-section proxies). Nothing to summarize.'
+      );
+      return;
+    }
     setBriefLoading(true);
     const ctx = [
       data.ceo ? `CEO: ${data.ceo.name} (${dash(data.ceo.title)}), age ${dash(data.ceo.age)}, since ${dash(data.ceo.since)}` : null,
