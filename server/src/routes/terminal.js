@@ -106,6 +106,10 @@ router.get('/governance/:ticker', async (req, res) => {
   }
   try {
     const proxy = await getProxyStatement(raw);
+    // TODO(structured-parser Task 6): proxyStatement now returns `html`,
+    // not `sections`. Parsers still take `proxy.sections` (undefined →
+    // empty, no throw) until Task 6 rewires this to `proxy.html`. Branch
+    // WIP only — not deployed; prod (origin/main) is unaffected.
     const { ceo, execs } = parseLeadership(proxy.sections);
     const board = parseBoard(proxy.sections);
     const comp = parseComp(proxy.sections);
