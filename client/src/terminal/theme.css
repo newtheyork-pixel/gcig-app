@@ -170,96 +170,131 @@
   background: var(--term-bg);
 }
 
-/* React-mosaic overrides — match terminal aesthetics.
-   The library ships with a light default + an optional Blueprint theme.
-   We explicitly NOT load the blueprint theme and override every surface
-   so nothing falls back to white. */
-[data-theme='terminal'] .mosaic,
-[data-theme='terminal'] .mosaic-root,
-[data-theme='terminal'] .mosaic > * {
-  background: var(--term-bg) !important;
-  color: var(--term-fg);
-}
-
-[data-theme='terminal'] .mosaic-tile {
-  margin: 4px;
-}
-
-[data-theme='terminal'] .mosaic-window,
-[data-theme='terminal'] .mosaic-tile > .mosaic-window {
-  background: var(--term-bg-panel) !important;
+/* Free-floating windows. The workspace is the positioning context; each
+   window is absolutely placed and sized by FloatingWindow. Square corners,
+   hard borders, no soft shadows — the surface should read as a panel cut
+   into the canvas, not a card hovering above a desktop. */
+[data-theme='terminal'] .term-window {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  background: var(--term-bg-panel);
   border: 1px solid var(--term-border);
-  box-shadow: none;
-  border-radius: 0;
+  overflow: hidden;
 }
 
-[data-theme='terminal'] .mosaic-window:focus-within {
+[data-theme='terminal'] .term-window.focused {
   border-color: var(--term-border-focused);
+  box-shadow: 0 0 0 1px var(--term-border-focused);
 }
 
-[data-theme='terminal'] .mosaic-window-toolbar {
-  background: var(--term-bg-header);
-  border-bottom: 1px solid var(--term-border);
-  height: 26px;
-  padding: 0 8px;
+[data-theme='terminal'] .term-window-titlebar {
   display: flex;
   align-items: center;
+  gap: 8px;
+  height: 26px;
+  padding: 0 4px 0 8px;
+  background: var(--term-bg-header);
+  border-bottom: 1px solid var(--term-border);
   color: var(--term-fg);
   font-weight: 700;
   font-size: 11px;
   letter-spacing: 0.08em;
   text-transform: uppercase;
+  cursor: move;
+  user-select: none;
+  touch-action: none;
+  flex-shrink: 0;
 }
 
-[data-theme='terminal'] .mosaic-window-title {
-  color: var(--term-fg);
-  font-weight: 700;
+[data-theme='terminal'] .term-window-title {
   flex: 1;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-[data-theme='terminal'] .mosaic-window-controls .mosaic-default-control {
+[data-theme='terminal'] .term-window-tools {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: default;
+}
+
+[data-theme='terminal'] .term-window-close {
   background: transparent;
   color: var(--term-fg-dim);
-  border: none;
-  padding: 0 4px;
+  border: 1px solid transparent;
+  font-family: inherit;
+  font-size: 11px;
+  line-height: 1;
+  padding: 3px 6px;
   cursor: pointer;
 }
 
-[data-theme='terminal'] .mosaic-window-controls .mosaic-default-control:hover {
-  color: var(--term-fg);
-  background: transparent;
+[data-theme='terminal'] .term-window-close:hover {
+  color: var(--term-negative);
+  border-color: var(--term-negative);
 }
 
-[data-theme='terminal'] .mosaic-window-body,
-[data-theme='terminal'] .mosaic-window > .mosaic-window-body {
-  background: var(--term-bg-panel) !important;
-  color: var(--term-fg) !important;
+[data-theme='terminal'] .term-window-body {
+  flex: 1;
+  min-height: 0;
   overflow: auto;
+  background: var(--term-bg-panel);
+  color: var(--term-fg);
 }
 
-/* Any container the library drops in between (mosaic-tile, drop-targets,
-   internal flex wrappers) must not bleed white through. */
-[data-theme='terminal'] .mosaic-tile,
-[data-theme='terminal'] .mosaic-drop-target,
-[data-theme='terminal'] .drop-target-container,
-[data-theme='terminal'] .drop-target {
-  background: var(--term-bg) !important;
+/* A small grip in the bottom-right corner. Two amber hatch lines, the
+   classic resize affordance, kept subtle so it doesn't fight the data. */
+[data-theme='terminal'] .term-window-resize {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  width: 16px;
+  height: 16px;
+  cursor: nwse-resize;
+  touch-action: none;
+  background: linear-gradient(
+    135deg,
+    transparent 0 45%,
+    var(--term-fg-muted) 45% 55%,
+    transparent 55% 70%,
+    var(--term-fg-muted) 70% 80%,
+    transparent 80%
+  );
 }
 
-[data-theme='terminal'] .mosaic-split {
-  background: var(--term-border);
+/* Empty workspace — the resting state before any command is run. */
+[data-theme='terminal'] .term-empty-hint {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  text-align: center;
+  padding: 24px;
+  pointer-events: none;
 }
 
-[data-theme='terminal'] .mosaic-split:hover {
-  background: var(--term-border-focused);
+[data-theme='terminal'] .term-empty-title {
+  color: var(--term-fg-muted);
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.28em;
 }
 
-[data-theme='terminal'] .mosaic-preview {
-  background: var(--term-bg-panel-hover);
-  border: 1px solid var(--term-border-focused);
+[data-theme='terminal'] .term-empty-sub {
+  color: var(--term-fg-muted);
+  font-size: 12px;
+  letter-spacing: 0.02em;
+}
+
+[data-theme='terminal'] .term-empty-sub b {
+  color: var(--term-fg-dim);
+  font-weight: 700;
 }
 
 /* Panel content scaffolding. Always set our own bg so even if mosaic's

@@ -1,170 +1,127 @@
-import { useCallback, useMemo, useState } from 'react';
-import { Mosaic, MosaicWindow } from 'react-mosaic-component';
-import 'react-mosaic-component/react-mosaic-component.css';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import CommandBar from './CommandBar.jsx';
+import FloatingWindow from './FloatingWindow.jsx';
 import { getFunction, FUNCTIONS } from './registry.js';
 import { useAuth } from '../context/AuthContext.jsx';
 
 // TerminalShell — the amber/black workstation. Owns:
 //   - The data-theme scoping (so the rest of the app is unaffected)
 //   - Topbar + command bar + status bar
-//   - The mosaic of panes; each pane is bound to a paneId -> { ticker, function }
+//   - A canvas of free-floating windows
 //
-// Mosaic value here is a tree of paneIds. We keep a separate `panes` map from
-// paneId -> { ticker, fn } so the same pane keeps its state across layout
-// drags. New panes get a fresh id; closing a pane drops its entry from the map.
+// The workspace starts empty. Every command opens its own window; the
+// shell tracks the list and the stacking order, each window owns its
+// own position and size (see FloatingWindow). Closing a window drops it
+// from the list. There is deliberately no saved layout — a session's
+// arrangement lives only as long as the tab is open, same as before.
 
-// No ticker pre-loaded. The landing layout shows market-wide panels so
-// the terminal is useful the moment it opens. Typing a ticker (e.g.
-// "HD DES") in the command bar takes over the focused pane.
-const DEFAULT_PANES = {
-  a: { ticker: null, fn: 'TOP' },
-  b: { ticker: null, fn: 'MOVR' },
-  c: { ticker: null, fn: 'HELP' },
-  d: { ticker: null, fn: 'BI' },
-};
+// New windows cascade down-right from the top-left so a burst of
+// commands doesn't bury every window under the last one. The step wraps
+// after a handful so the staircase can't march off a small screen.
+const SPAWN_BASE = 24;
+const SPAWN_STEP = 28;
+const SPAWN_WRAP = 8;
+const DEFAULT_W = 580;
+const DEFAULT_H = 440;
 
-const DEFAULT_LAYOUT = {
-  direction: 'row',
-  first: {
-    direction: 'column',
-    first: 'a',
-    second: 'b',
-    splitPercentage: 55,
-  },
-  second: {
-    direction: 'column',
-    first: 'c',
-    second: 'd',
-    splitPercentage: 40,
-  },
-  splitPercentage: 55,
-};
-
-let paneIdSeq = 100;
-function nextPaneId() {
-  paneIdSeq += 1;
-  return `p${paneIdSeq}`;
+let windowSeq = 0;
+function nextWindowId() {
+  windowSeq += 1;
+  return `w${windowSeq}`;
 }
 
 export default function TerminalShell({ onExit }) {
   const { user } = useAuth();
-  const [layout, setLayout] = useState(DEFAULT_LAYOUT);
-  const [panes, setPanes] = useState(DEFAULT_PANES);
-  const [focusedPaneId, setFocusedPaneId] = useState('a');
+  const [windows, setWindows] = useState([]);
+  const [focusedId, setFocusedId] = useState(null);
   const [lastInterpretation, setLastInterpretation] = useState(null);
+  // Monotonic stacking counter — the next focused/spawned window gets the
+  // top z so click-to-front needs nothing fancier than "current max + 1".
+  const zSeq = useRef(1);
 
-  // Build a workspace context blob to hand the AI chat panel.
+  // Build a workspace context blob to hand the AI chat panel so it can
+  // reason about what the user is currently looking at.
   const workspaceContext = useMemo(() => {
     const lines = ['GCIG Terminal workspace:'];
-    for (const [id, p] of Object.entries(panes)) {
-      const fn = getFunction(p.fn);
-      const focused = id === focusedPaneId ? ' [focused]' : '';
-      lines.push(`- pane ${id}${focused}: ${p.fn} (${fn?.label || p.fn})${p.ticker ? ` for ${p.ticker}` : ''}`);
+    if (windows.length === 0) lines.push('- (no windows open)');
+    for (const w of windows) {
+      const fn = getFunction(w.fn);
+      const focused = w.id === focusedId ? ' [focused]' : '';
+      lines.push(
+        `- ${w.fn} (${fn?.label || w.fn})${w.ticker ? ` for ${w.ticker}` : ''}${focused}`
+      );
     }
     if (user?.role) lines.push(`Viewer role: ${user.role}`);
     return lines.join('\n');
-  }, [panes, focusedPaneId, user]);
+  }, [windows, focusedId, user]);
 
-  // Apply a parsed command to the focused pane.
+  const focusWindow = useCallback((id) => {
+    setFocusedId(id);
+    zSeq.current += 1;
+    const z = zSeq.current;
+    setWindows((ws) => ws.map((w) => (w.id === id ? { ...w, z } : w)));
+  }, []);
+
+  // Open a new window for a function (optionally bound to a ticker) and
+  // bring it to the front. Position cascades off how many windows are
+  // already open; FloatingWindow pulls it back in if it lands off-screen.
+  const spawnWindow = useCallback((fn, ticker) => {
+    if (!fn) return;
+    const id = nextWindowId();
+    zSeq.current += 1;
+    setWindows((ws) => {
+      const step = (ws.length % SPAWN_WRAP) * SPAWN_STEP;
+      return [
+        ...ws,
+        {
+          id,
+          fn,
+          ticker: ticker || null,
+          x: SPAWN_BASE + step,
+          y: SPAWN_BASE + step,
+          w: DEFAULT_W,
+          h: DEFAULT_H,
+          z: zSeq.current,
+        },
+      ];
+    });
+    setFocusedId(id);
+  }, []);
+
+  // A parsed command bar entry. Each command opens its own window rather
+  // than taking over an existing one.
   const applyCommand = useCallback(
     (cmd) => {
       if (!cmd?.function) return;
       setLastInterpretation(cmd._source === 'llm' ? cmd : null);
-      setPanes((p) => {
-        const target = p[focusedPaneId] || { ticker: null, fn: 'DES' };
-        return {
-          ...p,
-          [focusedPaneId]: {
-            ticker: cmd.ticker || target.ticker,
-            fn: cmd.function,
-          },
-        };
-      });
+      spawnWindow(cmd.function, cmd.ticker);
     },
-    [focusedPaneId]
+    [spawnWindow]
   );
 
-  // Drill-down from inside a panel (e.g. clicking a peer row). Routes
-  // the command to a *different* window so the source panel stays put
-  // and the user sees a sibling switch. Prefers an existing pane that
-  // already runs the target function (a de-facto detail pane), then any
-  // other pane, falling back to the caller only if it's the lone pane.
-  const openFromPane = useCallback(
-    (fromPaneId, cmd) => {
+  // Drill-down from inside a panel (clicking a peer or mover row). Keeps
+  // the source window untouched and opens the target in a fresh window,
+  // matching the spawn-don't-hijack model everywhere else.
+  const openFromPanel = useCallback(
+    (cmd) => {
       if (!cmd?.ticker) return;
-      const wantFn = cmd.fn || 'DES';
-      const ids = Object.keys(panes);
-      const target =
-        ids.find((id) => id !== fromPaneId && panes[id]?.fn === wantFn) ||
-        ids.find((id) => id !== fromPaneId) ||
-        fromPaneId;
-      setPanes((p) => ({ ...p, [target]: { ticker: cmd.ticker, fn: wantFn } }));
-      setFocusedPaneId(target);
+      spawnWindow(cmd.fn || 'DES', cmd.ticker);
     },
-    [panes]
+    [spawnWindow]
   );
 
-  const renderTile = useCallback(
-    (paneId, path) => {
-      const pane = panes[paneId] || { ticker: null, fn: 'HELP' };
-      const fnDef = getFunction(pane.fn);
-      const Comp = fnDef?.component;
-      const isFocused = paneId === focusedPaneId;
+  const closeWindow = useCallback((id) => {
+    setWindows((ws) => ws.filter((w) => w.id !== id));
+    setFocusedId((cur) => (cur === id ? null : cur));
+  }, []);
 
-      const title = (() => {
-        const fnLabel = fnDef?.label || pane.fn;
-        if (pane.ticker && fnDef?.requires === 'ticker') {
-          return `${pane.ticker} · ${pane.fn} · ${fnLabel}`;
-        }
-        return `${pane.fn} · ${fnLabel}`;
-      })();
+  const setWindowFn = useCallback((id, newFn) => {
+    setWindows((ws) =>
+      ws.map((w) => (w.id === id ? { ...w, fn: newFn } : w))
+    );
+  }, []);
 
-      const toolbarControls = (
-        <div style={{ display: 'flex', gap: 6 }}>
-          <FunctionSwitcher
-            current={pane.fn}
-            onChange={(newFn) => {
-              setPanes((p) => ({ ...p, [paneId]: { ...p[paneId], fn: newFn } }));
-            }}
-          />
-        </div>
-      );
-
-      return (
-        <MosaicWindow
-          path={path}
-          title={title}
-          toolbarControls={toolbarControls}
-          renderToolbar={() => (
-            <div
-              className="mosaic-window-toolbar"
-              onMouseDown={() => setFocusedPaneId(paneId)}
-              style={isFocused ? { borderBottomColor: 'var(--term-border-focused)' } : undefined}
-            >
-              <div className="mosaic-window-title">{title}</div>
-              {toolbarControls}
-            </div>
-          )}
-        >
-          <div
-            onMouseDown={() => setFocusedPaneId(paneId)}
-            style={{ height: '100%', overflow: 'auto' }}
-          >
-            {Comp ? (
-              <Comp
-                ticker={pane.ticker}
-                fn={fnDef}
-                workspaceContext={workspaceContext}
-                onOpen={(cmd) => openFromPane(paneId, cmd)}
-              />
-            ) : null}
-          </div>
-        </MosaicWindow>
-      );
-    },
-    [panes, focusedPaneId, workspaceContext, openFromPane]
-  );
+  const focused = windows.find((w) => w.id === focusedId) || null;
 
   return (
     <div className="terminal-root" data-theme="terminal">
@@ -182,17 +139,65 @@ export default function TerminalShell({ onExit }) {
       <CommandBar onCommand={applyCommand} lastInterpretation={lastInterpretation} />
 
       <div className="term-workspace">
-        <Mosaic
-          renderTile={renderTile}
-          value={layout}
-          onChange={setLayout}
-        />
+        {windows.length === 0 ? (
+          <div className="term-empty-hint">
+            <div className="term-empty-title">EMPTY WORKSPACE</div>
+            <div className="term-empty-sub">
+              Type a command to open a window — e.g. <b>AAPL DES</b>, <b>MOVR</b>,
+              or ask in plain English.
+            </div>
+            <div className="term-empty-sub">
+              Drag a window by its title bar; resize from the bottom-right corner.
+            </div>
+          </div>
+        ) : null}
+
+        {windows.map((w) => {
+          const fnDef = getFunction(w.fn);
+          const Comp = fnDef?.component;
+          const fnLabel = fnDef?.label || w.fn;
+          const title =
+            w.ticker && fnDef?.requires === 'ticker'
+              ? `${w.ticker} · ${w.fn} · ${fnLabel}`
+              : `${w.fn} · ${fnLabel}`;
+
+          return (
+            <FloatingWindow
+              key={w.id}
+              title={title}
+              initial={{ x: w.x, y: w.y, w: w.w, h: w.h }}
+              z={w.z}
+              focused={w.id === focusedId}
+              onFocus={() => focusWindow(w.id)}
+              onClose={() => closeWindow(w.id)}
+              toolbar={
+                <FunctionSwitcher
+                  current={w.fn}
+                  onChange={(newFn) => setWindowFn(w.id, newFn)}
+                />
+              }
+            >
+              {Comp ? (
+                <Comp
+                  ticker={w.ticker}
+                  fn={fnDef}
+                  workspaceContext={workspaceContext}
+                  onOpen={openFromPanel}
+                />
+              ) : null}
+            </FloatingWindow>
+          );
+        })}
       </div>
 
       <div className="term-statusbar">
-        <span>FOCUSED: {focusedPaneId.toUpperCase()}</span>
+        <span>WINDOWS: {windows.length}</span>
         <span className="sep">|</span>
-        <span>{panes[focusedPaneId]?.ticker || '—'} · {panes[focusedPaneId]?.fn || '—'}</span>
+        <span>
+          {focused
+            ? `${focused.ticker || '—'} · ${focused.fn}`
+            : 'NONE FOCUSED'}
+        </span>
         <span className="sep">|</span>
         <span>HELP HELP &lt;GO&gt; for function list</span>
         <span style={{ marginLeft: 'auto' }}>{new Date().toLocaleDateString()}</span>
@@ -206,6 +211,7 @@ function FunctionSwitcher({ current, onChange }) {
     <select
       value={current}
       onChange={(e) => onChange(e.target.value)}
+      onPointerDown={(e) => e.stopPropagation()}
       onMouseDown={(e) => e.stopPropagation()}
       style={{
         background: 'var(--term-bg-panel)',
