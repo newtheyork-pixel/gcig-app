@@ -37,6 +37,7 @@ export default function CashInterestCard({
     fgtxxLatestYield,
     fgtxxLatestYieldDate,
     bdaApy,
+    quarterlyAvgCash,
   } = data || {};
 
   const [busy, setBusy] = useState(null);
@@ -121,6 +122,32 @@ export default function CashInterestCard({
           asOf="drawn down to $0 — funded the positions above"
         />
       </div>
+
+      {Array.isArray(quarterlyAvgCash) && quarterlyAvgCash.length > 0 && (
+        <div className="mt-4 border-t border-navy-50 pt-3">
+          <div className="text-[10px] font-semibold uppercase tracking-[0.18em] text-navy-400">
+            Average cash by quarter
+          </div>
+          <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
+            {quarterlyAvgCash.map((q) => (
+              <div
+                key={q.label}
+                className="rounded-lg border border-navy-100 bg-[#FAFBFE] px-3 py-2"
+              >
+                <div className="text-[10px] font-semibold uppercase tracking-wider text-navy-400">
+                  {q.label}
+                </div>
+                <div className="mt-0.5 font-serif text-base font-semibold text-navy tabular-nums">
+                  {fmtMoney(q.avgCash)}
+                </div>
+                <div className="text-[10px] text-navy-300">
+                  avg over {q.days} {q.days === 1 ? 'day' : 'days'}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {(canRefresh || canBackfill) && (
         <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-navy-50 pt-3">

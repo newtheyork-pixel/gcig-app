@@ -65,6 +65,45 @@ function estimateInterest({ tranches, endBalance, rate, end }) {
   return total;
 }
 
+// Average cash the club actually carried, per calendar quarter, from
+// the daily portfolio snapshots. `cashValue` is the sheet's CASH line
+// (the idle FGTXX balance) — exactly the balance the interest estimate
+// rides on, so the per-quarter average is the honest way to show "how
+// much cash were we sitting on, quarter by quarter". Rows without a
+// recorded cashValue predate the cash-tracking column and are skipped.
+async function quarterlyAverageCash() {
+  let snaps;
+  try {
+    snaps = await prisma.portfolioSnapshot.findMany({
+      where: { cashValue: { not: null } },
+      orderBy: { date: 'asc' },
+      select: { date: true, cashValue: true },
+    });
+  } catch {
+    return [];
+  }
+  const buckets = new Map();
+  for (const s of snaps) {
+    const d = new Date(s.date);
+    const q = Math.floor(d.getUTCMonth() / 3) + 1;
+    const key = `${d.getUTCFullYear()}-Q${q}`;
+    const b = buckets.get(key) || { sum: 0, days: 0, year: d.getUTCFullYear(), q };
+    b.sum += Number(s.cashValue) || 0;
+    b.days += 1;
+    buckets.set(key, b);
+  }
+  // Most recent quarter first.
+  return [...buckets.values()]
+    .sort((a, b) => b.year - a.year || b.q - a.q)
+    .map((b) => ({
+      label: `Q${b.q} ${b.year}`,
+      year: b.year,
+      quarter: b.q,
+      avgCash: b.days > 0 ? b.sum / b.days : 0,
+      days: b.days,
+    }));
+}
+
 // Latest observed FGTXX 7-day net yield, if we have one — purely so the
 // card can show the real headline rate. Falls back to the assumed APY.
 async function latestFgtxxYield() {
@@ -94,6 +133,8 @@ export async function computeCashInterest({ endDate } = {}) {
     fgtxxBalance = null;
   }
   const bdaBalance = 0;
+
+  const quarterlyAvgCash = await quarterlyAverageCash();
 
   const yieldRow = await latestFgtxxYield();
   const fgtxxApy = yieldRow?.sevenDayCurrentYield != null
@@ -138,6 +179,9 @@ export async function computeCashInterest({ endDate } = {}) {
     bdaEstimatedInterest,
     fgtxxEstimatedInterest,
     isEstimate: true,
+
+    // Average cash carried per calendar quarter, most recent first.
+    quarterlyAvgCash,
 
     // Back-compat aliases for older callers. `totalInterest` is forced
     // to 0 so any lingering `totalValue + totalInterest` adder is a
