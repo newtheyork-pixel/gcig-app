@@ -1,5 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import api from '../../api/client.js';
+import useLiveRefresh from '../hooks/useLiveRefresh.js';
 
 // PEER — sector peer comparison. Finnhub's peer set for the focused
 // ticker plus a compact fundamentals snapshot per name, with the
@@ -81,6 +82,33 @@ export default function Peers({ ticker, onOpen }) {
     };
   }, [data]);
 
+  // The on-screen set: focus ticker + every comparable, exactly the
+  // names already in the loaded peer grid (server uppercases them).
+  // Memoised to a stable comma list so the value the poll keys off of
+  // only changes when the actual peer set does, not on every render.
+  const liveTickers = useMemo(
+    () =>
+      [...new Set((data?.rows || []).map((r) => String(r.ticker).toUpperCase()))],
+    [data]
+  );
+  const liveKey = liveTickers.join(',');
+
+  // LAST and CHG % go live for the whole grid while Peers is open;
+  // MKT CAP / P/E / FWD P/E / DIV / BETA stay the ~15m fundamentals
+  // snapshot the rows loaded with. Disabled until the peer set exists,
+  // and (via the hook) only polling while mounted and the tab's
+  // visible. A failed poll keeps the last good quotes, not a wipe.
+  const { data: liveQuotes } = useLiveRefresh(
+    async () => {
+      if (!liveKey) return {};
+      const { data } = await api.get('/terminal/quotes', {
+        params: { tickers: liveKey },
+      });
+      return data;
+    },
+    { enabled: liveTickers.length > 0 }
+  );
+
   if (!ticker) {
     return (
       <div className="term-panel">
@@ -104,7 +132,27 @@ export default function Peers({ ticker, onOpen }) {
   }
   if (!data) return null;
 
-  const rows = data.rows || [];
+  // Overlay the live tap onto the snapshot rows: live LAST and CHG %
+  // win when present, the snapshot value stands in otherwise (no live
+  // tick yet, or a Finnhub miss → null for that name) so a cell never
+  // blanks out something it was already showing. Everything else on
+  // the row is left exactly as the fundamentals snapshot loaded it.
+  //
+  // Units: /terminal/quotes' changePct is Finnhub's `dp`, already a
+  // percent (1.23 == +1.23%), while getPeerSnapshot's changePct and
+  // fmt.pct here speak the fraction convention ((c-prev)/prev, fmt.pct
+  // does the ×100). We divide the live changePct by 100 to land in
+  // that convention so the cell shows the true percent; the snapshot
+  // fallback is already a fraction and is left untouched. Mirrors MOVR.
+  const rows = (data.rows || []).map((r) => {
+    const q = liveQuotes ? liveQuotes[String(r.ticker).toUpperCase()] : null;
+    if (!q) return r;
+    return {
+      ...r,
+      price: q.last != null ? q.last : r.price,
+      changePct: q.changePct != null ? q.changePct / 100 : r.changePct,
+    };
+  });
 
   return (
     <div className="term-panel">
@@ -169,8 +217,10 @@ export default function Peers({ ticker, onOpen }) {
       )}
 
       <div style={{ color: 'var(--term-fg-muted)', fontSize: 11 }}>
-        Finnhub peer set · fundamentals snapshot, 15m cache. Focus row
-        highlighted · click any row to open its DES.
+        Finnhub peer set · Last & Chg % refresh live (~20s) while this
+        panel is open; Mkt Cap / P/E / Div / Beta are a ~15m
+        fundamentals snapshot. Focus row highlighted · click any row to
+        open its DES.
       </div>
     </div>
   );
