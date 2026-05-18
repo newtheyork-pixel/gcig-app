@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import api from '../../api/client.js';
+import useLiveRefresh from '../hooks/useLiveRefresh.js';
 
 // DES — company description: live quote + fundamentals + business summary + AI brief.
 // Reuses /api/holdings/info/:ticker (already exists, finnhub-shaped).
@@ -55,6 +56,23 @@ export default function Description({ ticker }) {
     };
   }, [ticker]);
 
+  // LAST goes live while DES is open. The on-mount /holdings/info call
+  // above still owns name, fundamentals, the 52w range and the summary
+  // (it's also what paints the price on the very first frame, before
+  // this poller's first tick lands); here we just keep the quote fresh.
+  // Same source as DES has always used — Finnhub's real-time /quote —
+  // but refreshed on the shared while-visible cadence instead of once.
+  const sym = ticker ? ticker.toUpperCase() : '';
+  const { data: liveQuotes } = useLiveRefresh(
+    async () => {
+      const { data } = await api.get('/terminal/quotes', {
+        params: { tickers: sym },
+      });
+      return data;
+    },
+    { enabled: !!sym }
+  );
+
   useEffect(() => {
     if (!info || !ticker) return;
     let cancelled = false;
@@ -99,8 +117,16 @@ export default function Description({ ticker }) {
   }
   if (!info) return null;
 
-  const last = info.price;
-  const prev = info.previousClose;
+  // Prefer the live quote, fall back to the on-mount snapshot. The hook
+  // keeps the last good payload across a failed poll, so a dropped
+  // refresh leaves the panel on its last fresh number rather than
+  // snapping back; until the first tick lands we show the mount price,
+  // never a blank. A null entry (Finnhub miss for this name) also falls
+  // through to the snapshot. prevClose comes live too so Chg / Chg %
+  // stay internally consistent with whichever LAST we're showing.
+  const liveQ = sym && liveQuotes ? liveQuotes[sym] : null;
+  const last = liveQ?.last != null ? liveQ.last : info.price;
+  const prev = liveQ?.prevClose != null ? liveQ.prevClose : info.previousClose;
   const chg = last != null && prev != null ? last - prev : null;
   const chgPct = chg != null && prev ? chg / prev : null;
   const chgClass = chg == null ? '' : chg >= 0 ? 'pos' : 'neg';
