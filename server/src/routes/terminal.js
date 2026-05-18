@@ -5,6 +5,7 @@ import { llmChat } from '../services/llm.js';
 import { getHistory } from '../services/priceHistory.js';
 import { getPortfolioMovers, getSheetPortfolio } from '../services/sheetPortfolio.js';
 import { getProxyStatement } from '../services/proxyStatement.js';
+import { getExecutiveBios } from '../services/executiveBios.js';
 import { parseLeadership, parseBoard, parseComp, buildNetwork } from '../services/governanceParsers.js';
 import { getPeers, getPeerSnapshot } from '../services/marketData.js';
 import { getNewsForTicker } from '../services/news.js';
@@ -124,6 +125,42 @@ router.get('/governance/:ticker', async (req, res) => {
     res.status(502).json({ error: 'Governance data unavailable' });
   }
 });
+
+// MGMT, executive half — per-officer bios pulled lazily from the 10-K
+// (directors' bios already ride the DEF 14A in /governance above; the
+// SEC puts the officer disclosure in the 10-K, not the proxy). Split
+// out as its own endpoint so the panel only pays the second filing
+// fetch when a user actually opens an exec card.
+//
+// Unlike /governance, the service here (executiveBios.js) is itself
+// never-throws and returns an honest empty stub on any miss — no 10-K,
+// fetch error, or the incorporated-by-reference filers (MLAB, AAPL)
+// that carry no officer section at all. So a parse miss is a normal
+// 200 with officers:[], never a 5xx; the modal renders "no bios
+// disclosed" rather than an error. The handler is extracted with an
+// injectable service (same shape executiveBios.test.js uses to stay
+// off the network) and still wraps the call in its own try/catch:
+// even though the service contract is never-throws, the route does not
+// rely on that to hold — any unexpected rejection still degrades to
+// the same honest-empty 200, so this endpoint can never 5xx.
+export async function execBiosHandler(req, res, deps = {}) {
+  const fetchBios = deps.getExecutiveBios || getExecutiveBios;
+  const raw = String(req.params.ticker || '').trim().toUpperCase();
+  if (!raw || !/^[A-Z0-9.\-]{1,12}$/.test(raw)) {
+    return res.status(400).json({ error: 'Invalid ticker' });
+  }
+  try {
+    const { ticker, source, officers } = await fetchBios(raw);
+    res.json({ ticker, source, officers });
+  } catch (err) {
+    console.warn(`terminal/exec-bios(${raw}) degraded:`, err.message);
+    res.json({ ticker: raw, source: null, officers: [] });
+  }
+}
+
+router.get('/governance/:ticker/exec-bios', (req, res) =>
+  execBiosHandler(req, res)
+);
 
 // MOVR — every holding and how much it's up or down today, read live
 // from the positions sheet (same source as the dashboard). Not the
