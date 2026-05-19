@@ -96,6 +96,7 @@ model User {
   tradeRequests     TradeRequest[]   @relation("TradeRequestCreator")
   presidentReviewsGiven    PresidentReview[] @relation("PresidentReviewReviewer")
   presidentReviewsReceived PresidentReview[] @relation("PresidentReviewPresident")
+  watchlists        Watchlist[]
 }
 
 // Chat channels are addressed by a simple string:
@@ -713,4 +714,36 @@ model PriceBar {
 
   @@unique([ticker, date])
   @@index([ticker, date(sort: Desc)])
+}
+
+// Per-user named watchlist. A member can keep several (capped at the
+// route layer); the earliest one — lowest createdAt — is the implicit
+// "default" the DES ★ targets. Cascade from User so deleting an account
+// drops every list and, in turn, every item under it. Names are unique
+// per user, not globally — two members can both have a "Tech" list.
+model Watchlist {
+  id        Int             @id @default(autoincrement())
+  userId    Int
+  name      String
+  createdAt DateTime        @default(now())
+  user      User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  items     WatchlistItem[]
+
+  @@unique([userId, name])
+  @@index([userId])
+}
+
+// One ticker on a watchlist. The (watchlistId, ticker) unique key makes
+// a re-add idempotent — the route upserts on it so adding a name twice
+// is a benign no-op rather than a duplicate row or an error. Cascade
+// from Watchlist completes the User → Watchlist → WatchlistItem chain.
+model WatchlistItem {
+  id          Int       @id @default(autoincrement())
+  watchlistId Int
+  ticker      String
+  addedAt     DateTime  @default(now())
+  watchlist   Watchlist @relation(fields: [watchlistId], references: [id], onDelete: Cascade)
+
+  @@unique([watchlistId, ticker])
+  @@index([watchlistId])
 }
