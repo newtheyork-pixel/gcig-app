@@ -96,7 +96,9 @@ model User {
   tradeRequests     TradeRequest[]   @relation("TradeRequestCreator")
   presidentReviewsGiven    PresidentReview[] @relation("PresidentReviewReviewer")
   presidentReviewsReceived PresidentReview[] @relation("PresidentReviewPresident")
-  researchNotes            ResearchNote[]
+  watchlists        Watchlist[]
+  watchlistAlerts   WatchlistAlert[]
+  researchNotes     ResearchNote[]
 }
 
 // Chat channels are addressed by a simple string:
@@ -714,6 +716,65 @@ model PriceBar {
 
   @@unique([ticker, date])
   @@index([ticker, date(sort: Desc)])
+}
+
+// Per-user named watchlist. A member can keep several (capped at the
+// route layer); the earliest one — lowest createdAt — is the implicit
+// "default" the DES ★ targets. Cascade from User so deleting an account
+// drops every list and, in turn, every item under it. Names are unique
+// per user, not globally — two members can both have a "Tech" list.
+model Watchlist {
+  id        Int             @id @default(autoincrement())
+  userId    Int
+  name      String
+  createdAt DateTime        @default(now())
+  user      User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  items     WatchlistItem[]
+
+  @@unique([userId, name])
+  @@index([userId])
+}
+
+// One ticker on a watchlist. The (watchlistId, ticker) unique key makes
+// a re-add idempotent — the route upserts on it so adding a name twice
+// is a benign no-op rather than a duplicate row or an error. Cascade
+// from Watchlist completes the User → Watchlist → WatchlistItem chain.
+model WatchlistItem {
+  id          Int       @id @default(autoincrement())
+  watchlistId Int
+  ticker      String
+  addedAt     DateTime  @default(now())
+  watchlist   Watchlist @relation(fields: [watchlistId], references: [id], onDelete: Cascade)
+
+  @@unique([watchlistId, ticker])
+  @@index([watchlistId])
+}
+
+// A per-user price / day-%-move alert rule. Deliberately independent of
+// Watchlist — a rule is just user + ticker + condition, so it survives a
+// ticker leaving a list and doesn't care which list (if any) it's on.
+// `metric` is 'price' (compare the last print) or 'pct' (compare the
+// day % change, the whole-percent convention /terminal/quotes already
+// speaks); `direction` is 'above' or 'below'. The rule is one-shot:
+// when the Layout poller sees it cross it POSTs /fired, which stamps
+// `lastFiredAt` and flips `active` false so the same crossing can't
+// re-spam the popup every poll — the user re-arms it by hand if they
+// still want it. Cascade from User so deleting an account drops every
+// rule. No which-watchlist FK on purpose; the userId scope is the only
+// owner check, exactly the Watchlist `ownedList` discipline.
+model WatchlistAlert {
+  id          Int       @id @default(autoincrement())
+  userId      Int
+  ticker      String
+  metric      String    // 'price' | 'pct' (pct = day % change)
+  direction   String    // 'above' | 'below'
+  threshold   Float
+  active      Boolean   @default(true)
+  lastFiredAt DateTime?
+  createdAt   DateTime  @default(now())
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
 }
 
 // A private free-text research note a member keeps on a ticker while

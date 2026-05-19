@@ -54,6 +54,7 @@ const KNOWN_FUNCTIONS = [
   { id: 'WEI', label: 'World Equity Indices', summary: 'Global index snapshot.' },
   { id: 'TOP', label: 'Top News', summary: 'Market-wide top headlines.' },
   { id: 'MOVR', label: 'Movers', summary: 'Day\'s biggest gainers and losers.' },
+  { id: 'W', label: 'Watchlist', summary: 'Your saved personal ticker lists, with live quotes.' },
   { id: 'ECO', label: 'Economic Calendar', summary: 'Upcoming releases and central bank events.' },
   { id: 'HELP', label: 'Help', summary: 'List of available terminal functions.' },
 ];

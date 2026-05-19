@@ -1,7 +1,126 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import api from '../../api/client.js';
 import useLiveRefresh from '../hooks/useLiveRefresh.js';
 import FlashPrice from '../components/FlashPrice.jsx';
+
+// The DES ★ — a self-contained watchlist toggle for the focused
+// ticker. It targets the user's *default* list (the earliest one;
+// GET /api/watchlist returns lists oldest-first and lazily creates the
+// default if the user has none, so lists[0] is always a real, owned
+// list id). Click toggles membership via POST/DELETE item on that id.
+//
+// Hard rule from the spec: this never blocks or breaks DES. The whole
+// thing is its own component with its own state; any watchlist failure
+// (unreachable, auth, the never-5xx degraded shape) just silently
+// hides or no-ops the star — DES itself is wholly unaffected.
+function WatchlistStar({ ticker }) {
+  const sym = ticker ? ticker.toUpperCase() : '';
+  const [defaultList, setDefaultList] = useState(null); // {id,name}
+  const [member, setMember] = useState(false);
+  const [ready, setReady] = useState(false); // resolved at least once
+  const [busy, setBusy] = useState(false);
+  const [hidden, setHidden] = useState(false); // degrade: don't render
+
+  // Resolve the default list + whether this ticker is on it. Re-runs
+  // when the focused ticker changes. Any failure → hide the star
+  // entirely; it must never surface an error in DES.
+  const refresh = useCallback(async () => {
+    if (!sym) return;
+    try {
+      const { data } = await api.get('/watchlist');
+      const lists = Array.isArray(data?.lists) ? data.lists : [];
+      if (lists.length === 0) {
+        // GET lazily creates the default, so an empty set here means
+        // the watchlist is degraded — silently hide the star.
+        setHidden(true);
+        setReady(true);
+        return;
+      }
+      const def = lists[0]; // earliest = the default
+      setDefaultList({ id: def.id, name: def.name });
+      setMember(
+        (def.items || []).some(
+          (i) => String(i.ticker).toUpperCase() === sym
+        )
+      );
+      setHidden(false);
+      setReady(true);
+    } catch {
+      // Unreachable / 401 / anything — degrade silently. DES carries
+      // on; the star simply isn't shown.
+      setHidden(true);
+      setReady(true);
+    }
+  }, [sym]);
+
+  useEffect(() => {
+    setReady(false);
+    setHidden(false);
+    setDefaultList(null);
+    setMember(false);
+    refresh();
+  }, [refresh]);
+
+  const toggle = useCallback(async () => {
+    if (!sym || !defaultList || busy) return;
+    setBusy(true);
+    // Optimistic flip; the server response (or a failure) reconciles.
+    const wasMember = member;
+    setMember(!wasMember);
+    try {
+      const req = wasMember
+        ? api.delete(
+            `/watchlist/lists/${defaultList.id}/items/${encodeURIComponent(
+              sym
+            )}`
+          )
+        : api.post(`/watchlist/lists/${defaultList.id}/items`, {
+            ticker: sym,
+          });
+      const { data } = await req;
+      // Success carries { lists }; reconcile membership from the
+      // authoritative set. The never-5xx degraded shape ({ ok:false })
+      // has no lists — revert the optimistic flip and leave DES be.
+      if (Array.isArray(data?.lists)) {
+        const def =
+          data.lists.find((l) => l.id === defaultList.id) || data.lists[0];
+        if (def) {
+          setDefaultList({ id: def.id, name: def.name });
+          setMember(
+            (def.items || []).some(
+              (i) => String(i.ticker).toUpperCase() === sym
+            )
+          );
+        }
+      } else {
+        setMember(wasMember);
+      }
+    } catch {
+      // Revert; never throw out of the star.
+      setMember(wasMember);
+    } finally {
+      setBusy(false);
+    }
+  }, [sym, defaultList, member, busy]);
+
+  if (!sym || !ready || hidden || !defaultList) return null;
+
+  return (
+    <button
+      className={`term-wl-star${member ? ' on' : ''}`}
+      onClick={toggle}
+      disabled={busy}
+      title={
+        member
+          ? `In "${defaultList.name}" — click to remove`
+          : `Add ${sym} to "${defaultList.name}"`
+      }
+      aria-pressed={member}
+    >
+      {member ? `★ In ${defaultList.name}` : '☆ Watchlist'}
+    </button>
+  );
+}
 
 // DES — company description: live quote + fundamentals + business summary + AI brief.
 // Reuses /api/holdings/info/:ticker (already exists, finnhub-shaped).
@@ -137,6 +256,7 @@ export default function Description({ ticker }) {
       <div className="term-panel-header">
         <span className="ticker">{ticker.toUpperCase()}</span>
         <span className="name">{info.name || '—'}</span>
+        <WatchlistStar ticker={ticker} />
       </div>
 
       <div className="term-stat-grid">

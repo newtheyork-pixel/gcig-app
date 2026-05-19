@@ -31,6 +31,8 @@ import docusignRoutes from './routes/docusign.js';
 import tradeRequestRoutes from './routes/tradeRequests.js';
 import presidentReviewRoutes from './routes/presidentReview.js';
 import terminalRoutes from './routes/terminal.js';
+import watchlistRoutes from './routes/watchlist.js';
+import alertRoutes from './routes/alerts.js';
 import notesRoutes from './routes/notes.js';
 import { ensureRecurringMeetings } from './services/recurringMeetings.js';
 import cron from 'node-cron';
@@ -123,6 +125,8 @@ app.use('/api/docusign', docusignRoutes);
 app.use('/api/trade-requests', tradeRequestRoutes);
 app.use('/api/president-review', presidentReviewRoutes);
 app.use('/api/terminal', terminalRoutes);
+app.use('/api/watchlist', watchlistRoutes);
+app.use('/api/alerts', alertRoutes);
 app.use('/api/notes', notesRoutes);
 
 // Generic error handler. Logs the full error server-side for debugging but
