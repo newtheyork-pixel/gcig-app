@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  Fragment,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import api from '../../api/client.js';
 import useLiveRefresh from '../hooks/useLiveRefresh.js';
 import FlashPrice from '../components/FlashPrice.jsx';
@@ -29,6 +36,68 @@ const fmt = {
 
 const TICKER_RE = /^[A-Z0-9.\-]{1,12}$/;
 
+// Inline styles for the alert-management affordance. The terminal's
+// CSS variables are global, so referencing them inline keeps the new
+// surface on-theme without adding a stylesheet (the W panel's existing
+// .term-wl-btn / .term-wl-x / .term-wl-notice classes cover the
+// buttons; only these few containers/selects need styling).
+const ALERT_STYLE = {
+  editor: {
+    display: 'flex',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 6,
+    border: '1px solid var(--term-border)',
+    padding: '6px 8px',
+  },
+  lead: {
+    color: 'var(--term-fg-dim)',
+    fontSize: 11,
+    letterSpacing: '0.06em',
+  },
+  field: {
+    background: 'transparent',
+    color: 'var(--term-fg)',
+    border: '1px solid var(--term-border)',
+    font: 'inherit',
+    fontSize: 12,
+    padding: '3px 6px',
+  },
+  thresh: { width: 90 },
+  section: {
+    marginTop: 10,
+    borderTop: '1px solid var(--term-border)',
+    paddingTop: 8,
+  },
+  sectionHead: {
+    color: 'var(--term-fg-dim)',
+    fontSize: 11,
+    letterSpacing: '0.08em',
+    textTransform: 'uppercase',
+    marginBottom: 6,
+  },
+  row: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 8,
+    fontSize: 12,
+    padding: '3px 0',
+  },
+  desc: { flex: 1, minWidth: 0, color: 'var(--term-fg)' },
+  stateOn: {
+    fontSize: 10,
+    letterSpacing: '0.08em',
+    textTransform: 'uppercase',
+    color: 'var(--term-positive)',
+  },
+  stateOff: {
+    fontSize: 10,
+    letterSpacing: '0.08em',
+    textTransform: 'uppercase',
+    color: 'var(--term-fg-muted)',
+  },
+};
+
 export default function Watchlist({ onOpen }) {
   const [lists, setLists] = useState(null); // null = not loaded yet
   const [activeId, setActiveId] = useState(null);
@@ -38,6 +107,33 @@ export default function Watchlist({ onOpen }) {
   const [notice, setNotice] = useState(''); // soft, transient op notice
   const [tickerInput, setTickerInput] = useState('');
   const [busy, setBusy] = useState(false); // a mutation is in flight
+
+  // ── Price/%-move alerts ──────────────────────────────────────────
+  // A lean affordance on top of the list: the user's alert rules
+  // (independent of any list — see /api/alerts), an inline editor a
+  // row's "+ alert" opens, and a compact rule list with delete /
+  // re-arm. The substance of the feature is the global Layout poller;
+  // this is just the create/list/manage surface, so it stays small
+  // and degrades to a soft notice exactly like the list controls.
+  const [alerts, setAlerts] = useState([]);
+  const [alertFor, setAlertFor] = useState(null); // ticker the editor is open for
+  const [alertMetric, setAlertMetric] = useState('price');
+  const [alertDir, setAlertDir] = useState('above');
+  const [alertThresh, setAlertThresh] = useState('');
+  const [alertNotice, setAlertNotice] = useState('');
+  const [alertBusy, setAlertBusy] = useState(false);
+
+  const loadAlerts = useCallback(async () => {
+    try {
+      const { data } = await api.get('/alerts');
+      setAlerts(Array.isArray(data?.alerts) ? data.alerts : []);
+    } catch {
+      // Never-5xx route; a hard failure just leaves the section
+      // empty — the global poller is unaffected, this is only the
+      // management view.
+      setAlerts([]);
+    }
+  }, []);
 
   // Adopt a fresh { lists } payload as the single source of truth.
   // Only ever called with a real array — the never-5xx degraded
@@ -80,7 +176,8 @@ export default function Watchlist({ onOpen }) {
 
   useEffect(() => {
     load();
-  }, [load]);
+    loadAlerts();
+  }, [load, loadAlerts]);
 
   const active = useMemo(
     () => (lists || []).find((l) => l.id === activeId) || null,
@@ -236,6 +333,100 @@ export default function Watchlist({ onOpen }) {
     );
   }, [active, mutate]);
 
+  // Open the inline alert editor for one ticker. Toggling the same
+  // ticker closes it; defaults reset each open so the form is never
+  // stale from a previous row. Closing-vs-opening is decided off the
+  // current `alertFor` (not inside a setState updater) so the form
+  // resets stay plain, idempotent setter calls.
+  const openAlertEditor = useCallback(
+    (ticker) => {
+      setAlertNotice('');
+      if (alertFor === ticker) {
+        setAlertFor(null);
+        return;
+      }
+      setAlertMetric('price');
+      setAlertDir('above');
+      setAlertThresh('');
+      setAlertFor(ticker);
+    },
+    [alertFor]
+  );
+
+  // One wrapper for every alert mutation: guards concurrent ops, then
+  // re-reads the rule list from /alerts (its own source of truth) on
+  // success, and turns the never-5xx degraded shape or a thrown 4xx
+  // into the same soft inline notice — nothing is ever lost.
+  const alertMutate = useCallback(
+    async (fn, fallbackMsg) => {
+      if (alertBusy) return false;
+      setAlertBusy(true);
+      setAlertNotice('');
+      try {
+        const { data } = await fn();
+        if (Array.isArray(data?.alerts)) {
+          setAlerts(data.alerts);
+          return true;
+        }
+        setAlertNotice(data?.error || fallbackMsg);
+        return false;
+      } catch (e) {
+        setAlertNotice(
+          e.response?.data?.error || e.message || fallbackMsg
+        );
+        return false;
+      } finally {
+        setAlertBusy(false);
+      }
+    },
+    [alertBusy]
+  );
+
+  const createAlert = useCallback(async () => {
+    if (!alertFor) return;
+    const t = String(alertFor).toUpperCase();
+    const threshold = Number(alertThresh);
+    if (alertThresh.trim() === '' || !Number.isFinite(threshold)) {
+      setAlertNotice('Enter a numeric threshold.');
+      return;
+    }
+    const ok = await alertMutate(
+      () =>
+        api.post('/alerts', {
+          ticker: t,
+          metric: alertMetric,
+          direction: alertDir,
+          threshold,
+        }),
+      'Could not create that alert.'
+    );
+    if (ok) {
+      setAlertFor(null);
+      setAlertThresh('');
+    }
+  }, [alertFor, alertThresh, alertMetric, alertDir, alertMutate]);
+
+  const deleteAlert = useCallback(
+    (id) =>
+      alertMutate(
+        () => api.delete(`/alerts/${id}`),
+        'Could not delete that alert.'
+      ),
+    [alertMutate]
+  );
+
+  // Re-arm a fired/disabled rule or disable an armed one. The server
+  // caps *active* rules, so a re-arm can 409 if the user is already at
+  // the cap — that surfaces as the soft notice, not a thrown error.
+  const toggleAlert = useCallback(
+    (id, next) =>
+      alertMutate(
+        () => api.patch(`/alerts/${id}`, { active: next }),
+        'Could not update that alert.'
+      ),
+    [alertMutate]
+  );
+
   // Enter/Space activate a clickable row — same a11y shape as Movers.
   const rowKey = (fn) => (e) => {
     if (e.key === 'Enter' || e.key === ' ') {
@@ -389,64 +580,198 @@ export default function Watchlist({ onOpen }) {
               <th>Ticker</th>
               <th className="num">Last</th>
               <th className="num">Day %</th>
-              <th style={{ width: 28 }} />
+              <th style={{ width: 64 }} />
             </tr>
           </thead>
           <tbody>
             {rows.map((r, i) => (
-              <tr
-                key={r.ticker}
-                className="term-row-link"
-                role="button"
-                tabIndex={0}
-                onClick={() => onOpen?.({ ticker: r.ticker, fn: 'DES' })}
-                onKeyDown={rowKey(() =>
-                  onOpen?.({ ticker: r.ticker, fn: 'DES' })
-                )}
-                title={`Open ${r.ticker} DES`}
-              >
-                <td className="rank">{i + 1}</td>
-                <td className="sym">{r.ticker}</td>
-                <td className="num">
-                  <FlashPrice value={r.last}>{fmt.px(r.last)}</FlashPrice>
-                </td>
-                <td
-                  className={`num ${
-                    r.changePct == null
-                      ? ''
-                      : r.changePct >= 0
-                      ? 'pos'
-                      : 'neg'
-                  }`}
+              <Fragment key={r.ticker}>
+                <tr
+                  className="term-row-link"
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => onOpen?.({ ticker: r.ticker, fn: 'DES' })}
+                  onKeyDown={rowKey(() =>
+                    onOpen?.({ ticker: r.ticker, fn: 'DES' })
+                  )}
+                  title={`Open ${r.ticker} DES`}
                 >
-                  {fmt.pct(r.changePct)}
-                </td>
-                <td className="num">
-                  <button
-                    className="term-wl-x"
-                    onClick={(e) => {
-                      // Don't let the × bubble into the row's open-DES
-                      // click.
-                      e.stopPropagation();
-                      removeTicker(r.ticker);
-                    }}
-                    disabled={busy}
-                    title={`Remove ${r.ticker}`}
-                    aria-label={`Remove ${r.ticker}`}
+                  <td className="rank">{i + 1}</td>
+                  <td className="sym">{r.ticker}</td>
+                  <td className="num">
+                    <FlashPrice value={r.last}>{fmt.px(r.last)}</FlashPrice>
+                  </td>
+                  <td
+                    className={`num ${
+                      r.changePct == null
+                        ? ''
+                        : r.changePct >= 0
+                        ? 'pos'
+                        : 'neg'
+                    }`}
                   >
-                    ×
-                  </button>
-                </td>
-              </tr>
+                    {fmt.pct(r.changePct)}
+                  </td>
+                  <td className="num">
+                    <button
+                      className="term-wl-x"
+                      onClick={(e) => {
+                        // Don't let the alert toggle bubble into the
+                        // row's open-DES click.
+                        e.stopPropagation();
+                        openAlertEditor(r.ticker);
+                      }}
+                      disabled={alertBusy}
+                      title={`Set a price/%-move alert on ${r.ticker}`}
+                      aria-label={`Set an alert on ${r.ticker}`}
+                    >
+                      🔔
+                    </button>
+                    <button
+                      className="term-wl-x"
+                      onClick={(e) => {
+                        // Don't let the × bubble into the row's open-DES
+                        // click.
+                        e.stopPropagation();
+                        removeTicker(r.ticker);
+                      }}
+                      disabled={busy}
+                      title={`Remove ${r.ticker}`}
+                      aria-label={`Remove ${r.ticker}`}
+                    >
+                      ×
+                    </button>
+                  </td>
+                </tr>
+                {alertFor === r.ticker && (
+                  <tr>
+                    <td colSpan={5} style={{ padding: '6px 8px' }}>
+                      <div style={ALERT_STYLE.editor}>
+                        <span style={ALERT_STYLE.lead}>
+                          Alert {r.ticker}
+                        </span>
+                        <select
+                          style={ALERT_STYLE.field}
+                          value={alertMetric}
+                          onChange={(e) => setAlertMetric(e.target.value)}
+                          disabled={alertBusy}
+                          aria-label="Alert metric"
+                        >
+                          <option value="price">price</option>
+                          <option value="pct">day %</option>
+                        </select>
+                        <select
+                          style={ALERT_STYLE.field}
+                          value={alertDir}
+                          onChange={(e) => setAlertDir(e.target.value)}
+                          disabled={alertBusy}
+                          aria-label="Alert direction"
+                        >
+                          <option value="above">above</option>
+                          <option value="below">below</option>
+                        </select>
+                        <input
+                          style={{
+                            ...ALERT_STYLE.field,
+                            ...ALERT_STYLE.thresh,
+                          }}
+                          value={alertThresh}
+                          onChange={(e) => setAlertThresh(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              e.preventDefault();
+                              createAlert();
+                            }
+                          }}
+                          placeholder={
+                            alertMetric === 'price' ? 'e.g. 190' : 'e.g. -3'
+                          }
+                          inputMode="decimal"
+                          disabled={alertBusy}
+                          spellCheck={false}
+                          aria-label="Alert threshold"
+                        />
+                        <button
+                          className="term-wl-btn"
+                          onClick={createAlert}
+                          disabled={alertBusy || !alertThresh.trim()}
+                        >
+                          SET
+                        </button>
+                        <button
+                          className="term-wl-btn"
+                          onClick={() => setAlertFor(null)}
+                          disabled={alertBusy}
+                        >
+                          Cancel
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                )}
+              </Fragment>
             ))}
           </tbody>
         </table>
       )}
 
+      {/* The caller's alert rules — independent of which list a ticker
+          is on. Compact: each rule, a re-arm/disable toggle, and a ×.
+          The substance is the global Layout poller that evaluates
+          these; this is just the management view, so it stays lean and
+          honest about the only-while-open reality. */}
+      {alerts.length > 0 && (
+        <div style={ALERT_STYLE.section}>
+          <div style={ALERT_STYLE.sectionHead}>
+            Alerts · {alerts.filter((a) => a.active).length} armed ·
+            checked only while this app is open
+          </div>
+          {alerts.map((a) => (
+            <div key={a.id} style={ALERT_STYLE.row}>
+              <span style={ALERT_STYLE.desc}>
+                <span className="sym">{a.ticker}</span>{' '}
+                {a.metric === 'pct' ? 'day %' : 'price'} {a.direction}{' '}
+                {a.threshold}
+                {a.metric === 'pct' ? '%' : ''}
+              </span>
+              <span
+                style={a.active ? ALERT_STYLE.stateOn : ALERT_STYLE.stateOff}
+              >
+                {a.active ? 'armed' : 'fired'}
+              </span>
+              <button
+                className="term-wl-btn"
+                onClick={() => toggleAlert(a.id, !a.active)}
+                disabled={alertBusy}
+                title={a.active ? 'Disable this alert' : 'Re-arm this alert'}
+              >
+                {a.active ? 'Disable' : 'Re-arm'}
+              </button>
+              <button
+                className="term-wl-x"
+                onClick={() => deleteAlert(a.id)}
+                disabled={alertBusy}
+                title="Delete this alert"
+                aria-label={`Delete ${a.ticker} alert`}
+              >
+                ×
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {alertNotice ? (
+        <div className="term-wl-notice">{alertNotice}</div>
+      ) : null}
+
       <div style={{ color: 'var(--term-fg-muted)', fontSize: 11 }}>
         Saved to your profile · prices for the active list refresh live
         (~20s) while this panel is open. Click a row to open its DES ·
-        ★ a company on its DES to add it to your default list.
+        ★ a company on its DES to add it to your default list · 🔔 sets
+        a price/%-move alert. Alerts are one-shot (they disable after
+        firing — re-arm them here) and are only checked while you have
+        the app open in a tab — there is no logged-out push.
       </div>
     </div>
   );

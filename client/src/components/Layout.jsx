@@ -5,6 +5,7 @@ import MobileTabBar from './MobileTabBar.jsx';
 import VoteNotification from './VoteNotification.jsx';
 import PitchNotification from './PitchNotification.jsx';
 import PresidentReviewNotification from './PresidentReviewNotification.jsx';
+import WatchlistAlertNotification from './WatchlistAlertNotification.jsx';
 
 export default function Layout() {
   const [drawerOpen, setDrawerOpen] = useState(false);
@@ -14,6 +15,7 @@ export default function Layout() {
       <VoteNotification />
       <PitchNotification />
       <PresidentReviewNotification />
+      <WatchlistAlertNotification />
 
       {/* Desktop sidebar — hidden below md */}
       <div className="hidden md:block shrink-0">
