@@ -12,6 +12,7 @@ import { getNewsForTicker } from '../services/news.js';
 import { getWorldIndices, REGION_ORDER } from '../services/worldIndices.js';
 import { getInsiderTransactions } from '../services/insiderTx.js';
 import { getLiveQuotes } from '../services/liveQuotes.js';
+import { getRecentFilings } from '../services/secFilings.js';
 
 // Terminal — AI-driven endpoints that back the /terminal workstation.
 // Quote/news/fundamentals data is reused from /api/holdings/* (already
@@ -203,6 +204,42 @@ export async function quotesHandler(req, res, deps = {}) {
 
 router.get('/quotes', (req, res) => quotesHandler(req, res));
 
+// FIL — a ticker's recent SEC filings (8-K, 10-Q, 10-K, DEF 14A,
+// Form 4 …) straight off the EDGAR submissions feed. Pure reuse of
+// secFilings.js: getRecentFilings already backs holdings.js and owns
+// its own 6h per-ticker cache, ticker→CIK resolution (including the
+// dot/dash share-class convention), and the never-throws empty
+// degrade — there is no new SEC fetch path here. We pull a 40-row
+// window: deep enough that an annual DEF 14A or 10-K isn't buried
+// behind a torrent of 8-Ks/Form 4s for an active large-cap, while
+// still a single cached JSON read.
+//
+// Handler extracted with an injectable service (the shape
+// terminal.filings.test.js uses to stay off the network) and wrapped
+// in its own try/catch: getRecentFilings is contractually never-
+// throws (it returns [] on any miss), but the route does not lean on
+// that — any unexpected rejection still degrades to a 200
+// { ticker, filings: [] } with a warn, so this endpoint can never
+// 5xx and the panel says "no recent filings" rather than erroring.
+// A malformed path param is the one 400, matching the sibling
+// /governance and exec-bios input guards exactly.
+export async function filingsHandler(req, res, deps = {}) {
+  const fetchFilings = deps.getRecentFilings || getRecentFilings;
+  const raw = String(req.params.ticker || '').trim().toUpperCase();
+  if (!raw || !/^[A-Z0-9.\-]{1,12}$/.test(raw)) {
+    return res.status(400).json({ error: 'Invalid ticker' });
+  }
+  try {
+    const filings = await fetchFilings(raw, { limit: 40 });
+    res.json({ ticker: raw, filings: Array.isArray(filings) ? filings : [] });
+  } catch (err) {
+    console.warn(`terminal/filings(${raw}) degraded:`, err.message);
+    res.json({ ticker: raw, filings: [] });
+  }
+}
+
+router.get('/filings/:ticker', (req, res) => filingsHandler(req, res));
+
 // MOVR — every holding and how much it's up or down today, read live
 // from the positions sheet (same source as the dashboard). Not the
 // tickers charted in the terminal: the actual book. The sheet service
@@ -362,6 +399,13 @@ const FN_PROMPTS = {
     'You are a governance analyst at GCIG, a student investment fund. ' +
     'Write a 2–3 sentence brief on the leadership team. Note CEO tenure and any recent turnover. ' +
     'Flag if compensation appears outsized relative to company size, or if the board has notable interlocking directorships with portfolio companies. ' +
+    GROUNDING_RULES,
+
+  FIL:
+    'You are a filings analyst at GCIG, a student investment fund, reading a ticker\'s recent SEC submissions. ' +
+    'Write a 2–3 sentence brief on what is notable. Flag a fresh 10-K or 10-Q, a material 8-K, or a new DEF 14A, and note clustered Form 4s in a short window. ' +
+    'Distinguish substantive filings from routine boilerplate (144s, ownership amendments). ' +
+    'If nothing has been filed recently or the feed is stale, say so plainly rather than overstating thin activity. ' +
     GROUNDING_RULES,
 
   WEI:
