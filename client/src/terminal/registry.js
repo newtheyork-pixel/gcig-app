@@ -14,6 +14,7 @@ import InsiderActivity from './functions/InsiderActivity.jsx';
 import Governance from './functions/Governance.jsx';
 import TopNews from './functions/TopNews.jsx';
 import WorldIndices from './functions/WorldIndices.jsx';
+import Watchlist from './functions/Watchlist.jsx';
 import ComingSoon from './functions/ComingSoon.jsx';
 
 export const FUNCTIONS = [
@@ -59,6 +60,7 @@ export const FUNCTIONS = [
   { id: 'WEI', label: 'World Indices', help: 'Global index snapshot.', requires: null, component: WorldIndices },
   { id: 'TOP', label: 'Top News', help: 'Market-wide top headlines.', requires: null, component: TopNews },
   { id: 'MOVR', label: 'Movers', help: 'Day\'s biggest gainers and losers.', requires: null, component: Movers },
+  { id: 'W', label: 'Watchlist', help: 'Your saved ticker lists, live.', requires: null, component: Watchlist },
   { id: 'ECO', label: 'Economic Calendar', help: 'Upcoming releases and central bank events.', requires: null, component: ComingSoon },
 ];
 
