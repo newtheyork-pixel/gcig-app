@@ -97,6 +97,7 @@ model User {
   presidentReviewsGiven    PresidentReview[] @relation("PresidentReviewReviewer")
   presidentReviewsReceived PresidentReview[] @relation("PresidentReviewPresident")
   watchlists        Watchlist[]
+  watchlistAlerts   WatchlistAlert[]
 }
 
 // Chat channels are addressed by a simple string:
@@ -746,4 +747,31 @@ model WatchlistItem {
 
   @@unique([watchlistId, ticker])
   @@index([watchlistId])
+}
+
+// A per-user price / day-%-move alert rule. Deliberately independent of
+// Watchlist — a rule is just user + ticker + condition, so it survives a
+// ticker leaving a list and doesn't care which list (if any) it's on.
+// `metric` is 'price' (compare the last print) or 'pct' (compare the
+// day % change, the whole-percent convention /terminal/quotes already
+// speaks); `direction` is 'above' or 'below'. The rule is one-shot:
+// when the Layout poller sees it cross it POSTs /fired, which stamps
+// `lastFiredAt` and flips `active` false so the same crossing can't
+// re-spam the popup every poll — the user re-arms it by hand if they
+// still want it. Cascade from User so deleting an account drops every
+// rule. No which-watchlist FK on purpose; the userId scope is the only
+// owner check, exactly the Watchlist `ownedList` discipline.
+model WatchlistAlert {
+  id          Int       @id @default(autoincrement())
+  userId      Int
+  ticker      String
+  metric      String    // 'price' | 'pct' (pct = day % change)
+  direction   String    // 'above' | 'below'
+  threshold   Float
+  active      Boolean   @default(true)
+  lastFiredAt DateTime?
+  createdAt   DateTime  @default(now())
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
 }
