@@ -55,6 +55,18 @@ export function embedUrl(url, mime) {
       u.pathname = u.pathname.replace(/\/(edit|view)\b.*/, '/preview');
       return u.toString();
     }
+    // SEC.gov refuses third-party framing with X-Frame-Options plus a
+    // CSP frame-ancestors directive, so the direct URL paints blank
+    // in our iframe. Route SEC documents through our own origin via
+    // the public sec-doc-proxy: server-side it fetches the page with
+    // the keyless SEC_UA we already use elsewhere, strips the
+    // framing-refusal headers, and injects <base href> so SEC's
+    // relative asset paths still resolve back to sec.gov. The
+    // fallback "Open in new tab" link still goes to the original SEC
+    // URL for the rare case the proxy can't render perfectly.
+    if (u.hostname === 'www.sec.gov' || u.hostname === 'data.sec.gov') {
+      return `/api/terminal/sec-doc-proxy?url=${encodeURIComponent(url)}`;
+    }
     return url;
   } catch {
     // Non-URL strings (or odd custom schemes) — let the iframe try; if
