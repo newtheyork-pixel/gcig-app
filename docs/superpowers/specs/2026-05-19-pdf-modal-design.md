@@ -161,3 +161,32 @@ two-site client wiring.
   no-silent-break posture as v1.
 - Modal title format: `${TICKER} ${FORM} · ${MM/DD/YY}` so the user
   knows what they're looking at without reading the URL bar.
+
+## v1.2 — SEC iframe proxy
+
+- Predicted in v1.1 and confirmed in real testing of an AAPL Form 4/A:
+  SEC.gov refuses third-party framing via `X-Frame-Options: SAMEORIGIN`
+  plus a `Content-Security-Policy: frame-ancestors` directive, so the
+  iframe paints blank and only the modal chrome + fallback link remain
+  usable.
+- Fix: a server-side `/api/terminal/sec-doc-proxy?url=…` route that
+  fetches the SEC page with the same keyless `SEC_UA` plumbing used by
+  the FIL/MGMT/INSDR services, strips `X-Frame-Options` and the
+  upstream CSP, sets its own `Content-Security-Policy: frame-ancestors
+  'self' <CLIENT_ORIGIN…>`, and serves the bytes from our own origin
+  so the client iframe loads same-origin and renders.
+- For HTML responses the service injects `<base href="<dirname>/">`
+  into `<head>` so SEC's relative exhibit/image/CSS paths still
+  resolve back to sec.gov. Binary types (PDF, images) stream through
+  unchanged.
+- Tight SEC-only allowlist (only `www.sec.gov` and `data.sec.gov`)
+  inside the service, plus a 60 req/min/IP rate limit at the route —
+  the proxy can only ever reflect SEC URLs, and only at a polite
+  rate. Public by design (SEC content is public; the iframe can't
+  carry our Bearer header anyway); mounted before the auth-gated
+  terminal router so the route is not wrapped by `verifyJwt`.
+- Honest gaps: rich iXBRL viewers, JS-heavy interactive financial
+  reports, and pages whose layout depends on JS-loaded SEC-side
+  scripts may render imperfectly through the proxy — the modal's
+  always-visible "Open in new tab" link still goes to the original
+  SEC URL as the escape hatch, same no-silent-break posture as v1.

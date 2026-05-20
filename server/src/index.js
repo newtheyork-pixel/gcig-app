@@ -31,6 +31,7 @@ import docusignRoutes from './routes/docusign.js';
 import tradeRequestRoutes from './routes/tradeRequests.js';
 import presidentReviewRoutes from './routes/presidentReview.js';
 import terminalRoutes from './routes/terminal.js';
+import secDocProxyRoutes from './routes/secDocProxy.js';
 import notesRoutes from './routes/notes.js';
 import { ensureRecurringMeetings } from './services/recurringMeetings.js';
 import cron from 'node-cron';
@@ -122,6 +123,13 @@ app.use('/api/sea', seaRoutes);
 app.use('/api/docusign', docusignRoutes);
 app.use('/api/trade-requests', tradeRequestRoutes);
 app.use('/api/president-review', presidentReviewRoutes);
+// Mounted BEFORE /api/terminal so this route is NOT wrapped by the
+// terminal router's module-scope verifyJwt + requireExecutive chain.
+// The proxy is intentionally public (SEC content is public; an iframe
+// can't carry a Bearer header anyway). Abuse is bounded by the tight
+// SEC-only allowlist inside the service plus the per-IP rate limit in
+// the router file.
+app.use('/api/terminal/sec-doc-proxy', secDocProxyRoutes);
 app.use('/api/terminal', terminalRoutes);
 app.use('/api/notes', notesRoutes);
 
