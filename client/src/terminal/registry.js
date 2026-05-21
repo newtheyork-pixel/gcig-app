@@ -24,6 +24,7 @@ import WorldIndices from './functions/WorldIndices.jsx';
 import WeatherImpact from './functions/WeatherImpact.jsx';
 import WeatherRadar from './functions/WeatherRadar.jsx';
 import MacroSensitivity from './functions/MacroSensitivity.jsx';
+import Portfolio from './functions/Portfolio.jsx';
 import ComingSoon from './functions/ComingSoon.jsx';
 
 export const FUNCTIONS = [
@@ -76,6 +77,7 @@ export const FUNCTIONS = [
   { id: 'WEI', label: 'World Indices', help: 'Global index snapshot.', requires: null, component: WorldIndices },
   { id: 'TOP', label: 'Top News', help: 'Market-wide top headlines.', requires: null, component: TopNews },
   { id: 'MOVR', label: 'Movers', help: 'Day\'s biggest gainers and losers.', requires: null, component: Movers },
+  { id: 'PM', label: 'Portfolio Manager', help: 'The whole book: positions, weights, live value & P&L, sector allocation.', requires: null, component: Portfolio },
   { id: 'ECO', label: 'Economic Calendar', help: 'Upcoming releases and central bank events.', requires: null, component: ComingSoon },
   { id: 'WX', label: 'Weather Impact', help: 'Named-storm event impact on your Gulf O&G + insurer exposure.', requires: null, component: WeatherImpact },
   { id: 'RDR', label: 'Weather Radar', help: 'Live US NEXRAD radar + active NWS warnings.', requires: null, component: WeatherRadar },
