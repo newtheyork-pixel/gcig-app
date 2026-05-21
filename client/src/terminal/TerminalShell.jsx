@@ -121,6 +121,20 @@ export default function TerminalShell({ onExit }) {
     );
   }, []);
 
+  // A window commits its geometry here after a drag/resize (and once on
+  // mount). Mirroring it into the shell's record is what lets every other
+  // window read its neighbors' real rects for edge snapping — without it,
+  // siblings would only ever see each other's spawn positions.
+  const commitGeometry = useCallback((id, g) => {
+    setWindows((ws) =>
+      ws.map((w) =>
+        w.id === id && (w.x !== g.x || w.y !== g.y || w.w !== g.w || w.h !== g.h)
+          ? { ...w, x: g.x, y: g.y, w: g.w, h: g.h }
+          : w
+      )
+    );
+  }, []);
+
   // Double-tap Escape closes the focused pane — a keyboard equivalent
   // of clicking the × on a window's title bar. The 500 ms window is
   // tight enough that a deliberate two-press feels intentional and a
@@ -231,6 +245,10 @@ export default function TerminalShell({ onExit }) {
               ? `${w.ticker} · ${w.fn} · ${fnLabel}`
               : `${w.fn} · ${fnLabel}`;
 
+          const siblings = windows
+            .filter((o) => o.id !== w.id)
+            .map((o) => ({ x: o.x, y: o.y, w: o.w, h: o.h }));
+
           return (
             <FloatingWindow
               key={w.id}
@@ -238,6 +256,8 @@ export default function TerminalShell({ onExit }) {
               initial={{ x: w.x, y: w.y, w: w.w, h: w.h }}
               z={w.z}
               focused={w.id === focusedId}
+              siblings={siblings}
+              onGeometryChange={(g) => commitGeometry(w.id, g)}
               onFocus={() => focusWindow(w.id)}
               onClose={() => closeWindow(w.id)}
               toolbar={
