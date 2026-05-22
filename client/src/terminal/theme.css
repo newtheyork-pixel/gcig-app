@@ -1446,6 +1446,78 @@
   font-variant-numeric: tabular-nums;
 }
 
+[data-theme='terminal'] .term-pm-bar .fill.cash {
+  background: var(--term-fg-muted);
+}
+
+/* The orange "1)" prefix on the PORT tab strip — Bloomberg's numbered
+   menu language carried onto the sub-view tabs. */
+[data-theme='terminal'] .term-tab-n {
+  color: var(--term-orange);
+  font-weight: 700;
+}
+
+[data-theme='terminal'] .term-tab.active .term-tab-n {
+  color: oklch(0.16 0.006 70);
+}
+
+/* Sector group headers in the Holdings tree grid: an amber-washed bar
+   that carries the sector's subtotal marks, clickable to collapse. */
+[data-theme='terminal'] .term-pm-table tr.term-pm-sector {
+  cursor: pointer;
+  user-select: none;
+}
+
+[data-theme='terminal'] .term-pm-table tr.term-pm-sector td {
+  background: rgba(255, 176, 0, 0.07);
+  border-bottom: 1px solid var(--term-fg-muted);
+  color: var(--term-amber);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  padding-top: 5px;
+  padding-bottom: 5px;
+}
+
+[data-theme='terminal'] .term-pm-table tr.term-pm-sector:hover td {
+  background: rgba(255, 176, 0, 0.12);
+}
+
+[data-theme='terminal'] .term-pm-table tr.term-pm-sector .caret {
+  color: var(--term-orange);
+  margin-right: 4px;
+}
+
+[data-theme='terminal'] .term-pm-table tr.term-pm-sector .ct {
+  color: var(--term-fg-muted);
+  font-weight: 400;
+}
+
+/* The position rows under a sector header sit slightly indented so the
+   tree reads as a hierarchy, not a flat list. */
+[data-theme='terminal'] .term-pm-table tr.term-row-link .sym {
+  padding-left: 10px;
+}
+
+[data-theme='terminal'] .term-pm-chars,
+[data-theme='terminal'] .term-pm-attrib {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* Attribution's winner/loser tables sit side by side, wrapping on a
+   narrow pane. */
+[data-theme='terminal'] .term-pm-attrib-cols {
+  display: flex;
+  gap: 18px;
+  flex-wrap: wrap;
+}
+
+[data-theme='terminal'] .term-pm-attrib-cols > div {
+  flex: 1 1 220px;
+  min-width: 0;
+}
+
 /* Bottom status bar */
 [data-theme='terminal'] .term-statusbar {
   display: flex;
