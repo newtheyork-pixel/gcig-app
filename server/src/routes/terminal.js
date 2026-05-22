@@ -60,6 +60,7 @@ const KNOWN_FUNCTIONS = [
   { id: 'WEI', label: 'World Equity Indices', summary: 'Global index snapshot.' },
   { id: 'TOP', label: 'Top News', summary: 'Market-wide top headlines.' },
   { id: 'MOVR', label: 'Movers', summary: 'Day\'s biggest gainers and losers.' },
+  { id: 'PM', label: 'Portfolio Manager', summary: 'The whole book: positions, weights, live value and P&L, sector allocation.' },
   { id: 'ECO', label: 'Economic Calendar', summary: 'Upcoming releases and central bank events.' },
   { id: 'WX', label: 'Weather Impact', summary: 'Named-storm landfalls vs. Gulf O&G + P&C insurer baskets; historical playbook + active-storm feed.' },
   { id: 'RDR', label: 'Weather Radar', summary: 'Live US NEXRAD radar + active NWS warning polygons (tornado / severe TS / flood / winter / tropical).' },
@@ -657,6 +658,23 @@ router.get('/movers', async (_req, res) => {
   }
 });
 
+// PM — the whole book, not just the day's movers: every position with
+// its shares, average cost, market value, weight, and day / unrealized
+// P&L, plus the fund totals. Same live sheet as MOVR (the system of
+// record for what's actually held), but here we hand back the full row
+// rather than the trimmed move. The panel overlays /quotes for live
+// price and recomputes value, weight, and P&L on top — the way PORT
+// keeps marks current between sheet reads.
+router.get('/portfolio', async (_req, res) => {
+  try {
+    const data = await getSheetPortfolio();
+    res.json(data);
+  } catch (err) {
+    console.error('terminal/portfolio failed:', err.message);
+    res.status(502).json({ error: 'Portfolio unavailable — could not read the positions sheet.' });
+  }
+});
+
 // PEER — sector peer comparison for the focused ticker. Finnhub's peer
 // set (free tier), then a compact fundamentals snapshot for the focus
 // plus up to 6 peers, fetched a few at a time so a single load never
@@ -801,6 +819,13 @@ const FN_PROMPTS = {
     'You are a portfolio risk analyst at GCIG, a student investment fund, reviewing today\'s performance across the book. ' +
     'Write a 2–3 sentence brief. Is the fund broadly green or red? How concentrated is the move — is one name driving most of the P&L? ' +
     'Flag any holding moving more than ±3% as it likely has a catalyst. Note if the portfolio is moving with or against the broader market. ' +
+    GROUNDING_RULES,
+
+  PM:
+    'You are the portfolio manager at GCIG, a student investment fund, reviewing the book position by position. ' +
+    'Write a 3–4 sentence brief. Lead with posture: net asset value, today\'s P&L, and total unrealized gain/loss. ' +
+    'Address concentration — the largest position\'s weight and whether the top few names dominate the book — and name the biggest winner and loser by unrealized P&L. ' +
+    'Note the cash level and what it implies about dry powder. ' +
     GROUNDING_RULES,
 
   MGMT:
