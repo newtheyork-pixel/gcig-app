@@ -64,11 +64,12 @@ function normalizeEnvelopeStatus(raw) {
 }
 
 // Maximum line items per envelope. The PDF template needs anchor rows for
-// each — see CLAUDE.md for how to grow this. The server caps at 8 so a
-// caller can't accidentally build an envelope whose lines silently get
-// dropped by the PDF. (The template's row 9 anchors are present but
-// reserved — we don't expose them.)
-const MAX_ITEMS = 8;
+// each — see CLAUDE.md for how to grow this. The server caps at the number
+// of rows the template carries so a caller can't accidentally build an
+// envelope whose extra lines silently get dropped by the PDF. The Trading
+// Approval template was widened to 13 rows (June '26) to allow larger
+// end-of-year baskets; bump this in lockstep if the PDF grows again.
+const MAX_ITEMS = 13;
 
 // Closed sell-vote sessions that passed (finalDecision "Sell") and aren't
 // already on a TradeRequest, annotated with the shares we currently hold so

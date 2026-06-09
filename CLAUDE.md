@@ -230,9 +230,10 @@ same DocuSign template:
    envelope. State lives on the new `TradeRequest` row + items. The
    composer ties each Buy line back to its `VotingSession` so a
    session can't be claimed twice. Sell lines have no
-   `votingSessionId`. Cap is 8 lines per envelope (the PDF carries a
-   9th row of anchors but it's reserved; raise `MAX_ITEMS` in
-   `routes/tradeRequests.js` if you want to expose it).
+   `votingSessionId`. Cap is 13 lines per envelope, matching the 13
+   anchor rows on the Trading Approval PDF (widened from 8 in June
+   '26). `MAX_ITEMS` in `routes/tradeRequests.js` must stay in lockstep
+   with the PDF's row count — raise both together if it grows again.
 
 Both flows hit `POST /api/docusign/webhook` on completion. The
 webhook tries `VotingSession` first, then `TradeRequest`, then acks
@@ -279,8 +280,8 @@ them).
 
 Both flows share a single indexed anchor scheme. The single-session
 "Send trade confirmation" flow just fills row 1; the bundled flow
-fills rows 1..N. The PDF table runs 9 rows of anchors but `MAX_ITEMS`
-caps the bundled flow at 8 — the 9th row is reserved.
+fills rows 1..N. The PDF table runs 13 rows of anchors and `MAX_ITEMS`
+caps the bundled flow at 13 to match — every row is live.
 
 | Anchor | Filled with |
 |--------|-------------|
