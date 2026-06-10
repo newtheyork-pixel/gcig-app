@@ -64,6 +64,49 @@ function Row({ dot, label, value }) {
     </div>
   );
 }
+
+// Hover card for the prediction-history chart. A month can carry up to
+// four numbers — the released print plus the calls made for it from one,
+// two, and three months out — and when the print is in we also show how
+// far the headline (+1 mo) call missed.
+function HistoryTooltip({ active, payload, label }) {
+  if (!active || !Array.isArray(payload) || payload.length === 0) return null;
+  const row = payload[0]?.payload || {};
+  const fmt = (v) =>
+    v == null || !Number.isFinite(v) ? '—' : `${Number(v).toFixed(2)}%`;
+  const miss =
+    Number.isFinite(row.actual) && Number.isFinite(row.p1)
+      ? row.p1 - row.actual
+      : null;
+
+  return (
+    <div className="rounded-lg border border-navy-100 bg-white px-3 py-2 text-xs shadow-md">
+      <div className="font-serif text-sm font-semibold text-navy">{label}</div>
+      <div className="mt-1.5 h-px w-full bg-navy-50" />
+      <div className="mt-1.5 space-y-1">
+        {Number.isFinite(row.actual) && (
+          <Row dot="bg-navy" label="Released" value={fmt(row.actual)} />
+        )}
+        {Number.isFinite(row.p1) && (
+          <Row dot="bg-gold" label="+1 mo call" value={fmt(row.p1)} />
+        )}
+        {Number.isFinite(row.p2) && (
+          <Row dot="bg-gold/60" label="+2 mo call" value={fmt(row.p2)} />
+        )}
+        {Number.isFinite(row.p3) && (
+          <Row dot="bg-gold/30" label="+3 mo call" value={fmt(row.p3)} />
+        )}
+        {miss != null && (
+          <Row
+            dot={Math.abs(miss) <= 0.25 ? 'bg-emerald-500' : 'bg-red-400'}
+            label="+1 mo miss"
+            value={`${miss > 0 ? '+' : ''}${miss.toFixed(2)}pp`}
+          />
+        )}
+      </div>
+    </div>
+  );
+}
 import Card from '../components/Card.jsx';
 
 // CPI forecast page. Reads from /api/cpi/forecast (latest run) and
@@ -146,6 +189,35 @@ export default function CPI() {
     }
     return rows;
   }, [forecast]);
+
+  // Pivot the run history from "one row per run" to "one row per target
+  // month": each run anchors an actual print at its asOfMonth and aims
+  // calls at the next three. A given month therefore accumulates up to
+  // three calls (made 1, 2, and 3 months out) that the chart lays
+  // against the print once it's released.
+  const historyChartData = useMemo(() => {
+    if (history.length < 2) return [];
+    const actuals = new Map();
+    const calls = [new Map(), new Map(), new Map()];
+    for (const run of history) {
+      if (Number.isFinite(run.lastReleasedYoy)) {
+        actuals.set(run.asOfMonth, run.lastReleasedYoy);
+      }
+      (run.forecasts || []).slice(0, 3).forEach((f, i) => {
+        if (f?.month && Number.isFinite(f.yoy)) calls[i].set(f.month, f.yoy);
+      });
+    }
+    const months = [
+      ...new Set([...actuals.keys(), ...calls[0].keys()]),
+    ].sort();
+    return months.map((ym) => ({
+      month: monthLabel(ym),
+      actual: actuals.get(ym) ?? null,
+      p1: calls[0].get(ym) ?? null,
+      p2: calls[1].get(ym) ?? null,
+      p3: calls[2].get(ym) ?? null,
+    }));
+  }, [history]);
 
   if (loading) {
     return (
@@ -380,9 +452,91 @@ export default function CPI() {
       {history.length > 1 && (
         <Card kicker="Prediction history" title="Past forecasts vs. actuals">
           <p className="mb-3 text-xs text-navy-400">
-            Showing the last {history.length} monthly runs. As new CPI prints come out, you'll be
-            able to see how the forecast compared to reality in the chart below.
+            Showing the last {history.length} monthly runs. Each month lines up the released
+            print against the calls the model had made for it one, two, and three months out.
           </p>
+          {historyChartData.length > 1 && (
+            <>
+              <div className="h-64 w-full">
+                <ResponsiveContainer width="100%" height="100%">
+                  <ComposedChart
+                    data={historyChartData}
+                    margin={{ top: 10, right: 30, left: 0, bottom: 0 }}
+                  >
+                    <CartesianGrid strokeDasharray="3 3" stroke="#E2E8F0" />
+                    <XAxis dataKey="month" tick={{ fontSize: 11, fill: '#64748B' }} />
+                    <YAxis
+                      tick={{ fontSize: 11, fill: '#64748B' }}
+                      tickFormatter={(v) => `${v.toFixed(1)}%`}
+                      domain={['auto', 'auto']}
+                    />
+                    <Tooltip
+                      content={<HistoryTooltip />}
+                      cursor={{ stroke: '#C9A84C', strokeOpacity: 0.4, strokeWidth: 1 }}
+                    />
+                    {/* Older calls render as bare dots fading with distance —
+                        a fan of guesses converging on each print. Only the
+                        headline +1 mo call earns a line. */}
+                    <Line
+                      type="monotone"
+                      dataKey="p3"
+                      stroke="none"
+                      dot={{ r: 3.5, fill: '#C9A84C', fillOpacity: 0.3, strokeWidth: 0 }}
+                      isAnimationActive={false}
+                      name="+3 mo call"
+                    />
+                    <Line
+                      type="monotone"
+                      dataKey="p2"
+                      stroke="none"
+                      dot={{ r: 3.5, fill: '#C9A84C', fillOpacity: 0.55, strokeWidth: 0 }}
+                      isAnimationActive={false}
+                      name="+2 mo call"
+                    />
+                    <Line
+                      type="monotone"
+                      dataKey="p1"
+                      stroke="#C9A84C"
+                      strokeWidth={2.5}
+                      strokeDasharray="5 4"
+                      dot={{ r: 4, fill: '#C9A84C' }}
+                      connectNulls
+                      isAnimationActive={false}
+                      name="+1 mo call"
+                    />
+                    <Line
+                      type="monotone"
+                      dataKey="actual"
+                      stroke="#1B2A4A"
+                      strokeWidth={2.5}
+                      dot={{ r: 4, fill: '#1B2A4A' }}
+                      connectNulls
+                      isAnimationActive={false}
+                      name="Released"
+                    />
+                  </ComposedChart>
+                </ResponsiveContainer>
+              </div>
+              <div className="mb-4 mt-2 flex flex-wrap items-center gap-4 text-xs text-navy-400">
+                <span className="flex items-center gap-1.5">
+                  <span className="inline-block h-0.5 w-4 bg-navy" /> Released
+                </span>
+                <span className="flex items-center gap-1.5">
+                  <span
+                    className="inline-block h-0.5 w-4 bg-gold"
+                    style={{ borderTop: '1.5px dashed' }}
+                  />{' '}
+                  +1 mo call
+                </span>
+                <span className="flex items-center gap-1.5">
+                  <span className="inline-block h-2 w-2 rounded-full bg-gold/60" /> +2 mo
+                </span>
+                <span className="flex items-center gap-1.5">
+                  <span className="inline-block h-2 w-2 rounded-full bg-gold/30" /> +3 mo
+                </span>
+              </div>
+            </>
+          )}
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead className="text-left text-xs uppercase tracking-wider text-navy-400">
