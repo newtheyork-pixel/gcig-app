@@ -263,3 +263,60 @@ export async function executeTradeRequest({ tradeRequestId, fills = [], actorNam
     return { tradeRequest: updated, transactions, cashBefore, cashAfter };
   });
 }
+
+// A direct buy or sell on the portfolio, unattached to a vote or DocuSign
+// envelope — the super admin trades the book straight from the portfolio page.
+// Same settlement accounting as a filled TradeRequest (FIFO lots, realized P/L,
+// derived cash, buying-power + over-sell guards), just without the governance
+// pipeline. One transaction, so a guard trip leaves the book untouched.
+export async function executeDirectTrade({
+  side,
+  ticker,
+  shares,
+  pricePerShare,
+  actorName = null,
+  note = null,
+  db = prisma,
+}) {
+  const t = String(ticker || '').trim().toUpperCase();
+  const s = Number(shares);
+  const p = Number(pricePerShare);
+  if (side !== 'Buy' && side !== 'Sell') {
+    throw new TradeExecutionError('side must be "Buy" or "Sell"', 400);
+  }
+  if (!/^[A-Z0-9.\-]{1,10}$/.test(t)) {
+    throw new TradeExecutionError('Invalid ticker', 400);
+  }
+  if (!Number.isInteger(s) || s <= 0) {
+    throw new TradeExecutionError('Shares must be a whole number', 400);
+  }
+  if (!Number.isFinite(p) || p <= 0) {
+    throw new TradeExecutionError('Price per share must be positive', 400);
+  }
+
+  return db.$transaction(async (tx) => {
+    const cashBefore = await getCashBalance(tx);
+
+    if (side === 'Buy') {
+      const cost = s * p;
+      if (cashBefore - cost < -1e-6) {
+        throw new TradeExecutionError(
+          `Insufficient cash: this buy needs $${cost.toFixed(2)} but only $${cashBefore.toFixed(2)} is available. Record a deposit first if needed.`,
+          400
+        );
+      }
+      await applyBuy(tx, { ticker: t, shares: s, price: p, note: note || 'direct buy' });
+      const transaction = await tx.transaction.create({
+        data: { kind: 'Buy', ticker: t, shares: s, pricePerShare: p, cashDelta: -cost, note: note || null, executedByName: actorName },
+      });
+      return { transaction, cashBefore, cashAfter: await getCashBalance(tx) };
+    }
+
+    // Sell — applySell guards over-sell + lot/holding drift, returns proceeds + P/L.
+    const { proceeds, realizedPnl } = await applySell(tx, { ticker: t, shares: s, price: p });
+    const transaction = await tx.transaction.create({
+      data: { kind: 'Sell', ticker: t, shares: s, pricePerShare: p, cashDelta: proceeds, realizedPnl, note: note || null, executedByName: actorName },
+    });
+    return { transaction, cashBefore, cashAfter: await getCashBalance(tx) };
+  });
+}
