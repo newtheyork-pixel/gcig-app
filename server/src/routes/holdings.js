@@ -129,6 +129,7 @@ import { computeCashInterest } from '../services/cashInterest.js';
 import { scrapeAndStoreDailyRates } from '../services/gsamRates.js';
 import { backfillFgtxxFromEdgar } from '../services/secNmfp.js';
 import { recomputeHoldingFromLots, getCashBalance } from '../services/tradeExecution.js';
+import { importFromSheet, PortfolioImportError } from '../services/portfolioImport.js';
 
 const router = Router();
 
@@ -542,6 +543,23 @@ router.get('/positions', async (_req, res, next) => {
     const rows = await prisma.holding.findMany({ orderBy: { ticker: 'asc' } });
     res.json(rows);
   } catch (err) {
+    next(err);
+  }
+});
+
+// Run the one-time sheet → DB import (the cutover's data step) from the app, so
+// no database URL has to leave the server. Dry-run by default; { commit: true }
+// writes the held positions + opening cash and reconciles to the dollar,
+// rolling back on any mismatch. Super-admin only.
+router.post('/import-from-sheet', requireSuperAdmin, async (req, res, next) => {
+  try {
+    const commit = req.body?.commit === true;
+    const report = await importFromSheet({ commit });
+    res.json(report);
+  } catch (err) {
+    if (err instanceof PortfolioImportError) {
+      return res.status(400).json({ error: err.message });
+    }
     next(err);
   }
 });
