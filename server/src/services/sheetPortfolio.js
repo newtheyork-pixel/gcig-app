@@ -1,4 +1,5 @@
 import { parse } from 'csv-parse/sync';
+import prisma from '../db.js';
 import { getDbPortfolio } from './dbPortfolio.js';
 
 // Pulls the club portfolio directly from a Google Sheet published as "Anyone with
@@ -63,14 +64,27 @@ function matchHeaderIndex(headerRow) {
 }
 
 export async function getSheetPortfolio({ forceFresh = false } = {}) {
-  // Cutover switch. Once holdings live in the database, PORTFOLIO_SOURCE=db
-  // serves the book from there — positions from the Holding table, prices from
-  // the quote resolver, cash from the ledger — while emitting the identical
-  // shape, so every caller (and getPortfolioMovers below) is untouched.
-  // Defaults to the sheet, so shipping this is a no-op until the flag flips.
+  // Cutover switch. With PORTFOLIO_SOURCE=db we serve the book from the
+  // database (positions from Holding, prices from the resolver, cash from the
+  // ledger) in the identical shape, so every caller (and getPortfolioMovers
+  // below) is untouched. The subtlety during cutover: the DB is empty until the
+  // one-time import runs. So if db mode is on but no positions exist yet, we
+  // fall back to the sheet — tagged source:"db-empty" so an admin sees the
+  // import prompt — and the live page never shows an empty book. Defaults to
+  // the sheet.
   if ((process.env.PORTFOLIO_SOURCE || 'sheet').toLowerCase() === 'db') {
-    return getDbPortfolio({ forceFresh });
+    const held = await prisma.holding.count({ where: { closedAt: null, isCash: false } });
+    if (held > 0) return getDbPortfolio({ forceFresh });
+    const data = await readSheetPortfolio({ forceFresh });
+    return { ...data, source: 'db-empty' };
   }
+  return readSheetPortfolio({ forceFresh });
+}
+
+// The raw Google Sheet read — bypasses the cutover switch above, so the import
+// path (and the db-empty fallback) can always reach the sheet even under
+// PORTFOLIO_SOURCE=db.
+export async function readSheetPortfolio({ forceFresh = false } = {}) {
   if (!SHEET_ID) {
     throw new Error('GCIG_SHEET_ID is not set in .env');
   }

@@ -22,6 +22,7 @@ import RiskPanel from '../components/RiskPanel.jsx';
 import CashInterestCard from '../components/CashInterestCard.jsx';
 import CashLedgerCard from '../components/CashLedgerCard.jsx';
 import AddPositionButton from '../components/AddPositionButton.jsx';
+import ImportBookBanner from '../components/ImportBookBanner.jsx';
 import { useAuth } from '../context/AuthContext.jsx';
 import { ChevronDown, ChevronRight } from 'lucide-react';
 
@@ -433,6 +434,10 @@ export default function Portfolio() {
           </div>
         }
       />
+
+      {isSuperAdmin && data?.source === 'db-empty' && (
+        <ImportBookBanner onImported={load} />
+      )}
 
       {error && (
         <div className="mb-4 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-800">
