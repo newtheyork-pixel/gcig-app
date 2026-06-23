@@ -128,7 +128,12 @@ import { getRecentFilings } from '../services/secFilings.js';
 import { computeCashInterest } from '../services/cashInterest.js';
 import { scrapeAndStoreDailyRates } from '../services/gsamRates.js';
 import { backfillFgtxxFromEdgar } from '../services/secNmfp.js';
-import { recomputeHoldingFromLots, getCashBalance } from '../services/tradeExecution.js';
+import {
+  recomputeHoldingFromLots,
+  getCashBalance,
+  executeDirectTrade,
+  TradeExecutionError,
+} from '../services/tradeExecution.js';
 import { importFromSheet, PortfolioImportError } from '../services/portfolioImport.js';
 
 const router = Router();
@@ -543,6 +548,30 @@ router.get('/positions', async (_req, res, next) => {
     const rows = await prisma.holding.findMany({ orderBy: { ticker: 'asc' } });
     res.json(rows);
   } catch (err) {
+    next(err);
+  }
+});
+
+// Direct buy/sell on the portfolio — no vote, no envelope. Debits/credits cash,
+// relieves lots FIFO on a sell (with realized P/L), guards buying power +
+// over-sell. Super-admin only. Body: { side: "Buy"|"Sell", ticker, shares,
+// pricePerShare, note? }.
+router.post('/trade', requireSuperAdmin, async (req, res, next) => {
+  try {
+    const { side, ticker, shares, pricePerShare, note } = req.body || {};
+    const result = await executeDirectTrade({
+      side,
+      ticker,
+      shares,
+      pricePerShare,
+      note: note || null,
+      actorName: req.user?.name || null,
+    });
+    res.json(result);
+  } catch (err) {
+    if (err instanceof TradeExecutionError) {
+      return res.status(err.status).json({ error: err.message });
+    }
     next(err);
   }
 });

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { executeTradeRequest, TradeExecutionError } from './tradeExecution.js';
+import { executeTradeRequest, executeDirectTrade, TradeExecutionError } from './tradeExecution.js';
 
 // Exercises the whole settlement orchestration — buying-power guard, sells
 // funding buys, FIFO realized P/L, soft-close, idempotency — against an
@@ -198,6 +198,47 @@ test('an already-filled request cannot execute twice (idempotency)', async () =>
   await assert.rejects(
     () => executeTradeRequest({ tradeRequestId: 1, db }),
     (e) => e instanceof TradeExecutionError && /already/.test(e.message)
+  );
+});
+
+test('direct buy of a new ticker debits cash and creates the position', async () => {
+  const db = makeFakeDb({ transactions: [{ id: 1, kind: 'Opening', cashDelta: 10000 }] });
+  await executeDirectTrade({ side: 'Buy', ticker: 'NEW', shares: 10, pricePerShare: 100, db });
+  assert.equal(db.holding('NEW').shares, 10);
+  assert.equal(db.cash(), 9000);
+  assert.equal(db.txns().find((t) => t.kind === 'Buy').cashDelta, -1000);
+});
+
+test('direct sell relieves lots, books realized P/L, credits cash', async () => {
+  const db = makeFakeDb({
+    holdings: [{ ticker: 'AAA', name: 'AAA', shares: 10, costBasis: 45, isCash: false, closedAt: null }],
+    lots: [{ id: 1, ticker: 'AAA', shares: 10, pricePerShare: 45, buyDate: olderDate }],
+  });
+  await executeDirectTrade({ side: 'Sell', ticker: 'AAA', shares: 4, pricePerShare: 50, db });
+  const sell = db.txns().find((t) => t.kind === 'Sell');
+  assert.equal(sell.realizedPnl, 20); // (50-45)*4
+  assert.equal(sell.cashDelta, 200);
+  assert.equal(db.cash(), 200);
+  assert.equal(db.holding('AAA').shares, 6);
+});
+
+test('direct buy beyond available cash is rejected', async () => {
+  const db = makeFakeDb({ transactions: [{ id: 1, kind: 'Opening', cashDelta: 100 }] });
+  await assert.rejects(
+    () => executeDirectTrade({ side: 'Buy', ticker: 'XYZ', shares: 10, pricePerShare: 50, db }),
+    (e) => e instanceof TradeExecutionError && /Insufficient cash/.test(e.message)
+  );
+  assert.equal(db.cash(), 100);
+});
+
+test('direct sell beyond the held position is rejected', async () => {
+  const db = makeFakeDb({
+    holdings: [{ ticker: 'AAA', name: 'AAA', shares: 5, costBasis: 45, isCash: false, closedAt: null }],
+    lots: [{ id: 1, ticker: 'AAA', shares: 5, pricePerShare: 45, buyDate: olderDate }],
+  });
+  await assert.rejects(
+    () => executeDirectTrade({ side: 'Sell', ticker: 'AAA', shares: 10, pricePerShare: 50, db }),
+    (e) => e instanceof TradeExecutionError && /only 5 held/.test(e.message)
   );
 });
 
