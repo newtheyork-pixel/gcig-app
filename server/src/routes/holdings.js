@@ -128,6 +128,7 @@ import { getRecentFilings } from '../services/secFilings.js';
 import { computeCashInterest } from '../services/cashInterest.js';
 import { scrapeAndStoreDailyRates } from '../services/gsamRates.js';
 import { backfillFgtxxFromEdgar } from '../services/secNmfp.js';
+import { recomputeHoldingFromLots, getCashBalance } from '../services/tradeExecution.js';
 
 const router = Router();
 
@@ -446,23 +447,34 @@ router.get('/lots/:ticker', async (req, res) => {
   res.json(lots);
 });
 
-router.post('/lots', requireSuperAdmin, async (req, res) => {
-  const { ticker, shares, pricePerShare, buyDate, note } = req.body || {};
-  const t = String(ticker || '').trim().toUpperCase();
-  const s = Number(shares);
-  const p = Number(pricePerShare);
-  const d = buyDate ? new Date(buyDate) : null;
-  if (!validTicker(t)) return res.status(400).json({ error: 'Invalid ticker' });
-  if (!Number.isFinite(s) || s <= 0) return res.status(400).json({ error: 'Invalid shares' });
-  if (!Number.isFinite(p) || p <= 0) return res.status(400).json({ error: 'Invalid price' });
-  if (!d || Number.isNaN(d.getTime())) return res.status(400).json({ error: 'Invalid buy date' });
-  const lot = await prisma.holdingLot.create({
-    data: { ticker: t, shares: s, pricePerShare: p, buyDate: d, note: note || null },
-  });
-  res.status(201).json(lot);
+// Lots are authoritative for a position's shares + blended cost, so every
+// mutation refolds the matching Holding row in the same transaction — the
+// derived position can never drift from the lot history.
+router.post('/lots', requireSuperAdmin, async (req, res, next) => {
+  try {
+    const { ticker, shares, pricePerShare, buyDate, note } = req.body || {};
+    const t = String(ticker || '').trim().toUpperCase();
+    const s = Number(shares);
+    const p = Number(pricePerShare);
+    const d = buyDate ? new Date(buyDate) : null;
+    if (!validTicker(t)) return res.status(400).json({ error: 'Invalid ticker' });
+    if (!Number.isFinite(s) || s <= 0) return res.status(400).json({ error: 'Invalid shares' });
+    if (!Number.isFinite(p) || p <= 0) return res.status(400).json({ error: 'Invalid price' });
+    if (!d || Number.isNaN(d.getTime())) return res.status(400).json({ error: 'Invalid buy date' });
+    const lot = await prisma.$transaction(async (tx) => {
+      const created = await tx.holdingLot.create({
+        data: { ticker: t, shares: s, pricePerShare: p, buyDate: d, note: note || null },
+      });
+      await recomputeHoldingFromLots(tx, t);
+      return created;
+    });
+    res.status(201).json(lot);
+  } catch (err) {
+    next(err);
+  }
 });
 
-router.put('/lots/:id', requireSuperAdmin, async (req, res) => {
+router.put('/lots/:id', requireSuperAdmin, async (req, res, next) => {
   const id = Number(req.params.id);
   if (!Number.isFinite(id)) return res.status(400).json({ error: 'Invalid id' });
   const { shares, pricePerShare, buyDate, note } = req.body || {};
@@ -484,21 +496,146 @@ router.put('/lots/:id', requireSuperAdmin, async (req, res) => {
   }
   if (note !== undefined) data.note = note || null;
   try {
-    const lot = await prisma.holdingLot.update({ where: { id }, data });
+    const lot = await prisma.$transaction(async (tx) => {
+      const updated = await tx.holdingLot.update({ where: { id }, data });
+      await recomputeHoldingFromLots(tx, updated.ticker);
+      return updated;
+    });
     res.json(lot);
-  } catch {
-    res.status(404).json({ error: 'Lot not found' });
+  } catch (err) {
+    // P2025 = record-to-update not found; anything else is a real fault that
+    // must surface as a 500, not get masked as "not found".
+    if (err?.code === 'P2025') return res.status(404).json({ error: 'Lot not found' });
+    next(err);
   }
 });
 
-router.delete('/lots/:id', requireSuperAdmin, async (req, res) => {
+router.delete('/lots/:id', requireSuperAdmin, async (req, res, next) => {
   const id = Number(req.params.id);
   if (!Number.isFinite(id)) return res.status(400).json({ error: 'Invalid id' });
   try {
-    await prisma.holdingLot.delete({ where: { id } });
+    const found = await prisma.$transaction(async (tx) => {
+      const lot = await tx.holdingLot.findUnique({ where: { id } });
+      if (!lot) return false;
+      await tx.holdingLot.delete({ where: { id } });
+      await recomputeHoldingFromLots(tx, lot.ticker);
+      return true;
+    });
+    if (!found) return res.status(404).json({ error: 'Lot not found' });
     res.json({ ok: true });
-  } catch {
-    res.status(404).json({ error: 'Lot not found' });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// ── Positions + cash ledger (DB-backed book) ─────────────────────────
+// The positions list and the running cash balance, plus the manual cash
+// movements that aren't trades. Reads are open to any member (cash isn't
+// sensitive — same posture as cash-yield); writes are super-admin only.
+// Trade-driven Buy/Sell rows are written by settlement (tradeExecution.js),
+// never here, and can't be deleted here either.
+
+const MANUAL_TX_KINDS = new Set(['Deposit', 'Withdraw', 'Dividend', 'Fee']);
+
+router.get('/positions', async (_req, res, next) => {
+  try {
+    const rows = await prisma.holding.findMany({ orderBy: { ticker: 'asc' } });
+    res.json(rows);
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Edit metadata that isn't derived from lots. Shares + cost basis follow the
+// lots — adjust those via /lots.
+router.put('/positions/:ticker', requireSuperAdmin, async (req, res, next) => {
+  const t = String(req.params.ticker || '').trim().toUpperCase();
+  if (!validTicker(t)) return res.status(400).json({ error: 'Invalid ticker' });
+  const { name, sector } = req.body || {};
+  const data = {};
+  if (name !== undefined) data.name = name || null;
+  if (sector !== undefined) data.sector = sector || null;
+  try {
+    const row = await prisma.holding.update({ where: { ticker: t }, data });
+    res.json(row);
+  } catch (err) {
+    if (err?.code === 'P2025') return res.status(404).json({ error: 'Holding not found' });
+    next(err);
+  }
+});
+
+router.get('/cash', async (_req, res, next) => {
+  try {
+    res.json({ cash: await getCashBalance() });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.get('/transactions', async (req, res, next) => {
+  try {
+    const take = Math.min(Number(req.query.limit) || 100, 500);
+    const rows = await prisma.transaction.findMany({
+      orderBy: [{ executedAt: 'desc' }, { id: 'desc' }],
+      take,
+    });
+    res.json({ transactions: rows, cash: await getCashBalance() });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.post('/transactions', requireSuperAdmin, async (req, res, next) => {
+  try {
+    const { kind, amount, note, ticker, executedAt } = req.body || {};
+    const k = String(kind || '').trim();
+    if (!MANUAL_TX_KINDS.has(k)) {
+      return res
+        .status(400)
+        .json({ error: `kind must be one of ${[...MANUAL_TX_KINDS].join(', ')}` });
+    }
+    const amt = Number(amount);
+    if (!Number.isFinite(amt) || amt <= 0) {
+      return res.status(400).json({ error: 'amount (positive number) required' });
+    }
+    // Withdrawals + fees remove cash; deposits + dividends add it. The caller
+    // always sends a positive amount; the sign is ours to set.
+    const sign = k === 'Withdraw' || k === 'Fee' ? -1 : 1;
+    const when = executedAt ? new Date(executedAt) : new Date();
+    if (Number.isNaN(when.getTime())) return res.status(400).json({ error: 'Invalid executedAt' });
+    const row = await prisma.transaction.create({
+      data: {
+        kind: k,
+        cashDelta: sign * amt,
+        ticker: ticker ? String(ticker).toUpperCase() : null,
+        note: note || null,
+        executedByName: req.user?.name || null,
+        executedAt: when,
+      },
+    });
+    res.status(201).json({ transaction: row, cash: await getCashBalance() });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.delete('/transactions/:id', requireSuperAdmin, async (req, res, next) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) return res.status(400).json({ error: 'Invalid id' });
+    const tx = await prisma.transaction.findUnique({ where: { id } });
+    if (!tx) return res.status(404).json({ error: 'Transaction not found' });
+    // Buy/Sell/Opening rows are settlement facts tied to trades + lots; deleting
+    // one would desync the book. Only manual cash movements can be removed here.
+    if (!MANUAL_TX_KINDS.has(tx.kind)) {
+      return res.status(400).json({
+        error: `Can't delete a ${tx.kind} row here — it's tied to a trade. Reverse it with an opposing entry instead.`,
+      });
+    }
+    await prisma.transaction.delete({ where: { id } });
+    res.json({ ok: true, cash: await getCashBalance() });
+  } catch (err) {
+    next(err);
   }
 });
 

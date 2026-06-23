@@ -1,4 +1,5 @@
 import { parse } from 'csv-parse/sync';
+import { getDbPortfolio } from './dbPortfolio.js';
 
 // Pulls the club portfolio directly from a Google Sheet published as "Anyone with
 // the link can view". Every fetch hits the CSV export URL, which forces Google
@@ -62,6 +63,14 @@ function matchHeaderIndex(headerRow) {
 }
 
 export async function getSheetPortfolio({ forceFresh = false } = {}) {
+  // Cutover switch. Once holdings live in the database, PORTFOLIO_SOURCE=db
+  // serves the book from there — positions from the Holding table, prices from
+  // the quote resolver, cash from the ledger — while emitting the identical
+  // shape, so every caller (and getPortfolioMovers below) is untouched.
+  // Defaults to the sheet, so shipping this is a no-op until the flag flips.
+  if ((process.env.PORTFOLIO_SOURCE || 'sheet').toLowerCase() === 'db') {
+    return getDbPortfolio({ forceFresh });
+  }
   if (!SHEET_ID) {
     throw new Error('GCIG_SHEET_ID is not set in .env');
   }
@@ -185,6 +194,7 @@ export async function getSheetPortfolio({ forceFresh = false } = {}) {
     holdings,
     totals: { totalValue, totalCost, totalGainLoss, totalGainLossPct, cashValue },
     fetchedAt: new Date().toISOString(),
+    source: 'sheet',
   };
   cached = { at: Date.now(), data };
   return data;

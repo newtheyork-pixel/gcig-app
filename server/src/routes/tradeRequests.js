@@ -31,6 +31,7 @@ import {
   sendBundledTradeEnvelope,
   getEnvelope,
 } from '../services/docusign.js';
+import { executeTradeRequest, TradeExecutionError } from '../services/tradeExecution.js';
 
 const router = Router();
 router.use(verifyJwt);
@@ -276,6 +277,19 @@ router.get('/eligible-sells', requireExecutive, async (_req, res, next) => {
     res.json(buildEligibleSells({ sessions, claimedIds, allUsers, heldByTicker }));
   } catch (err) {
     next(err);
+  }
+});
+
+// GET /api/trade-requests/buying-power — spendable cash the composer warns
+// against before a buy basket. Reads the same portfolio source the book uses
+// (sheet today, ledger after the cutover), so the number always matches what
+// members see. Defined before /:id so the bare segment isn't captured as an id.
+router.get('/buying-power', requireExecutive, async (_req, res, next) => {
+  try {
+    const { totals } = await getSheetPortfolio();
+    res.json({ cash: totals.cashValue ?? 0 });
+  } catch (err) {
+    res.status(502).json({ error: `Portfolio source unavailable: ${err.message}` });
   }
 });
 
@@ -606,6 +620,44 @@ router.get('/:id/refresh', requireExecutive, async (req, res, next) => {
       completedAt: updated.docusignCompletedAt,
     });
   } catch (err) {
+    next(err);
+  }
+});
+
+// POST /api/trade-requests/:id/execute — mark a signed envelope as FILLED.
+//
+// This is the settlement step: it writes the real position + cash movements
+// into the ledger. Defaults each line to what was sent, but the exec can pass
+// the actual broker fills (price/qty differ from the quote-at-send) via
+//   { fills: [{ itemId, shares?, pricePerShare? }], force? }
+// The envelope must be signed (DocuSign "completed") first; a super-admin may
+// override with force:true for trades settled outside the normal flow.
+router.post('/:id/execute', requireExecutive, async (req, res, next) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) return res.status(400).json({ error: 'Invalid id' });
+
+    const tr = await prisma.tradeRequest.findUnique({ where: { id } });
+    if (!tr) return res.status(404).json({ error: 'Not found' });
+
+    const completed = tr.docusignStatus === 'completed';
+    const force = req.body?.force === true && req.user?.isSuperAdmin;
+    if (!completed && !force) {
+      return res.status(400).json({
+        error: `Envelope isn't signed yet (status: ${tr.docusignStatus || 'none'}). Refresh status, or a super-admin can force.`,
+      });
+    }
+
+    const result = await executeTradeRequest({
+      tradeRequestId: id,
+      fills: req.body?.fills,
+      actorName: req.user?.name || null,
+    });
+    res.json(result);
+  } catch (err) {
+    if (err instanceof TradeExecutionError) {
+      return res.status(err.status).json({ error: err.message });
+    }
     next(err);
   }
 });

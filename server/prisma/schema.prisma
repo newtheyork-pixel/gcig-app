@@ -323,6 +323,11 @@ model TradeRequest {
   docusignStatus       String?
   docusignSentAt       DateTime?
   docusignCompletedAt  DateTime?
+  // Settlement. Set when an exec marks the signed envelope as filled, which
+  // writes the position + cash movements into the ledger. Null until then, and
+  // the marker that makes execution idempotent (a request can't fill twice).
+  executedAt           DateTime?
+  executedByName       String?
   items                TradeRequestItem[]
 
   @@index([createdAt])
@@ -406,12 +411,28 @@ model EventRosterOverride {
   @@id([eventId, userId])
 }
 
+// A live position in the book. Was orphaned in the sheet era (nothing read or
+// wrote it); it is becoming the real positions table as holdings move off the
+// Google Sheet into the database. One row per ticker.
 model Holding {
-  id        Int      @id @default(autoincrement())
-  ticker    String
+  id        Int       @id @default(autoincrement())
+  ticker    String    @unique
+  name      String?
+  sector    String?
   shares    Float
+  // Blended per-share average cost, recomputed from HoldingLot on each buy.
+  // The column kept its original name — it has always meant average cost.
   costBasis Float
-  addedAt   DateTime @default(now())
+  // The club's cash sleeve (FGTXX) used to ride as a row in the holdings list.
+  // We no longer store cash as a Holding — it is derived from the Transaction
+  // ledger — but the flag is kept for any imported/legacy cash row and so the
+  // portfolio assembler can mark a synthetic cash row.
+  isCash    Boolean   @default(false)
+  addedAt   DateTime  @default(now())
+  // Soft-close: a fully-sold position keeps its row for history with closedAt
+  // set. The live portfolio query filters to closedAt = null.
+  closedAt  DateTime?
+  updatedAt DateTime  @updatedAt
 }
 
 model Report {
@@ -536,6 +557,39 @@ model HoldingThesis {
   updatedByName String?
   updatedAt     DateTime @updatedAt
   createdAt     DateTime @default(now())
+}
+
+// The fund's cash + trade ledger. There is deliberately no stored cash
+// balance: the spendable cash is the running sum of "cashDelta" across this
+// table, so every dollar that moves leaves an auditable row. Buys and sells
+// also record the share + price detail; a sell carries the realized P/L
+// against the blended cost of the lots it relieved. tradeRequestId /
+// votingSessionId tie a movement back to the envelope and vote that
+// authorized it (null for manual deposits, dividends, fees).
+model Transaction {
+  id              Int      @id @default(autoincrement())
+  // "Buy" | "Sell" | "Deposit" | "Withdraw" | "Dividend" | "Fee" | "Opening"
+  kind            String
+  ticker          String?
+  shares          Float?
+  pricePerShare   Float?
+  // Signed cash effect: buys / withdrawals / fees negative; sells / deposits /
+  // dividends positive. Whole-portfolio cash = SUM(cashDelta).
+  cashDelta       Float
+  // Realized P/L on a Sell, vs the blended cost of the lots relieved. Null on
+  // every other kind.
+  realizedPnl     Float?
+  // Loose provenance links (not FK relations, to keep this additive). Null
+  // unless the movement came from a trade.
+  tradeRequestId  Int?
+  votingSessionId Int?
+  note            String?
+  executedByName  String?
+  executedAt      DateTime @default(now())
+  createdAt       DateTime @default(now())
+
+  @@index([ticker])
+  @@index([executedAt])
 }
 
 // Persistent conversations with the in-house AI Assistant. The client

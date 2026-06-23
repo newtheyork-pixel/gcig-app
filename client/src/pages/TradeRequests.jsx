@@ -10,7 +10,16 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { format } from 'date-fns';
-import { Plus, Trash2, TrendingUp, TrendingDown, FileText, RefreshCw } from 'lucide-react';
+import {
+  Plus,
+  Trash2,
+  TrendingUp,
+  TrendingDown,
+  FileText,
+  RefreshCw,
+  CheckCircle2,
+  Wallet,
+} from 'lucide-react';
 import api from '../api/client.js';
 import { useAuth } from '../context/AuthContext.jsx';
 import PageHeader from '../components/PageHeader.jsx';
@@ -24,6 +33,8 @@ export default function TradeRequests({ embedded = false } = {}) {
   const [requests, setRequests] = useState([]);
   const [composerOpen, setComposerOpen] = useState(false);
   const [refreshing, setRefreshing] = useState(null);
+  // The signed request an exec is recording fills for, or null.
+  const [fillTarget, setFillTarget] = useState(null);
 
   async function loadRequests() {
     const { data } = await api.get('/trade-requests');
@@ -122,6 +133,7 @@ export default function TradeRequests({ embedded = false } = {}) {
               refreshing={refreshing === tr.id}
               onRefresh={() => refreshOne(tr.id)}
               onDelete={() => deleteOne(tr)}
+              onMarkFilled={() => setFillTarget(tr)}
             />
           ))
         )}
@@ -135,32 +147,45 @@ export default function TradeRequests({ embedded = false } = {}) {
           loadRequests();
         }}
       />
+
+      <MarkFilledModal
+        tr={fillTarget}
+        onClose={() => setFillTarget(null)}
+        onFilled={() => {
+          setFillTarget(null);
+          loadRequests();
+        }}
+      />
     </>
   );
 }
 
 // ── List row ──────────────────────────────────────────────────────────
 
-function RequestRow({ tr, refreshing, onRefresh, onDelete }) {
+function RequestRow({ tr, refreshing, onRefresh, onDelete, onMarkFilled }) {
   const status = tr.docusignStatus || 'draft';
-  const tone =
-    status === 'completed'
-      ? 'bg-emerald-100 text-emerald-800 border-emerald-200'
-      : status === 'declined' || status === 'voided'
-      ? 'bg-red-100 text-red-800 border-red-200'
-      : 'bg-gold-100 text-gold-800 border-gold-300';
-  const label =
-    status === 'completed'
-      ? 'Signed'
-      : status === 'declined'
-      ? 'Declined'
-      : status === 'voided'
-      ? 'Voided'
-      : status === 'delivered'
-      ? 'Awaiting signature'
-      : status === 'sent'
-      ? 'Sent'
-      : 'Draft';
+  // Settled into the book — the terminal state past "Signed".
+  const executed = !!tr.executedAt;
+  const tone = executed
+    ? 'bg-emerald-600 text-white border-emerald-700'
+    : status === 'completed'
+    ? 'bg-emerald-100 text-emerald-800 border-emerald-200'
+    : status === 'declined' || status === 'voided'
+    ? 'bg-red-100 text-red-800 border-red-200'
+    : 'bg-gold-100 text-gold-800 border-gold-300';
+  const label = executed
+    ? 'Filled'
+    : status === 'completed'
+    ? 'Signed'
+    : status === 'declined'
+    ? 'Declined'
+    : status === 'voided'
+    ? 'Voided'
+    : status === 'delivered'
+    ? 'Awaiting signature'
+    : status === 'sent'
+    ? 'Sent'
+    : 'Draft';
 
   const buyTotal = tr.items
     .filter((i) => i.kind === 'Buy')
@@ -191,6 +216,13 @@ function RequestRow({ tr, refreshing, onRefresh, onDelete }) {
               <>
                 {' '}
                 · sent {format(new Date(tr.docusignSentAt), 'MMM d, h:mm a')}
+              </>
+            )}
+            {tr.executedAt && (
+              <>
+                {' '}
+                · filled {format(new Date(tr.executedAt), 'MMM d, h:mm a')}
+                {tr.executedByName ? ` by ${tr.executedByName}` : ''}
               </>
             )}
           </div>
@@ -250,6 +282,23 @@ function RequestRow({ tr, refreshing, onRefresh, onDelete }) {
           </div>
         </div>
         <div className="flex shrink-0 flex-col items-end gap-2">
+          {executed ? (
+            <span className="flex items-center gap-1 text-xs font-semibold text-emerald-700">
+              <CheckCircle2 className="h-3.5 w-3.5" />
+              Filled
+            </span>
+          ) : (
+            status === 'completed' && (
+              <button
+                type="button"
+                onClick={onMarkFilled}
+                className="flex items-center gap-1 rounded-md bg-emerald-600 px-2.5 py-1 text-xs font-semibold text-white hover:bg-emerald-700"
+              >
+                <CheckCircle2 className="h-3.5 w-3.5" />
+                Mark filled
+              </button>
+            )
+          )}
           {tr.docusignEnvelopeId && (
             <button
               type="button"
@@ -275,13 +324,158 @@ function RequestRow({ tr, refreshing, onRefresh, onDelete }) {
   );
 }
 
+// ── Mark filled ───────────────────────────────────────────────────────
+// Settlement entry. Defaults each line to the quote-at-send, but the exec
+// types the ACTUAL broker fill (price + qty drift between signing and the
+// fill), and confirming writes the positions + cash into the book.
+
+function MarkFilledModal({ tr, onClose, onFilled }) {
+  const [fills, setFills] = useState({}); // itemId -> { shares, price }
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    if (!tr) return;
+    const seed = {};
+    for (const it of tr.items) {
+      seed[it.id] = { shares: String(it.shares), price: it.pricePerShare.toFixed(2) };
+    }
+    setFills(seed);
+    setError('');
+  }, [tr]);
+
+  if (!tr) return null;
+
+  const rows = tr.items.map((it) => {
+    const f = fills[it.id] || {};
+    const shares = Number(f.shares);
+    const price = Number(f.price);
+    // Whole shares only — the server rejects fractional fills, and this keeps
+    // the previewed total identical to what actually posts.
+    const valid =
+      Number.isInteger(shares) && shares > 0 && Number.isFinite(price) && price > 0;
+    return { it, valid, total: valid ? shares * price : null };
+  });
+  const allValid = rows.length > 0 && rows.every((r) => r.valid);
+  const buyTotal = rows
+    .filter((r) => r.it.kind === 'Buy')
+    .reduce((s, r) => s + (r.total || 0), 0);
+  const sellTotal = rows
+    .filter((r) => r.it.kind === 'Sell')
+    .reduce((s, r) => s + (r.total || 0), 0);
+  const netCash = sellTotal - buyTotal;
+
+  async function submit() {
+    setSubmitting(true);
+    setError('');
+    try {
+      await api.post(`/trade-requests/${tr.id}/execute`, {
+        fills: tr.items.map((it) => ({
+          itemId: it.id,
+          // Already constrained to a positive integer by `valid` above, so send
+          // it as-is — the preview the exec confirmed and the posted value match.
+          shares: Number(fills[it.id].shares),
+          pricePerShare: Number(fills[it.id].price),
+        })),
+      });
+      onFilled();
+    } catch (err) {
+      setError(err.response?.data?.error || 'Failed to record fills');
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <Modal open={!!tr} onClose={onClose} title={`Record fills — Approval #${tr.id}`} size="lg">
+      <div className="space-y-4">
+        <p className="text-xs text-navy-400">
+          Enter the actual broker fills. Confirming writes these positions and
+          cash movements into the book — defaults are the quote captured when
+          the envelope was sent.
+        </p>
+        <ul className="divide-y divide-navy-50 rounded-lg border border-navy-100">
+          {rows.map(({ it, total }) => (
+            <li key={it.id} className="flex flex-wrap items-center gap-3 px-3 py-2">
+              <span className="flex items-center gap-1.5 font-semibold text-navy">
+                {it.kind === 'Buy' ? (
+                  <TrendingUp className="h-4 w-4 text-emerald-600" />
+                ) : (
+                  <TrendingDown className="h-4 w-4 text-red-600" />
+                )}
+                {it.kind} {it.ticker}
+              </span>
+              <label className="flex items-center gap-1 text-xs text-navy-400">
+                shares
+                <input
+                  type="number"
+                  min={1}
+                  step={1}
+                  value={fills[it.id]?.shares ?? ''}
+                  onChange={(e) =>
+                    setFills((f) => ({ ...f, [it.id]: { ...f[it.id], shares: e.target.value } }))
+                  }
+                  className="w-20 rounded border border-navy-100 px-2 py-1 text-sm text-navy focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold"
+                />
+              </label>
+              <label className="flex items-center gap-1 text-xs text-navy-400">
+                @ $
+                <input
+                  type="number"
+                  min={0}
+                  step="0.01"
+                  value={fills[it.id]?.price ?? ''}
+                  onChange={(e) =>
+                    setFills((f) => ({ ...f, [it.id]: { ...f[it.id], price: e.target.value } }))
+                  }
+                  className="w-24 rounded border border-navy-100 px-2 py-1 text-sm text-navy focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold"
+                />
+              </label>
+              <span className="ml-auto text-sm font-semibold tabular-nums text-navy">
+                {total != null ? `$${total.toFixed(2)}` : '—'}
+              </span>
+            </li>
+          ))}
+        </ul>
+        <div className="flex flex-wrap gap-4 text-xs text-navy-400">
+          <span>
+            Buys: <span className="font-semibold text-navy">${buyTotal.toFixed(2)}</span>
+          </span>
+          {sellTotal > 0 && (
+            <span>
+              Sells: <span className="font-semibold text-navy">${sellTotal.toFixed(2)}</span>
+            </span>
+          )}
+          <span>
+            Net cash:{' '}
+            <span className={`font-semibold ${netCash >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>
+              {netCash >= 0 ? '+' : '−'}${Math.abs(netCash).toFixed(2)}
+            </span>
+          </span>
+        </div>
+        {error && (
+          <div className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700">{error}</div>
+        )}
+        <div className="flex justify-end gap-2 border-t border-navy-50 pt-3">
+          <Button variant="outline" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button onClick={submit} disabled={!allValid || submitting}>
+            {submitting ? 'Recording…' : 'Confirm fills'}
+          </Button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
 // ── Composer ──────────────────────────────────────────────────────────
 
 const DEFAULT_SELL_TICKER = 'VOO';
 // Cushion added to the default cover amount. Trades aren't instant — by the
-// time the broker fills, both the Buy legs and the SPY sell can drift on
-// us, so we ask for a bit more than the bare buy total. $1,000 has been
-// enough headroom historically.
+// time the broker fills, both the Buy legs and the cover sell (DEFAULT_SELL_TICKER,
+// VOO) can drift on us, so we ask for a bit more than the bare buy total.
+// $1,000 has been enough headroom historically.
 const COVER_BUFFER = 1000;
 
 function Composer({ open, onClose, onCreated }) {
@@ -310,6 +504,9 @@ function Composer({ open, onClose, onCreated }) {
   const [note, setNote] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState('');
+  // Spendable cash, for an advisory warning when the buys outrun it. Cash is
+  // enforced at fill time, not send time, so this never blocks the envelope.
+  const [buyingPower, setBuyingPower] = useState(null);
 
   useEffect(() => {
     if (!open) return;
@@ -333,6 +530,10 @@ function Composer({ open, onClose, onCreated }) {
       .get('/trade-requests/eligible-sells')
       .then((res) => setEligibleSells(res.data))
       .catch(() => setEligibleSells([]));
+    api
+      .get('/trade-requests/buying-power')
+      .then((res) => setBuyingPower(res.data?.cash ?? null))
+      .catch(() => setBuyingPower(null));
   }, [open]);
 
   // Fetch quotes for every selected session's ticker + the sell ticker.
@@ -503,6 +704,9 @@ function Composer({ open, onClose, onCreated }) {
   const voteSellTotal = lines.voteSells.reduce((s, v) => s + (v.totalCost || 0), 0);
   const sellTotal = (lines.sellLine?.totalCost || 0) + voteSellTotal;
   const netCash = sellTotal - buyTotal;
+  // Net cash this basket would draw, vs. what's on hand. Advisory only.
+  const cashNeed = buyTotal - sellTotal;
+  const insufficientCash = buyingPower != null && cashNeed > buyingPower + 1e-6;
 
   // Over-sell guard. If we'd be selling more shares than the sheet says we
   // own, block the send and surface the gap. Only kicks in once both the
@@ -1035,7 +1239,24 @@ function Composer({ open, onClose, onCreated }) {
                   {Math.abs(netCash).toFixed(2)}
                 </span>
               </span>
+              {buyingPower != null && (
+                <span className="flex items-center gap-1 text-navy-400">
+                  <Wallet className="h-3 w-3" />
+                  Cash avail:{' '}
+                  <span className="font-semibold text-navy">
+                    ${buyingPower.toLocaleString(undefined, { maximumFractionDigits: 0 })}
+                  </span>
+                </span>
+              )}
             </div>
+          </div>
+        )}
+
+        {insufficientCash && (
+          <div className="rounded-lg bg-gold-50 px-3 py-2 text-xs font-semibold text-gold-800">
+            Heads up: these buys draw ${cashNeed.toFixed(2)} but only $
+            {buyingPower.toFixed(2)} cash is on hand. Add a sell-to-cover, or it
+            will be blocked when you mark it filled.
           </div>
         )}
 
