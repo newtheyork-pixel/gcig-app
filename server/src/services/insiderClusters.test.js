@@ -31,8 +31,12 @@ function tx({ date, name, role, code, shares, price }) {
 }
 
 // Today is 2026-05-20 per the spec's clock. Anchor every fixture
-// against a stable "today" so the 60d window math is reviewable.
-const TODAY = new Date('2026-05-20T12:00:00Z');
+// "today" is the wall clock — getTickerCluster windows against the real
+// Date.now(), so the fixtures are anchored to now (not a fixed calendar date)
+// or they silently age out of the 60d window. A hard-coded 2026-05-20 anchor
+// is exactly what broke this suite once real time drifted past 60 days; the
+// day-offsets below keep the window math just as reviewable.
+const TODAY = new Date();
 const daysAgoIso = (n) => {
   const d = new Date(TODAY.getTime() - n * 86_400_000);
   return d.toISOString().slice(0, 10);
