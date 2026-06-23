@@ -21,6 +21,7 @@ import HoldingDetailModal from '../components/HoldingDetailModal.jsx';
 import RiskPanel from '../components/RiskPanel.jsx';
 import CashInterestCard from '../components/CashInterestCard.jsx';
 import CashLedgerCard from '../components/CashLedgerCard.jsx';
+import AddPositionButton from '../components/AddPositionButton.jsx';
 import { useAuth } from '../context/AuthContext.jsx';
 import { ChevronDown, ChevronRight } from 'lucide-react';
 
@@ -653,7 +654,14 @@ export default function Portfolio() {
       {data?.source === 'db' && <CashLedgerCard />}
 
       <div className="mt-6">
-        <Card title="Holdings">
+        <Card
+          title="Holdings"
+          action={
+            isSuperAdmin && data?.source === 'db' ? (
+              <AddPositionButton onAdded={load} />
+            ) : null
+          }
+        >
           {loading && !holdings.length ? (
             <div className="py-8 text-center text-navy-400">Loading the book…</div>
           ) : holdings.length === 0 ? (
