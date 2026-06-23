@@ -1,0 +1,265 @@
+import prisma from '../db.js';
+
+// Settlement: turning an approved trade into facts in the book. When an exec
+// marks a signed TradeRequest as filled, this writes the real position +
+// cash movements the broker just executed. The Holding table holds the current
+// position; HoldingLot holds the open lots (FIFO-relieved on a sell); the
+// Transaction ledger is the immutable record of every buy, sell, and cash move,
+// and the cash balance is the running sum of it. Nothing here trusts the
+// quote-at-send — the exec passes the actual fill price/qty.
+//
+// Cost basis: lots are authoritative. A buy appends a lot; a sell relieves the
+// oldest lots first (FIFO) and books realized P/L against the lots it consumed.
+// The Holding's shares + blended costBasis are recomputed from the open lots
+// after every change, so they can never drift from the lot history.
+
+// A typed error so the route can map it to the right HTTP status instead of a
+// blanket 500.
+export class TradeExecutionError extends Error {
+  constructor(message, status = 400) {
+    super(message);
+    this.name = 'TradeExecutionError';
+    this.status = status;
+  }
+}
+
+// Spendable cash = the running sum of every ledger movement. No stored balance.
+// Accepts a tx client so it can read a consistent value inside a settlement.
+export async function getCashBalance(client = prisma) {
+  const agg = await client.transaction.aggregate({ _sum: { cashDelta: true } });
+  return agg._sum.cashDelta ?? 0;
+}
+
+// Fold the open lots back into the Holding's authoritative shares + blended
+// cost. Creates the Holding row on first buy of a new name. A position with no
+// remaining shares is soft-closed (closedAt set, row kept for history); buying
+// back in clears it. `meta` carries name/sector for a freshly created row.
+export async function recomputeHoldingFromLots(client, ticker, meta = {}) {
+  const t = String(ticker).toUpperCase();
+  const lots = await client.holdingLot.findMany({ where: { ticker: t } });
+  const shares = lots.reduce((s, l) => s + l.shares, 0);
+  const costSum = lots.reduce((s, l) => s + l.shares * l.pricePerShare, 0);
+  const costBasis = shares > 0 ? costSum / shares : 0;
+
+  const existing = await client.holding.findUnique({ where: { ticker: t } });
+  if (existing) {
+    return client.holding.update({
+      where: { ticker: t },
+      data: {
+        shares,
+        costBasis,
+        closedAt: shares <= 0 ? existing.closedAt ?? new Date() : null,
+        ...(meta.name !== undefined ? { name: meta.name } : {}),
+        ...(meta.sector !== undefined ? { sector: meta.sector } : {}),
+      },
+    });
+  }
+  return client.holding.create({
+    data: {
+      ticker: t,
+      name: meta.name ?? t,
+      sector: meta.sector ?? null,
+      shares,
+      costBasis,
+      isCash: false,
+      closedAt: shares <= 0 ? new Date() : null,
+    },
+  });
+}
+
+// Append a buy lot and refold the Holding. Returns the cash outflow.
+async function applyBuy(tx, { ticker, shares, price, note, meta }) {
+  await tx.holdingLot.create({
+    data: {
+      ticker: String(ticker).toUpperCase(),
+      shares,
+      pricePerShare: price,
+      buyDate: new Date(),
+      note: note || null,
+    },
+  });
+  await recomputeHoldingFromLots(tx, ticker, meta || {});
+  return shares * price;
+}
+
+// Pure FIFO relief: given the open lots oldest-first, a sell quantity, and a
+// fill price, return the realized P/L and which lots to delete/shrink — plus
+// any quantity the lots couldn't cover. No DB, so the tricky money math is
+// unit-tested in isolation (tradeExecution.test.js).
+export function relieveLotsFifo(lots, shares, price) {
+  let remaining = shares;
+  let realizedPnl = 0;
+  const deletes = [];
+  const updates = [];
+  for (const lot of lots) {
+    if (remaining <= 1e-9) break;
+    const take = Math.min(lot.shares, remaining);
+    realizedPnl += (price - lot.pricePerShare) * take;
+    remaining -= take;
+    const left = lot.shares - take;
+    if (left <= 1e-9) deletes.push(lot.id);
+    else updates.push({ id: lot.id, shares: left });
+  }
+  return { realizedPnl, deletes, updates, remaining };
+}
+
+// Relieve the oldest lots FIFO for a sale, booking realized P/L against the
+// lots consumed, then refold the Holding. Returns { proceeds, realizedPnl }.
+async function applySell(tx, { ticker, shares, price }) {
+  const t = String(ticker).toUpperCase();
+  const holding = await tx.holding.findUnique({ where: { ticker: t } });
+  if (!holding || holding.closedAt || holding.shares <= 0) {
+    throw new TradeExecutionError(`Can't sell ${t} — no open position`, 409);
+  }
+  if (shares > holding.shares + 1e-9) {
+    throw new TradeExecutionError(
+      `Can't sell ${shares} ${t} — only ${holding.shares} held`,
+      400
+    );
+  }
+
+  const lots = await tx.holdingLot.findMany({
+    where: { ticker: t },
+    orderBy: [{ buyDate: 'asc' }, { id: 'asc' }],
+  });
+
+  const { realizedPnl, deletes, updates, remaining } = relieveLotsFifo(lots, shares, price);
+  if (remaining > 1e-6) {
+    // Lots didn't cover the sale even though the Holding said they should —
+    // the lot ledger and the position have drifted. Refuse rather than book a
+    // half-relieved sell.
+    throw new TradeExecutionError(
+      `Lot history for ${t} is short of its ${holding.shares}-share position; fix the lots before selling`,
+      409
+    );
+  }
+  for (const lotId of deletes) {
+    await tx.holdingLot.delete({ where: { id: lotId } });
+  }
+  for (const u of updates) {
+    await tx.holdingLot.update({ where: { id: u.id }, data: { shares: u.shares } });
+  }
+
+  await recomputeHoldingFromLots(tx, t);
+  return { proceeds: shares * price, realizedPnl };
+}
+
+// Execute a signed TradeRequest: write the fills as positions + cash movements.
+// `fills` is an optional array of { itemId, shares?, pricePerShare? } overrides
+// — anything omitted defaults to the item's recorded shares/price (the
+// quote-at-send), so a straight confirm needs no fills at all. Idempotent: a
+// request that already has ledger rows is refused. Whole thing is one
+// transaction, so a mid-settlement failure leaves the book untouched.
+export async function executeTradeRequest({ tradeRequestId, fills = [], actorName = null, db = prisma }) {
+  const id = Number(tradeRequestId);
+  if (!Number.isFinite(id)) throw new TradeExecutionError('Invalid trade request id', 400);
+
+  const fillById = new Map();
+  for (const f of Array.isArray(fills) ? fills : []) {
+    if (f && f.itemId != null) fillById.set(Number(f.itemId), f);
+  }
+
+  // db is injectable so the settlement orchestration can be exercised against
+  // an in-memory fake (tradeExecution.integration.test.js) without a real
+  // Postgres; production always passes the real prisma client.
+  return db.$transaction(async (tx) => {
+    // Lock the request row for the life of the transaction so two concurrent
+    // /execute calls can't both clear the idempotency check below and settle
+    // the same trade twice (doubling lots, cash, and realized P/L). The second
+    // caller blocks here until the first commits, then sees executedAt set.
+    await tx.$queryRaw`SELECT id FROM "TradeRequest" WHERE id = ${id} FOR UPDATE`;
+    const tr = await tx.tradeRequest.findUnique({ where: { id }, include: { items: true } });
+    if (!tr) throw new TradeExecutionError('Trade request not found', 404);
+    if (tr.executedAt) {
+      throw new TradeExecutionError('This trade request was already marked filled', 409);
+    }
+    const already = await tx.transaction.count({ where: { tradeRequestId: id } });
+    if (already > 0) {
+      throw new TradeExecutionError('This trade request already has ledger entries', 409);
+    }
+    if (!tr.items.length) throw new TradeExecutionError('Trade request has no line items', 400);
+
+    // Resolve each line to its actual fill, defaulting to what was sent.
+    const lines = tr.items.map((it) => {
+      const f = fillById.get(it.id) || {};
+      const shares = f.shares != null ? Number(f.shares) : it.shares;
+      const price = f.pricePerShare != null ? Number(f.pricePerShare) : it.pricePerShare;
+      // Whole shares only — the signed TradeRequestItem is an Int, and the
+      // brokerage fills in whole shares; a fractional fill from a direct API
+      // caller would desync the lot ledger from the envelope.
+      if (!Number.isInteger(shares) || shares <= 0) {
+        throw new TradeExecutionError(`Fill shares for ${it.ticker} must be a whole number`, 400);
+      }
+      if (!Number.isFinite(price) || price <= 0) {
+        throw new TradeExecutionError(`Invalid fill price for ${it.ticker}`, 400);
+      }
+      return { kind: it.kind, ticker: String(it.ticker).toUpperCase(), shares, price, votingSessionId: it.votingSessionId };
+    });
+
+    // Buying-power: the net of this basket can't drive cash negative. Sells add
+    // cash, buys spend it; we check the net so a sell-to-cover funds its buys.
+    const buyTotal = lines.filter((l) => l.kind === 'Buy').reduce((s, l) => s + l.shares * l.price, 0);
+    const sellTotal = lines.filter((l) => l.kind === 'Sell').reduce((s, l) => s + l.shares * l.price, 0);
+    const cashBefore = await getCashBalance(tx);
+    if (cashBefore + sellTotal - buyTotal < -1e-6) {
+      throw new TradeExecutionError(
+        `Insufficient cash: this basket needs $${(buyTotal - sellTotal).toFixed(2)} but only $${cashBefore.toFixed(2)} is available`,
+        400
+      );
+    }
+
+    const executedAt = new Date();
+    const transactions = [];
+
+    // Sells first so freed cash is on hand before the buys draw on it.
+    for (const l of lines.filter((x) => x.kind === 'Sell')) {
+      const { proceeds, realizedPnl } = await applySell(tx, l);
+      transactions.push(
+        await tx.transaction.create({
+          data: {
+            kind: 'Sell',
+            ticker: l.ticker,
+            shares: l.shares,
+            pricePerShare: l.price,
+            cashDelta: proceeds,
+            realizedPnl,
+            tradeRequestId: id,
+            votingSessionId: l.votingSessionId ?? null,
+            executedByName: actorName,
+            executedAt,
+          },
+        })
+      );
+    }
+    for (const l of lines.filter((x) => x.kind === 'Buy')) {
+      const cost = await applyBuy(tx, { ticker: l.ticker, shares: l.shares, price: l.price, note: `Buy via trade request #${id}` });
+      transactions.push(
+        await tx.transaction.create({
+          data: {
+            kind: 'Buy',
+            ticker: l.ticker,
+            shares: l.shares,
+            pricePerShare: l.price,
+            cashDelta: -cost,
+            tradeRequestId: id,
+            votingSessionId: l.votingSessionId ?? null,
+            executedByName: actorName,
+            executedAt,
+          },
+        })
+      );
+    }
+
+    const updated = await tx.tradeRequest.update({
+      where: { id },
+      data: { executedAt, executedByName: actorName },
+      include: {
+        creator: { select: { id: true, name: true, role: true } },
+        items: { orderBy: { id: 'asc' } },
+      },
+    });
+
+    const cashAfter = await getCashBalance(tx);
+    return { tradeRequest: updated, transactions, cashBefore, cashAfter };
+  });
+}

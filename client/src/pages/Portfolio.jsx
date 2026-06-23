@@ -20,6 +20,7 @@ import Button from '../components/Button.jsx';
 import HoldingDetailModal from '../components/HoldingDetailModal.jsx';
 import RiskPanel from '../components/RiskPanel.jsx';
 import CashInterestCard from '../components/CashInterestCard.jsx';
+import CashLedgerCard from '../components/CashLedgerCard.jsx';
 import { useAuth } from '../context/AuthContext.jsx';
 import { ChevronDown, ChevronRight } from 'lucide-react';
 
@@ -109,7 +110,9 @@ export default function Portfolio() {
       setHistory(hist.data);
     } catch (err) {
       setError(err.response?.data?.error || 'Failed to load portfolio');
-      setData({ holdings: [], totals: {} });
+      // Preserve the prior source so a transient failure doesn't flip db-mode
+      // copy back to "Google Sheets" or hide the cash ledger card mid-session.
+      setData((prev) => ({ holdings: [], totals: {}, source: prev?.source }));
     } finally {
       setLoading(false);
     }
@@ -404,9 +407,12 @@ export default function Portfolio() {
         kicker="The Live Book"
         title="Portfolio"
         subtitle={
-          data?.fetchedAt
-            ? `Live from Google Sheets · fetched ${format(new Date(data.fetchedAt), 'h:mm:ss a')}`
-            : 'Live from Google Sheets'
+          (data?.source === 'db'
+            ? 'Live · holdings from the database, prices from Google'
+            : 'Live from Google Sheets') +
+          (data?.fetchedAt
+            ? ` · fetched ${format(new Date(data.fetchedAt), 'h:mm:ss a')}`
+            : '')
         }
         actions={
           <div className="flex gap-2">
@@ -644,13 +650,15 @@ export default function Portfolio() {
 
       <SectorAllocation holdings={holdings} totalValue={totals.totalValue} />
 
+      {data?.source === 'db' && <CashLedgerCard />}
+
       <div className="mt-6">
         <Card title="Holdings">
           {loading && !holdings.length ? (
-            <div className="py-8 text-center text-navy-400">Loading from Google Sheets…</div>
+            <div className="py-8 text-center text-navy-400">Loading the book…</div>
           ) : holdings.length === 0 ? (
             <div className="py-8 text-center text-navy-400">
-              No positions found in the sheet.
+              No positions found.
             </div>
           ) : (
             <>
@@ -932,11 +940,23 @@ export default function Portfolio() {
             </>
           )}
           <div className="mt-4 text-xs text-navy-400">
-            Positions and prices are read live from the club's Google Sheet. To
-            add or remove a position, edit the sheet directly. Tap any
-            holding to see company details. The sheet's CASH line is the
-            leftover FGTXX money-market balance; BDA was drawn down to
-            zero buying the positions above.
+            {data?.source === 'db' ? (
+              <>
+                Holdings and cash live in the database — buy and sell on the
+                Trade Approval page and they post to the book when an exec marks
+                the trade filled. Prices are live from Google. Tap any holding
+                to see company details. The CASH line is the FGTXX money-market
+                balance.
+              </>
+            ) : (
+              <>
+                Positions and prices are read live from the club's Google Sheet.
+                To add or remove a position, edit the sheet directly. Tap any
+                holding to see company details. The sheet's CASH line is the
+                leftover FGTXX money-market balance; BDA was drawn down to zero
+                buying the positions above.
+              </>
+            )}
             {estimatedCashInterest > 0 && (
               <>
                 {' '}An estimated{' '}
