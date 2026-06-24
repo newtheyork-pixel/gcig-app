@@ -1,5 +1,6 @@
 import prisma from '../db.js';
 import { resolveQuotes } from './portfolioQuotes.js';
+import { enrichHoldingsMeta } from './holdingMeta.js';
 
 // The database-backed portfolio, assembled to be a drop-in for the sheet read.
 // It returns the EXACT shape getSheetPortfolio() returns — { holdings, totals,
@@ -22,6 +23,13 @@ export async function getDbPortfolio({ forceFresh = false } = {}) {
     where: { closedAt: null, isCash: false },
     orderBy: { ticker: 'asc' },
   });
+
+  // Self-heal: a position a trade created with just a ticker gets its company
+  // name + sector filled from Finnhub in the background. Fire-and-forget — this
+  // read returns immediately and the names appear on the next refresh.
+  if (positions.some((p) => !p.name || p.name === p.ticker || !p.sector)) {
+    enrichHoldingsMeta().catch(() => {});
+  }
 
   // Cash = running sum of every cash movement. No stored balance.
   const cashAgg = await prisma.transaction.aggregate({ _sum: { cashDelta: true } });
