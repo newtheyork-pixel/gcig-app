@@ -25,7 +25,9 @@ export default function ResetBookButton({ onReset }) {
     setBusy(true);
     setError('');
     try {
-      await api.post('/holdings/import-from-sheet', { commit: true, reset: true });
+      // force:true — the user has confirmed via the dialog above; the server
+      // otherwise refuses to wipe real recorded trades/movements.
+      await api.post('/holdings/import-from-sheet', { commit: true, reset: true, force: true });
       onReset?.();
     } catch (e) {
       setError(e.response?.data?.error || 'Reset failed');

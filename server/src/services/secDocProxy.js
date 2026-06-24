@@ -54,9 +54,24 @@ function isAllowedSecUrl(url) {
 // synthesize one right after <html ...>; if it has neither (a fragment
 // HTML — uncommon but possible), we prepend <base> bare, which is a
 // degraded-but-functional fallback.
+function htmlEscapeAttr(s) {
+  return String(s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
 function injectBaseHref(html, url) {
-  const baseHref = url.substring(0, url.lastIndexOf('/') + 1);
-  const baseTag = `<base href="${baseHref}">`;
+  // Build the base href from the PARSED, normalized URL (not the raw request
+  // string) and HTML-escape it. The raw string can carry literal " < > that
+  // `new URL()` tolerates in the path — interpolating it unescaped let an
+  // attacker break out of the attribute and inject <script> (XSS on this
+  // origin). Parsing + escaping closes that.
+  let dir;
+  try {
+    const u = new URL(url);
+    dir = u.href.substring(0, u.href.lastIndexOf('/') + 1);
+  } catch {
+    dir = '';
+  }
+  const baseTag = `<base href="${htmlEscapeAttr(dir)}">`;
   if (/<head([^>]*)>/i.test(html)) {
     return html.replace(/<head([^>]*)>/i, (_m, attrs) => `<head${attrs}>${baseTag}`);
   }
@@ -69,10 +84,20 @@ function injectBaseHref(html, url) {
 async function defaultDocFetch(url) {
   // Mirrors the proxyStatement.js docFetch shape: SEC_UA + a permissive
   // Accept (HTML, then anything) so a binary exhibit in the same path
-  // still flows through unchanged.
+  // still flows through unchanged. redirect:'manual' so the upstream can't 30x
+  // us off the SEC allowlist (SSRF / DNS-rebinding); a single same-allowlist
+  // hop is re-validated and followed below.
   return fetch(url, {
     headers: { 'User-Agent': SEC_UA, Accept: 'text/html,*/*' },
+    redirect: 'manual',
   });
+}
+
+function locationOf(upstream) {
+  if (!upstream || !upstream.headers) return null;
+  return typeof upstream.headers.get === 'function'
+    ? upstream.headers.get('location')
+    : upstream.headers['location'];
 }
 
 // { status, contentType, body }. Body is a string for HTML / XHTML
@@ -84,8 +109,25 @@ export async function fetchSecDoc(url, deps = {}) {
   if (!isAllowedSecUrl(url)) return null;
   const docFetch = deps.docFetch || defaultDocFetch;
   try {
-    const upstream = await docFetch(url);
+    let upstream = await docFetch(url);
     if (!upstream) return null;
+    // Follow at most one redirect, and only if it stays on the SEC allowlist —
+    // so EDGAR's own http→https / canonical redirects work, but the upstream
+    // can't bounce us to an internal or attacker host.
+    if (typeof upstream.status === 'number' && upstream.status >= 300 && upstream.status < 400) {
+      const loc = locationOf(upstream);
+      let next = null;
+      try {
+        next = loc ? new URL(loc, url).href : null;
+      } catch {
+        next = null;
+      }
+      if (!next || !isAllowedSecUrl(next)) return null;
+      upstream = await docFetch(next);
+      if (!upstream) return null;
+      if (typeof upstream.status === 'number' && upstream.status >= 300 && upstream.status < 400) return null;
+      url = next; // the base href + body now reflect the final URL
+    }
     const contentType =
       (upstream.headers &&
         (typeof upstream.headers.get === 'function'
