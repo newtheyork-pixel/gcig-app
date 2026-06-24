@@ -19,7 +19,7 @@ export class PortfolioImportError extends Error {
   }
 }
 
-export async function importFromSheet({ commit = false, db = prisma } = {}) {
+export async function importFromSheet({ commit = false, reset = false, db = prisma } = {}) {
   // Read the sheet straight, bypassing the cutover dispatcher so this works
   // even once PORTFOLIO_SOURCE=db, and without mutating global env (which would
   // race concurrent requests on the server).
@@ -67,6 +67,16 @@ export async function importFromSheet({ commit = false, db = prisma } = {}) {
 
   const result = await db.$transaction(
     async (tx) => {
+      // Reset: wipe the whole DB book first so the re-import is a clean slate —
+      // the cure for a portfolio messed up by test trades or bad data. Drops
+      // every position, lot, and ledger row (including trades), then rebuilds
+      // from the sheet. Destructive on purpose; the endpoint gates it on an
+      // explicit reset flag + super admin.
+      if (reset) {
+        await tx.holdingLot.deleteMany({});
+        await tx.transaction.deleteMany({});
+        await tx.holding.deleteMany({});
+      }
       let upserted = 0;
       let lotsSeeded = 0;
       for (const h of positions) {

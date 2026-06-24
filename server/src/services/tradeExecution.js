@@ -68,13 +68,13 @@ export async function recomputeHoldingFromLots(client, ticker, meta = {}) {
 }
 
 // Append a buy lot and refold the Holding. Returns the cash outflow.
-async function applyBuy(tx, { ticker, shares, price, note, meta }) {
+async function applyBuy(tx, { ticker, shares, price, note, meta, buyDate }) {
   await tx.holdingLot.create({
     data: {
       ticker: String(ticker).toUpperCase(),
       shares,
       pricePerShare: price,
-      buyDate: new Date(),
+      buyDate: buyDate || new Date(),
       note: note || null,
     },
   });
@@ -274,6 +274,12 @@ export async function executeDirectTrade({
   ticker,
   shares,
   pricePerShare,
+  buyDate = null,
+  // A buy that moves no cash — a transfer-in / donation / correction where the
+  // shares appeared without the fund spending. Off by default: a buy spends.
+  noCash = false,
+  name = null,
+  sector = null,
   actorName = null,
   note = null,
   db = prisma,
@@ -293,22 +299,38 @@ export async function executeDirectTrade({
   if (!Number.isFinite(p) || p <= 0) {
     throw new TradeExecutionError('Price per share must be positive', 400);
   }
+  let lotDate = null;
+  if (buyDate) {
+    lotDate = new Date(buyDate);
+    if (Number.isNaN(lotDate.getTime())) throw new TradeExecutionError('Invalid buy date', 400);
+  }
 
   return db.$transaction(async (tx) => {
     const cashBefore = await getCashBalance(tx);
 
     if (side === 'Buy') {
       const cost = s * p;
-      if (cashBefore - cost < -1e-6) {
+      if (!noCash && cashBefore - cost < -1e-6) {
         throw new TradeExecutionError(
           `Insufficient cash: this buy needs $${cost.toFixed(2)} but only $${cashBefore.toFixed(2)} is available. Record a deposit first if needed.`,
           400
         );
       }
-      await applyBuy(tx, { ticker: t, shares: s, price: p, note: note || 'direct buy' });
-      const transaction = await tx.transaction.create({
-        data: { kind: 'Buy', ticker: t, shares: s, pricePerShare: p, cashDelta: -cost, note: note || null, executedByName: actorName },
+      await applyBuy(tx, {
+        ticker: t,
+        shares: s,
+        price: p,
+        note: note || (noCash ? 'transfer in' : 'direct buy'),
+        meta: { name: name || undefined, sector: sector || undefined },
+        buyDate: lotDate,
       });
+      // A real buy spends cash; a transfer-in doesn't (the shares arrived
+      // without the fund paying), so no ledger row in that case.
+      const transaction = noCash
+        ? null
+        : await tx.transaction.create({
+            data: { kind: 'Buy', ticker: t, shares: s, pricePerShare: p, cashDelta: -cost, note: note || null, executedByName: actorName },
+          });
       return { transaction, cashBefore, cashAfter: await getCashBalance(tx) };
     }
 

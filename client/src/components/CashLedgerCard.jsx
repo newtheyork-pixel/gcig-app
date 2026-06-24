@@ -4,6 +4,7 @@ import { Wallet, Plus, Trash2 } from 'lucide-react';
 import api from '../api/client.js';
 import Card from './Card.jsx';
 import Button from './Button.jsx';
+import ResetBookButton from './ResetBookButton.jsx';
 import { useAuth } from '../context/AuthContext.jsx';
 
 // The fund's cash, straight off the Transaction ledger: the running balance up
@@ -22,7 +23,7 @@ function fmtMoney(n) {
   });
 }
 
-export default function CashLedgerCard() {
+export default function CashLedgerCard({ onReset } = {}) {
   const { isSuperAdmin } = useAuth();
   const [cash, setCash] = useState(null);
   const [rows, setRows] = useState([]);
@@ -188,6 +189,13 @@ export default function CashLedgerCard() {
             </ul>
           )}
         </div>
+
+        <ResetBookButton
+          onReset={() => {
+            load();
+            onReset?.();
+          }}
+        />
       </Card>
     </div>
   );

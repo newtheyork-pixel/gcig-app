@@ -558,12 +558,16 @@ router.get('/positions', async (_req, res, next) => {
 // pricePerShare, note? }.
 router.post('/trade', requireSuperAdmin, async (req, res, next) => {
   try {
-    const { side, ticker, shares, pricePerShare, note } = req.body || {};
+    const { side, ticker, shares, pricePerShare, note, buyDate, noCash, name, sector } = req.body || {};
     const result = await executeDirectTrade({
       side,
       ticker,
       shares,
       pricePerShare,
+      buyDate: buyDate || null,
+      noCash: noCash === true,
+      name: name || null,
+      sector: sector || null,
       note: note || null,
       actorName: req.user?.name || null,
     });
@@ -583,7 +587,8 @@ router.post('/trade', requireSuperAdmin, async (req, res, next) => {
 router.post('/import-from-sheet', requireSuperAdmin, async (req, res, next) => {
   try {
     const commit = req.body?.commit === true;
-    const report = await importFromSheet({ commit });
+    const reset = req.body?.reset === true;
+    const report = await importFromSheet({ commit, reset });
     res.json(report);
   } catch (err) {
     if (err instanceof PortfolioImportError) {
@@ -607,6 +612,27 @@ router.put('/positions/:ticker', requireSuperAdmin, async (req, res, next) => {
     res.json(row);
   } catch (err) {
     if (err?.code === 'P2025') return res.status(404).json({ error: 'Holding not found' });
+    next(err);
+  }
+});
+
+// Remove a position entirely — drops the Holding and all its lots. For an
+// erroneous / test position that shouldn't be in the book at all. Does NOT move
+// cash (use Trade → Sell to record a real sale that credits cash).
+router.delete('/positions/:ticker', requireSuperAdmin, async (req, res, next) => {
+  try {
+    const t = String(req.params.ticker || '').trim().toUpperCase();
+    if (!validTicker(t)) return res.status(400).json({ error: 'Invalid ticker' });
+    const removed = await prisma.$transaction(async (tx) => {
+      const h = await tx.holding.findUnique({ where: { ticker: t } });
+      if (!h) return false;
+      await tx.holdingLot.deleteMany({ where: { ticker: t } });
+      await tx.holding.delete({ where: { ticker: t } });
+      return true;
+    });
+    if (!removed) return res.status(404).json({ error: 'Holding not found' });
+    res.json({ ok: true });
+  } catch (err) {
     next(err);
   }
 });

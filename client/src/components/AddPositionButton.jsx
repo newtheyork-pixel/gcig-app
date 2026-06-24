@@ -4,15 +4,20 @@ import api from '../api/client.js';
 import Button from './Button.jsx';
 import Modal from './Modal.jsx';
 
-// Seeds a position outside the trade flow — a transfer-in, an account opening,
-// or a correction. There's no "buy" to settle here, so we create the holding
-// directly by writing its opening lot (shares + average cost are derived from
-// the lots server-side), then optionally stamp the name/sector. Day-to-day
-// positions still change through the vote -> Mark Filled flow; this is the
-// manual escape hatch a super admin occasionally needs.
+// Adds a position by BUYING it — debits cash, creates the holding + an opening
+// lot (with an optional custom date and name/sector). For the rare case where
+// shares arrive without the fund paying (a transfer-in, donation, or
+// correction), tick "transfer in" to skip the cash movement. Routes through the
+// same /holdings/trade engine as the Trade button, so the accounting matches.
 const TICKER_RE = /^[A-Z0-9.\-]{1,10}$/;
 const inputCls =
   'mt-1 w-full rounded border border-navy-100 px-2 py-1 text-sm focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold';
+
+function usd(n) {
+  return n == null
+    ? '—'
+    : Number(n).toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 2 });
+}
 
 function todayISO() {
   return new Date().toISOString().slice(0, 10);
@@ -27,7 +32,7 @@ function Field({ label, children }) {
   );
 }
 
-export default function AddPositionButton({ onAdded }) {
+export default function AddPositionButton({ onAdded, cash = 0 }) {
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState({
     ticker: '',
@@ -37,11 +42,13 @@ export default function AddPositionButton({ onAdded }) {
     name: '',
     sector: '',
   });
+  const [transfer, setTransfer] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
 
   function start() {
     setForm({ ticker: '', shares: '', pricePerShare: '', buyDate: todayISO(), name: '', sector: '' });
+    setTransfer(false);
     setError('');
     setOpen(true);
   }
@@ -57,27 +64,25 @@ export default function AddPositionButton({ onAdded }) {
     Number.isFinite(price) &&
     price > 0 &&
     !!form.buyDate;
+  const cost = valid ? shares * price : null;
+  const overSpend = !transfer && cost != null && cost > cash + 1e-6;
+  const canSubmit = valid && !overSpend && !saving;
 
   async function submit() {
-    if (!valid) return;
+    if (!canSubmit) return;
     setSaving(true);
     setError('');
     try {
-      // The opening lot creates the Holding (recompute derives shares + cost).
-      await api.post('/holdings/lots', {
+      await api.post('/holdings/trade', {
+        side: 'Buy',
         ticker,
         shares,
         pricePerShare: price,
         buyDate: form.buyDate,
-        note: 'manual add',
+        name: form.name.trim() || undefined,
+        sector: form.sector.trim() || undefined,
+        noCash: transfer,
       });
-      // Name/sector aren't carried on a lot — stamp them if provided.
-      if (form.name.trim() || form.sector.trim()) {
-        await api.put(`/holdings/positions/${encodeURIComponent(ticker)}`, {
-          name: form.name.trim() || undefined,
-          sector: form.sector.trim() || undefined,
-        });
-      }
       setOpen(false);
       onAdded?.();
     } catch (e) {
@@ -96,10 +101,9 @@ export default function AddPositionButton({ onAdded }) {
       <Modal open={open} onClose={() => setOpen(false)} title="Add a position" size="lg">
         <div className="space-y-3">
           <p className="text-xs text-navy-400">
-            Seeds a position outside the trade flow — a transfer-in or a
-            correction. Creates the holding with one opening lot; shares and
-            average cost come from the lots. Day-to-day buys should go through
-            the trade-approval flow instead.
+            Buys a position and <span className="font-semibold">debits cash</span> — creates the holding with an
+            opening lot. For shares that arrived without the fund paying (a transfer-in or correction), tick
+            "transfer in" below to skip the cash movement.
           </p>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <Field label="Ticker">
@@ -121,8 +125,8 @@ export default function AddPositionButton({ onAdded }) {
             <Field label="Shares">
               <input
                 type="number"
-                min={0}
-                step="any"
+                min={1}
+                step={1}
                 value={form.shares}
                 onChange={(e) => setForm((f) => ({ ...f, shares: e.target.value }))}
                 className={inputCls}
@@ -155,15 +159,41 @@ export default function AddPositionButton({ onAdded }) {
               />
             </Field>
           </div>
+
+          <label className="flex items-center gap-2 text-xs text-navy-600">
+            <input
+              type="checkbox"
+              checked={transfer}
+              onChange={(e) => setTransfer(e.target.checked)}
+              className="h-4 w-4 rounded border-navy-200 text-gold focus:ring-gold"
+            />
+            Transfer in — record the shares without subtracting cash (donation / correction)
+          </label>
+
           {form.ticker && !tickerOk && (
             <div className="text-xs text-red-700">
               Ticker must be 1–10 letters/digits (dots and dashes allowed).
             </div>
           )}
           {valid && (
-            <div className="text-xs text-navy-400">
-              Opening cost: <span className="font-semibold text-navy">${(shares * price).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
-              {' '}— recorded as a lot, not a cash movement.
+            <div className="rounded-lg border border-navy-100 bg-navy-50 px-3 py-2 text-sm">
+              <div className="flex justify-between">
+                <span className="text-navy-400">{transfer ? 'Cost basis' : 'Cost'}</span>
+                <span className="font-semibold text-navy">{usd(cost)}</span>
+              </div>
+              {!transfer && (
+                <div className="flex justify-between">
+                  <span className="text-navy-400">Cash after</span>
+                  <span className={`font-semibold ${cash - cost < 0 ? 'text-red-700' : 'text-navy'}`}>
+                    {usd(cash - cost)}
+                  </span>
+                </div>
+              )}
+            </div>
+          )}
+          {overSpend && (
+            <div className="text-xs font-semibold text-red-700">
+              Cost exceeds available cash ({usd(cash)}). Tick "transfer in", or record a deposit first.
             </div>
           )}
           {error && (
@@ -173,8 +203,8 @@ export default function AddPositionButton({ onAdded }) {
             <Button variant="outline" onClick={() => setOpen(false)}>
               Cancel
             </Button>
-            <Button onClick={submit} disabled={!valid || saving}>
-              {saving ? 'Adding…' : 'Add position'}
+            <Button onClick={submit} disabled={!canSubmit}>
+              {saving ? 'Adding…' : transfer ? 'Add (transfer)' : 'Buy position'}
             </Button>
           </div>
         </div>

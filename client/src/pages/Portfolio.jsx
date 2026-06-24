@@ -657,7 +657,7 @@ export default function Portfolio() {
 
       <SectorAllocation holdings={holdings} totalValue={totals.totalValue} />
 
-      {data?.source === 'db' && <CashLedgerCard />}
+      {data?.source === 'db' && <CashLedgerCard onReset={load} />}
 
       <div className="mt-6">
         <Card
@@ -666,7 +666,7 @@ export default function Portfolio() {
             isSuperAdmin && data?.source === 'db' ? (
               <div className="flex gap-2">
                 <TradeButton holdings={holdings} cash={totals?.cashValue ?? 0} onDone={load} />
-                <AddPositionButton onAdded={load} />
+                <AddPositionButton onAdded={load} cash={totals?.cashValue ?? 0} />
               </div>
             ) : null
           }
@@ -999,7 +999,11 @@ export default function Portfolio() {
 
       <HoldingDetailModal
         holding={selectedHolding}
-        onClose={() => setSelectedHolding(null)}
+        onClose={() => {
+          setSelectedHolding(null);
+          load();
+        }}
+        onChanged={load}
       />
     </>
   );
