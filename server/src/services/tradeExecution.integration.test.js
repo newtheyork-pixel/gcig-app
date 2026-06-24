@@ -1,6 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { executeTradeRequest, executeDirectTrade, TradeExecutionError } from './tradeExecution.js';
+import {
+  executeTradeRequest,
+  executeDirectTrade,
+  executeBulkTrades,
+  TradeExecutionError,
+} from './tradeExecution.js';
 
 // Exercises the whole settlement orchestration — buying-power guard, sells
 // funding buys, FIFO realized P/L, soft-close, idempotency — against an
@@ -248,6 +253,26 @@ test('direct sell beyond the held position is rejected', async () => {
     () => executeDirectTrade({ side: 'Sell', ticker: 'AAA', shares: 10, pricePerShare: 50, db }),
     (e) => e instanceof TradeExecutionError && /only 5 held/.test(e.message)
   );
+});
+
+test('bulk trades run sells before buys so proceeds fund the buys', async () => {
+  const db = makeFakeDb({
+    holdings: [{ ticker: 'AAA', name: 'AAA', shares: 10, costBasis: 45, isCash: false, closedAt: null }],
+    lots: [{ id: 1, ticker: 'AAA', shares: 10, pricePerShare: 45, buyDate: olderDate }],
+    transactions: [{ id: 2, kind: 'Opening', cashDelta: 100 }], // only $100 cash to start
+  });
+  // Buy listed FIRST but needs $400 with only $100 on hand — the $500 sell must
+  // run first or the whole batch fails.
+  await executeBulkTrades({
+    trades: [
+      { side: 'Buy', ticker: 'BBB', shares: 4, pricePerShare: 100 },
+      { side: 'Sell', ticker: 'AAA', shares: 10, pricePerShare: 50 },
+    ],
+    db,
+  });
+  assert.equal(db.holding('BBB').shares, 4);
+  assert.ok(db.holding('AAA').closedAt);
+  assert.equal(db.cash(), 200); // 100 + 500 sell − 400 buy
 });
 
 test('editable fills override the recorded quote-at-send', async () => {

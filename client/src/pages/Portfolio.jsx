@@ -23,6 +23,7 @@ import CashInterestCard from '../components/CashInterestCard.jsx';
 import CashLedgerCard from '../components/CashLedgerCard.jsx';
 import AddPositionButton from '../components/AddPositionButton.jsx';
 import TradeButton from '../components/TradeButton.jsx';
+import BulkTradeButton from '../components/BulkTradeButton.jsx';
 import ImportBookBanner from '../components/ImportBookBanner.jsx';
 import { useAuth } from '../context/AuthContext.jsx';
 import { ChevronDown, ChevronRight } from 'lucide-react';
@@ -664,8 +665,9 @@ export default function Portfolio() {
           title="Holdings"
           action={
             isSuperAdmin && data?.source === 'db' ? (
-              <div className="flex gap-2">
+              <div className="flex flex-wrap gap-2">
                 <TradeButton holdings={holdings} cash={totals?.cashValue ?? 0} onDone={load} />
+                <BulkTradeButton onDone={load} />
                 <AddPositionButton onAdded={load} cash={totals?.cashValue ?? 0} />
               </div>
             ) : null

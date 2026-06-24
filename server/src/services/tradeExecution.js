@@ -342,3 +342,61 @@ export async function executeDirectTrade({
     return { transaction, cashBefore, cashAfter: await getCashBalance(tx) };
   });
 }
+
+// Record a batch of buys/sells in one shot — a broker-statement import. All
+// trades land in a single transaction (all-or-nothing: if any fails, none
+// apply), and SELLS run before BUYS so the proceeds fund the buys regardless
+// of the order they were pasted in. Each line is the same accounting as a
+// single direct trade.
+export async function executeBulkTrades({ trades, actorName = null, db = prisma }) {
+  if (!Array.isArray(trades) || trades.length === 0) {
+    throw new TradeExecutionError('No trades provided', 400);
+  }
+  const norm = trades.map((tr, i) => {
+    const side = tr.side === 'Buy' || tr.side === 'Sell' ? tr.side : null;
+    const ticker = String(tr.ticker || '').trim().toUpperCase();
+    const shares = Number(tr.shares);
+    const price = Number(tr.pricePerShare);
+    const where = `Row ${i + 1}${ticker ? ` (${ticker})` : ''}`;
+    if (!side) throw new TradeExecutionError(`${where}: side must be Buy or Sell`, 400);
+    if (!/^[A-Z0-9.\-]{1,10}$/.test(ticker)) throw new TradeExecutionError(`${where}: invalid ticker`, 400);
+    if (!Number.isInteger(shares) || shares <= 0) throw new TradeExecutionError(`${where}: shares must be a whole number`, 400);
+    if (!Number.isFinite(price) || price <= 0) throw new TradeExecutionError(`${where}: price must be positive`, 400);
+    return { side, ticker, shares, price };
+  });
+  // Sells first so their proceeds are on hand before the buys draw cash.
+  norm.sort((a, b) => (a.side === b.side ? 0 : a.side === 'Sell' ? -1 : 1));
+
+  return db.$transaction(
+    async (tx) => {
+      const results = [];
+      for (const trade of norm) {
+        if (trade.side === 'Buy') {
+          const cost = trade.shares * trade.price;
+          const cash = await getCashBalance(tx);
+          if (cash - cost < -1e-6) {
+            throw new TradeExecutionError(
+              `${trade.ticker}: buy needs $${cost.toFixed(2)} but only $${cash.toFixed(2)} is available (after sells). Add a deposit or check the list.`,
+              400
+            );
+          }
+          await applyBuy(tx, { ticker: trade.ticker, shares: trade.shares, price: trade.price, note: 'bulk import' });
+          await tx.transaction.create({
+            data: { kind: 'Buy', ticker: trade.ticker, shares: trade.shares, pricePerShare: trade.price, cashDelta: -cost, note: 'bulk import', executedByName: actorName },
+          });
+          results.push({ ...trade, cashDelta: -cost });
+        } else {
+          const { proceeds, realizedPnl } = await applySell(tx, { ticker: trade.ticker, shares: trade.shares, price: trade.price });
+          await tx.transaction.create({
+            data: { kind: 'Sell', ticker: trade.ticker, shares: trade.shares, pricePerShare: trade.price, cashDelta: proceeds, realizedPnl, note: 'bulk import', executedByName: actorName },
+          });
+          results.push({ ...trade, cashDelta: proceeds, realizedPnl });
+        }
+      }
+      const cashAfter = await getCashBalance(tx);
+      const realizedPnl = results.reduce((s, r) => s + (r.realizedPnl || 0), 0);
+      return { results, cashAfter, count: norm.length, realizedPnl };
+    },
+    { timeout: 30000 }
+  );
+}
