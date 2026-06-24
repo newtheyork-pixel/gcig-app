@@ -136,6 +136,7 @@ import {
   TradeExecutionError,
 } from '../services/tradeExecution.js';
 import { importFromSheet, PortfolioImportError } from '../services/portfolioImport.js';
+import { enrichHoldingsMeta } from '../services/holdingMeta.js';
 
 const router = Router();
 
@@ -572,6 +573,7 @@ router.post('/trade', requireSuperAdmin, async (req, res, next) => {
       note: note || null,
       actorName: req.user?.name || null,
     });
+    enrichHoldingsMeta().catch(() => {}); // backfill name/sector for any new ticker
     res.json(result);
   } catch (err) {
     if (err instanceof TradeExecutionError) {
@@ -587,11 +589,22 @@ router.post('/trade', requireSuperAdmin, async (req, res, next) => {
 router.post('/trades', requireSuperAdmin, async (req, res, next) => {
   try {
     const result = await executeBulkTrades({ trades: req.body?.trades, actorName: req.user?.name || null });
+    enrichHoldingsMeta().catch(() => {}); // backfill name/sector for any new tickers
     res.json(result);
   } catch (err) {
     if (err instanceof TradeExecutionError) {
       return res.status(err.status).json({ error: err.message });
     }
+    next(err);
+  }
+});
+
+// Backfill company name + sector from Finnhub for any holding still missing them
+// (a position a trade created with just a ticker). Super-admin.
+router.post('/enrich-meta', requireSuperAdmin, async (_req, res, next) => {
+  try {
+    res.json(await enrichHoldingsMeta());
+  } catch (err) {
     next(err);
   }
 });
