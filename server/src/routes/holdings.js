@@ -132,6 +132,7 @@ import {
   recomputeHoldingFromLots,
   getCashBalance,
   executeDirectTrade,
+  executeBulkTrades,
   TradeExecutionError,
 } from '../services/tradeExecution.js';
 import { importFromSheet, PortfolioImportError } from '../services/portfolioImport.js';
@@ -571,6 +572,21 @@ router.post('/trade', requireSuperAdmin, async (req, res, next) => {
       note: note || null,
       actorName: req.user?.name || null,
     });
+    res.json(result);
+  } catch (err) {
+    if (err instanceof TradeExecutionError) {
+      return res.status(err.status).json({ error: err.message });
+    }
+    next(err);
+  }
+});
+
+// Bulk-record a batch of buys/sells — a broker-statement import. All-or-nothing
+// in one transaction, sells executed before buys so proceeds fund the buys.
+// Super-admin only. Body: { trades: [{ side, ticker, shares, pricePerShare }] }.
+router.post('/trades', requireSuperAdmin, async (req, res, next) => {
+  try {
+    const result = await executeBulkTrades({ trades: req.body?.trades, actorName: req.user?.name || null });
     res.json(result);
   } catch (err) {
     if (err instanceof TradeExecutionError) {
