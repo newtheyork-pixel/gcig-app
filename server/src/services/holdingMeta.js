@@ -8,6 +8,19 @@ import prisma from '../db.js';
 const FINNHUB = 'https://finnhub.io/api/v1';
 const TIMEOUT_MS = 8000;
 
+// Curated metadata for tickers Finnhub doesn't classify — chiefly ETFs, whose
+// company profiles carry no sector. Takes precedence over Finnhub during
+// enrichment. Mirrors how the sheet labeled broad ETFs ("Multi-Sector"). Add
+// rows here as the club buys new funds.
+const STATIC_META = {
+  SCHD: { name: 'Schwab US Dividend Equity ETF', sector: 'Multi-Sector' },
+  VOO: { name: 'Vanguard S&P 500 ETF', sector: 'Multi-Sector' },
+  QQQ: { name: 'Invesco QQQ Trust, Series 1', sector: 'Information Technology' },
+  VGT: { name: 'Vanguard Information Technology Index Fund ETF', sector: 'Information Technology' },
+  ROBO: { name: 'ROBO Global Robotics and Automation Index ETF', sector: 'Industrials' },
+  SHLD: { name: 'Global X Defense Tech ETF', sector: 'Industrials' },
+};
+
 export async function fetchTickerProfile(ticker) {
   const key = process.env.FINNHUB_API_KEY;
   if (!key) return null;
@@ -48,14 +61,19 @@ export async function enrichHoldingsMeta() {
     const CHUNK = 6;
     for (let i = 0; i < needs.length; i += CHUNK) {
       const slice = needs.slice(i, i + CHUNK);
-      const profiles = await Promise.all(slice.map((h) => fetchTickerProfile(h.ticker)));
+      // Only hit Finnhub for tickers the static map doesn't fully cover.
+      const profiles = await Promise.all(
+        slice.map((h) => (STATIC_META[h.ticker]?.name && STATIC_META[h.ticker]?.sector ? null : fetchTickerProfile(h.ticker)))
+      );
       for (let k = 0; k < slice.length; k++) {
         const h = slice[k];
-        const prof = profiles[k];
-        if (!prof) continue;
+        const stat = STATIC_META[h.ticker] || {};
+        const prof = profiles[k] || {};
+        const name = stat.name || prof.name || null; // curated first, Finnhub fallback
+        const sector = stat.sector || prof.sector || null;
         const data = {};
-        if ((!h.name || h.name === h.ticker) && prof.name) data.name = prof.name;
-        if (!h.sector && prof.sector) data.sector = prof.sector;
+        if ((!h.name || h.name === h.ticker) && name) data.name = name;
+        if (!h.sector && sector) data.sector = sector;
         if (Object.keys(data).length) {
           await prisma.holding.update({ where: { ticker: h.ticker }, data }).catch(() => {});
           updated += 1;
