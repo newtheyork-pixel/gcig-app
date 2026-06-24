@@ -53,7 +53,7 @@ function fmtPct(n) {
   return `${(n * 100).toFixed(2)}%`;
 }
 
-export default function HoldingDetailModal({ holding, onClose }) {
+export default function HoldingDetailModal({ holding, onClose, onChanged }) {
   const ticker = holding?.ticker;
   const { isSuperAdmin } = useAuth();
   const [info, setInfo] = useState(null);
@@ -376,9 +376,43 @@ export default function HoldingDetailModal({ holding, onClose }) {
               currentPrice={info.price}
               currency={info.currency}
               canEdit={isSuperAdmin}
-              onChange={refreshLots}
+              onChange={() => {
+                refreshLots();
+                onChanged?.();
+              }}
               onDelete={handleDeleteLot}
             />
+          )}
+
+          {/* Delete the whole position — for an erroneous / test entry. */}
+          {holding && !holding.isCash && isSuperAdmin && (
+            <div className="flex items-center justify-between gap-3 rounded-lg border border-red-100 bg-red-50/40 px-3 py-2">
+              <div className="text-xs text-navy-500">
+                Remove this position entirely (e.g. a wrong or test entry). Drops the holding and all its
+                lots; doesn't move cash — use Trade → Sell for a real sale.
+              </div>
+              <button
+                type="button"
+                onClick={async () => {
+                  if (
+                    !window.confirm(
+                      `Delete the entire ${ticker} position and all its lots? This does not move cash.`
+                    )
+                  )
+                    return;
+                  try {
+                    await api.delete(`/holdings/positions/${encodeURIComponent(ticker)}`);
+                    onChanged?.();
+                    onClose();
+                  } catch (e) {
+                    window.alert(e.response?.data?.error || 'Failed to delete position');
+                  }
+                }}
+                className="shrink-0 rounded-md border border-red-300 px-2.5 py-1 text-xs font-semibold text-red-700 hover:bg-red-100"
+              >
+                Delete position
+              </button>
+            </div>
           )}
 
           {/* Our Coverage — pitches and reports authored by the club */}

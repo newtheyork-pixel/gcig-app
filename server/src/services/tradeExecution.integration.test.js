@@ -222,6 +222,14 @@ test('direct sell relieves lots, books realized P/L, credits cash', async () => 
   assert.equal(db.holding('AAA').shares, 6);
 });
 
+test('direct buy with noCash adds shares without moving cash (transfer-in)', async () => {
+  const db = makeFakeDb({ transactions: [{ id: 1, kind: 'Opening', cashDelta: 1000 }] });
+  await executeDirectTrade({ side: 'Buy', ticker: 'GIFT', shares: 5, pricePerShare: 100, noCash: true, db });
+  assert.equal(db.holding('GIFT').shares, 5);
+  assert.equal(db.cash(), 1000); // unchanged — no cash spent
+  assert.equal(db.txns().filter((t) => t.kind === 'Buy').length, 0); // no ledger row
+});
+
 test('direct buy beyond available cash is rejected', async () => {
   const db = makeFakeDb({ transactions: [{ id: 1, kind: 'Opening', cashDelta: 100 }] });
   await assert.rejects(
