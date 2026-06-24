@@ -65,6 +65,9 @@ function makeFakeDb(initial = {}) {
       },
     },
     transaction: {
+      // No recent-duplicate in the test fixtures, so the idempotency guard
+      // never trips here — the dedup logic itself is exercised separately.
+      findFirst: async () => null,
       aggregate: async () => ({
         _sum: { cashDelta: state.transactions.reduce((s, t) => s + t.cashDelta, 0) },
       }),

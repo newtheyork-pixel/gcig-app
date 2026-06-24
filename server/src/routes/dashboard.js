@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import crypto from 'node:crypto';
 import prisma from '../db.js';
 import { verifyJwt } from '../middleware/auth.js';
 import { getSheetPortfolio } from '../services/sheetPortfolio.js';
@@ -7,6 +8,15 @@ import { getCached, regenerate } from '../services/dayInReview.js';
 import { getMacroSnapshot } from '../services/fredMacro.js';
 
 const router = Router();
+
+// Constant-time secret compare (see holdings.js) — no per-byte timing leak.
+function secretMatches(provided, expected) {
+  if (!expected) return false;
+  const a = Buffer.from(String(provided || ''));
+  const b = Buffer.from(String(expected));
+  if (a.length !== b.length) return false;
+  return crypto.timingSafeEqual(a, b);
+}
 
 // ── Cron-authed endpoints (no JWT needed) ─────────────────────────────
 // Mounted before `router.use(verifyJwt)` so external schedulers can
@@ -17,8 +27,7 @@ const router = Router();
 // schedule that fires daily at 4:05 PM ET, AND available as a manual
 // trigger if you ever want to re-warm the cache from outside.
 router.post('/day-in-review/cron-generate', async (req, res) => {
-  const secret = req.headers['x-cron-secret'];
-  if (!process.env.CRON_SECRET || secret !== process.env.CRON_SECRET) {
+  if (!secretMatches(req.headers['x-cron-secret'], process.env.CRON_SECRET)) {
     return res.status(401).json({ error: 'Invalid cron secret' });
   }
   const force = req.body?.force === true || req.query.force === '1';

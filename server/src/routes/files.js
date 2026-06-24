@@ -3,6 +3,7 @@ import multer from 'multer';
 import crypto from 'node:crypto';
 import rateLimit from 'express-rate-limit';
 import { verifyJwt, requireSuperAdmin } from '../middleware/auth.js';
+import { bufferMatchesDeclared } from '../services/upload.js';
 import {
   getAuthorizeUrl,
   exchangeCodeForTokens,
@@ -180,6 +181,13 @@ router.post(
       return res
         .status(400)
         .json({ error: `File type ${req.file.mimetype} is not allowed` });
+    }
+    // The extension + client MIME are spoofable; confirm the actual bytes are a
+    // real PDF / PowerPoint before storing.
+    if (!bufferMatchesDeclared(req.file.buffer, req.file.originalname)) {
+      return res
+        .status(400)
+        .json({ error: "File contents don't match its type — upload a real PDF or PowerPoint." });
     }
     try {
       const item = await uploadFile({

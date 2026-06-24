@@ -23,6 +23,17 @@ export class TradeExecutionError extends Error {
   }
 }
 
+// One process-wide advisory lock for the whole book. Every settlement grabs it
+// as the first statement in its transaction, so concurrent trades can't both
+// read a stale cash/lot state and then double-book proceeds or overdraw cash.
+// pg_advisory_xact_lock auto-releases at commit/rollback. Trades are
+// low-frequency admin actions, so serializing them globally costs nothing.
+const BOOK_LOCK_KEY = 728193;
+
+async function lockBook(tx) {
+  await tx.$queryRaw`SELECT pg_advisory_xact_lock(${BOOK_LOCK_KEY})`;
+}
+
 // Spendable cash = the running sum of every ledger movement. No stored balance.
 // Accepts a tx client so it can read a consistent value inside a settlement.
 export async function getCashBalance(client = prisma) {
@@ -163,6 +174,7 @@ export async function executeTradeRequest({ tradeRequestId, fills = [], actorNam
   // an in-memory fake (tradeExecution.integration.test.js) without a real
   // Postgres; production always passes the real prisma client.
   return db.$transaction(async (tx) => {
+    await lockBook(tx);
     // Lock the request row for the life of the transaction so two concurrent
     // /execute calls can't both clear the idempotency check below and settle
     // the same trade twice (doubling lots, cash, and realized P/L). The second
@@ -306,6 +318,27 @@ export async function executeDirectTrade({
   }
 
   return db.$transaction(async (tx) => {
+    await lockBook(tx);
+
+    // Idempotency / double-submit guard: refuse an identical trade booked in
+    // the last 15 seconds (a double-click or a network retry). A genuinely
+    // intentional repeat can be re-entered after the window.
+    const recent = await tx.transaction.findFirst({
+      where: {
+        kind: side,
+        ticker: t,
+        shares: s,
+        pricePerShare: p,
+        executedAt: { gte: new Date(Date.now() - 15000) },
+      },
+    });
+    if (recent) {
+      throw new TradeExecutionError(
+        `An identical ${side} of ${s} ${t} @ $${p} was just recorded — if this is a second, intentional trade, try again in a moment.`,
+        409
+      );
+    }
+
     const cashBefore = await getCashBalance(tx);
 
     if (side === 'Buy') {
@@ -352,6 +385,9 @@ export async function executeBulkTrades({ trades, actorName = null, db = prisma 
   if (!Array.isArray(trades) || trades.length === 0) {
     throw new TradeExecutionError('No trades provided', 400);
   }
+  if (trades.length > 200) {
+    throw new TradeExecutionError('Too many trades in one batch (max 200)', 400);
+  }
   const norm = trades.map((tr, i) => {
     const side = tr.side === 'Buy' || tr.side === 'Sell' ? tr.side : null;
     const ticker = String(tr.ticker || '').trim().toUpperCase();
@@ -369,6 +405,7 @@ export async function executeBulkTrades({ trades, actorName = null, db = prisma 
 
   return db.$transaction(
     async (tx) => {
+      await lockBook(tx);
       const results = [];
       for (const trade of norm) {
         if (trade.side === 'Buy') {

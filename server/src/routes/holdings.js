@@ -1,4 +1,6 @@
 import { Router } from 'express';
+import crypto from 'node:crypto';
+import rateLimit from 'express-rate-limit';
 import YahooFinance from 'yahoo-finance2';
 // yahoo-finance2 v2.14 ships the class as the default export; instantiate once.
 // Only `quote` / `autoc` are exposed — profile/sector data is fetched via a
@@ -140,16 +142,47 @@ import { enrichHoldingsMeta } from '../services/holdingMeta.js';
 
 const router = Router();
 
+// Constant-time secret compare — avoids leaking the secret a byte at a time via
+// response timing, consistent with the sea/cpi/docusign ingest checks.
+function secretMatches(provided, expected) {
+  if (!expected) return false;
+  const a = Buffer.from(String(provided || ''));
+  const b = Buffer.from(String(expected));
+  if (a.length !== b.length) return false;
+  return crypto.timingSafeEqual(a, b);
+}
+
 // Tiny in-memory cache so clicking the same ticker twice doesn't hammer Yahoo.
-// 15-minute TTL — fundamentals don't change intraday.
+// 15-minute TTL — fundamentals don't change intraday. Bounded so a member
+// iterating distinct ticker strings can't grow it without limit (the cache is
+// keyed per ticker, which otherwise defeats both the cache and memory).
 const tickerCache = new Map();
 const TICKER_TTL_MS = 15 * 60 * 1000;
+const TICKER_CACHE_MAX = 500;
+function setTickerCache(key, value) {
+  if (tickerCache.size >= TICKER_CACHE_MAX) {
+    tickerCache.delete(tickerCache.keys().next().value); // evict oldest (insertion order)
+  }
+  tickerCache.set(key, value);
+}
+
+// Per-member limiter on the routes that fan out to Finnhub/Yahoo/EDGAR/LLM per
+// distinct ticker — the global 200/min is too loose to protect Finnhub's
+// 60/min free tier from one member iterating tickers. Runs after verifyJwt, so
+// it keys per user (falls back to IP).
+const tickerDataLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 30,
+  keyGenerator: (req) => `ticker-data:${req.user?.id || req.ip}`,
+  message: { error: 'Too many ticker lookups — slow down and try again shortly.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
 
 // Machine-to-machine endpoint for the daily cron. Authed via shared secret,
 // NOT JWT. Mounted before verifyJwt so no user login is needed.
 router.post('/snapshot/daily', async (req, res) => {
-  const secret = req.headers['x-cron-secret'];
-  if (!process.env.CRON_SECRET || secret !== process.env.CRON_SECRET) {
+  if (!secretMatches(req.headers['x-cron-secret'], process.env.CRON_SECRET)) {
     return res.status(401).json({ error: 'Invalid cron secret' });
   }
   try {
@@ -181,8 +214,11 @@ router.post('/snapshot/daily', async (req, res) => {
       cashValue: snap.cashValue,
     });
   } catch (err) {
+    // This endpoint precedes verifyJwt, so a reflected err.message could leak
+    // internals (the private sheet id, Prisma errors) to an unauthenticated
+    // caller. Log the detail, return a generic message.
     console.error('Daily snapshot cron failed:', err.message);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: 'Snapshot failed' });
   }
 });
 
@@ -222,7 +258,7 @@ router.get('/quotes', async (_req, res) => {
 
 // Fetch basic company/quote info for a ticker from Yahoo Finance.
 // Used by the portfolio holding detail modal.
-router.get('/info/:ticker', async (req, res) => {
+router.get('/info/:ticker', tickerDataLimiter, async (req, res) => {
   const raw = String(req.params.ticker || '').trim().toUpperCase();
   // Tickers are ASCII letters, digits, dot, dash (e.g. BRK.B, RDS-A). Reject anything else.
   if (!raw || !/^[A-Z0-9.\-]{1,10}$/.test(raw)) {
@@ -248,7 +284,7 @@ router.get('/info/:ticker', async (req, res) => {
         if (!finnhubData.summary) {
           finnhubData.summary = await getBusinessSummary(raw);
         }
-        tickerCache.set(raw, { at: Date.now(), data: finnhubData });
+        setTickerCache(raw, { at: Date.now(), data: finnhubData });
         return res.json(finnhubData);
       }
     }
@@ -341,7 +377,7 @@ router.get('/info/:ticker', async (req, res) => {
     // down and we're on this path.
     if (!data.summary) data.summary = await getBusinessSummary(raw);
 
-    tickerCache.set(raw, { at: Date.now(), data });
+    setTickerCache(raw, { at: Date.now(), data });
     res.json(data);
   } catch (err) {
     console.error(`Ticker info fetch failed for ${raw}:`, err);
@@ -367,7 +403,7 @@ router.get('/news/article', async (req, res) => {
 
 // Recent news headlines for a ticker, sourced from newsapi.org. The service
 // caches 15 minutes so a rapid round of holding clicks doesn't burn quota.
-router.get('/news/:ticker', async (req, res) => {
+router.get('/news/:ticker', tickerDataLimiter, async (req, res) => {
   const raw = String(req.params.ticker || '').trim().toUpperCase();
   if (!raw || !/^[A-Z0-9.\-]{1,10}$/.test(raw)) {
     return res.status(400).json({ error: 'Invalid ticker' });
@@ -617,7 +653,8 @@ router.post('/import-from-sheet', requireSuperAdmin, async (req, res, next) => {
   try {
     const commit = req.body?.commit === true;
     const reset = req.body?.reset === true;
-    const report = await importFromSheet({ commit, reset });
+    const force = req.body?.force === true;
+    const report = await importFromSheet({ commit, reset, force });
     res.json(report);
   } catch (err) {
     if (err instanceof PortfolioImportError) {
@@ -705,6 +742,19 @@ router.post('/transactions', requireSuperAdmin, async (req, res, next) => {
     const sign = k === 'Withdraw' || k === 'Fee' ? -1 : 1;
     const when = executedAt ? new Date(executedAt) : new Date();
     if (Number.isNaN(when.getTime())) return res.status(400).json({ error: 'Invalid executedAt' });
+    // A future-dated movement would distort every historical snapshot.
+    if (when.getTime() > Date.now() + 60_000) {
+      return res.status(400).json({ error: 'executedAt cannot be in the future' });
+    }
+    // A withdrawal/fee can't take the book below zero (matches the trade paths).
+    if (sign < 0) {
+      const bal = await getCashBalance();
+      if (bal - amt < -1e-6) {
+        return res.status(400).json({
+          error: `Insufficient cash: ${k} of $${amt.toFixed(2)} exceeds the $${bal.toFixed(2)} balance.`,
+        });
+      }
+    }
     const row = await prisma.transaction.create({
       data: {
         kind: k,
@@ -986,7 +1036,7 @@ router.delete('/:ticker/thesis', requireSuperAdmin, async (req, res) => {
 
 // 1-2 sentence AI read on whether recent news supports or challenges the
 // stored thesis. Readable by any authed member (same tier as thesis GET).
-router.get('/:ticker/thesis-check', async (req, res) => {
+router.get('/:ticker/thesis-check', tickerDataLimiter, async (req, res) => {
   const ticker = normalizeTicker(req.params.ticker);
   if (!ticker) return res.status(400).json({ error: 'Ticker required' });
   try {

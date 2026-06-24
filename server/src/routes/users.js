@@ -550,20 +550,22 @@ router.post('/', requireExecutive, async (req, res) => {
 
 router.put('/:id', requireExecutive, async (req, res) => {
   const id = Number(req.params.id);
-  const { name, email, role } = req.body || {};
-  if (role && !ASSIGNABLE_ROLES.includes(role)) {
-    return res.status(400).json({ error: 'Invalid role' });
+  const { name } = req.body || {};
+  // Only `name` is writable here, on purpose. Role changes MUST go through
+  // PUT /:id/role, which enforces the rank rules — accepting `role` here let a
+  // CIO set their own role to President (ASSIGNABLE_ROLES includes it),
+  // bypassing every check. Email is not writable either: silently repointing a
+  // member's email + the public forgot-password flow is an account-takeover
+  // primitive. An email change, if ever needed, belongs in a verified flow.
+  if (typeof name !== 'string' || !name.trim()) {
+    return res.status(400).json({ error: 'name is required (use /:id/role to change roles)' });
   }
   const user = await prisma.user.update({
     where: { id },
-    data: {
-      ...(name !== undefined ? { name } : {}),
-      ...(email !== undefined ? { email: email.toLowerCase() } : {}),
-      ...(role !== undefined ? { role } : {}),
-    },
+    data: { name: name.trim() },
     select: { id: true, name: true, email: true, role: true, createdAt: true },
   });
-  await auditReq(req, 'user.updated', 'user', user.id, { name, email, role });
+  await auditReq(req, 'user.updated', 'user', user.id, { name: name.trim() });
   res.json(user);
 });
 
@@ -672,6 +674,19 @@ router.put('/:id/extra-roles', requireExecutive, async (req, res) => {
   }
   const invalid = extraRoles.find((r) => !ROLES.includes(r));
   if (invalid) return res.status(400).json({ error: `Invalid role: ${invalid}` });
+
+  // Never hand out a President/CIO badge as an "extra role" — it would be a
+  // privilege-escalation path the moment any gate consults extraRoles for rank.
+  const escalating = extraRoles.find((r) => r === 'President' || r === 'CIO');
+  if (escalating) {
+    return res.status(403).json({ error: `${escalating} cannot be granted as an extra role` });
+  }
+  // Advisory Board / Faculty extra-roles stay President-only, matching /:id/role.
+  if (req.user.role !== 'President' && extraRoles.some((r) => PRESIDENT_ONLY_ROLES.has(r))) {
+    return res
+      .status(403)
+      .json({ error: 'Only the President can grant Advisory Board or Faculty roles' });
+  }
 
   const user = await prisma.user.update({
     where: { id },

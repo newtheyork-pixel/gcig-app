@@ -19,7 +19,7 @@ export class PortfolioImportError extends Error {
   }
 }
 
-export async function importFromSheet({ commit = false, reset = false, db = prisma } = {}) {
+export async function importFromSheet({ commit = false, reset = false, force = false, db = prisma } = {}) {
   // Read the sheet straight, bypassing the cutover dispatcher so this works
   // even once PORTFOLIO_SOURCE=db, and without mutating global env (which would
   // race concurrent requests on the server).
@@ -68,11 +68,19 @@ export async function importFromSheet({ commit = false, reset = false, db = pris
   const result = await db.$transaction(
     async (tx) => {
       // Reset: wipe the whole DB book first so the re-import is a clean slate —
-      // the cure for a portfolio messed up by test trades or bad data. Drops
-      // every position, lot, and ledger row (including trades), then rebuilds
-      // from the sheet. Destructive on purpose; the endpoint gates it on an
-      // explicit reset flag + super admin.
+      // the cure for a portfolio messed up by test trades or bad data. This is
+      // DESTRUCTIVE: it drops every position, lot, and ledger row — including
+      // real recorded Buy/Sell trades and Deposit/Withdraw/Dividend/Fee
+      // movements, whose history the sheet cannot reconstruct. So when any
+      // non-Opening (i.e. real) ledger rows exist, refuse unless the caller
+      // explicitly confirms with force:true.
       if (reset) {
+        const realMovements = await tx.transaction.count({ where: { kind: { not: 'Opening' } } });
+        if (realMovements > 0 && !force) {
+          throw new PortfolioImportError(
+            `Reset would permanently destroy ${realMovements} recorded trade/cash movement(s) that aren't on the sheet. Re-run with force to confirm.`
+          );
+        }
         await tx.holdingLot.deleteMany({});
         await tx.transaction.deleteMany({});
         await tx.holding.deleteMany({});

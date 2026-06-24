@@ -23,7 +23,7 @@
 
 import { Router } from 'express';
 import prisma from '../db.js';
-import { verifyJwt, requireExecutive } from '../middleware/auth.js';
+import { verifyJwt, requireExecutive, requireSuperAdmin } from '../middleware/auth.js';
 import { computeTally } from './votes.js';
 import { getSheetPortfolio } from '../services/sheetPortfolio.js';
 import {
@@ -632,7 +632,7 @@ router.get('/:id/refresh', requireExecutive, async (req, res, next) => {
 //   { fills: [{ itemId, shares?, pricePerShare? }], force? }
 // The envelope must be signed (DocuSign "completed") first; a super-admin may
 // override with force:true for trades settled outside the normal flow.
-router.post('/:id/execute', requireExecutive, async (req, res, next) => {
+router.post('/:id/execute', requireSuperAdmin, async (req, res, next) => {
   try {
     const id = Number(req.params.id);
     if (!Number.isFinite(id)) return res.status(400).json({ error: 'Invalid id' });

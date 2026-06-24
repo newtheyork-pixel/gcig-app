@@ -86,9 +86,16 @@ app.use(
 // exact bytes the client signed (currently /api/cpi/ingest) read req.rawBody.
 app.use(
   express.json({
-    limit: '25mb',
+    // 1 MB is ample for every JSON route (file uploads use multipart, not this).
+    // 25 MB on a single worker was a memory-DoS amplifier.
+    limit: '1mb',
     verify: (req, _res, buf) => {
-      req.rawBody = buf;
+      // Only the HMAC-verified ingest routes need the exact signed bytes —
+      // capturing rawBody for every request wastes memory on the lone worker.
+      const url = req.url || '';
+      if (url.startsWith('/api/cpi') || url.startsWith('/api/sea')) {
+        req.rawBody = buf;
+      }
     },
   })
 );

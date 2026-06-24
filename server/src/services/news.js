@@ -15,6 +15,8 @@
 import { JSDOM } from 'jsdom';
 import { Readability, isProbablyReaderable } from '@mozilla/readability';
 import sanitizeHtml from 'sanitize-html';
+import dns from 'node:dns/promises';
+import net from 'node:net';
 import { rankArticles } from './articleRanker.js';
 import { summarizeTickerNews, summarizeArticle } from './articleSummarizer.js';
 
@@ -225,36 +227,104 @@ const SANITIZE_OPTS = {
   },
 };
 
-function isHttpUrl(raw) {
-  try {
-    const u = new URL(raw);
-    return u.protocol === 'http:' || u.protocol === 'https:';
-  } catch {
+// SSRF guard. This endpoint fetches a member-supplied URL server-side, so it
+// must never be steerable at an internal address (cloud metadata at
+// 169.254.169.254, localhost, the private RFC1918 / CGNAT / IPv6 ULA ranges,
+// internal Render services). A bare protocol check isn't enough — we resolve
+// the host and reject any non-public IP, reject odd ports, and (below) follow
+// redirects manually so a public-looking URL can't 30x into an internal host.
+function isPrivateIp(ip) {
+  const fam = net.isIP(ip);
+  if (fam === 4) {
+    const o = ip.split('.').map(Number);
+    if (o[0] === 0 || o[0] === 10 || o[0] === 127) return true;
+    if (o[0] === 169 && o[1] === 254) return true; // link-local + cloud metadata
+    if (o[0] === 172 && o[1] >= 16 && o[1] <= 31) return true;
+    if (o[0] === 192 && o[1] === 168) return true;
+    if (o[0] === 100 && o[1] >= 64 && o[1] <= 127) return true; // CGNAT
     return false;
   }
+  if (fam === 6) {
+    const lower = ip.toLowerCase().replace(/^\[|\]$/g, '');
+    if (lower === '::' || lower === '::1') return true;
+    if (lower.startsWith('fc') || lower.startsWith('fd')) return true; // ULA
+    if (lower.startsWith('fe80')) return true; // link-local
+    if (lower.startsWith('::ffff:')) return isPrivateIp(lower.slice(7)); // v4-mapped
+    return false;
+  }
+  return true; // not an IP literal we recognize → reject
 }
 
-export async function extractArticle(url) {
-  if (!isHttpUrl(url)) {
-    const err = new Error('Invalid article URL');
-    err.status = 400;
-    throw err;
+async function assertPublicHttpUrl(raw) {
+  let u;
+  try {
+    u = new URL(raw);
+  } catch {
+    const e = new Error('Invalid article URL');
+    e.status = 400;
+    throw e;
   }
+  if (u.protocol !== 'http:' && u.protocol !== 'https:') {
+    const e = new Error('Invalid article URL');
+    e.status = 400;
+    throw e;
+  }
+  if (u.port && u.port !== '80' && u.port !== '443') {
+    const e = new Error('Refusing to fetch a non-standard port');
+    e.status = 400;
+    throw e;
+  }
+  let ips;
+  if (net.isIP(u.hostname)) {
+    ips = [u.hostname];
+  } else {
+    try {
+      ips = (await dns.lookup(u.hostname, { all: true })).map((r) => r.address);
+    } catch {
+      ips = [];
+    }
+  }
+  if (ips.length === 0 || ips.some(isPrivateIp)) {
+    const e = new Error('Refusing to fetch a non-public address');
+    e.status = 400;
+    throw e;
+  }
+  return u.href;
+}
+
+const ARTICLE_UA =
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
+
+export async function extractArticle(url) {
   const cached = articleCache.get(url);
   if (cached && Date.now() - cached.at < ARTICLE_TTL_MS) {
     return cached.data;
   }
 
-  const res = await fetch(url, {
-    redirect: 'follow',
-    headers: {
-      // Publisher sites often gate bot-looking UAs. Present a normal browser.
-      'User-Agent':
-        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-      Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9',
-      'Accept-Language': 'en-US,en;q=0.9',
-    },
-  });
+  // Resolve + fetch manually, re-validating the host on every redirect hop so a
+  // public URL can't bounce to an internal one. Max 4 hops.
+  let current = await assertPublicHttpUrl(url);
+  let res;
+  for (let hop = 0; hop < 4; hop++) {
+    res = await fetch(current, {
+      redirect: 'manual',
+      headers: {
+        'User-Agent': ARTICLE_UA,
+        Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9',
+        'Accept-Language': 'en-US,en;q=0.9',
+      },
+    });
+    if (res.status >= 300 && res.status < 400 && res.headers.get('location')) {
+      current = await assertPublicHttpUrl(new URL(res.headers.get('location'), current).href);
+      continue;
+    }
+    break;
+  }
+  if (res.status >= 300 && res.status < 400) {
+    const err = new Error('Too many redirects');
+    err.status = 502;
+    throw err;
+  }
   if (!res.ok) {
     const err = new Error(`Publisher returned ${res.status}`);
     err.status = 502;

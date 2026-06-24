@@ -76,7 +76,15 @@ export async function secDocProxyHandler(req, res, deps = {}) {
   res.removeHeader('X-Frame-Options');
   const origins = parseAllowedOrigins();
   const frameAncestors = ["'self'", ...origins].join(' ');
-  res.setHeader('Content-Security-Policy', `frame-ancestors ${frameAncestors}`);
+  // frame-ancestors lets our iframe load it; script-src/object-src 'none' stop
+  // any script in the third-party EDGAR HTML (filer-submitted exhibits are
+  // attacker-controlled) from running on this origin. Images/styles still load
+  // from sec.gov via the injected <base>. nosniff stops MIME-confusion.
+  res.setHeader(
+    'Content-Security-Policy',
+    `frame-ancestors ${frameAncestors}; script-src 'none'; object-src 'none'`
+  );
+  res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('Content-Type', result.contentType);
   // SEC documents at a given URL are effectively immutable (each
   // accession is a frozen snapshot), so a short public cache is fine
