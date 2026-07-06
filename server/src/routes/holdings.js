@@ -139,6 +139,11 @@ import {
 } from '../services/tradeExecution.js';
 import { importFromSheet, PortfolioImportError } from '../services/portfolioImport.js';
 import { enrichHoldingsMeta } from '../services/holdingMeta.js';
+import { getHistory } from '../services/priceHistory.js';
+import {
+  computeSnapshotCorrections,
+  makeCloseLookup,
+} from '../services/snapshotReconcile.js';
 
 const router = Router();
 
@@ -829,6 +834,114 @@ router.delete('/snapshot/:date', requireSuperAdmin, async (req, res) => {
     res.json({ ok: true });
   } catch {
     res.status(404).json({ error: 'Snapshot not found' });
+  }
+});
+
+// Super-admin: retro-fit a late-recorded trade basket into the value chart. Each
+// snapshot from `startDate` to `endDate` was frozen against the OLD book — it
+// still counts what we sold and misses what we bought — so the line is wrong by
+// the day-to-day drift between the two baskets. This re-marks every affected day
+// using the PriceBar cache (the same source the GP chart reads), applying the
+// per-day correction from snapshotReconcile. Dry-run by default: it returns the
+// full before→after table and only writes when `commit:true`. It refuses to
+// commit any day it can't fully price, so a missing bar never silently zeroes a
+// leg and understates the book.
+//
+// Run this BEFORE flipping PORTFOLIO_SOURCE to db: while still on the sheet,
+// every snapshot in the window reflects the same stale book, so the correction
+// is uniform. Afterwards the daily capture reads the (now correct) db book and
+// needs no fixing.
+router.post('/snapshot/reconcile', requireSuperAdmin, async (req, res, next) => {
+  try {
+    const { startDate, endDate, legs, netCashDelta, commit } = req.body || {};
+
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(String(startDate || ''))) {
+      return res.status(400).json({ error: 'startDate (YYYY-MM-DD) is required' });
+    }
+    const end =
+      endDate && /^\d{4}-\d{2}-\d{2}$/.test(endDate)
+        ? endDate
+        : new Date().toISOString().slice(0, 10);
+    if (end < startDate) {
+      return res.status(400).json({ error: 'endDate is before startDate' });
+    }
+
+    if (!Array.isArray(legs) || legs.length === 0) {
+      return res.status(400).json({ error: 'legs (a non-empty array) is required' });
+    }
+    const cleanLegs = [];
+    for (const l of legs) {
+      const ticker = String(l?.ticker || '').trim().toUpperCase();
+      const side = l?.side === 'Buy' || l?.side === 'Sell' ? l.side : null;
+      const shares = Number(l?.shares);
+      if (!validTicker(ticker)) return res.status(400).json({ error: `Invalid ticker: ${l?.ticker}` });
+      if (!side) return res.status(400).json({ error: `Each leg needs side "Buy" or "Sell" (${ticker})` });
+      if (!Number.isFinite(shares) || shares <= 0) {
+        return res.status(400).json({ error: `Shares for ${ticker} must be a positive number` });
+      }
+      cleanLegs.push({ ticker, side, shares });
+    }
+
+    const cash = Number(netCashDelta);
+    if (!Number.isFinite(cash)) {
+      return res.status(400).json({ error: 'netCashDelta must be a number' });
+    }
+
+    const snapshots = await prisma.portfolioSnapshot.findMany({
+      where: {
+        date: { gte: new Date(`${startDate}T00:00:00Z`), lte: new Date(`${end}T23:59:59Z`) },
+      },
+      orderBy: { date: 'asc' },
+    });
+    if (snapshots.length === 0) {
+      return res.json({ committed: false, rows: [], missingTickers: [], note: 'No snapshots in that range.' });
+    }
+
+    // Daily closes per traded ticker. 3mo comfortably spans the window and
+    // getHistory backfills the PriceBar cache from NASDAQ on a miss.
+    const tickers = [...new Set(cleanLegs.map((l) => l.ticker))];
+    const barsByTicker = {};
+    const missingTickers = [];
+    for (const t of tickers) {
+      try {
+        const bars = await getHistory(t, '3mo');
+        barsByTicker[t] = bars
+          .filter((b) => b.close != null)
+          .map((b) => ({ date: b.date, close: b.close }));
+        if (barsByTicker[t].length === 0) missingTickers.push(t);
+      } catch {
+        barsByTicker[t] = [];
+        missingTickers.push(t);
+      }
+    }
+
+    const closeFor = makeCloseLookup(barsByTicker);
+    const rows = computeSnapshotCorrections({ snapshots, legs: cleanLegs, netCashDelta: cash, closeFor });
+    const anyMissing = rows.some((r) => r.missing.length > 0);
+
+    if (commit !== true) {
+      return res.json({ committed: false, rows, missingTickers, anyMissing });
+    }
+    if (anyMissing) {
+      return res.status(400).json({
+        error:
+          'Refusing to commit — some days have no price for a traded ticker, which would understate the book. Retry once the price history fills in.',
+        rows,
+        missingTickers,
+      });
+    }
+
+    // Update in place against each snapshot's own stored date, so we never
+    // depend on how midnight was constructed when the row was first written.
+    for (let i = 0; i < rows.length; i++) {
+      await prisma.portfolioSnapshot.update({
+        where: { date: snapshots[i].date },
+        data: { totalValue: rows[i].after.totalValue, cashValue: rows[i].after.cashValue },
+      });
+    }
+    res.json({ committed: true, rows, missingTickers: [], count: rows.length });
+  } catch (err) {
+    next(err);
   }
 });
 
