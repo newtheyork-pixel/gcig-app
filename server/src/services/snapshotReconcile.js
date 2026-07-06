@@ -87,3 +87,40 @@ export function computeSnapshotCorrections({ snapshots, legs, netCashDelta, clos
     };
   });
 }
+
+// The idempotent cousin of computeSnapshotCorrections. Instead of nudging each
+// snapshot by a delta (which stacks if you run it twice), it recomputes the
+// day's value from first principles: the current book, valued at that day's
+// close, plus the current cash. It SETS rather than adds, so re-running it lands
+// on the same numbers every time — the safe way to repair a chart, and the
+// escape hatch if the delta tool was run more than once.
+//
+// This is the exact calculation the live page does for TODAY (positions ×
+// price + cash); rebuild just walks it backwards over the frozen days using
+// historical closes. It assumes the book has been static across the window —
+// true when a single late basket is the only change — and that cash hasn't
+// moved since (add a Dividend/Deposit separately if it has). `positions` is the
+// live book: [{ ticker, shares }]. Missing prices are surfaced, never zeroed.
+export function computeSnapshotRebuild({ snapshots, positions, cash, closeFor }) {
+  return snapshots.map((snap) => {
+    const iso = toIso(snap.date);
+    const missing = [];
+    let positionsValue = 0;
+
+    for (const p of positions) {
+      const px = closeFor(p.ticker, iso);
+      if (px == null) missing.push(p.ticker);
+      else positionsValue += p.shares * px;
+    }
+
+    const total = round2(positionsValue + cash);
+    return {
+      date: iso,
+      before: { totalValue: snap.totalValue, cashValue: snap.cashValue },
+      after: { totalValue: total, cashValue: round2(cash) },
+      positionsValue: round2(positionsValue),
+      delta: round2(total - snap.totalValue),
+      missing,
+    };
+  });
+}

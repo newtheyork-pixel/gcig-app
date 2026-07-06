@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   computeSnapshotCorrections,
+  computeSnapshotRebuild,
   makeCloseLookup,
   toIso,
 } from './snapshotReconcile.js';
@@ -79,6 +80,49 @@ test('execution-day delta is roughly minus the fees (value-neutral swap)', () =>
   // delta = bought 1000 − sold 1000 + (−8) = −8.
   assert.equal(rows[0].delta, -8);
   assert.equal(rows[0].after.totalValue, 49992);
+});
+
+test('rebuild sets each day = book·close + cash, and is idempotent', () => {
+  const closeFor = makeCloseLookup(bars);
+  const positions = [
+    { ticker: 'X', shares: 10 },
+    { ticker: 'Y', shares: 5 },
+  ];
+  // Whatever garbage the snapshots currently hold (e.g. double-corrected), the
+  // rebuilt value depends only on the book + prices, not the prior value.
+  const snapshots = [
+    { date: new Date('2026-06-23T00:00:00Z'), totalValue: 999999, cashValue: -1 },
+    { date: new Date('2026-06-24T00:00:00Z'), totalValue: 0, cashValue: 12345 },
+  ];
+  const run = () => computeSnapshotRebuild({ snapshots, positions, cash: 200, closeFor });
+
+  const rows = run();
+  // Day 1: X 10·50 + Y 5·20 + cash 200 = 500 + 100 + 200 = 800.
+  assert.equal(rows[0].after.totalValue, 800);
+  assert.equal(rows[0].after.cashValue, 200);
+  // Day 2: 10·60 + 5·30 + 200 = 600 + 150 + 200 = 950.
+  assert.equal(rows[1].after.totalValue, 950);
+
+  // Idempotent: feeding the rebuilt values back in yields the same result.
+  const rebuiltSnaps = rows.map((r, i) => ({
+    date: snapshots[i].date,
+    totalValue: r.after.totalValue,
+    cashValue: r.after.cashValue,
+  }));
+  const again = computeSnapshotRebuild({ snapshots: rebuiltSnaps, positions, cash: 200, closeFor });
+  assert.equal(again[0].after.totalValue, 800);
+  assert.equal(again[1].after.totalValue, 950);
+});
+
+test('rebuild flags a day it can’t fully price rather than zeroing the leg', () => {
+  const closeFor = makeCloseLookup({ X: [{ date: '2026-06-23', close: 50 }] }); // no Y
+  const positions = [
+    { ticker: 'X', shares: 10 },
+    { ticker: 'Y', shares: 5 },
+  ];
+  const snapshots = [{ date: new Date('2026-06-23T00:00:00Z'), totalValue: 1000, cashValue: 200 }];
+  const rows = computeSnapshotRebuild({ snapshots, positions, cash: 200, closeFor });
+  assert.deepEqual(rows[0].missing, ['Y']);
 });
 
 test('toIso normalizes Date and string alike', () => {

@@ -142,6 +142,7 @@ import { enrichHoldingsMeta } from '../services/holdingMeta.js';
 import { getHistory } from '../services/priceHistory.js';
 import {
   computeSnapshotCorrections,
+  computeSnapshotRebuild,
   makeCloseLookup,
 } from '../services/snapshotReconcile.js';
 
@@ -933,6 +934,97 @@ router.post('/snapshot/reconcile', requireSuperAdmin, async (req, res, next) => 
 
     // Update in place against each snapshot's own stored date, so we never
     // depend on how midnight was constructed when the row was first written.
+    for (let i = 0; i < rows.length; i++) {
+      await prisma.portfolioSnapshot.update({
+        where: { date: snapshots[i].date },
+        data: { totalValue: rows[i].after.totalValue, cashValue: rows[i].after.cashValue },
+      });
+    }
+    res.json({ committed: true, rows, missingTickers: [], count: rows.length });
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Super-admin: rebuild the value chart from the live book — the idempotent
+// repair. For each snapshot in the range it SETS the day's value to the current
+// holdings valued at that day's close plus the current cash — the very same
+// math the live page runs for today, walked backwards. Because it sets rather
+// than nudges, running it once fixes a chart no matter what state it's in
+// (including a delta reconcile that was applied twice). Dry-run by default;
+// refuses to commit a day it can't fully price.
+//
+// Assumes the book has been static across the window (a single late basket is
+// the only change) and cash hasn't moved since — record a Dividend/Deposit
+// separately if it has. Meant for the tail end of the chart (the trade date
+// forward), not for rewriting deep history the current book never reflected.
+router.post('/snapshot/rebuild', requireSuperAdmin, async (req, res, next) => {
+  try {
+    const { startDate, endDate, commit } = req.body || {};
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(String(startDate || ''))) {
+      return res.status(400).json({ error: 'startDate (YYYY-MM-DD) is required' });
+    }
+    const end =
+      endDate && /^\d{4}-\d{2}-\d{2}$/.test(endDate)
+        ? endDate
+        : new Date().toISOString().slice(0, 10);
+    if (end < startDate) {
+      return res.status(400).json({ error: 'endDate is before startDate' });
+    }
+
+    const positions = await prisma.holding.findMany({
+      where: { closedAt: null, isCash: false },
+      select: { ticker: true, shares: true },
+    });
+    if (positions.length === 0) {
+      return res.status(400).json({
+        error: 'No open positions in the book — rebuild needs a db-mode book. Import the sheet first.',
+      });
+    }
+    const cash = await getCashBalance();
+
+    const snapshots = await prisma.portfolioSnapshot.findMany({
+      where: {
+        date: { gte: new Date(`${startDate}T00:00:00Z`), lte: new Date(`${end}T23:59:59Z`) },
+      },
+      orderBy: { date: 'asc' },
+    });
+    if (snapshots.length === 0) {
+      return res.json({ committed: false, rows: [], missingTickers: [], cash, note: 'No snapshots in that range.' });
+    }
+
+    // Daily closes for every held ticker. 3mo spans the window and getHistory
+    // backfills the PriceBar cache from NASDAQ on a miss.
+    const tickers = [...new Set(positions.map((p) => p.ticker))];
+    const barsByTicker = {};
+    const missingTickers = [];
+    for (const t of tickers) {
+      try {
+        const bars = await getHistory(t, '3mo');
+        barsByTicker[t] = bars.filter((b) => b.close != null).map((b) => ({ date: b.date, close: b.close }));
+        if (barsByTicker[t].length === 0) missingTickers.push(t);
+      } catch {
+        barsByTicker[t] = [];
+        missingTickers.push(t);
+      }
+    }
+
+    const closeFor = makeCloseLookup(barsByTicker);
+    const rows = computeSnapshotRebuild({ snapshots, positions, cash, closeFor });
+    const anyMissing = rows.some((r) => r.missing.length > 0);
+
+    if (commit !== true) {
+      return res.json({ committed: false, rows, missingTickers, anyMissing, cash });
+    }
+    if (anyMissing) {
+      return res.status(400).json({
+        error:
+          'Refusing to commit — some days have no price for a held ticker, which would understate the book. Open the GP chart for those names once to warm the cache, then retry.',
+        rows,
+        missingTickers,
+      });
+    }
+
     for (let i = 0; i < rows.length; i++) {
       await prisma.portfolioSnapshot.update({
         where: { date: snapshots[i].date },
