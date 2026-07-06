@@ -5,14 +5,16 @@ import { useAuth } from '../context/AuthContext.jsx';
 import Button from './Button.jsx';
 import Modal from './Modal.jsx';
 
-// Retro-fit a late-recorded trade basket into the historical value chart. The
-// PortfolioSnapshot rows from the trade date onward were captured against the
-// old book — they still count what we sold and miss what we bought — so this
-// re-marks each affected day from price history. Dry-run first (a full
-// before→after table), commit second. Super-admin only.
+// Fix the historical value chart when a trade basket executed on a past date
+// but was recorded late. Two methods, super-admin only, always preview first:
 //
-// The defaults are the Jun 23 2026 rebalance the broker confirmed late, so the
-// common case is preview → commit. Every field is editable for the next time.
+//   Rebuild from book (default) — SETS each day to the current holdings valued
+//     at that day's close plus current cash. The same math the live page runs
+//     for today, walked backwards. Idempotent: safe to run repeatedly, and the
+//     fix if the delta method was applied more than once.
+//
+//   Trade delta — nudges each day by the basket's value. A first-time fix for
+//     when the book itself isn't in the DB yet; must be run exactly once.
 const DEFAULT_LEGS = [
   'BUY GD 13',
   'BUY BN 99',
@@ -53,6 +55,7 @@ function parseLegs(text) {
 export default function SnapshotReconcileButton({ onDone }) {
   const { isSuperAdmin } = useAuth();
   const [open, setOpen] = useState(false);
+  const [mode, setMode] = useState('rebuild'); // 'rebuild' | 'delta'
   const [legsText, setLegsText] = useState(DEFAULT_LEGS);
   const [netCash, setNetCash] = useState(DEFAULT_NET_CASH);
   const [startDate, setStartDate] = useState(DEFAULT_START);
@@ -71,19 +74,35 @@ export default function SnapshotReconcileButton({ onDone }) {
     setOpen(true);
   }
 
+  function pickMode(m) {
+    setMode(m);
+    setPreview(null);
+    setError('');
+    setCommitted(false);
+  }
+
   async function run(commit) {
     setBusy(true);
     setError('');
     try {
-      const legs = parseLegs(legsText);
-      if (legs.length === 0) throw new Error('No legs parsed — each line needs BUY/SELL, a symbol, and a share count.');
-      const { data } = await api.post('/holdings/snapshot/reconcile', {
-        startDate,
-        endDate: endDate || undefined,
-        legs,
-        netCashDelta: Number(netCash),
-        commit,
-      });
+      let data;
+      if (mode === 'rebuild') {
+        ({ data } = await api.post('/holdings/snapshot/rebuild', {
+          startDate,
+          endDate: endDate || undefined,
+          commit,
+        }));
+      } else {
+        const legs = parseLegs(legsText);
+        if (legs.length === 0) throw new Error('No legs parsed — each line needs BUY/SELL, a symbol, and a share count.');
+        ({ data } = await api.post('/holdings/snapshot/reconcile', {
+          startDate,
+          endDate: endDate || undefined,
+          legs,
+          netCashDelta: Number(netCash),
+          commit,
+        }));
+      }
       setPreview(data);
       if (data.committed) {
         setCommitted(true);
@@ -112,11 +131,40 @@ export default function SnapshotReconcileButton({ onDone }) {
 
       <Modal open={open} onClose={() => setOpen(false)} title="Reconcile value chart" size="xl">
         <div className="space-y-4">
+          {/* Method toggle */}
+          <div className="inline-flex rounded-lg border border-navy-100 bg-white p-0.5 text-xs font-semibold">
+            {[
+              { key: 'rebuild', label: 'Rebuild from book' },
+              { key: 'delta', label: 'Trade delta' },
+            ].map((m) => (
+              <button
+                key={m.key}
+                type="button"
+                onClick={() => pickMode(m.key)}
+                className={`rounded-md px-3 py-1 transition ${
+                  mode === m.key ? 'bg-navy text-white' : 'text-navy-500 hover:text-navy'
+                }`}
+              >
+                {m.label}
+              </button>
+            ))}
+          </div>
+
           <p className="text-xs text-navy-400">
-            Fixes the historical <span className="font-semibold">Performance Over Time</span> line when a trade
-            basket executed on a past date but was recorded late. Every snapshot from the start date on is re-marked
-            from price history. <span className="font-semibold">Preview first</span> — nothing is written until you
-            commit. Run this while still on the sheet, before switching to database mode.
+            {mode === 'rebuild' ? (
+              <>
+                Recomputes each day from the <span className="font-semibold">current holdings + cash</span>, valued at
+                that day's close — the same math the live page runs for today.{' '}
+                <span className="font-semibold">Idempotent: safe to run repeatedly</span>, and the way to fix a chart
+                if the delta method was applied more than once. Assumes the book has been static since the start date.
+              </>
+            ) : (
+              <>
+                Nudges each day by the basket's value. Use only when the book isn't in the database yet.{' '}
+                <span className="font-semibold text-red-600">Run exactly once</span> — it's additive, so a second run
+                double-counts. If that happened, switch to <span className="font-semibold">Rebuild from book</span>.
+              </>
+            )}
           </p>
 
           <div className="grid gap-3 sm:grid-cols-2">
@@ -140,29 +188,34 @@ export default function SnapshotReconcileButton({ onDone }) {
             </label>
           </div>
 
-          <label className="block text-xs font-semibold text-navy-500">
-            Net cash the basket moved (sells − buys, broker net amounts)
-            <input
-              type="text"
-              inputMode="decimal"
-              value={netCash}
-              onChange={(e) => setNetCash(e.target.value)}
-              className="mt-1 w-full rounded-lg border border-navy-100 px-3 py-2 text-sm tabular-nums focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold"
-            />
-          </label>
+          {mode === 'delta' && (
+            <>
+              <label className="block text-xs font-semibold text-navy-500">
+                Net cash the basket moved (sells − buys, broker net amounts)
+                <input
+                  type="text"
+                  inputMode="decimal"
+                  value={netCash}
+                  onChange={(e) => setNetCash(e.target.value)}
+                  className="mt-1 w-full rounded-lg border border-navy-100 px-3 py-2 text-sm tabular-nums focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold"
+                />
+              </label>
 
-          <label className="block text-xs font-semibold text-navy-500">
-            Legs — one per line: <span className="font-mono font-normal">BUY GD 13</span> / <span className="font-mono font-normal">SELL VOO 30</span>
-            <textarea
-              rows={6}
-              value={legsText}
-              onChange={(e) => {
-                setLegsText(e.target.value);
-                setPreview(null);
-              }}
-              className="mt-1 w-full rounded-lg border border-navy-100 px-3 py-2 font-mono text-xs focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold"
-            />
-          </label>
+              <label className="block text-xs font-semibold text-navy-500">
+                Legs — one per line: <span className="font-mono font-normal">BUY GD 13</span> /{' '}
+                <span className="font-mono font-normal">SELL VOO 30</span>
+                <textarea
+                  rows={6}
+                  value={legsText}
+                  onChange={(e) => {
+                    setLegsText(e.target.value);
+                    setPreview(null);
+                  }}
+                  className="mt-1 w-full rounded-lg border border-navy-100 px-3 py-2 font-mono text-xs focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold"
+                />
+              </label>
+            </>
+          )}
 
           {error && (
             <div className="flex items-start gap-2 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700">
@@ -184,7 +237,7 @@ export default function SnapshotReconcileButton({ onDone }) {
                   <tr>
                     <th className="px-3 py-1.5 text-left">Date</th>
                     <th className="px-3 py-1.5 text-right">Chart shows</th>
-                    <th className="px-3 py-1.5 text-right">Correction</th>
+                    <th className="px-3 py-1.5 text-right">Change</th>
                     <th className="px-3 py-1.5 text-right">Corrected</th>
                   </tr>
                 </thead>
@@ -215,7 +268,7 @@ export default function SnapshotReconcileButton({ onDone }) {
           {rows.length > 0 && anyMissing && (
             <div className="flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
               <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-              Some days (highlighted) have no price for a traded ticker, so they can't be committed yet. Open the GP
+              Some days (highlighted) have no price for a held ticker, so they can't be committed yet. Open the GP
               chart for {(preview?.missingTickers || []).join(', ') || 'those tickers'} once to warm the price cache,
               then preview again.
             </div>
