@@ -25,8 +25,10 @@ function makeFakeDb(initial = {}) {
   const tval = (d) => (d && typeof d.getTime === 'function' ? d.getTime() : Number(d) || 0);
 
   const tx = {
-    // The settlement takes a FOR UPDATE row lock first; the fake has no real
-    // locking, so this is a no-op that just lets the call resolve.
+    // The settlement grabs a global advisory lock ($executeRaw) and a FOR
+    // UPDATE row lock ($queryRaw) first; the fake has no real locking, so both
+    // are no-ops that just let the calls resolve.
+    $executeRaw: async () => 0,
     $queryRaw: async () => [],
     holding: {
       findUnique: async ({ where }) =>
