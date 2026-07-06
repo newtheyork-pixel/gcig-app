@@ -31,7 +31,12 @@ export class TradeExecutionError extends Error {
 const BOOK_LOCK_KEY = 728193;
 
 async function lockBook(tx) {
-  await tx.$queryRaw`SELECT pg_advisory_xact_lock(${BOOK_LOCK_KEY})`;
+  // $executeRaw, not $queryRaw: pg_advisory_xact_lock() returns Postgres `void`,
+  // and $queryRaw tries to deserialize that result column and dies with P2010
+  // ("Failed to deserialize column of type 'void'"). $executeRaw runs the
+  // statement as a command and never maps a result set, which is all we want —
+  // the lock is a side effect, not a value.
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(${BOOK_LOCK_KEY})`;
 }
 
 // Spendable cash = the running sum of every ledger movement. No stored balance.
