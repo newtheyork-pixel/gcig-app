@@ -25,6 +25,7 @@ import AddPositionButton from '../components/AddPositionButton.jsx';
 import TradeButton from '../components/TradeButton.jsx';
 import BulkTradeButton from '../components/BulkTradeButton.jsx';
 import ImportBookBanner from '../components/ImportBookBanner.jsx';
+import SnapshotReconcileButton from '../components/SnapshotReconcileButton.jsx';
 import { useAuth } from '../context/AuthContext.jsx';
 import { ChevronDown, ChevronRight } from 'lucide-react';
 
@@ -645,6 +646,11 @@ export default function Portfolio() {
             </div>
           )}
         </Card>
+        {isSuperAdmin && (
+          <div className="mt-2 flex justify-end">
+            <SnapshotReconcileButton onDone={load} />
+          </div>
+        )}
       </div>
 
       {canSeeRisk && (
