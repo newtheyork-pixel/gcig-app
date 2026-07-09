@@ -30,9 +30,15 @@ function tx({ date, name, role, code, shares, price }) {
   };
 }
 
-// Today is 2026-05-20 per the spec's clock. Anchor every fixture
-// against a stable "today" so the 60d window math is reviewable.
-const TODAY = new Date('2026-05-20T12:00:00Z');
+// Anchor every fixture to the REAL current date. The service derives its
+// 60-day cutoff from the live wall clock (Date.now()), so fixtures have to be
+// relative to *now* — a hard-coded "today" silently ages out of the window
+// once real time passes it, the clusters stop forming, and the suite starts
+// failing for no code reason (which is exactly how it rotted before: it was
+// pinned to 2026-05-20). Offsets like daysAgoIso(5) stay inside the window
+// and daysAgoIso(61) stays just outside it on every run, so the window math
+// is still reviewable — just relative instead of absolute.
+const TODAY = new Date();
 const daysAgoIso = (n) => {
   const d = new Date(TODAY.getTime() - n * 86_400_000);
   return d.toISOString().slice(0, 10);
