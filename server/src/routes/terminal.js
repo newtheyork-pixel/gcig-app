@@ -973,7 +973,15 @@ router.post('/annotate', async (req, res) => {
     },
   ];
 
-  const brief = await llmChat({ messages, temperature: 0.3, timeoutMs: 20_000 });
+  // preferQuality: route panel briefs to the best reasoning model available
+  // (cloud first, local fallback) — a weak local model makes the amber "AI
+  // BRIEF" line read as filler instead of insight.
+  const brief = await llmChat({
+    messages,
+    temperature: 0.3,
+    timeoutMs: 20_000,
+    preferQuality: true,
+  });
   res.json({ brief: brief || 'Data unavailable.' });
 });
 
@@ -1008,7 +1016,13 @@ router.post('/parse-command', async (req, res) => {
     { role: 'user', content: input },
   ];
 
-  const raw = await llmChat({ messages, jsonMode: true, temperature: 0, timeoutMs: 12_000 });
+  const raw = await llmChat({
+    messages,
+    jsonMode: true,
+    temperature: 0,
+    timeoutMs: 12_000,
+    preferQuality: true,
+  });
   if (!raw) {
     return res.json({
       ticker: null,
@@ -1060,7 +1074,8 @@ router.post('/chat', async (req, res) => {
       role: 'system',
       content:
         'You are the Bloomberg Intelligence research console at the Griffin Fund, a student-run investment fund. ' +
-        'You think like a buy-side analyst: rigorous, quantitative, and opinionated when the data supports it.\n\n' +
+        'You think like a buy-side analyst: rigorous, quantitative, and opinionated when the data supports it.\n' +
+        `Today's date is ${new Date().toISOString().slice(0, 10)}.\n\n` +
         'Guidelines:\n' +
         '- Lead with the answer, then support it. Don\'t hedge everything.\n' +
         '- Cite specific numbers from the workspace context when available.\n' +
@@ -1076,7 +1091,12 @@ router.post('/chat', async (req, res) => {
     ...trimmed,
   ];
 
-  const reply = await llmChat({ messages, temperature: 0.3, timeoutMs: 30_000 });
+  const reply = await llmChat({
+    messages,
+    temperature: 0.3,
+    timeoutMs: 30_000,
+    preferQuality: true,
+  });
   res.json({ reply: reply || 'AI is unavailable right now. Try again in a moment.' });
 });
 

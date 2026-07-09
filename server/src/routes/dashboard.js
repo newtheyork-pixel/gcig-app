@@ -5,6 +5,7 @@ import { getSheetPortfolio } from '../services/sheetPortfolio.js';
 import { eventAudienceWhere } from './events.js';
 import { getCached, regenerate } from '../services/dayInReview.js';
 import { getMacroSnapshot } from '../services/fredMacro.js';
+import { getDailyCriticalHeadline } from '../services/breakingNews.js';
 
 const router = Router();
 
@@ -170,6 +171,20 @@ router.get('/macro', async (_req, res) => {
   } catch (err) {
     console.error('macro fetch failed:', err.message);
     res.status(500).json({ error: 'Failed to fetch macro snapshot' });
+  }
+});
+
+// Breaking news — at most one genuinely market-moving global headline per
+// day (see services/breakingNews.js). Returns { headline: null } when nothing
+// clears the bar, which is the common case; the client hides the banner then.
+// Never 500s: a news/LLM hiccup degrades to "no banner", not a broken page.
+router.get('/breaking-news', async (_req, res) => {
+  try {
+    const { headline, day } = await getDailyCriticalHeadline();
+    res.json({ headline, day });
+  } catch (err) {
+    console.error('breaking-news fetch failed:', err.message);
+    res.json({ headline: null, day: null });
   }
 });
 
