@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import rateLimit from 'express-rate-limit';
-import { verifyJwt, requireExecutive } from '../middleware/auth.js';
+import { verifyJwt, requireExecutiveOrAdvisory } from '../middleware/auth.js';
 import { llmChat } from '../services/llm.js';
 import { getHistory, getIntraday } from '../services/priceHistory.js';
 import { getFundamentals, getStatements } from '../services/secFundamentals.js';
@@ -27,11 +27,14 @@ import { scanUniverse as scanInsiderClusters } from '../services/insiderClusters
 //   POST /api/terminal/parse-command  Natural language -> mnemonic command
 //   POST /api/terminal/chat           Free-form chat with workspace context
 //
-// Gated executive-only initially; opens to PM+ later.
+// Gated to Executive (President/CIO) and the Advisory Board / Faculty
+// Advisor. Will open to PM+ later. Advisory members are read-only across
+// the rest of the app; the Terminal is a research surface they can use
+// without granting any operational permissions.
 
 const router = Router();
 router.use(verifyJwt);
-router.use(requireExecutive);
+router.use(requireExecutiveOrAdvisory);
 
 const aiLimiter = rateLimit({
   windowMs: 10 * 60 * 1000,
@@ -973,7 +976,15 @@ router.post('/annotate', async (req, res) => {
     },
   ];
 
-  const brief = await llmChat({ messages, temperature: 0.3, timeoutMs: 20_000 });
+  // preferQuality: route panel briefs to the best reasoning model available
+  // (cloud first, local fallback) — a weak local model makes the amber "AI
+  // BRIEF" line read as filler instead of insight.
+  const brief = await llmChat({
+    messages,
+    temperature: 0.3,
+    timeoutMs: 20_000,
+    preferQuality: true,
+  });
   res.json({ brief: brief || 'Data unavailable.' });
 });
 
@@ -1008,7 +1019,13 @@ router.post('/parse-command', async (req, res) => {
     { role: 'user', content: input },
   ];
 
-  const raw = await llmChat({ messages, jsonMode: true, temperature: 0, timeoutMs: 12_000 });
+  const raw = await llmChat({
+    messages,
+    jsonMode: true,
+    temperature: 0,
+    timeoutMs: 12_000,
+    preferQuality: true,
+  });
   if (!raw) {
     return res.json({
       ticker: null,
@@ -1060,7 +1077,8 @@ router.post('/chat', async (req, res) => {
       role: 'system',
       content:
         'You are the Bloomberg Intelligence research console at the Griffin Fund, a student-run investment fund. ' +
-        'You think like a buy-side analyst: rigorous, quantitative, and opinionated when the data supports it.\n\n' +
+        'You think like a buy-side analyst: rigorous, quantitative, and opinionated when the data supports it.\n' +
+        `Today's date is ${new Date().toISOString().slice(0, 10)}.\n\n` +
         'Guidelines:\n' +
         '- Lead with the answer, then support it. Don\'t hedge everything.\n' +
         '- Cite specific numbers from the workspace context when available.\n' +
@@ -1076,7 +1094,12 @@ router.post('/chat', async (req, res) => {
     ...trimmed,
   ];
 
-  const reply = await llmChat({ messages, temperature: 0.3, timeoutMs: 30_000 });
+  const reply = await llmChat({
+    messages,
+    temperature: 0.3,
+    timeoutMs: 30_000,
+    preferQuality: true,
+  });
   res.json({ reply: reply || 'AI is unavailable right now. Try again in a moment.' });
 });
 

@@ -19,6 +19,8 @@ import {
   TrendingUp,
   TrendingDown,
   Building2,
+  Newspaper,
+  X,
 } from 'lucide-react';
 import api from '../api/client.js';
 import { useAuth } from '../context/AuthContext.jsx';
@@ -132,6 +134,8 @@ export default function Dashboard() {
 
   return (
     <div className="space-y-6 md:space-y-8">
+      <BreakingBanner />
+
       <Masthead user={user} />
 
       <PortfolioHero
@@ -171,6 +175,85 @@ export default function Dashboard() {
         <OnTheCalendar events={dashboard?.upcomingEvents || []} />
         <LatelyFeed activity={dashboard?.activity || []} />
       </div>
+    </div>
+  );
+}
+
+// Breaking-news banner. Shows at most one genuinely market-moving global
+// headline per day (the server enforces the "one/day" bar; see
+// services/breakingNews.js). Self-contained: it fetches on mount, renders
+// nothing when there's no qualifying headline (the common case), and can be
+// dismissed for the rest of the day. Dismissal is keyed by the story's day
+// so a fresh headline tomorrow reappears even if today's was dismissed.
+function BreakingBanner() {
+  const [headline, setHeadline] = useState(null);
+  const [day, setDay] = useState(null);
+  const [dismissed, setDismissed] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .get('/dashboard/breaking-news')
+      .then((r) => {
+        if (cancelled) return;
+        const h = r.data?.headline || null;
+        const d = r.data?.day || null;
+        setHeadline(h);
+        setDay(d);
+        if (h && d && localStorage.getItem('gcig_breaking_dismissed') === d) {
+          setDismissed(true);
+        }
+      })
+      .catch(() => {
+        /* no banner on failure — silence is the right default here */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  if (!headline || dismissed) return null;
+
+  function dismiss() {
+    setDismissed(true);
+    if (day) {
+      try {
+        localStorage.setItem('gcig_breaking_dismissed', day);
+      } catch {
+        /* private mode — dismissal just won't persist */
+      }
+    }
+  }
+
+  return (
+    <div className="flex items-start gap-3 rounded-2xl border border-gold-300 bg-gold-100 px-4 py-3 shadow-card md:px-5">
+      <span className="mt-0.5 flex items-center gap-1.5 rounded-md bg-navy px-2 py-1 text-[10px] font-bold uppercase tracking-[0.15em] text-gold">
+        <Newspaper className="h-3.5 w-3.5" />
+        Breaking
+      </span>
+      <div className="min-w-0 flex-1">
+        <a
+          href={headline.url}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="group inline-flex items-start gap-1 font-serif text-sm font-semibold leading-snug text-navy hover:text-gold-700 md:text-base"
+        >
+          <span className="min-w-0">{headline.title}</span>
+          <ArrowUpRight className="mt-0.5 h-4 w-4 flex-shrink-0 opacity-60 transition group-hover:opacity-100" />
+        </a>
+        <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-navy-400">
+          {headline.source ? <span className="font-semibold">{headline.source}</span> : null}
+          {headline.why ? <span>· {headline.why}</span> : null}
+        </div>
+      </div>
+      <button
+        onClick={dismiss}
+        className="flex-shrink-0 rounded p-1 text-navy-200 transition hover:bg-navy-50 hover:text-navy"
+        title="Dismiss for today"
+        aria-label="Dismiss breaking news"
+      >
+        <X className="h-4 w-4" />
+      </button>
     </div>
   );
 }

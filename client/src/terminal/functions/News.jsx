@@ -141,14 +141,33 @@ export default function News({ ticker }) {
             const href = it.url || it.link;
             const key = href || it.title || i;
             const isNew = newIds.has(it.url || it.link || it.title);
+            const source = it.source || it.publisher || null;
             return (
               <div className={`term-news-row${isNew ? ' term-news-flash' : ''}`} key={key}>
                 <span className="time">
                   {formatTime(it.publishedAt || it.providerPublishTime || it.time)}
                 </span>
+                {source ? (
+                  href ? (
+                    <a
+                      className="source"
+                      href={href}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      title={`Open on ${source}`}
+                    >
+                      {source}
+                    </a>
+                  ) : (
+                    <span className="source">{source}</span>
+                  )
+                ) : null}
                 <span className="title">
                   {href ? (
-                    <a href={href} target="_blank" rel="noopener noreferrer">{it.title}</a>
+                    <a href={href} target="_blank" rel="noopener noreferrer">
+                      {it.title}
+                      <span className="term-news-ext" aria-hidden="true"> ↗</span>
+                    </a>
                   ) : (
                     it.title
                   )}

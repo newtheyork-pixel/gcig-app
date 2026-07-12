@@ -186,55 +186,85 @@ function logFailure(provider, result) {
 
 // ── Main entry point ────────────────────────────────────────────────
 
-export async function llmChat({ messages, temperature, jsonMode, timeoutMs } = {}) {
-  if (!Array.isArray(messages) || messages.length === 0) return null;
-  const effectiveTimeoutMs =
-    Number(timeoutMs) ||
-    Number(process.env.LOCAL_LLM_TIMEOUT_MS) ||
-    DEFAULT_TIMEOUT_MS;
-
-  // Provider 1: local Ollama. Preferred because it's free and private.
-  if (process.env.LOCAL_LLM_URL) {
-    const local = await callEndpoint({
+// Individual provider callers, keyed by name. Each returns the shared
+// { ok, content, ... } result shape and is a no-op (returns null) when its
+// env isn't configured, so the runner can just skip it.
+function runProvider(name, { messages, temperature, jsonMode, timeoutMs }) {
+  if (name === 'local') {
+    if (!process.env.LOCAL_LLM_URL) return null;
+    return callEndpoint({
       endpoint: `${normalizeBase(process.env.LOCAL_LLM_URL)}/chat/completions`,
       apiKey: process.env.LOCAL_LLM_API_KEY,
       model: process.env.LOCAL_LLM_MODEL || DEFAULT_LOCAL_MODEL,
       messages,
       temperature,
       jsonMode,
-      timeoutMs: effectiveTimeoutMs,
+      timeoutMs,
     });
-    if (local.ok && local.content) return local.content;
-    logFailure('local', local);
   }
-
-  // Provider 2: Anthropic Claude. Best cloud option for financial analysis.
-  if (process.env.ANTHROPIC_API_KEY) {
-    const claude = await callAnthropic({
+  if (name === 'anthropic') {
+    if (!process.env.ANTHROPIC_API_KEY) return null;
+    return callAnthropic({
       apiKey: process.env.ANTHROPIC_API_KEY,
       model: process.env.ANTHROPIC_MODEL || DEFAULT_ANTHROPIC_MODEL,
       messages,
       temperature,
       jsonMode,
-      timeoutMs: effectiveTimeoutMs,
+      timeoutMs,
     });
-    if (claude.ok && claude.content) return claude.content;
-    logFailure('anthropic', claude);
   }
-
-  // Provider 3: OpenAI fallback. Legacy option if everything else is down.
-  if (process.env.OPENAI_API_KEY) {
-    const openai = await callEndpoint({
+  if (name === 'openai') {
+    if (!process.env.OPENAI_API_KEY) return null;
+    return callEndpoint({
       endpoint: 'https://api.openai.com/v1/chat/completions',
       apiKey: process.env.OPENAI_API_KEY,
       model: process.env.OPENAI_MODEL || DEFAULT_OPENAI_MODEL,
       messages,
       temperature,
       jsonMode,
+      timeoutMs,
+    });
+  }
+  return null;
+}
+
+// Provider priority.
+//   default        local → anthropic → openai   (free/private first; cheap bulk
+//                                                 work like article ranking)
+//   preferQuality  anthropic → openai → local   (best reasoning first; used for
+//                                                 the interactive terminal AI —
+//                                                 chat, briefs, command parse —
+//                                                 where a weak local model reads
+//                                                 as "dumb". Falls back to local
+//                                                 so nothing breaks if no cloud
+//                                                 key is set.)
+const DEFAULT_ORDER = ['local', 'anthropic', 'openai'];
+const QUALITY_ORDER = ['anthropic', 'openai', 'local'];
+
+export async function llmChat({
+  messages,
+  temperature,
+  jsonMode,
+  timeoutMs,
+  preferQuality = false,
+} = {}) {
+  if (!Array.isArray(messages) || messages.length === 0) return null;
+  const effectiveTimeoutMs =
+    Number(timeoutMs) ||
+    Number(process.env.LOCAL_LLM_TIMEOUT_MS) ||
+    DEFAULT_TIMEOUT_MS;
+
+  const order = preferQuality ? QUALITY_ORDER : DEFAULT_ORDER;
+  for (const name of order) {
+    const result = await runProvider(name, {
+      messages,
+      temperature,
+      jsonMode,
       timeoutMs: effectiveTimeoutMs,
     });
-    if (openai.ok && openai.content) return openai.content;
-    logFailure('openai', openai);
+    if (!result) continue; // provider not configured
+    if (result.ok && result.content) return result.content;
+    logFailure(name, result);
   }
 
   return null;

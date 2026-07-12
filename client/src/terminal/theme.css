@@ -317,10 +317,20 @@
   white-space: nowrap;
 }
 
+/* The body row: side rail + workspace share the space under the command
+   and breaking bars. The workspace remains the positioning context for the
+   free-floating windows. */
+[data-theme='terminal'] .term-body {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+
 [data-theme='terminal'] .term-workspace {
   flex: 1;
   position: relative;
   min-height: 0;
+  min-width: 0;
   background: var(--term-bg);
 }
 
@@ -1912,4 +1922,416 @@
   [data-theme='terminal'] .tick-down {
     animation: none;
   }
+}
+
+/* ── Breaking-news strip ──────────────────────────────────────────────
+ * A thin live wire under the command bar carrying the market-wide feed,
+ * one rotating headline at a time. Reads as a ticker: red pulse, a
+ * BREAKING chip, the source outlet, then the clickable headline. */
+[data-theme='terminal'] .term-breaking {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: 28px;
+  padding: 0 14px;
+  background: linear-gradient(
+    90deg,
+    color-mix(in oklch, var(--term-negative) 12%, var(--term-bg)),
+    var(--term-bg) 55%
+  );
+  border-bottom: 1px solid var(--term-border);
+  flex-shrink: 0;
+  overflow: hidden;
+  font-size: 12px;
+}
+
+[data-theme='terminal'] .term-breaking-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--term-negative);
+  font-weight: 700;
+  font-size: 10px;
+  letter-spacing: 0.16em;
+  flex-shrink: 0;
+}
+
+[data-theme='terminal'] .term-breaking-tag .dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--term-negative);
+  box-shadow: 0 0 6px var(--term-negative);
+  animation: term-pulse 1.6s ease-in-out infinite;
+}
+
+[data-theme='terminal'] .term-breaking-headline {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  color: var(--term-white);
+  text-decoration: none;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+[data-theme='terminal'] .term-breaking-headline .src {
+  color: var(--term-fg-dim);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  flex-shrink: 0;
+}
+
+[data-theme='terminal'] .term-breaking-headline .hl {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+[data-theme='terminal'] .term-breaking-headline:hover .hl {
+  color: var(--term-fg);
+  text-decoration: underline;
+}
+
+[data-theme='terminal'] .term-breaking-nav {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  color: var(--term-fg-muted);
+}
+
+[data-theme='terminal'] .term-breaking-nav button {
+  background: transparent;
+  border: 1px solid var(--term-border);
+  color: var(--term-fg-dim);
+  font: inherit;
+  font-size: 12px;
+  line-height: 1;
+  padding: 1px 6px;
+  cursor: pointer;
+}
+
+[data-theme='terminal'] .term-breaking-nav button:hover {
+  color: var(--term-fg);
+  border-color: var(--term-fg-dim);
+}
+
+[data-theme='terminal'] .term-breaking-nav button.close:hover {
+  color: var(--term-negative);
+  border-color: var(--term-negative);
+}
+
+[data-theme='terminal'] .term-breaking-nav .count {
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  min-width: 30px;
+  text-align: center;
+}
+
+/* ── Side rail (favorites + recents) ──────────────────────────────────
+ * A dense left column of launchers. Squared, hard-bordered, in-theme. */
+[data-theme='terminal'] .term-rail {
+  width: 194px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  background: var(--term-bg-panel);
+  border-right: 1px solid var(--term-border);
+  overflow-y: auto;
+  padding-bottom: 8px;
+}
+
+[data-theme='terminal'] .term-rail.collapsed {
+  width: 22px;
+  align-items: center;
+  padding-top: 6px;
+  overflow: hidden;
+}
+
+[data-theme='terminal'] .term-rail-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 24px;
+  padding: 0 8px;
+  background: var(--term-bg-header);
+  border-bottom: 1px solid var(--term-border);
+}
+
+[data-theme='terminal'] .term-rail-brand {
+  color: var(--term-fg-dim);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.2em;
+}
+
+[data-theme='terminal'] .term-rail-collapse {
+  background: transparent;
+  border: none;
+  color: var(--term-fg-muted);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  padding: 2px 4px;
+}
+
+[data-theme='terminal'] .term-rail-collapse:hover {
+  color: var(--term-fg);
+}
+
+[data-theme='terminal'] .term-rail-section {
+  padding: 6px 6px 0;
+}
+
+[data-theme='terminal'] .term-rail-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: var(--term-blue);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  padding: 2px 2px 5px;
+  border-bottom: 1px solid var(--term-border);
+  margin-bottom: 5px;
+}
+
+[data-theme='terminal'] .term-rail-title .ct {
+  color: var(--term-fg-muted);
+  letter-spacing: 0;
+}
+
+[data-theme='terminal'] .term-rail-clear {
+  background: transparent;
+  border: none;
+  color: var(--term-fg-muted);
+  font: inherit;
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  cursor: pointer;
+  padding: 0;
+}
+
+[data-theme='terminal'] .term-rail-clear:hover {
+  color: var(--term-negative);
+}
+
+[data-theme='terminal'] .term-rail-add {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 6px;
+}
+
+[data-theme='terminal'] .term-rail-add-input {
+  flex: 1;
+  min-width: 0;
+  background: var(--term-bg);
+  border: 1px solid var(--term-border);
+  color: var(--term-fg);
+  font: inherit;
+  font-size: 11px;
+  padding: 3px 6px;
+  outline: none;
+  text-transform: uppercase;
+}
+
+[data-theme='terminal'] .term-rail-add-input::placeholder {
+  color: var(--term-fg-muted);
+  text-transform: none;
+}
+
+[data-theme='terminal'] .term-rail-add-input:focus {
+  border-color: var(--term-border-focused);
+}
+
+[data-theme='terminal'] .term-rail-add-btn {
+  background: var(--term-bg-panel-hover);
+  border: 1px solid var(--term-border);
+  color: var(--term-fg-dim);
+  font: inherit;
+  font-size: 13px;
+  line-height: 1;
+  padding: 0 8px;
+  cursor: pointer;
+}
+
+[data-theme='terminal'] .term-rail-add-btn:hover {
+  color: var(--term-fg);
+  border-color: var(--term-fg-dim);
+}
+
+[data-theme='terminal'] .term-rail-add-err {
+  color: var(--term-negative);
+  font-size: 10px;
+  line-height: 1.35;
+  margin: -2px 0 6px;
+}
+
+[data-theme='terminal'] .term-rail-empty {
+  color: var(--term-fg-muted);
+  font-size: 10px;
+  line-height: 1.4;
+  padding: 2px 2px 6px;
+}
+
+[data-theme='terminal'] .term-rail-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+[data-theme='terminal'] .term-rail-row {
+  display: flex;
+  align-items: stretch;
+  border-bottom: 1px dotted var(--term-border);
+}
+
+[data-theme='terminal'] .term-rail-row:hover {
+  background: var(--term-bg-panel-hover);
+}
+
+[data-theme='terminal'] .term-rail-open {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  background: transparent;
+  border: none;
+  text-align: left;
+  cursor: pointer;
+  padding: 4px 4px 4px 2px;
+  font: inherit;
+}
+
+[data-theme='terminal'] .term-rail-open .mnem {
+  color: var(--term-amber);
+  font-weight: 700;
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+[data-theme='terminal'] .term-rail-open .name {
+  color: var(--term-fg-muted);
+  font-size: 10px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+[data-theme='terminal'] .term-rail-open:hover .mnem {
+  color: var(--term-white);
+}
+
+[data-theme='terminal'] .term-rail-x,
+[data-theme='terminal'] .term-rail-star {
+  background: transparent;
+  border: none;
+  color: var(--term-fg-muted);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  padding: 0 6px;
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+
+[data-theme='terminal'] .term-rail-row:hover .term-rail-x,
+[data-theme='terminal'] .term-rail-row:hover .term-rail-star {
+  opacity: 1;
+}
+
+[data-theme='terminal'] .term-rail-x:hover {
+  color: var(--term-negative);
+}
+
+[data-theme='terminal'] .term-rail-star:hover {
+  color: var(--term-amber);
+}
+
+/* Favorite star in a window titlebar */
+[data-theme='terminal'] .term-window-fav {
+  background: transparent;
+  border: none;
+  color: var(--term-fg-muted);
+  font-size: 13px;
+  line-height: 1;
+  padding: 2px 4px;
+  cursor: pointer;
+}
+
+[data-theme='terminal'] .term-window-fav:hover {
+  color: var(--term-amber);
+}
+
+[data-theme='terminal'] .term-window-fav.active {
+  color: var(--term-amber);
+}
+
+/* CN external-link cue — a faint arrow trailing a headline so it reads as
+   a link out to the source outlet without underlining every title. */
+[data-theme='terminal'] .term-news-ext {
+  color: var(--term-fg-muted);
+  font-size: 10px;
+}
+
+[data-theme='terminal'] .term-news-row a.source {
+  color: var(--term-fg-dim);
+  text-decoration: none;
+}
+
+[data-theme='terminal'] .term-news-row a.source:hover {
+  color: var(--term-fg);
+  text-decoration: underline;
+}
+
+/* ── Terminal scrollbars ──────────────────────────────────────────────
+ * Thin, in-theme scrollbars so panels and the rail read as one machined
+ * surface instead of borrowing the OS's default light scrollbar. */
+[data-theme='terminal'] .term-window-body,
+[data-theme='terminal'] .term-rail,
+[data-theme='terminal'] .term-chat-log,
+[data-theme='terminal'] .term-fa-scroll,
+[data-theme='terminal'] .term-cmd-suggest {
+  scrollbar-width: thin;
+  scrollbar-color: var(--term-border) transparent;
+}
+
+[data-theme='terminal'] .term-window-body::-webkit-scrollbar,
+[data-theme='terminal'] .term-rail::-webkit-scrollbar,
+[data-theme='terminal'] .term-chat-log::-webkit-scrollbar,
+[data-theme='terminal'] .term-fa-scroll::-webkit-scrollbar,
+[data-theme='terminal'] .term-cmd-suggest::-webkit-scrollbar {
+  width: 9px;
+  height: 9px;
+}
+
+[data-theme='terminal'] .term-window-body::-webkit-scrollbar-thumb,
+[data-theme='terminal'] .term-rail::-webkit-scrollbar-thumb,
+[data-theme='terminal'] .term-chat-log::-webkit-scrollbar-thumb,
+[data-theme='terminal'] .term-fa-scroll::-webkit-scrollbar-thumb,
+[data-theme='terminal'] .term-cmd-suggest::-webkit-scrollbar-thumb {
+  background: var(--term-border);
+  border: 2px solid var(--term-bg-panel);
+}
+
+[data-theme='terminal'] .term-window-body::-webkit-scrollbar-thumb:hover,
+[data-theme='terminal'] .term-rail::-webkit-scrollbar-thumb:hover,
+[data-theme='terminal'] .term-chat-log::-webkit-scrollbar-thumb:hover {
+  background: var(--term-fg-muted);
+}
+
+[data-theme='terminal'] .term-window-body::-webkit-scrollbar-corner,
+[data-theme='terminal'] .term-rail::-webkit-scrollbar-corner {
+  background: transparent;
 }

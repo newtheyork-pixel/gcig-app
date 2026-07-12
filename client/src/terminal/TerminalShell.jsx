@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import CommandBar from './CommandBar.jsx';
 import FloatingWindow from './FloatingWindow.jsx';
+import SideRail from './components/SideRail.jsx';
+import BreakingStrip from './components/BreakingStrip.jsx';
+import useTerminalPrefs from './hooks/useTerminalPrefs.js';
 import { getFunction, FUNCTIONS } from './registry.js';
 import { useAuth } from '../context/AuthContext.jsx';
 
@@ -35,6 +38,24 @@ export default function TerminalShell({ onExit }) {
   const [windows, setWindows] = useState([]);
   const [focusedId, setFocusedId] = useState(null);
   const [lastInterpretation, setLastInterpretation] = useState(null);
+  // Favorites + recent tickers, persisted per user (localStorage).
+  const prefs = useTerminalPrefs(user?.id);
+  const { recordTicker } = prefs;
+  // Side rail collapse persists so a member who hides it keeps it hidden.
+  const [railCollapsed, setRailCollapsed] = useState(
+    () => localStorage.getItem('gcig_term_rail_collapsed') === '1'
+  );
+  const toggleRail = useCallback(() => {
+    setRailCollapsed((c) => {
+      const next = !c;
+      try {
+        localStorage.setItem('gcig_term_rail_collapsed', next ? '1' : '0');
+      } catch {
+        /* private mode — collapse just won't persist */
+      }
+      return next;
+    });
+  }, []);
   // Monotonic stacking counter — the next focused/spawned window gets the
   // top z so click-to-front needs nothing fancier than "current max + 1".
   const zSeq = useRef(1);
@@ -74,29 +95,35 @@ export default function TerminalShell({ onExit }) {
   // Open a new window for a function (optionally bound to a ticker) and
   // bring it to the front. Position cascades off how many windows are
   // already open; FloatingWindow pulls it back in if it lands off-screen.
-  const spawnWindow = useCallback((fn, ticker) => {
-    if (!fn) return;
-    armedRef.current = null;
-    const id = nextWindowId();
-    zSeq.current += 1;
-    setWindows((ws) => {
-      const step = (ws.length % SPAWN_WRAP) * SPAWN_STEP;
-      return [
-        ...ws,
-        {
-          id,
-          fn,
-          ticker: ticker || null,
-          x: SPAWN_BASE + step,
-          y: SPAWN_BASE + step,
-          w: DEFAULT_W,
-          h: DEFAULT_H,
-          z: zSeq.current,
-        },
-      ];
-    });
-    setFocusedId(id);
-  }, []);
+  const spawnWindow = useCallback(
+    (fn, ticker) => {
+      if (!fn) return;
+      armedRef.current = null;
+      // Any ticker-bearing open feeds the Recents rail. Central here so every
+      // path (command bar, panel drill-down, rail click) records once.
+      if (ticker) recordTicker(ticker);
+      const id = nextWindowId();
+      zSeq.current += 1;
+      setWindows((ws) => {
+        const step = (ws.length % SPAWN_WRAP) * SPAWN_STEP;
+        return [
+          ...ws,
+          {
+            id,
+            fn,
+            ticker: ticker || null,
+            x: SPAWN_BASE + step,
+            y: SPAWN_BASE + step,
+            w: DEFAULT_W,
+            h: DEFAULT_H,
+            z: zSeq.current,
+          },
+        ];
+      });
+      setFocusedId(id);
+    },
+    [recordTicker]
+  );
 
   // A parsed command bar entry. Each command opens its own window rather
   // than taking over an existing one.
@@ -232,7 +259,21 @@ export default function TerminalShell({ onExit }) {
 
       <CommandBar onCommand={applyCommand} lastInterpretation={lastInterpretation} />
 
-      <div className="term-workspace">
+      <BreakingStrip />
+
+      <div className="term-body">
+        <SideRail
+          collapsed={railCollapsed}
+          onToggleCollapsed={toggleRail}
+          favorites={prefs.favorites}
+          recents={prefs.recents}
+          onOpen={(fn, ticker) => spawnWindow(fn, ticker)}
+          onAddFavorite={prefs.addFavorite}
+          onRemoveFavorite={prefs.removeFavorite}
+          onClearRecents={prefs.clearRecents}
+        />
+
+        <div className="term-workspace">
         {windows.length === 0 ? (
           <div className="term-empty-hint">
             <div className="term-empty-title">EMPTY WORKSPACE</div>
@@ -285,10 +326,16 @@ export default function TerminalShell({ onExit }) {
               onFocus={() => focusWindow(w.id)}
               onClose={() => closeWindow(w.id)}
               toolbar={
-                <FunctionSwitcher
-                  current={w.fn}
-                  onChange={(newFn) => setWindowFn(w.id, newFn)}
-                />
+                <>
+                  <FavoriteToggle
+                    active={prefs.isFavorite(w.fn, w.ticker)}
+                    onToggle={() => prefs.toggleFavorite(w.fn, w.ticker)}
+                  />
+                  <FunctionSwitcher
+                    current={w.fn}
+                    onChange={(newFn) => setWindowFn(w.id, newFn)}
+                  />
+                </>
               }
             >
               {Comp ? (
@@ -302,6 +349,7 @@ export default function TerminalShell({ onExit }) {
             </FloatingWindow>
           );
         })}
+        </div>
       </div>
 
       <div className="term-statusbar">
@@ -344,6 +392,23 @@ function MarketClock() {
     <span className="term-topbar-clock">
       {time}<span className="tz">ET</span>
     </span>
+  );
+}
+
+// Star toggle in a window's titlebar — pins its (function, ticker) pair to
+// the Favorites rail. Filled amber when active, hollow otherwise.
+function FavoriteToggle({ active, onToggle }) {
+  return (
+    <button
+      className={`term-window-fav${active ? ' active' : ''}`}
+      title={active ? 'Remove from favorites' : 'Pin to favorites'}
+      aria-label={active ? 'Remove from favorites' : 'Pin to favorites'}
+      aria-pressed={active}
+      onClick={onToggle}
+      onPointerDown={(e) => e.stopPropagation()}
+    >
+      {active ? '★' : '☆'}
+    </button>
   );
 }
 
