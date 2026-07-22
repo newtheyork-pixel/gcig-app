@@ -104,6 +104,11 @@ export default function TerminalShell({ onExit }) {
       if (ticker) recordTicker(ticker);
       const id = nextWindowId();
       zSeq.current += 1;
+      // A registry entry may pin its own spawn footprint (news panes want
+      // the extra column width); everything else gets the standard size.
+      const fnDef = getFunction(fn);
+      const w = fnDef?.w || DEFAULT_W;
+      const h = fnDef?.h || DEFAULT_H;
       setWindows((ws) => {
         const step = (ws.length % SPAWN_WRAP) * SPAWN_STEP;
         return [
@@ -114,8 +119,8 @@ export default function TerminalShell({ onExit }) {
             ticker: ticker || null,
             x: SPAWN_BASE + step,
             y: SPAWN_BASE + step,
-            w: DEFAULT_W,
-            h: DEFAULT_H,
+            w,
+            h,
             z: zSeq.current,
           },
         ];

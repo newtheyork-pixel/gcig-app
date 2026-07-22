@@ -183,8 +183,8 @@ router.get('/macro', async (_req, res) => {
   }
 });
 
-// Breaking news — at most one genuinely market-moving global headline per
-// day (see services/breakingNews.js). Returns { headline: null } when nothing
+// Breaking news — the rare, genuinely system-shaking story, ~1-3 a week
+// (see services/breakingNews.js). Returns { headline: null } when nothing
 // clears the bar, which is the common case; the client hides the banner then.
 // Never 500s: a news/LLM hiccup degrades to "no banner", not a broken page.
 router.get('/breaking-news', async (_req, res) => {

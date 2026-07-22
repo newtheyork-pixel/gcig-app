@@ -646,6 +646,24 @@
   color: var(--term-fg);
 }
 
+/* Whole-row news links (TOP/CN) — the anchor IS the row, so it must not
+   pick up the browser's link styling, and hover/focus feedback lands on
+   the full width instead of the headline text alone. */
+[data-theme='terminal'] a.term-news-row {
+  text-decoration: none;
+  color: inherit;
+  cursor: pointer;
+}
+
+[data-theme='terminal'] a.term-news-row:hover {
+  background: rgba(255, 176, 0, 0.07);
+}
+
+[data-theme='terminal'] a.term-news-row:focus-visible {
+  outline: 1px solid var(--term-amber);
+  outline-offset: -1px;
+}
+
 /* MOVR — side-by-side gainers / losers ranking tables */
 [data-theme='terminal'] .term-movers {
   display: flex;
@@ -2278,21 +2296,11 @@
   color: var(--term-amber);
 }
 
-/* CN external-link cue — a faint arrow trailing a headline so it reads as
-   a link out to the source outlet without underlining every title. */
+/* TOP/CN external-link cue — a faint arrow trailing a headline so it reads
+   as a link out to the source outlet without underlining every title. */
 [data-theme='terminal'] .term-news-ext {
   color: var(--term-fg-muted);
   font-size: 10px;
-}
-
-[data-theme='terminal'] .term-news-row a.source {
-  color: var(--term-fg-dim);
-  text-decoration: none;
-}
-
-[data-theme='terminal'] .term-news-row a.source:hover {
-  color: var(--term-fg);
-  text-decoration: underline;
 }
 
 /* ── Terminal scrollbars ──────────────────────────────────────────────

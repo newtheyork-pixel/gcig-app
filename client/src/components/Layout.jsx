@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Outlet } from 'react-router-dom';
 import Sidebar from './Sidebar.jsx';
 import MobileTabBar from './MobileTabBar.jsx';
+import TerminalLauncher from './TerminalLauncher.jsx';
 import VoteNotification from './VoteNotification.jsx';
 import PitchNotification from './PitchNotification.jsx';
 import PresidentReviewNotification from './PresidentReviewNotification.jsx';
@@ -47,6 +48,8 @@ export default function Layout() {
             backgroundSize: '48px 48px',
           }}
         />
+
+        <TerminalLauncher />
 
         {/* Extra bottom padding on mobile so the tab bar doesn't cover the
             last row of content. Desktop gets the normal py-8. */}

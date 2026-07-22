@@ -179,15 +179,15 @@ export default function Dashboard() {
   );
 }
 
-// Breaking-news banner. Shows at most one genuinely market-moving global
-// headline per day (the server enforces the "one/day" bar; see
-// services/breakingNews.js). Self-contained: it fetches on mount, renders
-// nothing when there's no qualifying headline (the common case), and can be
-// dismissed for the rest of the day. Dismissal is keyed by the story's day
-// so a fresh headline tomorrow reappears even if today's was dismissed.
+// Breaking-news banner. The server surfaces only the rare, genuinely
+// system-shaking story (~1-3 a week; see services/breakingNews.js), and a
+// chosen alert persists there for a few days. Self-contained: it fetches on
+// mount and renders nothing when there's no live alert (the common case).
+// Dismissal is keyed by the story itself (its URL), not the calendar day —
+// the same alert stays dismissed across its multi-day run, while a new
+// story always reappears.
 function BreakingBanner() {
   const [headline, setHeadline] = useState(null);
-  const [day, setDay] = useState(null);
   const [dismissed, setDismissed] = useState(false);
 
   useEffect(() => {
@@ -197,10 +197,8 @@ function BreakingBanner() {
       .then((r) => {
         if (cancelled) return;
         const h = r.data?.headline || null;
-        const d = r.data?.day || null;
         setHeadline(h);
-        setDay(d);
-        if (h && d && localStorage.getItem('gcig_breaking_dismissed') === d) {
+        if (h?.url && localStorage.getItem('gcig_breaking_dismissed') === h.url) {
           setDismissed(true);
         }
       })
@@ -216,9 +214,9 @@ function BreakingBanner() {
 
   function dismiss() {
     setDismissed(true);
-    if (day) {
+    if (headline.url) {
       try {
-        localStorage.setItem('gcig_breaking_dismissed', day);
+        localStorage.setItem('gcig_breaking_dismissed', headline.url);
       } catch {
         /* private mode — dismissal just won't persist */
       }
@@ -249,7 +247,7 @@ function BreakingBanner() {
       <button
         onClick={dismiss}
         className="flex-shrink-0 rounded p-1 text-navy-200 transition hover:bg-navy-50 hover:text-navy"
-        title="Dismiss for today"
+        title="Dismiss this alert"
         aria-label="Dismiss breaking news"
       >
         <X className="h-4 w-4" />

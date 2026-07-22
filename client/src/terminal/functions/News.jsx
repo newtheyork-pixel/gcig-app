@@ -142,36 +142,37 @@ export default function News({ ticker }) {
             const key = href || it.title || i;
             const isNew = newIds.has(it.url || it.link || it.title);
             const source = it.source || it.publisher || null;
-            return (
-              <div className={`term-news-row${isNew ? ' term-news-flash' : ''}`} key={key}>
+            const rowClass = `term-news-row${isNew ? ' term-news-flash' : ''}`;
+            // The whole row is the link, not just the headline text — a
+            // truncated 12px title is a mean click target. Source stays a
+            // plain span so no anchor nests inside the row anchor.
+            const cells = (
+              <>
                 <span className="time">
                   {formatTime(it.publishedAt || it.providerPublishTime || it.time)}
                 </span>
-                {source ? (
-                  href ? (
-                    <a
-                      className="source"
-                      href={href}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      title={`Open on ${source}`}
-                    >
-                      {source}
-                    </a>
-                  ) : (
-                    <span className="source">{source}</span>
-                  )
-                ) : null}
+                {source ? <span className="source">{source}</span> : null}
                 <span className="title">
+                  {it.title}
                   {href ? (
-                    <a href={href} target="_blank" rel="noopener noreferrer">
-                      {it.title}
-                      <span className="term-news-ext" aria-hidden="true"> ↗</span>
-                    </a>
-                  ) : (
-                    it.title
-                  )}
+                    <span className="term-news-ext" aria-hidden="true"> ↗</span>
+                  ) : null}
                 </span>
+              </>
+            );
+            return href ? (
+              <a
+                className={rowClass}
+                key={key}
+                href={href}
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                {cells}
+              </a>
+            ) : (
+              <div className={rowClass} key={key}>
+                {cells}
               </div>
             );
           })

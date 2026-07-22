@@ -127,17 +127,34 @@ export default function TopNews() {
         ) : (
           ordered.map((it, i) => {
             const isNew = newIds.has(it.url);
-            return (
-              <div className={`term-news-row${isNew ? ' term-news-flash' : ''}`} key={it.url || i}>
+            const rowClass = `term-news-row${isNew ? ' term-news-flash' : ''}`;
+            // The whole row is the link, not just the headline text — a
+            // truncated 12px title is a mean click target.
+            const cells = (
+              <>
                 <span className="time">{formatTime(it.publishedAt)}</span>
                 <span className="source">{it.source || ''}</span>
                 <span className="title">
+                  {it.title}
                   {it.url ? (
-                    <a href={it.url} target="_blank" rel="noopener noreferrer">{it.title}</a>
-                  ) : (
-                    it.title
-                  )}
+                    <span className="term-news-ext" aria-hidden="true"> ↗</span>
+                  ) : null}
                 </span>
+              </>
+            );
+            return it.url ? (
+              <a
+                className={rowClass}
+                key={it.url}
+                href={it.url}
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                {cells}
+              </a>
+            ) : (
+              <div className={rowClass} key={i}>
+                {cells}
               </div>
             );
           })

@@ -13,6 +13,42 @@ import api from '../../api/client.js';
 const REFRESH_MS = 30 * 60 * 1000; // pull fresh headlines every 30 min
 const ROTATE_MS = 9_000; // advance the visible headline every 9s
 const MAX_HEADLINES = 12;
+// No single outlet may fill more than this share of the strip. The wire
+// arrives batched by provider, so without a cap one prolific outlet (AP,
+// most days) crowds every other voice out of the rotation.
+const PER_SOURCE_SHARE = 0.45;
+
+// The wire spells the same outlet several ways ("AP", "Associated Press",
+// "ap news"). Collapse to one canonical name so the per-source cap can't
+// be dodged by a rename.
+function normalizeSource(source) {
+  const s = String(source || '').trim();
+  const key = s.toLowerCase();
+  if (key === 'ap' || key === 'ap news' || key === 'associated press' || key === 'the associated press') {
+    return 'AP';
+  }
+  return s;
+}
+
+// Walk the wire newest-first, keeping a story only while its outlet is
+// under the cap, until the strip is full. Capping every source (not just
+// the loudest one) keeps the mix honest even when the dominant outlet
+// changes week to week.
+function curate(articles) {
+  const perSourceCap = Math.max(1, Math.floor(MAX_HEADLINES * PER_SOURCE_SHARE));
+  const bySource = new Map();
+  const out = [];
+  for (const a of articles || []) {
+    if (!a || !a.title || !a.url) continue;
+    const key = String(a.source).toLowerCase().trim();
+    const n = bySource.get(key) || 0;
+    if (n >= perSourceCap) continue;
+    bySource.set(key, n + 1);
+    out.push(a);
+    if (out.length >= MAX_HEADLINES) break;
+  }
+  return out;
+}
 
 export default function BreakingStrip() {
   const [items, setItems] = useState([]);
@@ -23,14 +59,16 @@ export default function BreakingStrip() {
   // Fetch + refresh the headline pool.
   useEffect(() => {
     let cancelled = false;
-    const pull = () => {
+    const loadWire = () => {
       api
         .get('/terminal/top-news')
         .then(({ data }) => {
           if (cancelled) return;
-          const list = (data?.articles || [])
-            .filter((a) => a && a.title && a.url)
-            .slice(0, MAX_HEADLINES);
+          const wire = (data?.articles || []).map((a) => ({
+            ...a,
+            source: normalizeSource(a?.source),
+          }));
+          const list = curate(wire);
           setItems(list);
           // Keep the pointer valid if the list shrank.
           setIdx((i) => (list.length ? i % list.length : 0));
@@ -39,8 +77,8 @@ export default function BreakingStrip() {
           /* leave the last good headlines up; a blip shouldn't blank the wire */
         });
     };
-    pull();
-    const id = setInterval(pull, REFRESH_MS);
+    loadWire();
+    const id = setInterval(loadWire, REFRESH_MS);
     return () => {
       cancelled = true;
       clearInterval(id);
