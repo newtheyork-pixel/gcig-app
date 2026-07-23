@@ -54,6 +54,45 @@ const RANGES = [
   { key: 'ALL', label: 'All' },
 ];
 
+// Timeframes for the per-equity return column in the Holdings table. 1D and
+// 'purchase' come off the sheet directly; 1W/1M/1Y are joined in from
+// /holdings/period-returns (which prices each ticker off the same PriceBar
+// cache the terminal chart uses). Default 'purchase' preserves the table's
+// original since-purchase column.
+const RETURN_RANGES = [
+  { key: '1D', label: 'Daily' },
+  { key: '1W', label: 'Weekly' },
+  { key: '1M', label: 'Monthly' },
+  { key: '1Y', label: 'Yearly' },
+  { key: 'purchase', label: 'Since Buy' },
+];
+
+// Resolve one holding's { pct, usd } return for the selected timeframe.
+// Prefers the server's period-returns payload (keyed by ticker); falls back
+// to the sheet's own columns for 1D and purchase so the table still reads
+// correctly before that request lands or when a ticker is absent from it.
+// Anything genuinely unavailable (a young position with no 1Y history)
+// comes back as nulls, which the cells render as "—".
+function returnForRange(h, rangeKey, periodReturns) {
+  const pr = periodReturns?.[String(h.ticker || '').toUpperCase()];
+  const cell = pr?.[rangeKey];
+  if (cell && (cell.pct != null || cell.usd != null)) {
+    return { pct: cell.pct ?? null, usd: cell.usd ?? null };
+  }
+  if (rangeKey === 'purchase') {
+    return { pct: h.percentReturn ?? null, usd: h.dollarReturn ?? null };
+  }
+  if (rangeKey === '1D') {
+    const prior =
+      h.price != null && h.dayChange != null ? h.price - h.dayChange : null;
+    return {
+      pct: prior > 0 ? (h.dayChange / prior) * 100 : null,
+      usd: h.dayChange != null && h.shares != null ? h.dayChange * h.shares : null,
+    };
+  }
+  return { pct: null, usd: null };
+}
+
 // Starting capital the club was founded with. The sheet's per-position cost
 // basis sometimes drifts by a few dollars from rounding — anchoring Total
 // Gain/Loss to the actual dollar amount we began with avoids that error.
@@ -102,6 +141,15 @@ export default function Portfolio() {
   // user clicks the CASH row, plus the summary card below the table.
   const [cashYield, setCashYield] = useState(null);
   const [cashExpanded, setCashExpanded] = useState(false);
+  // Per-ticker returns across timeframes (1W/1M/1Y computed server-side from
+  // the price-history cache; 1D/purchase echoed from the sheet). Fetched
+  // independently of the main quotes so a slow or failed price-history pass
+  // never blocks the book from rendering — the column just falls back to the
+  // sheet's own numbers until it lands.
+  const [periodReturns, setPeriodReturns] = useState(null);
+  // Which timeframe the Holdings return column shows. 'purchase' matches the
+  // table's original behavior.
+  const [returnRange, setReturnRange] = useState('purchase');
 
   async function load() {
     setLoading(true);
@@ -130,9 +178,17 @@ export default function Portfolio() {
       .catch(() => setCashYield(null));
   }
 
+  function reloadPeriodReturns() {
+    return api
+      .get('/holdings/period-returns')
+      .then((r) => setPeriodReturns(r.data || {}))
+      .catch(() => setPeriodReturns(null));
+  }
+
   useEffect(() => {
     load();
     reloadCashYield();
+    reloadPeriodReturns();
   }, []);
 
   const totals = data?.totals || {};
@@ -188,6 +244,38 @@ export default function Portfolio() {
       pct: (dollarChange / cost) * 100,
     };
   }, [holdings]);
+
+  // Totals-row return for the selected timeframe. 'purchase' keeps the exact
+  // since-inception figure the table has always shown (anchored to capital
+  // invested). For any other window we roll the book up from the per-holding
+  // period returns: sum the dollar moves and divide by the summed
+  // start-of-period value, over just the positions that have data for that
+  // window (a young name with no 1Y history drops out rather than distorting
+  // the total).
+  const holdingsReturnTotal = useMemo(() => {
+    if (returnRange === 'purchase') {
+      return { usd: lifetimeGainLoss, pct: lifetimeGainLossPct };
+    }
+    let sumUsd = 0;
+    let sumBase = 0;
+    let any = false;
+    for (const h of holdings) {
+      if (h.isCash) continue;
+      const r = returnForRange(h, returnRange, periodReturns);
+      if (r.usd == null) continue;
+      const mv =
+        h.marketValue ??
+        (h.shares != null && h.price != null ? h.shares * h.price : null);
+      if (mv == null) continue;
+      const base = mv - r.usd; // position value at the start of the window
+      if (!(base > 0)) continue;
+      sumUsd += r.usd;
+      sumBase += base;
+      any = true;
+    }
+    if (!any || sumBase <= 0) return { usd: null, pct: null };
+    return { usd: sumUsd, pct: (sumUsd / sumBase) * 100 };
+  }, [returnRange, holdings, periodReturns, lifetimeGainLoss, lifetimeGainLossPct]);
 
   const [range, setRange] = useState('6M');
   const [selectedHolding, setSelectedHolding] = useState(null);
@@ -687,10 +775,38 @@ export default function Portfolio() {
             </div>
           ) : (
             <>
+            {/* Return timeframe toggle — drives the return column below in both
+                the desktop table and the mobile cards. Same segmented-control
+                look as the performance chart's range picker. */}
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+              <div className="text-xs text-navy-400">
+                Return shown:{' '}
+                <span className="font-semibold text-navy">
+                  {RETURN_RANGES.find((r) => r.key === returnRange)?.label}
+                </span>
+              </div>
+              <div className="flex rounded-lg border border-navy-100 bg-white p-0.5">
+                {RETURN_RANGES.map((r) => (
+                  <button
+                    key={r.key}
+                    onClick={() => setReturnRange(r.key)}
+                    className={`rounded-md px-3 py-1 text-xs font-semibold transition ${
+                      returnRange === r.key
+                        ? 'bg-navy text-white'
+                        : 'text-navy-400 hover:text-navy'
+                    }`}
+                  >
+                    {r.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
             {/* Mobile: stacked cards */}
             <div className="space-y-2 md:hidden">
               {holdings.map((h) => {
-                const up = (h.dollarReturn ?? 0) >= 0;
+                const ret = returnForRange(h, returnRange, periodReturns);
+                const up = (ret.pct ?? ret.usd ?? 0) >= 0;
                 const marketValue =
                   h.marketValue ??
                   (h.shares != null && h.price != null ? h.shares * h.price : null);
@@ -736,10 +852,14 @@ export default function Portfolio() {
                         {!h.isCash && (
                           <div
                             className={`text-xs font-semibold ${
-                              up ? 'text-emerald-600' : 'text-red-600'
+                              ret.pct == null
+                                ? 'text-navy-400'
+                                : up
+                                  ? 'text-emerald-600'
+                                  : 'text-red-600'
                             }`}
                           >
-                            {fmtPct(h.percentReturn)}
+                            {fmtPct(ret.pct)}
                           </div>
                         )}
                       </div>
@@ -749,8 +869,16 @@ export default function Portfolio() {
                         <span>
                           {h.shares ?? '—'} sh @ {fmtMoney(h.costBasis)}
                         </span>
-                        <span className={up ? 'text-emerald-600' : 'text-red-600'}>
-                          {fmtMoney(h.dollarReturn)}
+                        <span
+                          className={
+                            ret.usd == null
+                              ? 'text-navy-400'
+                              : up
+                                ? 'text-emerald-600'
+                                : 'text-red-600'
+                          }
+                        >
+                          {fmtMoney(ret.usd)}
                         </span>
                       </div>
                     )}
@@ -798,9 +926,15 @@ export default function Portfolio() {
                     {fmtMoney(displayedTotal)}
                   </div>
                   <div
-                    className={`text-xs font-semibold ${isUp ? 'text-emerald-600' : 'text-red-600'}`}
+                    className={`text-xs font-semibold ${
+                      holdingsReturnTotal.pct == null
+                        ? 'text-navy-400'
+                        : holdingsReturnTotal.pct >= 0
+                          ? 'text-emerald-600'
+                          : 'text-red-600'
+                    }`}
                   >
-                    {fmtPct(lifetimeGainLossPct)}
+                    {fmtPct(holdingsReturnTotal.pct)}
                   </div>
                 </div>
               </div>
@@ -818,13 +952,18 @@ export default function Portfolio() {
                     <th className="py-2 pr-4 text-right">Price</th>
                     <th className="py-2 pr-4 text-right">Value</th>
                     <th className="py-2 pr-4 text-right">Weight</th>
-                    <th className="py-2 pr-4 text-right">Return $</th>
-                    <th className="py-2 pr-4 text-right">Return %</th>
+                    <th className="py-2 pr-4 text-right">
+                      {RETURN_RANGES.find((r) => r.key === returnRange)?.label} $
+                    </th>
+                    <th className="py-2 pr-4 text-right">
+                      {RETURN_RANGES.find((r) => r.key === returnRange)?.label} %
+                    </th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-navy-50">
                   {holdings.map((h) => {
-                    const up = (h.dollarReturn ?? 0) >= 0;
+                    const ret = returnForRange(h, returnRange, periodReturns);
+                    const up = (ret.pct ?? ret.usd ?? 0) >= 0;
                     const marketValue =
                       h.marketValue ??
                       (h.shares != null && h.price != null ? h.shares * h.price : null);
@@ -882,25 +1021,25 @@ export default function Portfolio() {
                           </td>
                           <td
                             className={`py-3 pr-4 text-right tabular-nums font-semibold ${
-                              h.isCash
+                              h.isCash || ret.usd == null
                                 ? 'text-navy-400'
                                 : up
                                 ? 'text-emerald-600'
                                 : 'text-red-600'
                             }`}
                           >
-                            {h.isCash ? '—' : fmtMoney(h.dollarReturn)}
+                            {h.isCash ? '—' : fmtMoney(ret.usd)}
                           </td>
                           <td
                             className={`py-3 pr-4 text-right tabular-nums font-semibold ${
-                              h.isCash
+                              h.isCash || ret.pct == null
                                 ? 'text-navy-400'
                                 : up
                                 ? 'text-emerald-600'
                                 : 'text-red-600'
                             }`}
                           >
-                            {h.isCash ? '—' : fmtPct(h.percentReturn)}
+                            {h.isCash ? '—' : fmtPct(ret.pct)}
                           </td>
                         </tr>
                         {hasCashBreakdown && cashExpanded && (
@@ -946,17 +1085,25 @@ export default function Portfolio() {
                     <td />
                     <td
                       className={`py-3 pr-4 text-right font-bold tabular-nums ${
-                        isUp ? 'text-emerald-600' : 'text-red-600'
+                        holdingsReturnTotal.usd == null
+                          ? 'text-navy-400'
+                          : holdingsReturnTotal.usd >= 0
+                            ? 'text-emerald-600'
+                            : 'text-red-600'
                       }`}
                     >
-                      {fmtMoney(lifetimeGainLoss)}
+                      {fmtMoney(holdingsReturnTotal.usd)}
                     </td>
                     <td
                       className={`py-3 pr-4 text-right font-bold tabular-nums ${
-                        isUp ? 'text-emerald-600' : 'text-red-600'
+                        holdingsReturnTotal.pct == null
+                          ? 'text-navy-400'
+                          : holdingsReturnTotal.pct >= 0
+                            ? 'text-emerald-600'
+                            : 'text-red-600'
                       }`}
                     >
-                      {fmtPct(lifetimeGainLossPct)}
+                      {fmtPct(holdingsReturnTotal.pct)}
                     </td>
                   </tr>
                 </tfoot>

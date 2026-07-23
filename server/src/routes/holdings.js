@@ -1116,6 +1116,105 @@ router.get('/history', async (_req, res) => {
   res.json(snapshots);
 });
 
+// Per-equity returns across timeframes for the Portfolio holdings table:
+// { [ticker]: { '1D': {pct,usd}, '1W': …, '1M': …, '1Y': …, purchase: {pct,usd} } }
+//
+// 1D and purchase come straight off the sheet (dayChange is a PER-SHARE
+// dollar figure — see getPortfolioMovers — and percentReturn/dollarReturn
+// are the since-purchase columns). 1W/1M/1Y need each ticker's close at
+// the lookback date, which the PriceBar cache (services/priceHistory.js)
+// already holds for the terminal's GP chart — same source, no new vendor.
+// pct is the share-price move over the period; usd scales it by the
+// position's share count.
+//
+// The whole payload is memoized for 15 minutes and the per-ticker reads
+// run sequentially, so a page load never stampedes NASDAQ — on a warm
+// cache this is a handful of Postgres reads. Never 500s: a gap is a null
+// cell, and an upstream failure serves the last good payload (or {}).
+const periodReturnsCache = { at: 0, data: null };
+const PERIOD_RETURNS_TTL_MS = 15 * 60 * 1000;
+
+const PERIOD_LOOKBACKS = [
+  { key: '1W', days: 7 },
+  { key: '1M', days: 30 },
+  { key: '1Y', days: 365 },
+];
+
+// Latest close on or before the target day (bars ascending, ISO dates).
+function closeOnOrBefore(bars, targetIso) {
+  for (let i = bars.length - 1; i >= 0; i--) {
+    if (bars[i].date <= targetIso && bars[i].close != null) return bars[i].close;
+  }
+  return null;
+}
+
+router.get('/period-returns', async (_req, res) => {
+  if (periodReturnsCache.data && Date.now() - periodReturnsCache.at < PERIOD_RETURNS_TTL_MS) {
+    return res.json(periodReturnsCache.data);
+  }
+  try {
+    const sheet = await getSheetPortfolio();
+    const out = {};
+    for (const h of sheet.holdings) {
+      if (h.isCash) continue;
+      const ticker = String(h.ticker || '').trim().toUpperCase();
+      if (!/^[A-Z0-9.\-]{1,12}$/.test(ticker)) continue;
+
+      const shares = Number.isFinite(h.shares) ? h.shares : null;
+      const entry = {};
+
+      const prior =
+        h.price != null && h.dayChange != null ? h.price - h.dayChange : null;
+      entry['1D'] = {
+        pct: prior > 0 ? (h.dayChange / prior) * 100 : null,
+        usd: h.dayChange != null && shares != null ? h.dayChange * shares : null,
+      };
+      entry.purchase = {
+        pct: h.percentReturn ?? null,
+        usd:
+          h.dollarReturn ??
+          (h.marketValue != null && shares != null && h.costBasis != null
+            ? h.marketValue - shares * h.costBasis
+            : null),
+      };
+
+      let bars = [];
+      try {
+        bars = await getHistory(ticker, '2y');
+      } catch {
+        bars = []; // this ticker's lookbacks go null; the rest still fill
+      }
+      const last = bars.length ? bars[bars.length - 1] : null;
+      const current = h.price ?? last?.close ?? null;
+      for (const { key, days } of PERIOD_LOOKBACKS) {
+        const target = new Date(Date.now() - days * 86400_000)
+          .toISOString()
+          .slice(0, 10);
+        // Refuse to price a period the cache doesn't reach back to (a
+        // recent IPO): using the earliest bar would misstate the return.
+        const past =
+          bars.length && bars[0].date <= target
+            ? closeOnOrBefore(bars, target)
+            : null;
+        entry[key] =
+          current != null && past > 0
+            ? {
+                pct: ((current - past) / past) * 100,
+                usd: shares != null ? (current - past) * shares : null,
+              }
+            : { pct: null, usd: null };
+      }
+      out[ticker] = entry;
+    }
+    periodReturnsCache.at = Date.now();
+    periodReturnsCache.data = out;
+    res.json(out);
+  } catch (err) {
+    console.error('period-returns failed:', err.message);
+    res.json(periodReturnsCache.data || {});
+  }
+});
+
 // Upcoming earnings for every held equity ticker (next 60 days). Pulled
 // from Finnhub with a 12h per-ticker cache, then filtered + sorted so
 // the client can render a clean "next up" list.
