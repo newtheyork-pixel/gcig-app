@@ -31,6 +31,13 @@ export const BREAKING_THRESHOLD = 6;
 
 const cache = new Map(); // url -> { score, reason }
 
+// Terminal opens are bursty — a meeting starts and six members load the
+// workspace at once. Without this, every one of them finds the same
+// unscored URLs, and they all fire the same LLM call before the first
+// reply populates the cache. One pass at a time: later arrivals wait for
+// the in-flight pass, then re-read the cache it just filled.
+let inFlight = null;
+
 function remember(url, value) {
   cache.delete(url);
   cache.set(url, value);
@@ -124,6 +131,16 @@ export async function scoreBreaking(articles, deps = {}) {
   const scorer = deps.scoreBatch || scoreBatch;
   const store = deps.cache || cache;
 
+  // Tests inject their own cache and scorer and want deterministic,
+  // un-shared behavior; the in-flight guard is a production concern.
+  const shared = !deps.cache;
+
+  // Wait out any pass already running, so we score against the cache it
+  // leaves behind rather than duplicating its work.
+  if (shared && inFlight) {
+    await inFlight.catch(() => {});
+  }
+
   const unscored = list.filter((a) => a?.url && !store.has(a.url));
 
   // Only the unknowns cost a call, and only up to a batch — the strip
@@ -131,7 +148,7 @@ export async function scoreBreaking(articles, deps = {}) {
   // tail nobody will see.
   if (unscored.length > 0) {
     const batch = unscored.slice(0, BATCH_MAX);
-    try {
+    const pass = (async () => {
       const scored = await scorer(batch);
       for (const [i, value] of scored) {
         const article = batch[i];
@@ -140,8 +157,14 @@ export async function scoreBreaking(articles, deps = {}) {
           else remember(article.url, value);
         }
       }
+    })();
+    if (shared) inFlight = pass;
+    try {
+      await pass;
     } catch {
       /* leave them unscored */
+    } finally {
+      if (shared && inFlight === pass) inFlight = null;
     }
   }
 

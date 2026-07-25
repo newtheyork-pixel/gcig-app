@@ -118,3 +118,26 @@ test('the exported threshold is the boundary the filter actually uses', () => {
   // Below the bar it drops to the quiet-day path, not a hard filter.
   assert.ok(below.every((a) => a.breaking < BREAKING_THRESHOLD));
 });
+
+test('concurrent callers share one scoring pass', async () => {
+  // Uses the shared production cache path (no deps.cache) so the
+  // in-flight guard is exercised. Distinct URLs keep this run isolated
+  // from other tests in the file.
+  let calls = 0;
+  const scoreBatch = async (batch) => {
+    calls += 1;
+    await new Promise((r) => setTimeout(r, 25));
+    return new Map(batch.map((_, i) => [i, { score: 8, reason: 'shared' }]));
+  };
+  const articles = [
+    { title: 'x', url: 'https://herd.test/1', source: 'W' },
+    { title: 'y', url: 'https://herd.test/2', source: 'W' },
+  ];
+  const [a, b, c] = await Promise.all([
+    scoreBreaking(articles, { scoreBatch }),
+    scoreBreaking(articles, { scoreBatch }),
+    scoreBreaking(articles, { scoreBatch }),
+  ]);
+  assert.equal(calls, 1, 'three simultaneous callers must not each call the model');
+  for (const out of [a, b, c]) assert.ok(out.every((x) => x.breaking === 8));
+});
