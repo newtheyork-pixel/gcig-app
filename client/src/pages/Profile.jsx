@@ -436,6 +436,10 @@ export default function Profile() {
               <TwoFactorPanel />
             </SecuritySubsection>
 
+            <SecuritySubsection label="API Token">
+              <ApiToken />
+            </SecuritySubsection>
+
             <SecuritySubsection label="Active Sessions">
               <p className="max-w-md text-sm text-navy-400">
                 If you suspect your account has been accessed from another
@@ -608,5 +612,69 @@ function SecuritySubsection({ label, children }) {
       </div>
       {children}
     </section>
+  );
+}
+
+// Your own session token, on your own profile page.
+//
+// This exists because loading data through the API from a script needs a
+// credential, and the only way to get one was the browser console —
+// which on Safari means turning on the Develop menu first. This is not
+// new access: the token is already in this browser's localStorage, it is
+// the same one every request from this tab carries, and it dies with the
+// session like any other. Showing it to its owner exposes nothing that
+// owner did not already have.
+//
+// It is deliberately NOT a long-lived API key. A key that outlives a
+// session, survives "sign out everywhere", and sits in someone's shell
+// history is a different and much worse thing than a 24-hour token.
+function ApiToken() {
+  const [shown, setShown] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const token = localStorage.getItem('gcig_token') || '';
+
+  async function copy() {
+    try {
+      await navigator.clipboard.writeText(token);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // Clipboard is blocked in some contexts; revealing the token lets
+      // the user select it by hand rather than leaving them stuck.
+      setShown(true);
+    }
+  }
+
+  return (
+    <>
+      <p className="max-w-md text-sm text-navy-400">
+        Your current session token, for loading data through the API from a
+        script. It expires with this session and is revoked by “Sign out
+        everywhere”. Treat it like your password — anyone holding it can act
+        as you until it expires.
+      </p>
+      <div className="mt-4 flex flex-wrap items-center gap-2">
+        <Button onClick={copy} disabled={!token}>
+          {copied ? 'Copied' : 'Copy token'}
+        </Button>
+        <Button variant="secondary" onClick={() => setShown((v) => !v)} disabled={!token}>
+          {shown ? 'Hide' : 'Show'}
+        </Button>
+      </div>
+      {shown && token ? (
+        <textarea
+          readOnly
+          value={token}
+          onFocus={(e) => e.target.select()}
+          className="mt-3 w-full max-w-md rounded-lg border border-navy-100 bg-navy-50 p-2 font-mono text-[11px] text-navy"
+          rows={3}
+        />
+      ) : null}
+      {!token ? (
+        <p className="mt-2 text-xs text-red-700">
+          No token in this browser — sign in again to get one.
+        </p>
+      ) : null}
+    </>
   );
 }
