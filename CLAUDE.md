@@ -185,6 +185,18 @@ Sidebar, Landing, and `index.html`.
 - `server/src/routes/dashboard.js` — main dashboard payload, plus
   separate `/dashboard/day-in-review` (lazy LLM call) and
   `/dashboard/macro` endpoints.
+- **Transcript import** (`parseTranscriptText` in `transcription.js`,
+  `POST /research/interviews/:id/transcript`) — takes the
+  `[MM:SS] speaker_N: text` form scribe_v2 output is already saved in, so
+  existing transcripts round-trip without paying to re-run them. The
+  timestamps are per TURN, not per word: every word carries its turn's
+  bounds rather than an interpolated position, because inventing
+  sub-turn precision would make a citation look exact when it is a
+  guess. Recorded on the row as `imported (turn-level timing)`. Consent
+  is still required — a transcript existing is not evidence anyone
+  agreed to be recorded — and imports are MNPI-screened like any other.
+  `server/scripts/ingest-lindt.mjs` bulk-loads the Lindt corpus through
+  the live API (needs a member token; `--dry-run` prints the plan).
 - **MNPI screen** (`services/mnpiScreen.js`) — runs automatically on
   every transcript at ingest, before anyone reads or extracts from it,
   so an interview cannot sit unscreened. Two passes combined

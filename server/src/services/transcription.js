@@ -129,6 +129,87 @@ export function formatStamp(ms) {
   return h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${pad(m)}:${pad(s)}`;
 }
 
+// Parse a transcript we already have back into the shape the claim
+// pipeline reads. Lines look like:
+//
+//   [00:12] speaker_1: I would say the Hershey's sells more.
+//
+// which is exactly what renderTranscript above emits, so a transcript
+// produced by scribe_v2 elsewhere round-trips in without being re-run
+// through a paid API.
+//
+// The honesty problem here is precision. These timestamps are per TURN,
+// not per word. Interpolating a word's position inside its turn would
+// manufacture precision the source never had — a citation reading
+// "00:14:22" that is really a guess. So every word in a turn carries
+// that turn's bounds, and a located quote resolves to the turn that
+// contains it. Less precise than live transcription, and truthfully so:
+// the citation still lands you at the right moment of the recording.
+const LINE_RE = /^\[(\d{1,2}):(\d{2})(?::(\d{2}))?\]\s*([A-Za-z0-9_ .-]+?):\s*(.*)$/;
+
+export function parseTranscriptText(raw) {
+  const turns = [];
+  for (const line of String(raw || '').split(/\r?\n/)) {
+    const m = LINE_RE.exec(line.trim());
+    if (!m) continue; // headers, rules, blank lines
+    const [, a, b, c, speaker, text] = m;
+    // Two captured groups means MM:SS, three means H:MM:SS.
+    const startMs = c
+      ? (Number(a) * 3600 + Number(b) * 60 + Number(c)) * 1000
+      : (Number(a) * 60 + Number(b)) * 1000;
+    const body = text.trim();
+    if (!body) continue;
+    turns.push({
+      speaker: speaker.trim().replace(/\s+/g, '_').toLowerCase(),
+      startMs,
+      endMs: null, // filled below from the next turn's start
+      text: body,
+    });
+  }
+  if (turns.length === 0) {
+    const err = new Error(
+      'No timestamped lines found. Expected lines like "[00:12] speaker_1: …".'
+    );
+    err.code = 'UNPARSEABLE_TRANSCRIPT';
+    throw err;
+  }
+
+  // A turn runs until the next one starts. The last turn has no
+  // successor, so give it the median turn length rather than inventing a
+  // duration — it is a bounded guess about the tail, not about content.
+  const gaps = [];
+  for (let i = 0; i < turns.length - 1; i++) {
+    turns[i].endMs = turns[i + 1].startMs;
+    gaps.push(turns[i + 1].startMs - turns[i].startMs);
+  }
+  gaps.sort((x, y) => x - y);
+  const median = gaps.length ? gaps[Math.floor(gaps.length / 2)] : 5000;
+  const last = turns[turns.length - 1];
+  last.endMs = last.startMs + median;
+
+  // One entry per word, each carrying its TURN's bounds. locateQuote
+  // matches on the token sequence, so this gives correct matching with
+  // turn-level — never fabricated — timing.
+  const words = [];
+  for (const t of turns) {
+    for (const w of t.text.split(/\s+/)) {
+      if (!w) continue;
+      words.push({ text: w, startMs: t.startMs, endMs: t.endMs, speaker: t.speaker });
+    }
+  }
+
+  return {
+    turns,
+    words,
+    transcript: renderTranscript(turns),
+    durationMs: last.endMs,
+    speakerCount: new Set(turns.map((t) => t.speaker)).size,
+    // Stated plainly so nothing downstream mistakes this for
+    // word-accurate timing.
+    precision: 'turn',
+  };
+}
+
 /**
  * Transcribe an audio buffer.
  *

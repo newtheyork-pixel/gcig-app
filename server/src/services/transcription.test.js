@@ -86,3 +86,66 @@ test('the reading copy carries a stamp and a speaker on every turn', () => {
   assert.match(text, /\[01:02\] Speaker 1: We cut the rebate\./);
   assert.match(text, /\[01:10\] Unknown: Inaudible bit\./);
 });
+
+// Importing a transcript we already have. The risk is manufactured
+// precision: these timestamps are per turn, and interpolating a word's
+// position inside its turn would produce a citation that looks exact and
+// is a guess.
+import { parseTranscriptText } from './transcription.js';
+
+const SAMPLE = `TRANSCRIPT -- CVS Store 3, Harlem
+scribe_v2 diarized. dur ~216s
+======================================================================
+[00:00] speaker_0: Premium chocolate like Lindt, how does it sell?
+[00:12] speaker_1: I would say the Hershey's sells more because they are cheaper.
+[00:25] speaker_0: Way cheaper, yeah.`;
+
+test('parses timestamped turns and skips the header', () => {
+  const r = parseTranscriptText(SAMPLE);
+  assert.equal(r.turns.length, 3);
+  assert.equal(r.turns[0].startMs, 0);
+  assert.equal(r.turns[1].startMs, 12_000);
+  assert.equal(r.turns[1].speaker, 'speaker_1');
+});
+
+test('a turn ends where the next one begins', () => {
+  const r = parseTranscriptText(SAMPLE);
+  assert.equal(r.turns[0].endMs, 12_000);
+  assert.equal(r.turns[1].endMs, 25_000);
+});
+
+test('every word carries its turn bounds, never an interpolated guess', () => {
+  const r = parseTranscriptText(SAMPLE);
+  const inTurn2 = r.words.filter((w) => w.startMs === 12_000);
+  assert.ok(inTurn2.length > 3);
+  // Each word of a turn shares one start. A rising per-word offset here
+  // would mean we invented precision the source never had.
+  assert.equal(new Set(inTurn2.map((w) => w.startMs)).size, 1);
+  assert.equal(r.precision, 'turn');
+});
+
+test('supports H:MM:SS for long calls', () => {
+  const r = parseTranscriptText('[1:02:03] speaker_0: Still going.');
+  assert.equal(r.turns[0].startMs, 3_723_000);
+});
+
+test('the imported stream works with locateQuote', async () => {
+  const { locateQuote } = await import('./claimExtraction.js');
+  const r = parseTranscriptText(SAMPLE);
+  const hit = locateQuote(r.words, "the Hershey's sells more because they are cheaper");
+  assert.ok(hit, 'a real quote must locate');
+  assert.equal(hit.startMs, 12_000);
+  assert.equal(hit.speaker, 'speaker_1');
+  // And a paraphrase must still fail, exactly as with live transcription.
+  assert.equal(locateQuote(r.words, 'Hershey outsells Lindt on price'), null);
+});
+
+test('a file with no timestamped lines is refused, not silently empty', () => {
+  assert.throws(() => parseTranscriptText('Just some notes.\nNo timestamps here.'), /No timestamped lines/);
+  assert.throws(() => parseTranscriptText(''), /No timestamped lines/);
+});
+
+test('speaker counting reflects the real number of voices', () => {
+  assert.equal(parseTranscriptText(SAMPLE).speakerCount, 2);
+  assert.equal(parseTranscriptText('[00:01] speaker_0: alone').speakerCount, 1);
+});

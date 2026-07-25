@@ -3,7 +3,7 @@ import multer from 'multer';
 import rateLimit from 'express-rate-limit';
 import prisma from '../db.js';
 import { verifyJwt, requireRole } from '../middleware/auth.js';
-import { transcribe, isConfigured as transcriptionConfigured, formatStamp } from '../services/transcription.js';
+import { transcribe, isConfigured as transcriptionConfigured, formatStamp, parseTranscriptText } from '../services/transcription.js';
 import { extractClaims } from '../services/claimExtraction.js';
 import { assessTopics, formatCitation } from '../services/corroboration.js';
 import { assessCoverage, funnel } from '../services/questionCoverage.js';
@@ -850,6 +850,90 @@ router.post(
     }
   }
 );
+
+// Import a transcript we already have, instead of paying to re-run one.
+//
+// Accepts the "[MM:SS] speaker_N: text" form that scribe_v2 output is
+// already saved in. The timestamps are per TURN rather than per word, so
+// a claim from an imported transcript resolves to the turn containing it
+// — genuinely less precise than live transcription, and recorded as such
+// on the row rather than quietly presented as equivalent.
+//
+// Consent is still required. A transcript that exists is not evidence
+// the person agreed to be recorded, and importing must not become the
+// way round that check.
+router.post('/interviews/:id/transcript', canResearch, async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) return res.status(400).json({ error: 'Bad id' });
+  const text = req.body?.text;
+  if (!text || typeof text !== 'string') {
+    return res.status(400).json({ error: 'text is required' });
+  }
+  try {
+    const interview = await prisma.interview.findUnique({ where: { id } });
+    if (!interview) return res.status(404).json({ error: 'Not found' });
+    if (!interview.consentObtained) {
+      return res.status(409).json({
+        error: 'Consent is not recorded for this interview. Record consent before importing a transcript.',
+      });
+    }
+
+    let parsed;
+    try {
+      parsed = parseTranscriptText(text);
+    } catch (err) {
+      return res.status(422).json({ error: err.message });
+    }
+
+    // Imported transcripts get screened exactly like transcribed ones.
+    // Where the words came from changes nothing about whether they
+    // contain material non-public information.
+    const source = await prisma.researchSource.findUnique({
+      where: { id: interview.sourceId },
+      select: { relationship: true },
+    });
+    const screen = await screenTranscript(parsed.transcript, {
+      relationship: source?.relationship,
+    });
+
+    const updated = await prisma.interview.update({
+      where: { id },
+      data: {
+        transcript: parsed.transcript,
+        transcriptWords: parsed.words,
+        transcriptModel: `imported (${parsed.precision}-level timing)`,
+        durationMs: parsed.durationMs,
+        status: screen.risk === RISK.PROHIBITED ? 'Quarantined' : 'Transcribed',
+        mnpiRisk: screen.risk,
+        screenedAt: new Date(),
+        screenedById: req.user?.id ?? null,
+        quarantined: screen.risk === RISK.PROHIBITED,
+        quarantineNote:
+          screen.risk === RISK.PROHIBITED
+            ? `Auto-quarantined by MNPI screen: ${screen.reason}`
+            : null,
+      },
+      select: { id: true, status: true, durationMs: true, transcriptModel: true, mnpiRisk: true, quarantined: true },
+    });
+
+    res.json({
+      ...updated,
+      turnCount: parsed.turns.length,
+      wordCount: parsed.words.length,
+      speakerCount: parsed.speakerCount,
+      precision: parsed.precision,
+      screen: {
+        risk: screen.risk,
+        reason: screen.reason,
+        hits: screen.hits,
+        modelAvailable: screen.modelAvailable,
+      },
+    });
+  } catch (err) {
+    console.error('research/transcript import failed:', err.message);
+    res.status(500).json({ error: 'Could not import the transcript' });
+  }
+});
 
 // Extract claims from a transcribed interview.
 //
