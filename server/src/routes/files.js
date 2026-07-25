@@ -338,6 +338,29 @@ function allowedFrameAncestors() {
 // credential. It authorizes exactly one item, expires in minutes, and is
 // only ever minted by the JWT-guarded route above.
 router.get('/:itemId/inline', async (req, res) => {
+  // Relax the framing headers FIRST, before any early return. helmet's
+  // frameguard puts X-Frame-Options: SAMEORIGIN on every response, and
+  // the client (thegriffinfund.org) is a different origin from the API
+  // (gcig-api.onrender.com) — so without this the browser refuses to
+  // paint the frame and the preview is dead on arrival in production
+  // while working fine on localhost. Same treatment the SEC document
+  // proxy applies: drop the legacy header, replace it with a CSP naming
+  // our own client origins.
+  //
+  // This has to cover the error paths too, not just the stream. An
+  // expired token is the single most likely failure here — leave
+  // SAMEORIGIN on that 403 and the browser blocks the frame, so the
+  // member gets a browser error page instead of our "reopen the file"
+  // message and no way to tell what went wrong.
+  res.removeHeader('X-Frame-Options');
+  res.setHeader(
+    'Content-Security-Policy',
+    `frame-ancestors ${allowedFrameAncestors()}; script-src 'none'; object-src 'none'`
+  );
+  // The bytes are typed by streamPreview, never sniffed. A PDF a browser
+  // decides to treat as HTML would be an XSS vector on our own origin.
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+
   const claims = verifyFileToken(req.query.t);
   if (!claims) {
     return res.status(403).json({ error: 'Preview link expired — reopen the file.' });
@@ -348,22 +371,6 @@ router.get('/:itemId/inline', async (req, res) => {
     return res.status(403).json({ error: 'Preview link does not match this file.' });
   }
   try {
-    // helmet's frameguard puts X-Frame-Options: SAMEORIGIN on every
-    // response, and the client (thegriffinfund.org) is a different
-    // origin from the API (gcig-api.onrender.com) — so without this the
-    // browser refuses to paint the frame and the whole preview is dead
-    // on arrival in production while working fine on localhost. Same
-    // treatment the SEC document proxy already applies: drop the legacy
-    // header, replace it with a CSP that names our own client origins.
-    res.removeHeader('X-Frame-Options');
-    res.setHeader(
-      'Content-Security-Policy',
-      `frame-ancestors ${allowedFrameAncestors()}; script-src 'none'; object-src 'none'`
-    );
-    // The bytes are typed by streamPreview, never sniffed. A PDF that a
-    // browser decides to treat as HTML would be an XSS vector on our
-    // own origin.
-    res.setHeader('X-Content-Type-Options', 'nosniff');
     await streamPreview(claims.itemId, res);
   } catch (err) {
     if (err.code === 'UNSUPPORTED_PREVIEW') {

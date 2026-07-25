@@ -22,7 +22,25 @@ positions in via a Google Sheet).
 - Client: https://thegriffinfund.org (also gcig-client.onrender.com)
 - API: https://gcig-api.onrender.com
 - Local LLM: https://llm.thegriffinfund.org (Cloudflare tunnel → Ollama
-  qwen2.5:14b on Thomas's mac), with OpenAI fallback.
+  `qwen2.5:14b-instruct-q4_K_M`), with Claude/OpenAI fallback.
+  The GPU is the **Windows box** — THOMAS_HOME_PC, RTX 4060 Ti, reachable
+  over Tailscale at `ssh thoma@100.82.48.3`. Not the mac; that is where
+  this used to live. The chain is: cloudflared (tunnel `gcig-llm`, config
+  `C:\Users\thoma\.cloudflared\config.yml`) → `localhost:9099` →
+  `C:\llm_router.py` → Ollama on 11434 (Griffin Fund) or port 8000 (the
+  Optimize grading connectors — same router, different project).
+
+  **A 502 from the tunnel means the router is down.** That is the whole
+  failure mode, and `Get-NetTCPConnection -State Listen -LocalPort 9099`
+  confirms it in one command. The router is owned by the
+  `OptimizeLLMRouter` scheduled task — start it with
+  `Start-ScheduledTask -TaskName OptimizeLLMRouter`, never with
+  `Start-Process` over SSH, which dies with the session.
+
+  Note the box serves two projects and its model set drifts. Confirm the
+  Fund's configured model is actually present (`ollama list`) before
+  concluding the tunnel is healthy — a live tunnel still 404s every
+  request if the model was deleted to make room for another project's.
 
 **Repo:** `~/Desktop/gcig-app` on Thomas's mac. Single git remote,
 GitHub `newtheyork-pixel/gcig-app`, branch `main`. Render auto-deploys
@@ -156,6 +174,21 @@ Sidebar, Landing, and `index.html`.
 - `server/src/routes/dashboard.js` — main dashboard payload, plus
   separate `/dashboard/day-in-review` (lazy LLM call) and
   `/dashboard/macro` endpoints.
+- `server/src/services/newsFeeds.js` — keyless public RSS wires (Federal
+  Reserve press releases, WSJ Markets, CNBC, MarketWatch) merged into
+  `/terminal/top-news` alongside Finnhub. The Fed feed is the point: it
+  carries central-bank events the finance-trade feed is slow on. Regex
+  parser, no XML dependency. Strip markup BEFORE decoding entities — the
+  other order turns an escaped `&lt;word&gt;` into live tags that the
+  stripper then deletes.
+- `server/src/services/breakingClassifier.js` — scores each headline 0–10
+  on how genuinely *breaking* it is (urgency), which is a different
+  question from `articleRanker.js`'s materiality (thesis impact). The
+  terminal strip filters on it. Two degraded states that must stay
+  distinguishable: `classified:false` means the model never ran → show
+  the unfiltered wire; scored-but-none-qualified means a quiet day → show
+  the best few labelled "WIRE" rather than "BREAKING". Never blank the
+  strip.
 - `server/src/services/oneDriveStorage.js` — Graph file storage.
   `streamPreview` is the in-app preview path: PDFs and images stream
   through untouched, Office files are converted server-side via

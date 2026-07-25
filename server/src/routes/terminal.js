@@ -25,6 +25,12 @@ import {
   summariesFor,
 } from '../services/internalResearch.js';
 import { extractFileText } from '../services/fileSummarizer.js';
+import { getWireHeadlines } from '../services/newsFeeds.js';
+import {
+  scoreBreaking,
+  filterBreaking,
+  BREAKING_THRESHOLD,
+} from '../services/breakingClassifier.js';
 
 // Terminal — AI-driven endpoints that back the /terminal workstation.
 // Quote/news/fundamentals data is reused from /api/holdings/* (already
@@ -788,20 +794,67 @@ router.get('/peers/:ticker', async (req, res) => {
   }
 });
 
-// TOP — market-wide general news. Uses Finnhub's general category feed
-// via the same news service (which routes broad-market tickers like SPY
-// through the general endpoint). 10-min cache via the service layer.
-router.get('/top-news', async (_req, res) => {
+// TOP — market-wide general news. Finnhub's general category feed via the
+// news service, merged with the keyless public wires (Fed press releases,
+// WSJ Markets, CNBC, MarketWatch) so central-bank and macro events show up
+// here even when the finance-trade feed is quiet on them.
+//
+// Every headline is then scored for how genuinely BREAKING it is, which is
+// what the strip filters on. Scoring is best-effort: if the model is
+// unreachable the articles come back with `breaking: null` and the client
+// falls back to the unfiltered wire rather than an empty strip.
+//
+// `?all=1` returns the unfiltered merge — TOP is a reading panel and wants
+// the whole feed, while the strip wants only what's urgent.
+router.get('/top-news', async (req, res) => {
   try {
-    const data = await getNewsForTicker('SPY', '');
-    const articles = (data?.articles || []).slice(0, 20).map((a) => ({
-      title: a.title,
-      url: a.url,
-      source: a.source,
-      publishedAt: a.publishedAt,
-      score: a.score ?? null,
-    }));
-    res.json({ articles, fetchedAt: data?.fetchedAt || new Date().toISOString() });
+    // Finnhub is the primary and must not be blocked by a slow publisher;
+    // the wire fetch already bounds itself and degrades to [].
+    const [data, wire] = await Promise.all([
+      getNewsForTicker('SPY', '').catch(() => null),
+      getWireHeadlines().catch(() => []),
+    ]);
+
+    const seen = new Set();
+    const merged = [];
+    for (const a of [...(data?.articles || []), ...wire]) {
+      if (!a?.title || !a?.url) continue;
+      const key = String(a.url).split('?')[0].toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      merged.push(a);
+    }
+    if (merged.length === 0 && !data) {
+      return res.status(502).json({ error: 'Top news unavailable' });
+    }
+    merged.sort(
+      (a, b) => new Date(b.publishedAt || 0) - new Date(a.publishedAt || 0)
+    );
+
+    const scored = await scoreBreaking(merged.slice(0, 25));
+    const wantAll = req.query.all === '1' || req.query.all === 'true';
+    const selected = wantAll ? scored : filterBreaking(scored);
+
+    res.json({
+      articles: selected.slice(0, 20).map((a) => ({
+        title: a.title,
+        url: a.url,
+        source: a.source,
+        publishedAt: a.publishedAt,
+        score: a.score ?? null,
+        breaking: a.breaking ?? null,
+        breakingReason: a.breakingReason ?? null,
+      })),
+      // Lets the client tell "nothing is breaking" apart from "we never
+      // got to judge" — two states that must not look alike.
+      classified: scored.some((a) => typeof a.breaking === 'number'),
+      threshold: BREAKING_THRESHOLD,
+      sources: {
+        finnhub: (data?.articles || []).length,
+        wire: wire.length,
+      },
+      fetchedAt: data?.fetchedAt || new Date().toISOString(),
+    });
   } catch (err) {
     console.error('terminal/top-news failed:', err.message);
     res.status(502).json({ error: 'Top news unavailable' });

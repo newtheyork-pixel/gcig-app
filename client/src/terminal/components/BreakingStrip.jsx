@@ -3,12 +3,27 @@ import api from '../../api/client.js';
 
 // Breaking-news strip — a thin live wire pinned under the command bar.
 // Pulls the market-wide headline feed every 30 minutes and rotates through
-// the most relevant stories one at a time (a real ticker cadence), pausing
-// on hover so a headline you want to click stays put. The whole strip is a
-// link to the current story's source outlet.
+// the stories one at a time (a real ticker cadence), pausing on hover so a
+// headline you want to click stays put. The whole strip is a link to the
+// current story's source outlet.
 //
 // This is the terminal's "relevant but not critical" news surface; the
 // genuinely market-moving one-a-day headline lives on the app Dashboard.
+//
+// What arrives here is already filtered server-side: every headline is
+// scored 0-10 for how genuinely breaking it is and only those clearing the
+// bar are sent. That filtering is the whole point — the strip used to say
+// "breaking" over an unranked wire, so an explainer about index funds sat
+// under the same banner as a rate decision.
+//
+// The server distinguishes three states and so must we, because they look
+// identical if you only count articles:
+//   classified && breaking present → real breaking news, badge it
+//   classified && none cleared     → a quiet day; server sends its best
+//                                    few, labelled as not-breaking
+//   !classified                    → the model was unreachable; this is
+//                                    the raw wire and must not claim to
+//                                    be anything more
 
 const REFRESH_MS = 30 * 60 * 1000; // pull fresh headlines every 30 min
 const ROTATE_MS = 9_000; // advance the visible headline every 9s
@@ -55,6 +70,12 @@ export default function BreakingStrip() {
   const [idx, setIdx] = useState(0);
   const [paused, setPaused] = useState(false);
   const [hidden, setHidden] = useState(false);
+  // Did the model actually get to judge this batch? Drives whether the
+  // strip is allowed to call itself "breaking".
+  const [classified, setClassified] = useState(false);
+  // Server-owned bar, mirrored so the label and the filter can never
+  // disagree. The literal is only the pre-first-response default.
+  const [threshold, setThreshold] = useState(6);
 
   // Fetch + refresh the headline pool.
   useEffect(() => {
@@ -68,6 +89,11 @@ export default function BreakingStrip() {
             ...a,
             source: normalizeSource(a?.source),
           }));
+          setClassified(!!data?.classified);
+          if (typeof data?.threshold === 'number') setThreshold(data.threshold);
+          // The per-outlet cap still applies. Scoring decides WHAT is
+          // worth showing; the cap keeps one prolific wire from owning
+          // the rotation when several of its stories qualify.
           const list = curate(wire);
           setItems(list);
           // Keep the pointer valid if the list shrank.
@@ -99,14 +125,40 @@ export default function BreakingStrip() {
   const current = items[Math.min(idx, items.length - 1)];
   if (!current) return null;
 
+  // Only claim "BREAKING" when the model actually said so about THIS
+  // headline. On a quiet day, or with the model down, the strip still
+  // carries the wire — it just stops overstating what it is.
+  const isBreaking =
+    classified && typeof current.breaking === 'number' && current.breaking >= threshold;
+
+  // Surface the model's one-line justification on hover. Seeing why a
+  // story was promoted is how anyone builds trust in the filter — or
+  // catches it being wrong.
+  const hoverTitle = current.breakingReason
+    ? `${current.title}\n\n[${current.breaking}/10] ${current.breakingReason}`
+    : current.title;
+
   return (
     <div
       className="term-breaking"
       onMouseEnter={() => setPaused(true)}
       onMouseLeave={() => setPaused(false)}
     >
-      <span className="term-breaking-tag">
-        <span className="dot" /> BREAKING
+      <span
+        className="term-breaking-tag"
+        title={
+          isBreaking
+            ? 'Rated genuinely breaking by the research model'
+            : classified
+            ? 'Nothing cleared the breaking bar — showing the top of the wire'
+            : 'Headline scoring unavailable — showing the unfiltered wire'
+        }
+        // Drop the pulsing dot when nothing is actually breaking: the
+        // animation is the part that reads as urgency across the room.
+        style={isBreaking ? undefined : { opacity: 0.75 }}
+      >
+        {isBreaking ? <span className="dot" /> : null}
+        {isBreaking ? ' BREAKING' : ' WIRE'}
       </span>
 
       <a
@@ -114,7 +166,7 @@ export default function BreakingStrip() {
         href={current.url}
         target="_blank"
         rel="noopener noreferrer"
-        title={current.title}
+        title={hoverTitle}
       >
         {current.source ? <span className="src">{current.source}</span> : null}
         <span className="hl">{current.title}</span>

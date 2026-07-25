@@ -26,7 +26,10 @@ export default function TopNews() {
       prevUrlsRef.current = new Set();
     }
     api
-      .get('/terminal/top-news')
+      // `all=1` keeps the whole market-wide feed. The endpoint filters to
+      // genuinely-breaking stories by default for the ticker strip; TOP is
+      // a reading panel and wants everything.
+      .get('/terminal/top-news?all=1')
       .then(({ data }) => {
         const list = data?.articles || [];
 
