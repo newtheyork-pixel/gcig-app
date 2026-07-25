@@ -7,6 +7,8 @@ import { transcribe, isConfigured as transcriptionConfigured, formatStamp } from
 import { extractClaims } from '../services/claimExtraction.js';
 import { assessTopics, formatCitation } from '../services/corroboration.js';
 import { assessCoverage, funnel } from '../services/questionCoverage.js';
+import { synthesize } from '../services/synthesis.js';
+import { screenTranscript, RISK } from '../services/mnpiScreen.js';
 import { uploadFile } from '../services/oneDriveStorage.js';
 
 // Field research — sources, interviews, and the claim ledger.
@@ -278,6 +280,81 @@ router.delete('/artifacts/:id', canResearch, async (req, res) => {
   } catch (err) {
     console.error('research/artifact delete failed:', err.message);
     res.status(500).json({ error: 'Could not remove artifact' });
+  }
+});
+
+// ── Synthesis: the memo at the end ───────────────────────────────────
+//
+// Drafts a memo from the project's own evidence, with every factual
+// sentence carrying the claim ids it rests on. Saved as an artifact so
+// it lives beside the evidence it was written from, and re-runnable —
+// a draft is a starting point for the author, never the finished
+// product, and nothing here overwrites human prose.
+router.post('/projects/:id/synthesize', canResearch, heavyLimiter, async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) return res.status(400).json({ error: 'Bad id' });
+  try {
+    const project = await prisma.researchProject.findUnique({
+      where: { id },
+      include: {
+        questions: { orderBy: [{ rank: 'asc' }, { id: 'asc' }] },
+        visits: { include: { siteObservations: true } },
+      },
+    });
+    if (!project) return res.status(404).json({ error: 'Not found' });
+
+    const claims = await prisma.researchClaim.findMany({
+      where: { interview: { projectId: id, ...CITABLE } },
+      include: {
+        interview: {
+          select: {
+            conductedAt: true,
+            source: { select: SOURCE_PUBLIC },
+          },
+        },
+      },
+    });
+    const observations = project.visits.flatMap((v) =>
+      v.siteObservations.map((o) => ({ ...o, visit: { location: v.location } }))
+    );
+    const coverage = assessCoverage(project.questions, claims, observations);
+
+    const result = await synthesize({ ...project, claims }, coverage);
+    if (result.unavailable) {
+      return res.status(503).json({ error: result.reason });
+    }
+
+    // Persist as a memo artifact. Each run is a new row rather than an
+    // overwrite: drafts get edited by hand, and silently replacing
+    // someone's edited memo with a fresh generation would be the worst
+    // possible behaviour here.
+    const artifact = await prisma.researchArtifact.create({
+      data: {
+        projectId: id,
+        kind: 'memo',
+        title: `Draft memo — ${new Date().toISOString().slice(0, 10)}`,
+        body: result.draft,
+        note: `Drafted from ${result.evidenceCount} claims; cites ${result.citedCount}.` +
+          (result.removedCitations
+            ? ` ${result.removedCitations} invented citation(s) removed.`
+            : ''),
+        uploadedById: req.user?.id ?? null,
+      },
+    });
+
+    res.json({
+      artifactId: artifact.id,
+      draft: result.draft,
+      citedCount: result.citedCount,
+      evidenceCount: result.evidenceCount,
+      // Non-zero means the model reached for evidence it did not have.
+      // Surfaced rather than swallowed: the author should know before
+      // they trust a word of it.
+      removedCitations: result.removedCitations,
+    });
+  } catch (err) {
+    console.error('research/synthesize failed:', err.message);
+    res.status(502).json({ error: 'Could not draft the memo' });
   }
 });
 
@@ -703,6 +780,18 @@ router.post(
         numSpeakers: Number(req.body?.numSpeakers) || 2,
       });
 
+      // Screen every transcript the moment it exists, before anyone
+      // reads it or extracts from it. Doing this at ingest rather than
+      // on request means an interview cannot sit unscreened in the
+      // archive, and the result is stored on the row as the audit trail.
+      const source = await prisma.researchSource.findUnique({
+        where: { id: interview.sourceId },
+        select: { relationship: true },
+      });
+      const screen = await screenTranscript(result.transcript, {
+        relationship: source?.relationship,
+      });
+
       const updated = await prisma.interview.update({
         where: { id },
         data: {
@@ -711,15 +800,36 @@ router.post(
           transcriptWords: result.words,
           transcriptModel: result.model,
           durationMs: result.durationMs,
-          status: 'Transcribed',
+          status: screen.risk === RISK.PROHIBITED ? 'Quarantined' : 'Transcribed',
+          mnpiRisk: screen.risk,
+          screenedAt: new Date(),
+          screenedById: req.user?.id ?? null,
+          // Prohibited quarantines immediately: material non-public
+          // information must not reach the ledger while someone gets
+          // round to reviewing it. A person can release it afterwards —
+          // the safe default is the reversible one.
+          quarantined: screen.risk === RISK.PROHIBITED,
+          quarantineNote:
+            screen.risk === RISK.PROHIBITED
+              ? `Auto-quarantined by MNPI screen: ${screen.reason}`
+              : null,
         },
-        select: { id: true, status: true, durationMs: true, transcriptModel: true },
+        select: { id: true, status: true, durationMs: true, transcriptModel: true, mnpiRisk: true, quarantined: true },
       });
 
       res.json({
         ...updated,
         wordCount: result.words.length,
         speakerCount: result.speakerCount,
+        screen: {
+          risk: screen.risk,
+          reason: screen.reason,
+          hits: screen.hits,
+          // A "low" that only the crude pass produced is not the same
+          // as a clean bill of health, and the UI should not present it
+          // as one.
+          modelAvailable: screen.modelAvailable,
+        },
         // One separated voice on a two-party call means diarization
         // failed, and every attribution from it would be a guess. The
         // caller is told rather than left to discover it in a footnote.

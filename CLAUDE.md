@@ -174,6 +174,27 @@ Sidebar, Landing, and `index.html`.
 - `server/src/routes/dashboard.js` — main dashboard payload, plus
   separate `/dashboard/day-in-review` (lazy LLM call) and
   `/dashboard/macro` endpoints.
+- **MNPI screen** (`services/mnpiScreen.js`) — runs automatically on
+  every transcript at ingest, before anyone reads or extracts from it,
+  so an interview cannot sit unscreened. Two passes combined
+  PESSIMISTICALLY: a keyword pass that needs no network and cannot be
+  unavailable, then a model pass for the innocuously-phrased cases. The
+  model can RAISE risk and never lower what keywords or the source
+  relationship established — a screen that can be talked out of a flag
+  is not a screen. Current employees start elevated regardless.
+  `prohibited` auto-quarantines (reversible by a person); everything
+  else flags and explains. `modelAvailable:false` on a `low` result
+  means only the crude pass ran — never present that as a clearance.
+- **Synthesis** (`services/synthesis.js`) — drafts the end-of-project
+  memo from the project's own evidence only. Citations are VERIFIED,
+  not trusted: every `[C123]` must match a supplied claim id, invented
+  ones are stripped and counted (`removedCitations` — non-zero means
+  read the draft closely). Support level is stated per question in the
+  prompt so thin findings must say they are thin, and questions with no
+  evidence are output as open rather than omitted — the most dangerous
+  memo is the one that reads complete because the holes were left out.
+  Saved as a `memo` artifact; each run is a new row, never an overwrite
+  of someone's edited prose.
 - **The question spine** (`services/questionCoverage.js`) —
   `ResearchQuestion` is what makes FLD a process rather than a pile of
   facts. Claims and observations link to a question; coverage is then

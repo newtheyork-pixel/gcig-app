@@ -546,11 +546,23 @@ function InterviewRow({ interview: i, onChanged, setFlash }) {
       const { data } = await api.post(`/research/interviews/${i.id}/recording`, form, {
         headers: { 'Content-Type': 'multipart/form-data' },
       });
+      // Compliance first, quality second. If the screen quarantined this
+      // interview that is the only thing worth saying — the word count
+      // is irrelevant next to it.
+      const sc = data.screen || {};
+      const parts = [`Transcribed ${data.wordCount} words, ${data.speakerCount} speakers.`];
+      if (data.quarantined) {
+        parts.unshift(`QUARANTINED — ${sc.reason}. Its claims cannot be cited until a person releases it.`);
+      } else if (sc.risk === 'elevated') {
+        parts.push(`MNPI screen: elevated — ${sc.reason}. Read it before extracting.`);
+      } else if (sc.risk === 'low' && sc.modelAvailable === false) {
+        // Do not let a keyword-only pass read as an all-clear.
+        parts.push('MNPI screen ran on keywords only (model unavailable) — not a full clearance.');
+      }
+      if (data.diarizationWarning) parts.push(data.diarizationWarning);
       setFlash({
-        bad: !!data.diarizationWarning,
-        text: data.diarizationWarning
-          ? `Transcribed ${data.wordCount} words. ${data.diarizationWarning}`
-          : `Transcribed ${data.wordCount} words, ${data.speakerCount} speakers.`,
+        bad: !!(data.quarantined || data.diarizationWarning || sc.risk === 'elevated'),
+        text: parts.join(' '),
       });
       onChanged();
     } catch (e) {
@@ -756,8 +768,31 @@ function Files({ project, onChanged, setFlash, onOpenDoc }) {
 function Coverage({ project, onChanged }) {
   const [text, setText] = useState('');
   const [saving, setSaving] = useState(false);
+  const [drafting, setDrafting] = useState(false);
+  const [draftNote, setDraftNote] = useState(null);
   const cov = project.coverage || { questions: [], summary: {} };
   const s = cov.summary || {};
+
+  async function draftMemo() {
+    setDrafting(true);
+    setDraftNote(null);
+    try {
+      const { data } = await api.post(`/research/projects/${project.id}/synthesize`);
+      setDraftNote({
+        bad: data.removedCitations > 0,
+        text:
+          `Draft saved to Files — cites ${data.citedCount} of ${data.evidenceCount} claims.` +
+          (data.removedCitations
+            ? ` ${data.removedCitations} invented citation(s) were removed; read it closely.`
+            : ''),
+      });
+      onChanged();
+    } catch (e) {
+      setDraftNote({ bad: true, text: e.response?.data?.error || 'Could not draft the memo' });
+    } finally {
+      setDrafting(false);
+    }
+  }
 
   async function add() {
     setSaving(true);
@@ -804,6 +839,30 @@ function Coverage({ project, onChanged }) {
           {s.unlinkedClaims
             ? ` · ${s.unlinkedClaims} claim${s.unlinkedClaims === 1 ? '' : 's'} answering something we never asked`
             : ''}
+        </div>
+      ) : null}
+
+      {/* Drafting is only offered once there is evidence to draft from.
+          A memo written from nothing is the single most misleading thing
+          this system could produce. */}
+      {project.claims.length > 0 || (project.visits || []).some((v) => v.siteObservations?.length) ? (
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          <TermButton onClick={draftMemo} disabled={drafting}>
+            {drafting ? 'Drafting…' : 'Draft memo'}
+          </TermButton>
+          <span style={{ color: 'var(--term-fg-muted)', fontSize: 10 }}>
+            Writes only from this project's evidence, every sentence cited.
+          </span>
+        </div>
+      ) : null}
+      {draftNote ? (
+        <div
+          style={{
+            fontSize: 11,
+            color: draftNote.bad ? 'var(--term-negative)' : 'var(--term-positive)',
+          }}
+        >
+          {draftNote.text}
         </div>
       ) : null}
 
