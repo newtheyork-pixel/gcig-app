@@ -1,18 +1,20 @@
 import { useEffect, useState } from 'react';
 import { X, ExternalLink, Download, Loader2 } from 'lucide-react';
-import api from '../api/client.js';
 import {
   isManagedFile,
-  extractItemId,
+  fetchPreviewUrl,
   downloadFile,
 } from '../api/fileHelpers.js';
 
 // In-app file preview. Two paths:
 //
-//   onedrive:ITEM_ID — asks the server for a short-lived OneDrive embed
-//                      URL (POST /me/drive/items/:id/preview) and loads
-//                      it in an iframe. Microsoft's Office Online viewer
-//                      handles PDF, PPTX, DOCX, XLSX uniformly.
+//   onedrive:ITEM_ID — asks our own API for a short-lived signed URL and
+//                      loads it in an iframe. PDFs stream through as-is;
+//                      PPTX/DOCX/XLSX are converted to PDF on the way
+//                      out. We render these ourselves because Microsoft's
+//                      Office Online embed action isn't served for
+//                      personal OneDrive accounts — see the note above
+//                      streamPreview in server/services/oneDriveStorage.js.
 //
 //   http(s)://...    — embedded directly via <iframe>. Works for sites
 //                      that don't set X-Frame-Options: DENY (Google
@@ -25,6 +27,7 @@ export default function FilePreviewModal({ url, title, filename, onClose }) {
   const [embedUrl, setEmbedUrl] = useState(null);
   const [loadError, setLoadError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [converted, setConverted] = useState(false);
 
   const managed = isManagedFile(url);
 
@@ -38,15 +41,13 @@ export default function FilePreviewModal({ url, title, filename, onClose }) {
     setLoading(true);
     setLoadError('');
     setEmbedUrl(null);
+    setConverted(false);
     (async () => {
       try {
-        const id = extractItemId(url);
-        const { data } = await api.get(
-          `/files/${encodeURIComponent(id)}/preview`
-        );
+        const preview = await fetchPreviewUrl(url);
         if (cancelled) return;
-        if (!data?.url) throw new Error('Preview URL missing from response');
-        setEmbedUrl(data.url);
+        setEmbedUrl(preview.url);
+        setConverted(preview.converted);
       } catch (err) {
         if (!cancelled) {
           setLoadError(
@@ -141,12 +142,22 @@ export default function FilePreviewModal({ url, title, filename, onClose }) {
               src={embedUrl}
               title={title || 'Document preview'}
               className="h-full w-full"
-              // OneDrive's embed URL serves the Office Online viewer in
-              // its own sandbox — no extra restrictions needed here.
+              // Same-origin document served by our own API — the browser's
+              // native PDF/image viewer takes it from here.
               allow="fullscreen"
             />
           ) : null}
         </div>
+
+        {/* Say plainly when the reader is looking at a rendering rather
+            than the uploaded file. Slide animations, embedded video and
+            speaker notes don't survive the PDF conversion, and someone
+            citing a deck should know which artifact they read. */}
+        {converted && !loading && !loadError ? (
+          <div className="border-t border-navy-50 px-4 py-1.5 text-[11px] text-navy-400">
+            Converted to PDF for viewing — download for the original file.
+          </div>
+        ) : null}
 
         {/* Mobile / fallback action strip. Always visible on small screens
             (where the header buttons are hidden). */}

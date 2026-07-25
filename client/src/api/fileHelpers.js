@@ -37,6 +37,30 @@ export async function fetchFileMetadata(url) {
   }
 }
 
+// Resolve a managed (`onedrive:`) ref into something an <iframe> can
+// actually load. The server answers with a URL on our own origin that
+// carries a short-lived signed grant — an iframe is a top-level GET and
+// can't send our Authorization header, so the file's own credential
+// travels in the query string instead.
+//
+// Resolves to `{ url, converted, filename }` on success and throws
+// otherwise, including the honest 415 for types we can't render inline
+// (archives, legacy binaries). Callers should catch and offer the
+// download path — never a blank frame.
+export async function fetchPreviewUrl(managedUrl) {
+  const id = extractItemId(managedUrl);
+  if (!id) throw new Error('Not a managed file');
+  const { data } = await api.get(`/files/${encodeURIComponent(id)}/preview`);
+  if (!data?.url) throw new Error('Preview URL missing from response');
+  return {
+    url: data.url,
+    // True when we're showing a PDF rendering of a PPTX/DOCX rather
+    // than the uploaded file itself — worth telling the reader.
+    converted: !!data.converted,
+    filename: data.filename || null,
+  };
+}
+
 // Click-handler helper for any "open this file" affordance. Routing:
 //   managed (onedrive:ITEM_ID) → set preview state so the in-app
 //                                FilePreviewModal opens with the

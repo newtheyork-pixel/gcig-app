@@ -171,6 +171,51 @@ async function extractText(buffer, filename) {
   throw err;
 }
 
+// Extracted text, memoized. The terminal's research reader pulls the
+// same document repeatedly as members scroll and reopen it, and each
+// miss costs a Graph download plus a full PDF parse. Uploaded files are
+// immutable, so a cache entry is never stale — the only reason to bound
+// it is memory. Keep the last few documents; the map is small (a big
+// deck extracts to well under a megabyte of text).
+const TEXT_CACHE = new Map();
+const TEXT_CACHE_MAX = 12;
+
+/**
+ * Pull the readable text out of a OneDrive-hosted document.
+ *
+ * Throws with `code = 'UNSUPPORTED_TYPE'` for formats we can't parse
+ * (images, archives) so callers can say so instead of showing an empty
+ * pane.
+ *
+ * @param {string} itemId - OneDrive item id
+ * @returns {Promise<{text: string, filename: string|null, chars: number}>}
+ */
+export async function extractFileText(itemId) {
+  const hit = TEXT_CACHE.get(itemId);
+  if (hit) {
+    // Refresh recency — Map preserves insertion order, so delete+set
+    // moves this entry to the back of the eviction queue.
+    TEXT_CACHE.delete(itemId);
+    TEXT_CACHE.set(itemId, hit);
+    return hit;
+  }
+
+  const meta = await fetchItemMetadata(itemId);
+  const buffer = await fetchBuffer(itemId);
+  const text = await extractText(buffer, meta.name);
+  const result = {
+    text,
+    filename: meta.name || null,
+    chars: text.length,
+  };
+
+  TEXT_CACHE.set(itemId, result);
+  if (TEXT_CACHE.size > TEXT_CACHE_MAX) {
+    TEXT_CACHE.delete(TEXT_CACHE.keys().next().value);
+  }
+  return result;
+}
+
 /**
  * Generate (or fetch cached) an AI summary for a OneDrive-hosted
  * file. Returns the full FileSummary row.

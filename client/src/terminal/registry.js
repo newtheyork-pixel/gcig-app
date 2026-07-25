@@ -28,6 +28,7 @@ import WeatherRadar from './functions/WeatherRadar.jsx';
 import MacroSensitivity from './functions/MacroSensitivity.jsx';
 import Portfolio from './functions/Portfolio.jsx';
 import SupplyChain from './functions/SupplyChain.jsx';
+import Research from './functions/Research.jsx';
 import ComingSoon from './functions/ComingSoon.jsx';
 
 export const FUNCTIONS = [
@@ -87,6 +88,10 @@ export const FUNCTIONS = [
   { id: 'CMP', label: 'Compare', help: '2–4 tickers side by side: live price, day %, valuation.', requires: null, component: Compare },
   { id: 'ICLUSTER', label: 'Insider Clusters', help: 'Multi-insider buy clusters across your book (last 60d).', requires: null, component: InsiderClusters },
   { id: 'NOTE', label: 'Notes', help: 'Your private research notes for this ticker (saved to your profile).', requires: 'ticker', component: Notes },
+  // Ticker-optional: `RSCH` opens the whole archive, `AIT RSCH` scopes
+  // it. Wider/taller than the default because this pane is read, not
+  // scanned — prose at 580px wraps every few words.
+  { id: 'RSCH', label: 'Internal Research', help: 'The club\'s own reports & pitch decks — full text and AI summaries, readable inline.', requires: null, component: Research, w: 800, h: 640 },
   { id: 'MGMT', label: 'Management & Board', help: 'CEO, board, comp & interlocking boards from the latest DEF 14A.', requires: 'ticker', component: Governance },
   { id: 'WEI', label: 'World Indices', help: 'Global index snapshot.', requires: null, component: WorldIndices },
   { id: 'TOP', label: 'Top News', help: 'Market-wide top headlines.', requires: null, component: TopNews, w: 780, h: 620 },

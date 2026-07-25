@@ -19,6 +19,12 @@ import { getWeatherImpact } from '../services/weatherSignals.js';
 import { getActiveAlerts } from '../services/wxAlerts.js';
 import { getMacroSensitivity } from '../services/factorSensitivity.js';
 import { scanUniverse as scanInsiderClusters } from '../services/insiderClusters.js';
+import {
+  listResearch,
+  getResearchItem,
+  summariesFor,
+} from '../services/internalResearch.js';
+import { extractFileText } from '../services/fileSummarizer.js';
 
 // Terminal — AI-driven endpoints that back the /terminal workstation.
 // Quote/news/fundamentals data is reused from /api/holdings/* (already
@@ -71,6 +77,7 @@ const KNOWN_FUNCTIONS = [
   { id: 'WX', label: 'Weather Impact', summary: 'Named-storm landfalls vs. Gulf O&G + P&C insurer baskets; historical playbook + active-storm feed.' },
   { id: 'RDR', label: 'Weather Radar', summary: 'Live US NEXRAD radar + active NWS warning polygons (tornado / severe TS / flood / winter / tropical).' },
   { id: 'MACRO', label: 'Macro Sensitivity', summary: 'Portfolio β to 10Y / WTI / USD / VIX / SPY (252-day OLS), top contributors, scenario preview.' },
+  { id: 'RSCH', label: 'Internal Research', summary: 'The club\'s own archive — research reports and pitch decks, readable in full with their AI summaries. Ticker-scoped or searched across everything.' },
   { id: 'HELP', label: 'Help', summary: 'List of available terminal functions.' },
 ];
 
@@ -1101,6 +1108,105 @@ router.post('/chat', async (req, res) => {
     preferQuality: true,
   });
   res.json({ reply: reply || 'AI is unavailable right now. Try again in a moment.' });
+});
+
+// ── RSCH — the club's own research ───────────────────────────────────
+//
+// Everything the Griffin Fund has written, readable inside the terminal
+// instead of only as a file to download. Two endpoints: an index, and a
+// reader that returns the document's extracted text plus its cached AI
+// summary.
+//
+// The point is that reading our own research never depends on a
+// document viewer working. Text extraction runs against the bytes, so a
+// deck stays readable here even when nothing can render it inline.
+
+// Full text is capped on the way out. A long 10-K-flavored report can
+// extract to hundreds of KB, which is a slow response and more than
+// anyone scrolls in a terminal pane. The client shows a truncation
+// notice and links to the file for the rest.
+const RESEARCH_TEXT_MAX = 120_000;
+
+router.get('/research', async (req, res) => {
+  try {
+    const items = await listResearch({
+      ticker: req.query.ticker || null,
+      q: req.query.q || null,
+    });
+    const summaries = await summariesFor(items.map((i) => i.fileRef));
+    res.json({
+      items: items.map((it) => ({
+        ...it,
+        // Surface what the reader can expect before they open it: a
+        // one-click AI read, or a document we'd have to parse first.
+        hasSummary: !!(it.fileRef && summaries[it.fileRef]),
+        managed: !!(it.fileRef && it.fileRef.startsWith('onedrive:')),
+      })),
+      counts: {
+        reports: items.filter((i) => i.kind === 'report').length,
+        pitches: items.filter((i) => i.kind === 'pitch').length,
+      },
+    });
+  } catch (err) {
+    console.error('RSCH index failed:', err.message);
+    res.status(500).json({ error: 'Could not load the research archive.' });
+  }
+});
+
+router.get('/research/:ref', async (req, res) => {
+  const ref = req.params.ref;
+  try {
+    const item = await getResearchItem(ref);
+    if (!item) return res.status(404).json({ error: 'No such research item.' });
+
+    // Nothing was ever uploaded for this row, or it points at an
+    // external link we don't host. Either way there's no text to pull —
+    // return the record so the panel can still show what it knows.
+    if (!item.fileRef || !item.fileRef.startsWith('onedrive:')) {
+      return res.json({
+        ...item,
+        summary: null,
+        text: null,
+        unavailable: item.fileRef
+          ? 'This document is an external link — open it to read.'
+          : 'No document was uploaded for this entry.',
+      });
+    }
+
+    const itemId = item.fileRef.slice('onedrive:'.length);
+    const summaries = await summariesFor([item.fileRef]);
+    const summary = summaries[item.fileRef] || null;
+
+    // A failed extraction must not take the whole panel down — the
+    // record and any existing summary are still worth showing. Image-
+    // only PDFs and unsupported types land here routinely.
+    let text = null;
+    let chars = null;
+    let unavailable = null;
+    try {
+      const extracted = await extractFileText(itemId);
+      chars = extracted.chars;
+      text = extracted.text.slice(0, RESEARCH_TEXT_MAX);
+    } catch (err) {
+      unavailable =
+        err.code === 'UNSUPPORTED_TYPE'
+          ? err.message
+          : 'Could not read the text of this document.';
+    }
+
+    res.json({
+      ...item,
+      summary: summary ? summary.summary : null,
+      summaryModel: summary ? summary.model : null,
+      text,
+      chars,
+      truncated: chars != null && chars > RESEARCH_TEXT_MAX,
+      unavailable,
+    });
+  } catch (err) {
+    console.error('RSCH read failed:', err.message);
+    res.status(500).json({ error: 'Could not open that research item.' });
+  }
 });
 
 // Mnemonic parser: TICKER FUNCTION [ARGS] -> structured form.

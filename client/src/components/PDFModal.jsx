@@ -1,5 +1,9 @@
-import { useEffect, useRef } from 'react';
-import { isManagedFile, downloadFile } from '../api/fileHelpers.js';
+import { useEffect, useRef, useState } from 'react';
+import {
+  isManagedFile,
+  downloadFile,
+  fetchPreviewUrl,
+} from '../api/fileHelpers.js';
 
 // Lean in-app PDF previewer. The body is a single <iframe> pointed at a
 // viewer-friendly URL so the browser's native PDF reader handles the
@@ -18,15 +22,19 @@ import { isManagedFile, downloadFile } from '../api/fileHelpers.js';
 //      header buttons, so the focus trap also wraps the iframe handle.
 //
 // Auth wrinkle for our OneDrive-served PDFs: `<iframe src=…>` is a
-// top-level GET that cannot carry our Authorization: Bearer header. The
-// existing /api/files/:itemId route is Bearer-only (verifyJwt, no query
-// /cookie auth path), so embedding it would 401. v1 ships with the
-// honest fallback for onedrive: refs — the preview panel says "can't
-// preview inline yet" and the new-tab button triggers the existing
-// authenticated download (downloadFile fetches with the Bearer header,
-// streams to a blob, and the browser saves it). Drive/Slides/plain-PDF
-// URLs still embed cleanly, which is the real v1 win. A small signed-
-// URL endpoint (≤30 min follow-up) lifts that gap when we get to it.
+// top-level GET that cannot carry our Authorization: Bearer header, and
+// /api/files/:itemId is Bearer-only, so embedding it would 401. v1
+// shipped the honest fallback — "can't preview inline yet" plus an
+// authenticated download. The signed-URL endpoint that note promised
+// now exists: GET /api/files/:itemId/preview returns a same-origin URL
+// carrying a short-lived HMAC grant, so managed refs embed like any
+// other document. Office files (PPTX/DOCX/XLSX) arrive converted to
+// PDF, since Microsoft doesn't serve its Office Online embed action to
+// personal OneDrive accounts.
+//
+// Resolving that URL is a network round trip, so managed refs render
+// asynchronously: null src while in flight, then the iframe, and the
+// download fallback if the server says the type can't preview at all.
 
 const FOCUSABLE =
   'a[href], button:not([disabled]), textarea, input, select, iframe, [tabindex]:not([tabindex="-1"])';
@@ -39,9 +47,9 @@ const FOCUSABLE =
 // the new-tab button is always reachable as the escape hatch.
 export function embedUrl(url, mime) {
   if (!url) return null;
-  // Our OneDrive-served files would 401 in an iframe (Bearer-only
-  // route, no top-level navigation auth). Return null so the modal
-  // shows the honest fallback instead of a broken viewer.
+  // Managed refs have no synchronous answer — their embeddable URL is
+  // minted per-open by the server. The component resolves those and
+  // supplies the src itself; this helper owns the external-URL path.
   if (isManagedFile(url)) return null;
   try {
     const u = new URL(url);
@@ -91,13 +99,15 @@ export function embedUrl(url, mime) {
 // honest-no-silent-break posture v1 already committed to). Known
 // non-embeddable downloads (PPTX, DOCX, archives) still return false
 // up front so we show the explicit fallback message instead of a
-// useless blank iframe, and managed onedrive: refs stay false for the
-// Bearer-header gap noted up top.
+// useless blank iframe. Managed onedrive: refs return false here too,
+// but for a different reason than they used to: only the server knows
+// whether it can render a given item, so the component asks it rather
+// than guessing from the URL.
 const NON_EMBEDDABLE_EXTS = /\.(pptx?|docx?|xlsx?|zip|rar|7z|tar|gz)(?:[?#].*)?$/i;
 
 export function embeddable(url, mime) {
   if (!url) return false;
-  if (isManagedFile(url)) return false; // see auth note above
+  if (isManagedFile(url)) return false; // resolved asynchronously instead
   if (mime === 'application/pdf') return true;
   try {
     const u = new URL(url);
@@ -130,6 +140,43 @@ export default function PDFModal({ url, title, mime, onClose }) {
   // the dialog so dismissing returns the user to whatever button opened
   // this. A ref (not state) keeps the effect pure with no re-render.
   const restoreRef = useRef(null);
+
+  // Managed (onedrive:) refs need a signed, same-origin URL before they
+  // can be framed. `null` while in flight or unresolved; the fallback
+  // panel covers both that window and an outright failure.
+  const [managedSrc, setManagedSrc] = useState(null);
+  const [resolving, setResolving] = useState(false);
+  const [converted, setConverted] = useState(false);
+
+  useEffect(() => {
+    if (!url || !isManagedFile(url)) {
+      setManagedSrc(null);
+      setConverted(false);
+      return undefined;
+    }
+    let cancelled = false;
+    setResolving(true);
+    setManagedSrc(null);
+    setConverted(false);
+    fetchPreviewUrl(url)
+      .then((preview) => {
+        if (cancelled) return;
+        setManagedSrc(preview.url);
+        setConverted(preview.converted);
+      })
+      .catch(() => {
+        // Types the server can't render (415) and transport failures
+        // land in the same place: the download fallback below, which
+        // is the one action that always works.
+        if (!cancelled) setManagedSrc(null);
+      })
+      .finally(() => {
+        if (!cancelled) setResolving(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [url]);
 
   // Esc closes; Tab is trapped within the dialog. Bound to the document
   // so a keystroke still lands while focus sits on the scrollable body
@@ -188,9 +235,11 @@ export default function PDFModal({ url, title, mime, onClose }) {
   if (!url) return null;
 
   const titleId = 'pdf-modal-title';
-  const src = embedUrl(url, mime);
-  const canEmbed = embeddable(url, mime);
   const managed = isManagedFile(url);
+  // Managed refs get their src from the resolver above; everything else
+  // is decided synchronously from the URL itself.
+  const src = managed ? managedSrc : embedUrl(url, mime);
+  const canEmbed = managed ? !!managedSrc : embeddable(url, mime);
 
   // The "Open in new tab" affordance has two routes. For external URLs
   // we just window.open them. For managed onedrive: refs the URL is a
@@ -290,7 +339,11 @@ export default function PDFModal({ url, title, mime, onClose }) {
         </div>
 
         <div className="flex-1 overflow-auto bg-navy-50">
-          {canEmbed && src ? (
+          {resolving ? (
+            <div className="flex h-full items-center justify-center px-4 text-center text-sm text-navy-400">
+              Loading preview…
+            </div>
+          ) : canEmbed && src ? (
             <iframe
               src={src}
               title={title || 'Document'}
@@ -306,6 +359,15 @@ export default function PDFModal({ url, title, mime, onClose }) {
             />
           )}
         </div>
+
+        {/* Decks read as PDF renderings — no animations, no speaker
+            notes. Say so rather than letting someone assume they saw
+            the original. */}
+        {converted && !resolving ? (
+          <div className="border-t border-navy-50 px-4 py-1.5 text-[11px] text-navy-400">
+            Converted to PDF for viewing — download for the original file.
+          </div>
+        ) : null}
       </div>
     </div>
   );
@@ -319,7 +381,7 @@ function FallbackPanel({ managed, onOpenExternal }) {
     <div className="flex h-full flex-col items-center justify-center gap-3 px-4 text-center">
       <p className="text-sm text-navy">
         {managed
-          ? "This file can't preview inline yet — download it to view."
+          ? "This file can't preview inline — download it to view."
           : "This file can't preview inline — open it in a new tab to view."}
       </p>
       <button

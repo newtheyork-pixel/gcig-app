@@ -156,6 +156,27 @@ Sidebar, Landing, and `index.html`.
 - `server/src/routes/dashboard.js` — main dashboard payload, plus
   separate `/dashboard/day-in-review` (lazy LLM call) and
   `/dashboard/macro` endpoints.
+- `server/src/services/oneDriveStorage.js` — Graph file storage.
+  `streamPreview` is the in-app preview path: PDFs and images stream
+  through untouched, Office files are converted server-side via
+  `?format=pdf`, anything else raises `UNSUPPORTED_PREVIEW` so the UI
+  offers a download instead of an empty frame. `previewPlan(filename)`
+  answers which of those applies without fetching a byte.
+- `server/src/services/signedFileUrl.js` — short-lived HMAC grants
+  (`JWT_SECRET`, 15 min) that let an `<iframe>` load one OneDrive item.
+  An iframe is a top-level GET and can't carry our Bearer header, so
+  `GET /api/files/:id/preview` (JWT-guarded) mints a token and
+  `GET /api/files/:id/inline?t=…` (token-guarded) streams the bytes.
+  The token is bound to one item id and the route re-checks it against
+  the path, so a valid grant can't be pointed at another document.
+- `server/src/services/internalResearch.js` — Report + Pitch flattened
+  into one chronology for RSCH. Ids are namespaced (`report:12`,
+  `pitch:12`) because the two tables share row numbers. Loaders are
+  injectable (`deps.loadReports` / `deps.loadPitches`) for tests.
+- `client/src/terminal/functions/Research.jsx` — RSCH panel. Index of
+  the archive plus a reader that shows extracted document text and any
+  cached AI summary, so our own research is legible in the terminal
+  without depending on a viewer rendering the file.
 - `server/src/routes/attendance.js` — `EventRosterOverride` table
   persists the super-admin × removals and + additions so they
   survive page reloads.
@@ -420,6 +441,21 @@ Hit-rate stats count `Approved` toward Voted Yes too.
   free, SEC EDGAR, FRED) deliberately. The exception is DocuSign,
   which we use because Thomas already pays for an account; never
   fall back to a second e-sign vendor.
+- Don't reach for Microsoft Graph's `driveItem: preview` action. It is
+  not served to personal Microsoft accounts — Microsoft's reference
+  says "only available on SharePoint and OneDrive for Business" and
+  lists delegated personal-MSA access as "Not supported" — and our
+  storage is a single consumer OneDrive. It returns
+  `400 invalidRequest — API not found`, always. `createLink` with
+  `type: "embed"` *is* the personal-account API, but it hands back an
+  anonymous, non-expiring public URL; we deliberately chose the signed
+  same-origin stream instead so internal research never leaves our
+  auth boundary.
+- Don't serve anything meant for an `<iframe>` without stripping
+  `X-Frame-Options` and setting a `frame-ancestors` CSP. helmet's
+  frameguard sets SAMEORIGIN on every response, and the client and API
+  are different origins — the frame silently refuses to paint in
+  production while working fine on localhost.
 - Don't auto-send the trade-confirmation envelope on vote close.
   The Send button is manual on purpose — gives the exec a chance to
   eyeball the share count against the live quote before the
@@ -443,6 +479,17 @@ Hit-rate stats count `Approved` toward Voted Yes too.
 
 ## Recent fixes / playbook notes
 
+- **Document preview 400'd everywhere (Jul '26)**: every in-app preview
+  failed with `Preview URL fetch failed (400) … "API not found"`. Root
+  cause was not our code — Graph's `/preview` action simply isn't
+  served to consumer OneDrive accounts. Replaced with our own signed
+  same-origin stream (`signedFileUrl.js` + `streamPreview`), which also
+  closed the gap PDFModal had documented since v1: managed `onedrive:`
+  refs now embed instead of falling back to a download. Lesson: when a
+  Graph call fails with `invalidRequest` and a *routing*-flavored
+  message like "API not found", check the doc's supported-account
+  table before debugging the request — the endpoint may not exist for
+  your drive type at all.
 - **DES had no company description (May '26)**: Finnhub free tier
   carries no business summary and Yahoo's profile endpoint is
   429/401-blocked from Render datacenter IPs (same wall as the GSAM

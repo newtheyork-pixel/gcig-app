@@ -9,8 +9,9 @@ import {
   exchangeCodeForTokens,
   uploadFile,
   streamDownload,
+  streamPreview,
+  previewPlan,
   getMetadata,
-  getPreviewUrl,
   getStatus,
   disconnect,
   isConfigured,
@@ -19,6 +20,7 @@ import {
   summarizeFile,
   getCachedSummary,
 } from '../services/fileSummarizer.js';
+import { signFileToken, verifyFileToken } from '../services/signedFileUrl.js';
 
 // File-storage endpoints. Backed by OneDrive via Microsoft Graph.
 // The OAuth callback (`/oauth/callback`) intentionally sits OUTSIDE
@@ -275,16 +277,40 @@ router.post('/:itemId/summarize', verifyJwt, summarizeLimiter, async (req, res) 
   }
 });
 
-// Metadata — filename + size, for rendering file chips in the UI.
-// Short-lived embed URL from Microsoft Graph. The frontend iframe-loads
-// this in the FilePreviewModal, which lets us preview PDF + Office files
-// (PPTX, DOCX, XLSX) without ever serving the bytes ourselves.
+// Hand the client a URL it can drop straight into an <iframe>.
+//
+// This used to return Microsoft's Office Online embed URL. That action
+// doesn't exist for personal OneDrive accounts — see the long note over
+// streamPreview in oneDriveStorage.js — so we serve the preview from
+// our own origin instead. The reply is a URL to /inline below, carrying
+// a signed grant good for one item for a few minutes, because an iframe
+// can't send our Authorization header.
+//
+// Unsupported types are rejected here rather than at stream time so the
+// modal can show "download instead" without first opening a dead frame.
 router.get('/:itemId/preview', verifyJwt, async (req, res) => {
   const { itemId } = req.params;
   if (!itemId) return res.status(400).json({ error: 'Bad item id' });
   try {
-    const { url } = await getPreviewUrl(itemId);
-    res.json({ url });
+    const meta = await getMetadata(itemId);
+    const plan = previewPlan(meta?.name);
+    if (plan.mode === 'unsupported') {
+      return res.status(415).json({
+        error: `Can't preview ${plan.ext ? `.${plan.ext}` : 'this'} files inline — download it to view.`,
+      });
+    }
+    const token = signFileToken(itemId, { userId: req.user?.id ?? null });
+    // Absolute, because the iframe resolves it against the *client*
+    // origin — which has no /api — if we hand back a relative path.
+    // `trust proxy` is on, so req.protocol reflects Render's TLS edge.
+    const origin = `${req.protocol}://${req.get('host')}`;
+    res.json({
+      url: `${origin}/api/files/${encodeURIComponent(itemId)}/inline?t=${encodeURIComponent(token)}`,
+      filename: meta?.name || null,
+      // 'convert' means the member is reading a PDF rendering of a
+      // PPTX/DOCX, not the file itself. The UI can say so.
+      converted: plan.mode === 'convert',
+    });
   } catch (err) {
     if (err.code === 'NOT_AUTHORIZED') {
       return res.status(503).json({ error: 'OneDrive not connected' });
@@ -294,6 +320,68 @@ router.get('/:itemId/preview', verifyJwt, async (req, res) => {
   }
 });
 
+// CLIENT_ORIGIN is the comma-separated list index.js already parses for
+// CORS. Re-parsed here for the same reason secDocProxy does it: keeps
+// the framing policy next to the route that needs it. The localhost
+// default mirrors index.js exactly — miss it and previews break in
+// local dev, where the env var is usually unset.
+function allowedFrameAncestors() {
+  const origins = (process.env.CLIENT_ORIGIN || 'http://localhost:5173')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  return ["'self'", ...origins].join(' ');
+}
+
+// The iframe target. Deliberately outside verifyJwt: a top-level browser
+// GET carries no Authorization header, so the signed `t` param is the
+// credential. It authorizes exactly one item, expires in minutes, and is
+// only ever minted by the JWT-guarded route above.
+router.get('/:itemId/inline', async (req, res) => {
+  const claims = verifyFileToken(req.query.t);
+  if (!claims) {
+    return res.status(403).json({ error: 'Preview link expired — reopen the file.' });
+  }
+  // Bind the signature to the path. Without this a valid token for one
+  // document would read any document the id in the URL names.
+  if (claims.itemId !== req.params.itemId) {
+    return res.status(403).json({ error: 'Preview link does not match this file.' });
+  }
+  try {
+    // helmet's frameguard puts X-Frame-Options: SAMEORIGIN on every
+    // response, and the client (thegriffinfund.org) is a different
+    // origin from the API (gcig-api.onrender.com) — so without this the
+    // browser refuses to paint the frame and the whole preview is dead
+    // on arrival in production while working fine on localhost. Same
+    // treatment the SEC document proxy already applies: drop the legacy
+    // header, replace it with a CSP that names our own client origins.
+    res.removeHeader('X-Frame-Options');
+    res.setHeader(
+      'Content-Security-Policy',
+      `frame-ancestors ${allowedFrameAncestors()}; script-src 'none'; object-src 'none'`
+    );
+    // The bytes are typed by streamPreview, never sniffed. A PDF that a
+    // browser decides to treat as HTML would be an XSS vector on our
+    // own origin.
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    await streamPreview(claims.itemId, res);
+  } catch (err) {
+    if (err.code === 'UNSUPPORTED_PREVIEW') {
+      return res.status(415).json({ error: err.message });
+    }
+    if (err.code === 'NOT_AUTHORIZED') {
+      return res.status(503).json({ error: 'OneDrive not connected' });
+    }
+    console.error('OneDrive inline preview failed:', err.message);
+    if (!res.headersSent) {
+      res.status(502).json({ error: err.message });
+    } else {
+      res.end();
+    }
+  }
+});
+
+// Metadata — filename + size, for rendering file chips in the UI.
 router.get('/:itemId/info', verifyJwt, async (req, res) => {
   try {
     const m = await getMetadata(req.params.itemId);

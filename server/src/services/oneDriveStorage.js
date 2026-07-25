@@ -391,34 +391,149 @@ export async function getMetadata(itemId) {
   return r.json();
 }
 
-// Ask Microsoft Graph for a short-lived embed URL that renders the file
-// in the Office Online viewer. Works for PDF, PPTX, DOCX, XLSX — anything
-// Office can render. Returns { url, postParameters? } where url is meant
-// to be loaded in an <iframe> and postParameters (if present) describes a
-// form post that produces the same render. We only need `url`.
-export async function getPreviewUrl(itemId) {
+// ── In-app preview ───────────────────────────────────────────────────
+//
+// We render previews ourselves rather than handing the browser an
+// Office Online embed URL. That isn't a preference — Graph's
+// `POST /me/drive/items/{id}/preview` action does not exist for this
+// account. Microsoft's reference is explicit: "The preview action is
+// currently only available on SharePoint and OneDrive for Business,"
+// and its permissions table lists delegated personal-Microsoft-account
+// access as "Not supported." Our storage is a single consumer OneDrive
+// (the OAuth authority is /common), so every call came back
+// `400 invalidRequest — API not found`. No retry or reconnect fixes
+// that; the route simply isn't served for consumer drives.
+//
+// So: fetch the bytes with our own credentials and stream them to the
+// member. PDFs go straight through. Office documents are converted by
+// Graph on the way out via `?format=pdf`, which *is* supported on
+// personal accounts. Images and plain text pass through as themselves.
+// Everything else is refused honestly so the client can offer a
+// download instead of painting an empty frame.
+
+// Source extensions Graph will convert to PDF. Taken from the format
+// table in the "Convert to other formats" reference — trimmed to the
+// types our upload allowlist actually admits, plus the legacy Office
+// formats old decks still arrive in.
+const PDF_CONVERTIBLE = new Set([
+  'doc', 'docx', 'dot', 'dotx', 'dotm',
+  'ppt', 'pptx', 'pps', 'ppsx', 'pot', 'potx',
+  'xls', 'xlsx', 'xlsm',
+  'odt', 'odp', 'ods',
+  'rtf', 'epub', 'htm', 'html', 'md', 'markdown', 'msg', 'eml',
+  'tif', 'tiff',
+]);
+
+// Types a browser renders natively in an iframe, so conversion would
+// only cost us latency and fidelity.
+const PASSTHROUGH_TYPES = {
+  pdf: 'application/pdf',
+  png: 'image/png',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  webp: 'image/webp',
+  gif: 'image/gif',
+  txt: 'text/plain; charset=utf-8',
+};
+
+function extensionOf(name) {
+  const m = /\.([A-Za-z0-9]+)$/.exec(String(name || ''));
+  return m ? m[1].toLowerCase() : '';
+}
+
+/**
+ * Decide how a file would preview without fetching a byte of it.
+ * Lets the caller reject unsupported types up front — a fast 415 beats
+ * streaming half a ZIP into an iframe.
+ *
+ * @returns {{mode: 'passthrough'|'convert'|'unsupported', contentType: string|null, ext: string}}
+ */
+export function previewPlan(filename) {
+  const ext = extensionOf(filename);
+  if (PASSTHROUGH_TYPES[ext]) {
+    return { mode: 'passthrough', contentType: PASSTHROUGH_TYPES[ext], ext };
+  }
+  if (PDF_CONVERTIBLE.has(ext)) {
+    return { mode: 'convert', contentType: 'application/pdf', ext };
+  }
+  return { mode: 'unsupported', contentType: null, ext };
+}
+
+// Copy a Graph response body into an Express response. Kept separate
+// from streamDownload because the preview path overrides the headers
+// wholesale (we know the type better than Graph does after a format
+// conversion) instead of proxying them through.
+async function pipeBody(upstream, res) {
+  const reader = upstream.body.getReader();
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      res.write(Buffer.from(value));
+    }
+  } finally {
+    res.end();
+  }
+}
+
+/**
+ * Stream a file to `res` shaped for inline display in an iframe.
+ * Converts Office documents to PDF on the way through.
+ *
+ * Throws with `code = 'UNSUPPORTED_PREVIEW'` for types we can't render,
+ * so the route can answer 415 and the client can fall back to download.
+ *
+ * @param {string} itemId - OneDrive item id
+ * @param {object} res - Express response
+ * @param {object} meta - Optional pre-fetched Graph metadata, to skip a round trip
+ */
+export async function streamPreview(itemId, res, meta = null) {
+  const item = meta || (await getMetadata(itemId));
+  const plan = previewPlan(item?.name);
+  if (plan.mode === 'unsupported') {
+    const err = new Error(
+      `Can't preview ${plan.ext ? `.${plan.ext}` : 'this'} files inline — download it to view.`
+    );
+    err.code = 'UNSUPPORTED_PREVIEW';
+    throw err;
+  }
+
   const token = await getAccessToken();
-  const url = `${GRAPH}/me/drive/items/${encodeURIComponent(itemId)}/preview`;
+  const base = `${GRAPH}/me/drive/items/${encodeURIComponent(itemId)}/content`;
+  const url = plan.mode === 'convert' ? `${base}?format=pdf` : base;
+
+  // Graph answers a conversion with 302 → a short-lived preauthenticated
+  // URL on a *.files.1drv.com host. undici follows it and drops the
+  // Authorization header across the origin change, which is exactly
+  // right: that URL carries its own grant.
   const r = await fetch(url, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${token}`,
-      'Content-Type': 'application/json',
-    },
-    // Empty body — defaults are fine. zoom=1, allowEdit=false implied.
-    body: '{}',
+    headers: { Authorization: `Bearer ${token}` },
+    redirect: 'follow',
   });
   if (!r.ok) {
     const text = await r.text().catch(() => '');
-    throw new Error(`Preview URL fetch failed (${r.status}): ${text.slice(0, 300)}`);
+    const verb = plan.mode === 'convert' ? 'PDF conversion' : 'Preview fetch';
+    throw new Error(`${verb} failed (${r.status}): ${text.slice(0, 300)}`);
   }
-  const json = await r.json();
-  // Graph returns { getUrl, postUrl, postParameters }. getUrl is suitable
-  // for direct iframe src.
-  if (!json?.getUrl) {
-    throw new Error('Preview URL missing from Graph response');
-  }
-  return { url: json.getUrl };
+
+  res.setHeader('Content-Type', plan.contentType);
+  const cl = r.headers.get('content-length');
+  if (cl) res.setHeader('Content-Length', cl);
+  // Name the download after the source file so a "save" from inside the
+  // browser's PDF viewer lands with a sensible filename. Converted docs
+  // get a .pdf suffix because that's genuinely what the bytes are now.
+  const stem = String(item?.name || 'document').replace(/\.[^.]+$/, '');
+  const outName =
+    plan.mode === 'convert' ? `${stem}.pdf` : item?.name || 'document';
+  res.setHeader(
+    'Content-Disposition',
+    `inline; filename="${outName.replace(/["\\]/g, '')}"`
+  );
+  // The URL already carries an expiry in its signature; tell shared
+  // caches to keep out of it regardless.
+  res.setHeader('Cache-Control', 'private, no-store');
+
+  await pipeBody(r, res);
 }
 
 export async function deleteFile(itemId) {
