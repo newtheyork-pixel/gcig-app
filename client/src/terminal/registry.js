@@ -29,6 +29,7 @@ import MacroSensitivity from './functions/MacroSensitivity.jsx';
 import Portfolio from './functions/Portfolio.jsx';
 import SupplyChain from './functions/SupplyChain.jsx';
 import Research from './functions/Research.jsx';
+import FieldWork from './functions/FieldWork.jsx';
 import ComingSoon from './functions/ComingSoon.jsx';
 
 export const FUNCTIONS = [
@@ -88,9 +89,15 @@ export const FUNCTIONS = [
   { id: 'CMP', label: 'Compare', help: '2–4 tickers side by side: live price, day %, valuation.', requires: null, component: Compare },
   { id: 'ICLUSTER', label: 'Insider Clusters', help: 'Multi-insider buy clusters across your book (last 60d).', requires: null, component: InsiderClusters },
   { id: 'NOTE', label: 'Notes', help: 'Your private research notes for this ticker (saved to your profile).', requires: 'ticker', component: Notes },
+  // Our own primary research on a company: brief, guides, recordings,
+  // transcripts, files and the pinned claim ledger. Ticker-optional —
+  // `FLD` lists every project, `AIT FLD` scopes to one name. Wide and
+  // tall because it is a workspace, not a readout.
+  { id: 'FLD', label: 'Field Research', help: 'Field-research projects: interview guides, recordings, transcripts, files and the pinned claim ledger.', requires: null, component: FieldWork, w: 860, h: 680 },
   // Ticker-optional: `RSCH` opens the whole archive, `AIT RSCH` scopes
   // it. Wider/taller than the default because this pane is read, not
-  // scanned — prose at 580px wraps every few words.
+  // scanned — prose at 580px wraps every few words. FLD is what we went
+  // and found; RSCH is what we already wrote up.
   { id: 'RSCH', label: 'Internal Research', help: 'The club\'s own reports & pitch decks — full text and AI summaries, readable inline.', requires: null, component: Research, w: 800, h: 640 },
   { id: 'MGMT', label: 'Management & Board', help: 'CEO, board, comp & interlocking boards from the latest DEF 14A.', requires: 'ticker', component: Governance },
   { id: 'WEI', label: 'World Indices', help: 'Global index snapshot.', requires: null, component: WorldIndices },

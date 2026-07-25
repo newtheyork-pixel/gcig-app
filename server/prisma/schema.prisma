@@ -101,6 +101,8 @@ model User {
   interviewsConducted      Interview[]      @relation("InterviewInterviewer")
   interviewsScreened       Interview[]      @relation("InterviewScreener")
   researchClaimsVerified   ResearchClaim[]  @relation("ResearchClaimVerifier")
+  researchProjectsCreated  ResearchProject[]  @relation("ResearchProjectCreator")
+  researchArtifacts        ResearchArtifact[] @relation("ResearchArtifactUploader")
 }
 
 // Chat channels are addressed by a simple string:
@@ -898,6 +900,11 @@ model Interview {
   quarantined     Boolean @default(false)
   quarantineNote  String?
 
+  // Nullable on purpose: a one-off call, or one logged before anyone
+  // opened a project, is still a real interview.
+  projectId     Int?
+  project       ResearchProject? @relation(fields: [projectId], references: [id], onDelete: SetNull)
+
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
   claims        ResearchClaim[]
@@ -905,6 +912,7 @@ model Interview {
   @@index([ticker, conductedAt(sort: Desc)])
   @@index([sourceId])
   @@index([status])
+  @@index([projectId])
 }
 
 // A single assertion, pinned to who said it and when. This is the unit a
@@ -941,4 +949,61 @@ model ResearchClaim {
 
   @@index([ticker, topic])
   @@index([interviewId])
+}
+
+// A field-research project: everything gathered on one company, in one
+// place. The container the terminal's FLD panel opens.
+//
+// A real channel-check effort accumulates more than interviews — the
+// question guide you wrote before the first call, the store photos, the
+// pricing sheet a distributor emailed over, the 10-K pages you marked
+// up, the running memo. Scattering those across a drive is how a project
+// becomes unreproducible six months later when someone asks where a
+// number came from. Everything hangs off this row.
+model ResearchProject {
+  id          Int      @id @default(autoincrement())
+  ticker      String?
+  name        String
+  // What we are trying to find out. Written before the work starts, so
+  // the project can be judged against what it set out to answer rather
+  // than what it happened to find.
+  brief       String?
+  // Open | Fieldwork | Synthesis | Closed
+  status      String   @default("Open")
+  createdById Int?
+  createdBy   User?    @relation("ResearchProjectCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  interviews  Interview[]
+  artifacts   ResearchArtifact[]
+
+  @@index([ticker, updatedAt(sort: Desc)])
+  @@index([status])
+}
+
+// Anything attached to a project. Either an uploaded file OR an inline
+// text body — a question guide someone typed straight in is as much a
+// project artifact as a PDF they dragged over, and forcing the second
+// shape on the first just makes people keep scripts in Notes instead.
+model ResearchArtifact {
+  id          Int      @id @default(autoincrement())
+  projectId   Int
+  project     ResearchProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  // guide | script | document | data | photo | memo | other. A string,
+  // so adding a category is a code change rather than a migration.
+  kind        String   @default("document")
+  title       String
+  // "onedrive:ITEM_ID" for uploads; null for inline text.
+  fileRef     String?
+  filename    String?
+  // Inline text, for guides and memos written in the app.
+  body        String?
+  note        String?
+  uploadedById Int?
+  uploadedBy  User?    @relation("ResearchArtifactUploader", fields: [uploadedById], references: [id], onDelete: SetNull)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([projectId, kind])
 }

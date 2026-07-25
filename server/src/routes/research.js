@@ -61,6 +61,208 @@ const SOURCE_PUBLIC = {
   tickers: true,
 };
 
+// ── Projects ─────────────────────────────────────────────────────────
+//
+// A project is the whole effort on one company: the brief, the question
+// guides, the interviews, the photos, the pricing sheets, the memo. One
+// row to open and everything is there — which is the difference between
+// research someone can reproduce next year and a folder nobody can
+// reconstruct.
+
+const ARTIFACT_KINDS = new Set([
+  'guide', 'script', 'document', 'data', 'photo', 'memo', 'other',
+]);
+const PROJECT_STATUSES = new Set(['Open', 'Fieldwork', 'Synthesis', 'Closed']);
+
+router.get('/projects', async (req, res) => {
+  try {
+    const ticker = req.query.ticker ? String(req.query.ticker).toUpperCase() : null;
+    const projects = await prisma.researchProject.findMany({
+      where: ticker ? { ticker } : undefined,
+      orderBy: { updatedAt: 'desc' },
+      include: {
+        createdBy: { select: { id: true, name: true } },
+        _count: { select: { interviews: true, artifacts: true } },
+      },
+    });
+    res.json(projects);
+  } catch (err) {
+    console.error('research/projects failed:', err.message);
+    res.status(500).json({ error: 'Could not load projects' });
+  }
+});
+
+// One project, fully assembled: artifacts, interviews, and the claim
+// ledger with triangulation. This is what the terminal panel opens, and
+// it is deliberately one request — a research surface that makes you
+// click four times to see what you have is a filing cabinet, not a
+// workspace.
+router.get('/projects/:id', async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) return res.status(400).json({ error: 'Bad id' });
+  try {
+    const project = await prisma.researchProject.findUnique({
+      where: { id },
+      include: {
+        createdBy: { select: { id: true, name: true } },
+        artifacts: {
+          orderBy: { createdAt: 'desc' },
+          include: { uploadedBy: { select: { id: true, name: true } } },
+        },
+        interviews: {
+          orderBy: { conductedAt: 'desc' },
+          include: {
+            source: { select: SOURCE_PUBLIC },
+            _count: { select: { claims: true } },
+          },
+        },
+      },
+    });
+    if (!project) return res.status(404).json({ error: 'Not found' });
+
+    const claims = await prisma.researchClaim.findMany({
+      where: { interview: { projectId: id, ...CITABLE } },
+      orderBy: [{ topic: 'asc' }, { startMs: 'asc' }],
+      include: {
+        interview: {
+          select: {
+            id: true, title: true, conductedAt: true,
+            source: { select: SOURCE_PUBLIC },
+          },
+        },
+      },
+    });
+
+    res.json({
+      ...project,
+      claims: claims.map((c) => ({
+        ...c,
+        stamp: formatStamp(c.startMs),
+        citation: formatCitation(c, { formatStamp }),
+      })),
+      topics: assessTopics(claims),
+      transcriptionReady: transcriptionConfigured(),
+    });
+  } catch (err) {
+    console.error('research/project failed:', err.message);
+    res.status(500).json({ error: 'Could not load project' });
+  }
+});
+
+router.post('/projects', canResearch, async (req, res) => {
+  const { ticker, name, brief } = req.body || {};
+  if (!name) return res.status(400).json({ error: 'name is required' });
+  try {
+    const project = await prisma.researchProject.create({
+      data: {
+        ticker: ticker ? String(ticker).toUpperCase().slice(0, 12) : null,
+        name: String(name).slice(0, 300),
+        brief: brief ? String(brief).slice(0, 5000) : null,
+        createdById: req.user?.id ?? null,
+      },
+    });
+    res.status(201).json(project);
+  } catch (err) {
+    console.error('research/project create failed:', err.message);
+    res.status(500).json({ error: 'Could not create project' });
+  }
+});
+
+router.patch('/projects/:id', canResearch, async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) return res.status(400).json({ error: 'Bad id' });
+  const data = {};
+  if (req.body?.name) data.name = String(req.body.name).slice(0, 300);
+  if (req.body?.brief !== undefined) {
+    data.brief = req.body.brief ? String(req.body.brief).slice(0, 5000) : null;
+  }
+  if (req.body?.status) {
+    if (!PROJECT_STATUSES.has(req.body.status)) {
+      return res.status(400).json({ error: `status must be one of: ${[...PROJECT_STATUSES].join(', ')}` });
+    }
+    data.status = req.body.status;
+  }
+  try {
+    res.json(await prisma.researchProject.update({ where: { id }, data }));
+  } catch (err) {
+    console.error('research/project update failed:', err.message);
+    res.status(500).json({ error: 'Could not update project' });
+  }
+});
+
+// Attach anything to a project — an uploaded file, or a guide typed
+// straight in. Both shapes land in the same list, because a script
+// someone wrote in the app is as much a project artifact as a PDF they
+// dragged over, and forcing the file shape on the first just means
+// people keep their scripts somewhere else.
+router.post(
+  '/projects/:id/artifacts',
+  canResearch,
+  upload.single('file'),
+  async (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id)) return res.status(400).json({ error: 'Bad id' });
+    const title = req.body?.title || req.file?.originalname;
+    if (!title) return res.status(400).json({ error: 'title or a file is required' });
+    if (!req.file && !req.body?.body) {
+      return res.status(400).json({ error: 'Attach a file or write some text.' });
+    }
+    const kind = ARTIFACT_KINDS.has(req.body?.kind) ? req.body.kind : 'document';
+    try {
+      const project = await prisma.researchProject.findUnique({ where: { id } });
+      if (!project) return res.status(404).json({ error: 'No such project' });
+
+      let fileRef = null;
+      if (req.file) {
+        const stored = await uploadFile({
+          buffer: req.file.buffer,
+          filename: req.file.originalname || 'artifact',
+          contentType: req.file.mimetype || 'application/octet-stream',
+        });
+        if (!stored?.id) {
+          return res.status(502).json({ error: 'File storage failed — nothing was attached.' });
+        }
+        fileRef = `onedrive:${stored.id}`;
+      }
+
+      const artifact = await prisma.researchArtifact.create({
+        data: {
+          projectId: id,
+          kind,
+          title: String(title).slice(0, 300),
+          fileRef,
+          filename: req.file?.originalname || null,
+          body: req.body?.body ? String(req.body.body).slice(0, 100_000) : null,
+          note: req.body?.note ? String(req.body.note).slice(0, 1000) : null,
+          uploadedById: req.user?.id ?? null,
+        },
+        include: { uploadedBy: { select: { id: true, name: true } } },
+      });
+      // Touch the project so the list sorts by real activity.
+      await prisma.researchProject.update({ where: { id }, data: { updatedAt: new Date() } });
+      res.status(201).json(artifact);
+    } catch (err) {
+      if (err.code === 'NOT_AUTHORIZED') {
+        return res.status(503).json({ error: 'File storage is not connected.' });
+      }
+      console.error('research/artifact failed:', err.message);
+      res.status(500).json({ error: 'Could not attach artifact' });
+    }
+  }
+);
+
+router.delete('/artifacts/:id', canResearch, async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) return res.status(400).json({ error: 'Bad id' });
+  try {
+    await prisma.researchArtifact.delete({ where: { id } });
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('research/artifact delete failed:', err.message);
+    res.status(500).json({ error: 'Could not remove artifact' });
+  }
+});
+
 // ── Sources ──────────────────────────────────────────────────────────
 
 router.get('/sources', async (req, res) => {
@@ -120,8 +322,12 @@ router.post('/sources', canResearch, async (req, res) => {
 router.get('/interviews', async (req, res) => {
   try {
     const ticker = req.query.ticker ? String(req.query.ticker).toUpperCase() : null;
+    const projectId = Number(req.query.projectId);
     const interviews = await prisma.interview.findMany({
-      where: ticker ? { ticker } : undefined,
+      where: {
+        ...(ticker ? { ticker } : {}),
+        ...(Number.isInteger(projectId) ? { projectId } : {}),
+      },
       orderBy: { conductedAt: 'desc' },
       include: {
         source: { select: SOURCE_PUBLIC },
@@ -159,7 +365,7 @@ router.get('/interviews/:id', async (req, res) => {
 });
 
 router.post('/interviews', canResearch, async (req, res) => {
-  const { sourceId, ticker, title, conductedAt, consentObtained, consentNote, mnpiRisk } = req.body || {};
+  const { sourceId, ticker, title, conductedAt, consentObtained, consentNote, mnpiRisk, projectId } = req.body || {};
   if (!sourceId || !title) {
     return res.status(400).json({ error: 'sourceId and title are required' });
   }
@@ -188,6 +394,7 @@ router.post('/interviews', canResearch, async (req, res) => {
         consentNote: consentNote ? String(consentNote).slice(0, 1000) : null,
         mnpiRisk: risk,
         quarantined: risk === 'prohibited',
+        projectId: Number.isInteger(Number(projectId)) ? Number(projectId) : null,
       },
       include: { source: { select: SOURCE_PUBLIC } },
     });

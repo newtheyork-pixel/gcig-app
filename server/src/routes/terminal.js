@@ -83,6 +83,7 @@ const KNOWN_FUNCTIONS = [
   { id: 'WX', label: 'Weather Impact', summary: 'Named-storm landfalls vs. Gulf O&G + P&C insurer baskets; historical playbook + active-storm feed.' },
   { id: 'RDR', label: 'Weather Radar', summary: 'Live US NEXRAD radar + active NWS warning polygons (tornado / severe TS / flood / winter / tropical).' },
   { id: 'MACRO', label: 'Macro Sensitivity', summary: 'Portfolio β to 10Y / WTI / USD / VIX / SPY (252-day OLS), top contributors, scenario preview.' },
+  { id: 'FLD', label: 'Field Research', summary: 'Our own primary research on a company — interview guides, recordings, transcripts, uploaded files, and the claim ledger with each claim pinned to a source and timestamp.' },
   { id: 'RSCH', label: 'Internal Research', summary: 'The club\'s own archive — research reports and pitch decks, readable in full with their AI summaries. Ticker-scoped or searched across everything.' },
   { id: 'HELP', label: 'Help', summary: 'List of available terminal functions.' },
 ];

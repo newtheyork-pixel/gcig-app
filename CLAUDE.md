@@ -174,6 +174,17 @@ Sidebar, Landing, and `index.html`.
 - `server/src/routes/dashboard.js` — main dashboard payload, plus
   separate `/dashboard/day-in-review` (lazy LLM call) and
   `/dashboard/macro` endpoints.
+- **FLD terminal function** (`terminal/functions/FieldWork.jsx`) — the
+  whole primary-research process for a company inside the terminal.
+  `ResearchProject` is the container: brief, interview guides, recordings,
+  transcripts, uploaded files and the claim ledger, one row to open.
+  `ResearchArtifact` holds anything attached — an uploaded file OR an
+  inline text body, deliberately the same list, because forcing the file
+  shape on a typed-in guide just means people keep scripts elsewhere and
+  the project stops being the whole record. `Interview.projectId` is
+  nullable (a one-off call is still real) and SetNull on delete —
+  deleting a project must never delete the evidence gathered under it.
+  FLD is what we went and found; RSCH is what we already wrote up.
 - **Field research** (`services/transcription.js`, `claimExtraction.js`,
   `corroboration.js`, `routes/research.js`, `pages/FieldResearch.jsx`) —
   primary research: interviews with people who touch a business, and the
