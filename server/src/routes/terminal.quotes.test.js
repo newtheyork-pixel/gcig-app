@@ -130,7 +130,7 @@ test('GET /quotes: never 5xx even if the service rejects', async () => {
 // Auth/limiter parity with the sibling /governance/:ticker route, by
 // the identical technique terminal.execbios.test.js uses: prove the
 // new /quotes route sits on the same router stack, after the same three
-// module-scope middlewares (verifyJwt → requireExecutiveOrAdvisory → aiLimiter),
+// module-scope middlewares (verifyJwt → requireTerminalAccess → aiLimiter),
 // with no extra/different per-route middleware than the sibling. Both
 // routes then provably traverse an identical auth chain.
 test('quotes inherits the exact same global auth/limiter chain as /governance/:ticker', () => {
@@ -140,12 +140,12 @@ test('quotes inherits the exact same global auth/limiter chain as /governance/:t
     .filter((l) => !l.route && typeof l.handle === 'function')
     .map((l) => l.handle.name);
   const vIdx = globalMw.indexOf('verifyJwt');
-  const eIdx = globalMw.indexOf('requireExecutiveOrAdvisory');
+  const eIdx = globalMw.indexOf('requireTerminalAccess');
   assert.ok(vIdx >= 0, 'verifyJwt must be a global middleware on the terminal router');
-  assert.ok(eIdx > vIdx, 'requireExecutiveOrAdvisory must follow verifyJwt globally');
+  assert.ok(eIdx > vIdx, 'requireTerminalAccess must follow verifyJwt globally');
   assert.ok(
     layers.filter((l) => !l.route).length >= 3,
-    'expected verifyJwt + requireExecutiveOrAdvisory + aiLimiter as global middlewares'
+    'expected verifyJwt + requireTerminalAccess + aiLimiter as global middlewares'
   );
 
   const findRoute = (p) =>
@@ -167,4 +167,41 @@ test('quotes inherits the exact same global auth/limiter chain as /governance/:t
     1,
     'sibling /governance/:ticker has exactly one handler — auth/limiter are global, not per-route'
   );
+});
+
+// The terminal gate opened from executive-only to Analyst+ when FLD
+// landed. These pin the boundary, because the failure mode is silent:
+// a too-tight gate hides the panel from the people doing the work, and a
+// too-loose one hands the whole book to anyone who signs up with Google.
+test('terminal gate: Analyst and above get in, JuniorAnalyst does not', async () => {
+  const { requireTerminalAccess } = await import('../middleware/auth.js');
+  const check = (role) => {
+    let allowed = false;
+    requireTerminalAccess(
+      { user: role ? { role } : null },
+      { status: () => ({ json: () => {} }) },
+      () => { allowed = true; }
+    );
+    return allowed;
+  };
+  for (const r of ['President', 'CIO', 'SeniorPortfolioManager', 'PortfolioManager', 'SeniorAnalyst', 'Analyst']) {
+    assert.equal(check(r), true, `${r} should reach the terminal`);
+  }
+  // JuniorAnalyst is the default role for a Google self-signup. Letting
+  // it in would hand the portfolio to anyone who found the login page.
+  assert.equal(check('JuniorAnalyst'), false, 'JuniorAnalyst must stay out');
+  assert.equal(check('ChiefOfCommunication'), false);
+  assert.equal(check('FormerPresident'), false, 'honorific confers no access');
+  assert.equal(check(null), false, 'no user, no terminal');
+});
+
+test('terminal gate: advisory members keep their read-only research access', async () => {
+  const { requireTerminalAccess } = await import('../middleware/auth.js');
+  const check = (role) => {
+    let allowed = false;
+    requireTerminalAccess({ user: { role } }, { status: () => ({ json: () => {} }) }, () => { allowed = true; });
+    return allowed;
+  };
+  assert.equal(check('AdvisoryBoardMember'), true);
+  assert.equal(check('FacultyAdvisory'), true);
 });

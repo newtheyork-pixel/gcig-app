@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import rateLimit from 'express-rate-limit';
-import { verifyJwt, requireExecutiveOrAdvisory } from '../middleware/auth.js';
+import { verifyJwt, requireTerminalAccess } from '../middleware/auth.js';
 import { llmChat } from '../services/llm.js';
 import { getHistory, getIntraday } from '../services/priceHistory.js';
 import { getFundamentals, getStatements } from '../services/secFundamentals.js';
@@ -39,14 +39,18 @@ import {
 //   POST /api/terminal/parse-command  Natural language -> mnemonic command
 //   POST /api/terminal/chat           Free-form chat with workspace context
 //
-// Gated to Executive (President/CIO) and the Advisory Board / Faculty
-// Advisor. Will open to PM+ later. Advisory members are read-only across
-// the rest of the app; the Terminal is a research surface they can use
-// without granting any operational permissions.
+// Gated to Analyst and above, plus the Advisory Board / Faculty Advisor.
+// It was executive-only until the FLD field-research panel landed, which
+// made that gate wrong: /api/research is requireRole('Analyst'), so the
+// members most likely to be making the calls could do the fieldwork but
+// could not open the surface built for it. JuniorAnalyst stays out — it
+// is the default role for every Google self-signup. Advisory members are
+// read-only across the rest of the app; the Terminal is a research
+// surface that grants no operational permissions.
 
 const router = Router();
 router.use(verifyJwt);
-router.use(requireExecutiveOrAdvisory);
+router.use(requireTerminalAccess);
 
 const aiLimiter = rateLimit({
   windowMs: 10 * 60 * 1000,

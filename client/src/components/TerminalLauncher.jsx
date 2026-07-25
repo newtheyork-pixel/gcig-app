@@ -10,8 +10,8 @@ import { useAuth } from '../context/AuthContext.jsx';
 // gets nothing and the strip collapses. The terminal page itself renders
 // outside this Layout, so the launcher never stacks on top of the terminal.
 export default function TerminalLauncher() {
-  const { isExecutive, isAdvisory } = useAuth();
-  if (!isExecutive && !isAdvisory) return null;
+  const { isAnalystOrAbove, isAdvisory } = useAuth();
+  if (!isAnalystOrAbove && !isAdvisory) return null;
 
   return (
     <div className="sticky top-0 z-30 bg-[#F7F8FB]/90 px-4 pt-3 backdrop-blur md:px-8">

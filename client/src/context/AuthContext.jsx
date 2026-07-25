@@ -143,6 +143,21 @@ export function AuthProvider({ children }) {
     user?.role === 'CIO' ||
     user?.role === 'SeniorPortfolioManager' ||
     user?.role === 'PortfolioManager';
+  // Analyst and above. Mirrors requireRole('Analyst') on the server,
+  // which is the gate on /api/research — so whoever can do fieldwork can
+  // also open the surface built for it.
+  //
+  // JuniorAnalyst is deliberately NOT in this list: it ranks below
+  // Analyst on the server (4 vs 5) and is the default role every Google
+  // self-signup lands on. Including it would hand the terminal to anyone
+  // who found the login page.
+  const isAnalystOrAbove =
+    user?.role === 'President' ||
+    user?.role === 'CIO' ||
+    user?.role === 'SeniorPortfolioManager' ||
+    user?.role === 'PortfolioManager' ||
+    user?.role === 'SeniorAnalyst' ||
+    user?.role === 'Analyst';
   const isAdvisory =
     user?.role === 'AdvisoryBoardMember' || user?.role === 'FacultyAdvisory';
   // Owner-only tier above President. Identified by email via SUPER_ADMIN_EMAIL
@@ -167,6 +182,7 @@ export function AuthProvider({ children }) {
         isAdmin,
         isExecutive,
         isPmOrAbove,
+        isAnalystOrAbove,
         isAdvisory,
         isSuperAdmin,
       }}

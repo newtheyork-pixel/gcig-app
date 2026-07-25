@@ -180,6 +180,32 @@ export function requireExecutiveOrAdvisory(req, res, next) {
   next();
 }
 
+// Terminal access: Analyst and above, plus the Advisory Board.
+//
+// The terminal was executive-only until the FLD field-research panel
+// landed, at which point the gate became actively wrong: /api/research
+// is requireRole('Analyst'), so the members most likely to be making the
+// calls could do the fieldwork but could not open the surface built for
+// it. This mirrors that rank.
+//
+// JuniorAnalyst sits below Analyst in ROLE_RANK and is the default role
+// for every Google self-signup, so it stays out — otherwise anyone who
+// found the login page would get the whole book.
+//
+// Advisory members remain read-only everywhere else in the app; the
+// terminal is a research surface that grants no operational power.
+export function requireTerminalAccess(req, res, next) {
+  const role = req.user?.role;
+  const advisory = role === 'AdvisoryBoardMember' || role === 'FacultyAdvisory';
+  const rank = ROLE_RANK[role] || 0;
+  if (!req.user || (!advisory && rank < ROLE_RANK.Analyst)) {
+    return res
+      .status(403)
+      .json({ error: 'Analyst role or higher (or Advisory Board) required' });
+  }
+  next();
+}
+
 // Operational permission hierarchy (higher number = more power).
 // Advisory Board Members and Faculty Advisors sit OUTSIDE the operational chain
 // — they are observers with no edit rights. Chief of Communication is a

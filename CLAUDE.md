@@ -109,6 +109,17 @@ If something feels weird with auth on Safari, check that order in
 - **CIO**, **President** — execs, run meetings, mark attendance.
 - **AdvisoryBoard / FacultyAdvisor** — attend advisory meetings only,
   separate roster.
+
+**Terminal access** is `requireTerminalAccess` (server) /
+`isAnalystOrAbove` (client): Analyst and above, plus Advisory. It was
+executive-only until the FLD field-research panel landed, which made the
+gate actively wrong — `/api/research` is `requireRole('Analyst')`, so the
+members most likely to be making the calls could do the fieldwork but
+could not open the surface built for it. **JuniorAnalyst is deliberately
+excluded**: it ranks below Analyst (4 vs 5) and is the default role for
+every Google self-signup, so including it would hand the whole book to
+anyone who found the login page. Client and server gates must move
+together or an analyst opens the terminal and 403s on every panel.
 - **ChiefOfCommunication** — comms officer, attendance-exempt.
 - **Super admin** — defined by email match (`isSuperAdminEmail`),
   not a role. Thomas's email. Bypasses every role gate.

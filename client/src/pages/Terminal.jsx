@@ -4,13 +4,22 @@ import { useAuth } from '../context/AuthContext.jsx';
 import TerminalShell from '../terminal/TerminalShell.jsx';
 import '../terminal/theme.css';
 
-// Terminal page. Gated to Executive (President/CIO) and Advisory Board /
-// Faculty Advisor; will open up to PM+ once we have load-test confidence.
+// Terminal page. Open to Analyst and above, plus the Advisory Board /
+// Faculty Advisor.
+//
+// It was executive-only until the FLD field-research panel landed, which
+// made the gate actively wrong: /api/research lets Analyst-and-above do
+// the fieldwork, so the members most likely to be making the calls were
+// the ones who could not open the surface built for them. The gate now
+// mirrors that API rank exactly.
+//
+// JuniorAnalyst stays out on purpose — it ranks below Analyst on the
+// server and is the default role for every Google self-signup.
 // Renders full-bleed by hiding the standard app chrome via the
 // `data-theme="terminal"` wrapper.
 
 export default function Terminal() {
-  const { user, isExecutive, isAdvisory } = useAuth();
+  const { user, isAnalystOrAbove, isAdvisory } = useAuth();
   const navigate = useNavigate();
 
   // Hide page scroll while terminal is mounted (we own the whole viewport).
@@ -23,7 +32,7 @@ export default function Terminal() {
   }, []);
 
   if (!user) return <Navigate to="/login" replace />;
-  if (!isExecutive && !isAdvisory) return <Navigate to="/dashboard" replace />;
+  if (!isAnalystOrAbove && !isAdvisory) return <Navigate to="/dashboard" replace />;
 
   return <TerminalShell onExit={() => navigate('/dashboard')} />;
 }
