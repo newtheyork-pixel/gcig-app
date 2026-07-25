@@ -103,6 +103,8 @@ model User {
   researchClaimsVerified   ResearchClaim[]  @relation("ResearchClaimVerifier")
   researchProjectsCreated  ResearchProject[]  @relation("ResearchProjectCreator")
   researchArtifacts        ResearchArtifact[] @relation("ResearchArtifactUploader")
+  researchTargets          ResearchTarget[]   @relation("ResearchTargetCreator")
+  siteVisits               SiteVisit[]        @relation("SiteVisitVisitor")
 }
 
 // Chat channels are addressed by a simple string:
@@ -846,6 +848,7 @@ model ResearchSource {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
   interviews   Interview[]
+  targets      ResearchTarget[]
 
   @@index([relationship])
 }
@@ -941,6 +944,11 @@ model ResearchClaim {
   // 0.0-1.0, the extractor's confidence that the claim is faithfully
   // pulled from the transcript. NOT a judgement of whether it is true.
   extractionConfidence Float?
+  // Which project question this bears on. Nullable — plenty of good
+  // material answers something nobody thought to ask, and forcing every
+  // claim into a pre-written bucket would quietly discard it.
+  questionId  Int?
+  question    ResearchQuestion? @relation(fields: [questionId], references: [id], onDelete: SetNull)
   // Set by a human who has listened back and agreed the pin is right.
   verifiedById Int?
   verifiedBy   User?   @relation("ResearchClaimVerifier", fields: [verifiedById], references: [id], onDelete: SetNull)
@@ -949,6 +957,7 @@ model ResearchClaim {
 
   @@index([ticker, topic])
   @@index([interviewId])
+  @@index([questionId])
 }
 
 // A field-research project: everything gathered on one company, in one
@@ -977,6 +986,9 @@ model ResearchProject {
 
   interviews  Interview[]
   artifacts   ResearchArtifact[]
+  questions   ResearchQuestion[]
+  targets     ResearchTarget[]
+  visits      SiteVisit[]
 
   @@index([ticker, updatedAt(sort: Desc)])
   @@index([status])
@@ -1006,4 +1018,129 @@ model ResearchArtifact {
   updatedAt   DateTime @updatedAt
 
   @@index([projectId, kind])
+}
+
+// What the project set out to answer. The spine of the whole process.
+//
+// Without this a project is a pile of interesting facts with no finish
+// line — you cannot tell whether you are done, and "done" quietly
+// becomes "tired of calling people". Questions are written from the
+// brief BEFORE fieldwork starts, so the work is judged against what it
+// meant to find out rather than whatever happened to turn up. Every
+// claim and observation links back to one, which is what makes coverage
+// computable: answered, thin, or still open.
+model ResearchQuestion {
+  id        Int      @id @default(autoincrement())
+  projectId Int
+  project   ResearchProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  text      String
+  // Why it matters to the thesis — the "so what" that stops a question
+  // list becoming trivia.
+  rationale String?
+  // Display order; the questions that decide the thesis go first.
+  rank      Int      @default(0)
+  // Open | Answered | Abandoned. Set by a human, not inferred: evidence
+  // volume is not the same as being satisfied, and only a person should
+  // decide a question is closed.
+  status    String   @default("Open")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  claims       ResearchClaim[]
+  observations SiteObservation[]
+
+  @@index([projectId, rank])
+}
+
+// Someone we want to talk to, and how that outreach is going. The front
+// of the funnel — without it there are no interviews, and "who haven't
+// we tried yet" is the question that actually paces a project.
+//
+// Separate from ResearchSource: a target is a lead, most of which never
+// become sources. Collapsing the two would either pollute the source
+// list with people who never replied, or lose the record of everyone we
+// failed to reach — which is itself a finding about a company.
+model ResearchTarget {
+  id           Int      @id @default(autoincrement())
+  projectId    Int
+  project      ResearchProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  name         String
+  // Where they sit in the value chain: FormerEmployee, Distributor,
+  // Customer, Supplier, Competitor, Landlord, IndustryExpert, Other.
+  relationship String
+  employer     String?
+  role         String?
+  // How we might reach them, kept deliberately vague-friendly — often
+  // "via LinkedIn" or "Sarah's old colleague" rather than an address.
+  channel      String?
+  // Identified | Contacted | Scheduled | Completed | Declined | Unreachable
+  status       String   @default("Identified")
+  // Set once outreach converts, so a completed target points at the
+  // source record it became.
+  sourceId     Int?
+  source       ResearchSource? @relation(fields: [sourceId], references: [id], onDelete: SetNull)
+  notes        String?
+  lastContactAt DateTime?
+  createdById  Int?
+  createdBy    User?    @relation("ResearchTargetCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([projectId, status])
+}
+
+// A store visit or channel check — going and looking, rather than
+// asking. For a retail name this is most of the fieldwork: what is on
+// the shelf, what it costs, how busy it is, how many staff are on.
+model SiteVisit {
+  id          Int      @id @default(autoincrement())
+  projectId   Int
+  project     ResearchProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  ticker      String?
+  // "Target #1247, Atlantic Terminal, Brooklyn" — whatever identifies
+  // the location well enough to go back.
+  location    String
+  banner      String?
+  visitedAt   DateTime
+  visitorId   Int?
+  visitor     User?    @relation("SiteVisitVisitor", fields: [visitorId], references: [id], onDelete: SetNull)
+  // Structured template answers: shelf state, promo depth, staffing,
+  // traffic count, stock gaps. JSON because the useful template differs
+  // by sector, and a column per field would freeze it to retail.
+  observations Json?
+  notes       String?
+  weather     String?
+  // Day of week and hour matter enormously for retail traffic reads — a
+  // Tuesday 11am count says nothing about a Saturday.
+  dayPart     String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  siteObservations SiteObservation[]
+
+  @@index([projectId, visitedAt(sort: Desc)])
+}
+
+// One recorded observation from a visit. Deliberately NOT a
+// ResearchClaim: a claim is pinned to a millisecond in a transcript, and
+// that guarantee is the whole point of the ledger. What someone saw with
+// their own eyes is different evidence — often stronger than hearsay,
+// but it has no recording to walk back to. Keeping them separate lets
+// coverage count both while never blurring where a fact came from.
+model SiteObservation {
+  id         Int      @id @default(autoincrement())
+  visitId    Int
+  visit      SiteVisit @relation(fields: [visitId], references: [id], onDelete: Cascade)
+  questionId Int?
+  question   ResearchQuestion? @relation(fields: [questionId], references: [id], onDelete: SetNull)
+  text       String
+  topic      String?
+  // measurement | condition | pricing | traffic | assortment | other
+  kind       String   @default("condition")
+  // Photographic backup, as an artifact reference.
+  artifactId Int?
+  createdAt  DateTime @default(now())
+
+  @@index([visitId])
+  @@index([questionId])
 }

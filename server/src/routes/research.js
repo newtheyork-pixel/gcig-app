@@ -6,6 +6,7 @@ import { verifyJwt, requireRole } from '../middleware/auth.js';
 import { transcribe, isConfigured as transcriptionConfigured, formatStamp } from '../services/transcription.js';
 import { extractClaims } from '../services/claimExtraction.js';
 import { assessTopics, formatCitation } from '../services/corroboration.js';
+import { assessCoverage, funnel } from '../services/questionCoverage.js';
 import { uploadFile } from '../services/oneDriveStorage.js';
 
 // Field research — sources, interviews, and the claim ledger.
@@ -116,6 +117,15 @@ router.get('/projects/:id', async (req, res) => {
             _count: { select: { claims: true } },
           },
         },
+        questions: { orderBy: [{ rank: 'asc' }, { id: 'asc' }] },
+        targets: { orderBy: { updatedAt: 'desc' } },
+        visits: {
+          orderBy: { visitedAt: 'desc' },
+          include: {
+            visitor: { select: { id: true, name: true } },
+            siteObservations: { orderBy: { id: 'asc' } },
+          },
+        },
       },
     });
     if (!project) return res.status(404).json({ error: 'Not found' });
@@ -133,6 +143,12 @@ router.get('/projects/:id', async (req, res) => {
       },
     });
 
+    // Observations live under visits; flatten them so coverage can see
+    // both kinds of evidence against a question in one pass.
+    const observations = project.visits.flatMap((v) =>
+      v.siteObservations.map((o) => ({ ...o, visit: { location: v.location } }))
+    );
+
     res.json({
       ...project,
       claims: claims.map((c) => ({
@@ -141,6 +157,8 @@ router.get('/projects/:id', async (req, res) => {
         citation: formatCitation(c, { formatStamp }),
       })),
       topics: assessTopics(claims),
+      coverage: assessCoverage(project.questions, claims, observations),
+      funnel: funnel(project.targets),
       transcriptionReady: transcriptionConfigured(),
     });
   } catch (err) {
@@ -260,6 +278,235 @@ router.delete('/artifacts/:id', canResearch, async (req, res) => {
   } catch (err) {
     console.error('research/artifact delete failed:', err.message);
     res.status(500).json({ error: 'Could not remove artifact' });
+  }
+});
+
+// ── Questions: the spine ─────────────────────────────────────────────
+
+router.post('/projects/:id/questions', canResearch, async (req, res) => {
+  const projectId = Number(req.params.id);
+  const { text, rationale, rank } = req.body || {};
+  if (!Number.isInteger(projectId)) return res.status(400).json({ error: 'Bad id' });
+  if (!text) return res.status(400).json({ error: 'text is required' });
+  try {
+    const q = await prisma.researchQuestion.create({
+      data: {
+        projectId,
+        text: String(text).slice(0, 500),
+        rationale: rationale ? String(rationale).slice(0, 2000) : null,
+        rank: Number.isInteger(Number(rank)) ? Number(rank) : 0,
+      },
+    });
+    res.status(201).json(q);
+  } catch (err) {
+    console.error('research/question create failed:', err.message);
+    res.status(500).json({ error: 'Could not add question' });
+  }
+});
+
+const QUESTION_STATUSES = new Set(['Open', 'Answered', 'Abandoned']);
+
+router.patch('/questions/:id', canResearch, async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) return res.status(400).json({ error: 'Bad id' });
+  const data = {};
+  if (req.body?.text) data.text = String(req.body.text).slice(0, 500);
+  if (req.body?.rationale !== undefined) {
+    data.rationale = req.body.rationale ? String(req.body.rationale).slice(0, 2000) : null;
+  }
+  if (req.body?.rank !== undefined && Number.isInteger(Number(req.body.rank))) {
+    data.rank = Number(req.body.rank);
+  }
+  if (req.body?.status) {
+    if (!QUESTION_STATUSES.has(req.body.status)) {
+      return res.status(400).json({ error: `status must be one of: ${[...QUESTION_STATUSES].join(', ')}` });
+    }
+    // Closing a question is a person's judgement, never inferred from
+    // how much evidence piled up behind it.
+    data.status = req.body.status;
+  }
+  try {
+    res.json(await prisma.researchQuestion.update({ where: { id }, data }));
+  } catch (err) {
+    console.error('research/question update failed:', err.message);
+    res.status(500).json({ error: 'Could not update question' });
+  }
+});
+
+router.delete('/questions/:id', canResearch, async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) return res.status(400).json({ error: 'Bad id' });
+  try {
+    // Claims and observations survive: the FK is SetNull, so evidence
+    // gathered against a deleted question becomes unlinked rather than
+    // vanishing with it.
+    await prisma.researchQuestion.delete({ where: { id } });
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('research/question delete failed:', err.message);
+    res.status(500).json({ error: 'Could not remove question' });
+  }
+});
+
+// Link a claim to the question it bears on. This is the join that makes
+// coverage mean anything, and it is a human judgement — the extractor
+// knows what was said, not what we were trying to learn.
+router.post('/claims/:id/link', canResearch, async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) return res.status(400).json({ error: 'Bad id' });
+  const questionId = req.body?.questionId === null ? null : Number(req.body?.questionId);
+  try {
+    const claim = await prisma.researchClaim.update({
+      where: { id },
+      data: { questionId: Number.isInteger(questionId) ? questionId : null },
+    });
+    res.json(claim);
+  } catch (err) {
+    console.error('research/claim link failed:', err.message);
+    res.status(500).json({ error: 'Could not link claim' });
+  }
+});
+
+// ── Targets: the outreach funnel ─────────────────────────────────────
+
+const TARGET_STATUSES = new Set([
+  'Identified', 'Contacted', 'Scheduled', 'Completed', 'Declined', 'Unreachable',
+]);
+
+router.post('/projects/:id/targets', canResearch, async (req, res) => {
+  const projectId = Number(req.params.id);
+  const { name, relationship, employer, role, channel, notes } = req.body || {};
+  if (!Number.isInteger(projectId)) return res.status(400).json({ error: 'Bad id' });
+  if (!name || !relationship) {
+    return res.status(400).json({ error: 'name and relationship are required' });
+  }
+  try {
+    const t = await prisma.researchTarget.create({
+      data: {
+        projectId,
+        name: String(name).slice(0, 200),
+        relationship: String(relationship).slice(0, 60),
+        employer: employer ? String(employer).slice(0, 200) : null,
+        role: role ? String(role).slice(0, 200) : null,
+        channel: channel ? String(channel).slice(0, 300) : null,
+        notes: notes ? String(notes).slice(0, 2000) : null,
+        createdById: req.user?.id ?? null,
+      },
+    });
+    res.status(201).json(t);
+  } catch (err) {
+    console.error('research/target create failed:', err.message);
+    res.status(500).json({ error: 'Could not add target' });
+  }
+});
+
+router.patch('/targets/:id', canResearch, async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) return res.status(400).json({ error: 'Bad id' });
+  const data = {};
+  if (req.body?.status) {
+    if (!TARGET_STATUSES.has(req.body.status)) {
+      return res.status(400).json({ error: `status must be one of: ${[...TARGET_STATUSES].join(', ')}` });
+    }
+    data.status = req.body.status;
+    // Any movement off "Identified" is contact, so stamp it — "when did
+    // we last try this person" is the question that paces follow-up.
+    if (req.body.status !== 'Identified') data.lastContactAt = new Date();
+  }
+  if (req.body?.notes !== undefined) {
+    data.notes = req.body.notes ? String(req.body.notes).slice(0, 2000) : null;
+  }
+  if (req.body?.sourceId !== undefined) {
+    const sid = Number(req.body.sourceId);
+    data.sourceId = Number.isInteger(sid) ? sid : null;
+  }
+  try {
+    res.json(await prisma.researchTarget.update({ where: { id }, data }));
+  } catch (err) {
+    console.error('research/target update failed:', err.message);
+    res.status(500).json({ error: 'Could not update target' });
+  }
+});
+
+router.delete('/targets/:id', canResearch, async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) return res.status(400).json({ error: 'Bad id' });
+  try {
+    await prisma.researchTarget.delete({ where: { id } });
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: 'Could not remove target' });
+  }
+});
+
+// ── Site visits: going and looking ───────────────────────────────────
+
+router.post('/projects/:id/visits', canResearch, async (req, res) => {
+  const projectId = Number(req.params.id);
+  const { location, banner, visitedAt, dayPart, weather, notes, observations } = req.body || {};
+  if (!Number.isInteger(projectId)) return res.status(400).json({ error: 'Bad id' });
+  if (!location) return res.status(400).json({ error: 'location is required' });
+  try {
+    const project = await prisma.researchProject.findUnique({ where: { id: projectId } });
+    if (!project) return res.status(404).json({ error: 'No such project' });
+    const visit = await prisma.siteVisit.create({
+      data: {
+        projectId,
+        ticker: project.ticker,
+        location: String(location).slice(0, 300),
+        banner: banner ? String(banner).slice(0, 200) : null,
+        visitedAt: visitedAt ? new Date(visitedAt) : new Date(),
+        visitorId: req.user?.id ?? null,
+        // Day-part matters enormously for a retail traffic read: a
+        // Tuesday 11am count says nothing about a Saturday.
+        dayPart: dayPart ? String(dayPart).slice(0, 40) : null,
+        weather: weather ? String(weather).slice(0, 120) : null,
+        notes: notes ? String(notes).slice(0, 10_000) : null,
+        observations: observations && typeof observations === 'object' ? observations : undefined,
+      },
+      include: { visitor: { select: { id: true, name: true } }, siteObservations: true },
+    });
+    res.status(201).json(visit);
+  } catch (err) {
+    console.error('research/visit create failed:', err.message);
+    res.status(500).json({ error: 'Could not log visit' });
+  }
+});
+
+const OBSERVATION_KINDS = new Set([
+  'measurement', 'condition', 'pricing', 'traffic', 'assortment', 'other',
+]);
+
+router.post('/visits/:id/observations', canResearch, async (req, res) => {
+  const visitId = Number(req.params.id);
+  const { text, topic, kind, questionId } = req.body || {};
+  if (!Number.isInteger(visitId)) return res.status(400).json({ error: 'Bad id' });
+  if (!text) return res.status(400).json({ error: 'text is required' });
+  try {
+    const o = await prisma.siteObservation.create({
+      data: {
+        visitId,
+        text: String(text).slice(0, 2000),
+        topic: topic ? String(topic).toLowerCase().slice(0, 60) : null,
+        kind: OBSERVATION_KINDS.has(kind) ? kind : 'condition',
+        questionId: Number.isInteger(Number(questionId)) ? Number(questionId) : null,
+      },
+    });
+    res.status(201).json(o);
+  } catch (err) {
+    console.error('research/observation failed:', err.message);
+    res.status(500).json({ error: 'Could not add observation' });
+  }
+});
+
+router.delete('/visits/:id', canResearch, async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) return res.status(400).json({ error: 'Bad id' });
+  try {
+    await prisma.siteVisit.delete({ where: { id } });
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: 'Could not remove visit' });
   }
 });
 

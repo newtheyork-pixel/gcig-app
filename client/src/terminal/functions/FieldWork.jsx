@@ -44,6 +44,23 @@ const SUPPORT_LABEL = {
   contested: 'CONTESTED',
 };
 
+const COVERAGE_COLOR = {
+  supported: 'var(--term-positive)',
+  thin: 'var(--term-amber, var(--term-white))',
+  unaddressed: 'var(--term-fg-muted)',
+  contested: 'var(--term-negative)',
+};
+const COVERAGE_LABEL = {
+  supported: 'SUPPORTED',
+  thin: 'THIN',
+  unaddressed: 'NO EVIDENCE',
+  contested: 'CONTESTED',
+};
+
+const TARGET_STATUSES = [
+  'Identified', 'Contacted', 'Scheduled', 'Completed', 'Declined', 'Unreachable',
+];
+
 const fmtDate = (d) => {
   const dt = new Date(d);
   if (Number.isNaN(dt.getTime())) return '—';
@@ -239,7 +256,7 @@ function ProjectPane({ id, onBack }) {
   const [p, setP] = useState(null);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState(null);
-  const [tab, setTab] = useState('ledger');
+  const [tab, setTab] = useState('coverage');
   const [flash, setFlash] = useState(null);
   const [doc, setDoc] = useState(null);
 
@@ -315,8 +332,11 @@ function ProjectPane({ id, onBack }) {
 
       <div className="term-tabs">
         {[
-          ['ledger', `Ledger (${p.claims.length})`],
+          ['coverage', `Questions (${p.questions?.length ?? 0})`],
+          ['targets', `Outreach (${p.funnel?.total ?? 0})`],
           ['interviews', `Interviews (${p.interviews.length})`],
+          ['visits', `Visits (${p.visits?.length ?? 0})`],
+          ['ledger', `Ledger (${p.claims.length})`],
           ['files', `Files (${p.artifacts.length})`],
         ].map(([k, label]) => (
           <button
@@ -329,7 +349,10 @@ function ProjectPane({ id, onBack }) {
         ))}
       </div>
 
-      {tab === 'ledger' ? <Ledger project={p} /> : null}
+      {tab === 'coverage' ? <Coverage project={p} onChanged={load} /> : null}
+      {tab === 'targets' ? <Targets project={p} onChanged={load} /> : null}
+      {tab === 'visits' ? <Visits project={p} onChanged={load} setFlash={setFlash} /> : null}
+      {tab === 'ledger' ? <Ledger project={p} onChanged={load} /> : null}
       {tab === 'interviews' ? (
         <Interviews project={p} onChanged={load} setFlash={setFlash} />
       ) : null}
@@ -346,7 +369,7 @@ function ProjectPane({ id, onBack }) {
   );
 }
 
-function Ledger({ project }) {
+function Ledger({ project, onChanged }) {
   if (project.claims.length === 0) {
     return (
       <div className="term-loading">
@@ -392,9 +415,31 @@ function Ledger({ project }) {
                     “{c.quote}”
                   </div>
                 ) : null}
-                <div style={{ color: 'var(--term-fg-muted)', fontSize: 10 }}>
-                  {c.citation} · {c.kind}
-                  {c.verifiedById ? ' · verified' : ''}
+                <div style={{ color: 'var(--term-fg-muted)', fontSize: 10, display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+                  <span>
+                    {c.citation} · {c.kind}
+                    {c.verifiedById ? ' · verified' : ''}
+                  </span>
+                  {/* Which question this bears on. The extractor knows
+                      what was said; only a person knows what we set out
+                      to learn, so the join stays a human judgement. */}
+                  <select
+                    style={{ ...termInput, padding: '1px 4px', fontSize: 10, maxWidth: 200 }}
+                    value={c.questionId || ''}
+                    onChange={async (e) => {
+                      await api
+                        .post(`/research/claims/${c.id}/link`, {
+                          questionId: e.target.value ? Number(e.target.value) : null,
+                        })
+                        .catch(() => {});
+                      onChanged?.();
+                    }}
+                  >
+                    <option value="">— answers no question yet —</option>
+                    {(project.questions || []).map((q) => (
+                      <option key={q.id} value={q.id}>{q.text.slice(0, 44)}</option>
+                    ))}
+                  </select>
                 </div>
               </div>
             ))}
@@ -700,6 +745,335 @@ function Files({ project, onChanged, setFlash, onOpenDoc }) {
           </tbody>
         </table>
       )}
+    </div>
+  );
+}
+
+// Coverage — what we set out to learn, and how much we actually know.
+// The first thing you should see on opening a project, because "which
+// questions are still open with nothing behind them" is next week's
+// call list.
+function Coverage({ project, onChanged }) {
+  const [text, setText] = useState('');
+  const [saving, setSaving] = useState(false);
+  const cov = project.coverage || { questions: [], summary: {} };
+  const s = cov.summary || {};
+
+  async function add() {
+    setSaving(true);
+    try {
+      await api.post(`/research/projects/${project.id}/questions`, {
+        text,
+        rank: (project.questions?.length || 0) + 1,
+      });
+      setText('');
+      onChanged();
+    } catch {
+      /* leave the text in place to retry */
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function setStatus(id, status) {
+    await api.patch(`/research/questions/${id}`, { status }).catch(() => {});
+    onChanged();
+  }
+
+  return (
+    <div style={{ display: 'grid', gap: 10 }}>
+      <div style={{ display: 'flex', gap: 6 }}>
+        <input
+          style={{ ...termInput, flex: 1 }}
+          placeholder="What do we need to find out? (one question)"
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter' && text) add(); }}
+        />
+        <TermButton onClick={add} disabled={saving || !text}>Add</TermButton>
+      </div>
+
+      {cov.questions.length > 0 ? (
+        <div style={{ color: 'var(--term-fg-muted)', fontSize: 11 }}>
+          {s.supported || 0} supported · {s.thin || 0} thin ·{' '}
+          {s.unaddressed || 0} no evidence
+          {s.contested ? ` · ${s.contested} contested` : ''}
+          {s.openAndUnaddressed
+            ? ` — ${s.openAndUnaddressed} still open with nothing behind them`
+            : ''}
+          {s.unlinkedClaims
+            ? ` · ${s.unlinkedClaims} claim${s.unlinkedClaims === 1 ? '' : 's'} answering something we never asked`
+            : ''}
+        </div>
+      ) : null}
+
+      {cov.questions.length === 0 ? (
+        <div className="term-loading">
+          No questions yet. Write what the project is meant to answer before
+          the calls start — it is what tells you when you are done.
+        </div>
+      ) : (
+        cov.questions.map((q) => (
+          <div
+            key={q.questionId}
+            style={{ borderTop: '1px dotted var(--term-border)', paddingTop: 6 }}
+          >
+            <div style={{ display: 'flex', gap: 8, alignItems: 'baseline', flexWrap: 'wrap' }}>
+              <span style={{ color: COVERAGE_COLOR[q.coverage], fontSize: 10, letterSpacing: 0.5 }}>
+                {COVERAGE_LABEL[q.coverage]}
+              </span>
+              <span style={{ color: 'var(--term-white)', fontSize: 12, flex: 1, minWidth: 200 }}>
+                {q.text}
+              </span>
+              <span style={{ color: 'var(--term-fg-muted)', fontSize: 10 }}>
+                {q.claimCount} claim{q.claimCount === 1 ? '' : 's'} ·{' '}
+                {q.independentLines} independent
+                {q.observationCount
+                  ? ` · ${q.observationCount} observed at ${q.distinctLocations} site${q.distinctLocations === 1 ? '' : 's'}`
+                  : ''}
+                {q.forecastCount ? ` · ${q.forecastCount} forecast` : ''}
+              </span>
+              {/* Closing a question is a person's call. Coverage informs
+                  it; it never makes it. */}
+              <TermButton
+                onClick={() => setStatus(q.questionId, q.status === 'Answered' ? 'Open' : 'Answered')}
+                title={q.status === 'Answered' ? 'Reopen' : 'Mark answered'}
+              >
+                {q.status === 'Answered' ? 'Answered' : 'Mark answered'}
+              </TermButton>
+            </div>
+          </div>
+        ))
+      )}
+    </div>
+  );
+}
+
+// Outreach — the front of the funnel. Without it there are no
+// interviews, and "who haven't we tried yet" is what actually paces a
+// project.
+function Targets({ project, onChanged }) {
+  const [f, setF] = useState({ name: '', relationship: 'FormerEmployee', employer: '', channel: '' });
+  const [saving, setSaving] = useState(false);
+  const fn = project.funnel || {};
+
+  async function add() {
+    setSaving(true);
+    try {
+      await api.post(`/research/projects/${project.id}/targets`, f);
+      setF({ name: '', relationship: 'FormerEmployee', employer: '', channel: '' });
+      onChanged();
+    } catch {
+      /* keep the form */
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function move(id, status) {
+    await api.patch(`/research/targets/${id}`, { status }).catch(() => {});
+    onChanged();
+  }
+
+  return (
+    <div style={{ display: 'grid', gap: 10 }}>
+      <div style={{ color: 'var(--term-fg-muted)', fontSize: 11 }}>
+        {fn.Identified || 0} not yet tried · {fn.Contacted || 0} contacted ·{' '}
+        {fn.Scheduled || 0} scheduled · {fn.Completed || 0} done ·{' '}
+        {(fn.Declined || 0) + (fn.Unreachable || 0)} dead
+        {fn.conversionPct != null ? ` · ${fn.conversionPct}% conversion` : ''}
+      </div>
+
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+        <input
+          style={{ ...termInput, flex: '1 1 140px' }}
+          placeholder="Name"
+          value={f.name}
+          onChange={(e) => setF({ ...f, name: e.target.value })}
+        />
+        <select
+          style={{ ...termInput, flex: '0 0 150px' }}
+          value={f.relationship}
+          onChange={(e) => setF({ ...f, relationship: e.target.value })}
+        >
+          {['FormerEmployee', 'CurrentEmployee', 'Customer', 'Distributor', 'Supplier', 'Competitor', 'Landlord', 'IndustryExpert', 'Other'].map((r) => (
+            <option key={r} value={r}>{r}</option>
+          ))}
+        </select>
+        <input
+          style={{ ...termInput, flex: '1 1 120px' }}
+          placeholder="Employer"
+          value={f.employer}
+          onChange={(e) => setF({ ...f, employer: e.target.value })}
+        />
+        <input
+          style={{ ...termInput, flex: '1 1 140px' }}
+          placeholder="How to reach them"
+          value={f.channel}
+          onChange={(e) => setF({ ...f, channel: e.target.value })}
+        />
+        <TermButton onClick={add} disabled={saving || !f.name}>Add</TermButton>
+      </div>
+
+      {!project.targets || project.targets.length === 0 ? (
+        <div className="term-loading">
+          No targets yet. Map the value chain — former staff, distributors,
+          customers, suppliers, competitors — then work the list.
+        </div>
+      ) : (
+        <table className="term-table">
+          <thead>
+            <tr><th>Name</th><th>Role</th><th>Employer</th><th>Status</th><th>Last try</th></tr>
+          </thead>
+          <tbody>
+            {project.targets.map((t) => (
+              <tr key={t.id}>
+                <td className="sym">{t.name}</td>
+                <td>{t.relationship}</td>
+                <td>{t.employer || '—'}</td>
+                <td>
+                  <select
+                    style={{ ...termInput, padding: '1px 4px', fontSize: 11 }}
+                    value={t.status}
+                    onChange={(e) => move(t.id, e.target.value)}
+                  >
+                    {TARGET_STATUSES.map((st) => <option key={st} value={st}>{st}</option>)}
+                  </select>
+                </td>
+                <td>{t.lastContactAt ? fmtDate(t.lastContactAt) : '—'}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
+  );
+}
+
+// Site visits — going and looking rather than asking. For a retail name
+// this is most of the fieldwork. Observations recorded here are counted
+// toward question coverage but never merged with transcript claims:
+// what someone saw has no tape to walk back to.
+function Visits({ project, onChanged, setFlash }) {
+  const [f, setF] = useState({ location: '', banner: '', dayPart: '', notes: '' });
+  const [saving, setSaving] = useState(false);
+
+  async function add() {
+    setSaving(true);
+    try {
+      await api.post(`/research/projects/${project.id}/visits`, f);
+      setF({ location: '', banner: '', dayPart: '', notes: '' });
+      onChanged();
+    } catch (e) {
+      setFlash({ bad: true, text: e.response?.data?.error || 'Could not log visit' });
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div style={{ display: 'grid', gap: 10 }}>
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+        <input
+          style={{ ...termInput, flex: '2 1 200px' }}
+          placeholder="Location — e.g. Store #1247, Atlantic Terminal"
+          value={f.location}
+          onChange={(e) => setF({ ...f, location: e.target.value })}
+        />
+        <input
+          style={{ ...termInput, flex: '1 1 110px' }}
+          placeholder="Banner"
+          value={f.banner}
+          onChange={(e) => setF({ ...f, banner: e.target.value })}
+        />
+        {/* Day-part is not optional colour: a Tuesday 11am traffic read
+            says nothing about a Saturday, and comparing the two is how
+            channel checks mislead. */}
+        <input
+          style={{ ...termInput, flex: '1 1 110px' }}
+          placeholder="Day part (Sat 2pm)"
+          value={f.dayPart}
+          onChange={(e) => setF({ ...f, dayPart: e.target.value })}
+        />
+        <TermButton onClick={add} disabled={saving || !f.location}>Log visit</TermButton>
+      </div>
+      <textarea
+        style={{ ...termInput, resize: 'vertical', minHeight: 48 }}
+        placeholder="What did you see? Shelf state, pricing, staffing, traffic, stock gaps."
+        value={f.notes}
+        onChange={(e) => setF({ ...f, notes: e.target.value })}
+      />
+
+      {!project.visits || project.visits.length === 0 ? (
+        <div className="term-loading">
+          No visits logged. For a retail name this is most of the work —
+          and three different stores beat three trips to one.
+        </div>
+      ) : (
+        project.visits.map((v) => (
+          <VisitRow key={v.id} visit={v} project={project} onChanged={onChanged} />
+        ))
+      )}
+    </div>
+  );
+}
+
+function VisitRow({ visit: v, project, onChanged }) {
+  const [text, setText] = useState('');
+  const [questionId, setQuestionId] = useState('');
+
+  async function addObs() {
+    await api
+      .post(`/research/visits/${v.id}/observations`, { text, questionId: questionId || null })
+      .catch(() => {});
+    setText('');
+    onChanged();
+  }
+
+  return (
+    <div style={{ borderTop: '1px dotted var(--term-border)', paddingTop: 6 }}>
+      <div style={{ color: 'var(--term-white)', fontSize: 12 }}>
+        {v.location}
+        {v.banner ? <span style={{ color: 'var(--term-fg-muted)' }}> · {v.banner}</span> : null}
+      </div>
+      <div style={{ color: 'var(--term-fg-muted)', fontSize: 10 }}>
+        {fmtDate(v.visitedAt)}
+        {v.dayPart ? ` · ${v.dayPart}` : ''}
+        {v.visitor?.name ? ` · ${v.visitor.name}` : ''}
+        {` · ${v.siteObservations?.length || 0} observation${v.siteObservations?.length === 1 ? '' : 's'}`}
+      </div>
+      {v.notes ? (
+        <div style={{ color: 'var(--term-fg-dim)', fontSize: 11, marginTop: 2 }}>{v.notes}</div>
+      ) : null}
+
+      {(v.siteObservations || []).map((o) => (
+        <div key={o.id} style={{ color: 'var(--term-fg-dim)', fontSize: 11, paddingLeft: 10 }}>
+          · {o.text}
+          {o.questionId ? (
+            <span style={{ color: 'var(--term-positive)', fontSize: 10 }}> [linked]</span>
+          ) : null}
+        </div>
+      ))}
+
+      <div style={{ display: 'flex', gap: 6, marginTop: 4 }}>
+        <input
+          style={{ ...termInput, flex: 1, fontSize: 11 }}
+          placeholder="Add an observation"
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Enter' && text) addObs(); }}
+        />
+        <select
+          style={{ ...termInput, flex: '0 0 160px', fontSize: 11 }}
+          value={questionId}
+          onChange={(e) => setQuestionId(e.target.value)}
+        >
+          <option value="">Not linked</option>
+          {(project.questions || []).map((q) => (
+            <option key={q.id} value={q.id}>{q.text.slice(0, 40)}</option>
+          ))}
+        </select>
+      </div>
     </div>
   );
 }

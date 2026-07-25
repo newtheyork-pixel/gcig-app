@@ -174,6 +174,22 @@ Sidebar, Landing, and `index.html`.
 - `server/src/routes/dashboard.js` — main dashboard payload, plus
   separate `/dashboard/day-in-review` (lazy LLM call) and
   `/dashboard/macro` endpoints.
+- **The question spine** (`services/questionCoverage.js`) —
+  `ResearchQuestion` is what makes FLD a process rather than a pile of
+  facts. Claims and observations link to a question; coverage is then
+  computable as supported / thin / no-evidence / contested, and
+  `openAndUnaddressed` is literally next week's call list. Two rules
+  that matter: independence for CLAIMS is distinct employers, but for
+  OBSERVATIONS it is distinct LOCATIONS — one analyst visiting eight
+  stores is eight data points, eight trips to one store is one. And a
+  question's Answered status is always a human's call, never inferred
+  from evidence volume; coverage informs it, never sets it.
+  `ResearchTarget` is the outreach funnel, kept separate from
+  `ResearchSource` so the source list isn't polluted with people who
+  never replied and the record of who we couldn't reach survives.
+  `SiteObservation` is deliberately NOT a `ResearchClaim` — a claim is
+  pinned to a millisecond of tape and that guarantee is the point;
+  what someone saw has no recording to walk back to.
 - **FLD terminal function** (`terminal/functions/FieldWork.jsx`) — the
   whole primary-research process for a company inside the terminal.
   `ResearchProject` is the container: brief, interview guides, recordings,
