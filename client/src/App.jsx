@@ -20,6 +20,7 @@ import Profile from './pages/Profile.jsx';
 import Votes from './pages/Votes.jsx';
 import Industries from './pages/Industries.jsx';
 import Library from './pages/Library.jsx';
+import FieldResearch from './pages/FieldResearch.jsx';
 import Admin from './pages/Admin.jsx';
 import PitchOutcomes from './pages/PitchOutcomes.jsx';
 import Broadcast from './pages/Broadcast.jsx';
@@ -68,6 +69,7 @@ export default function App() {
         <Route path="/events" element={<Calendar />} />
         <Route path="/outcomes" element={<PitchOutcomes />} />
         <Route path="/library" element={<Library />} />
+        <Route path="/field-research" element={<FieldResearch />} />
         <Route path="/admin" element={<Admin />} />
         {/* Legacy routes — keep old bookmarks working */}
         <Route path="/archive" element={<Library />} />

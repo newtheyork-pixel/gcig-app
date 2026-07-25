@@ -174,6 +174,32 @@ Sidebar, Landing, and `index.html`.
 - `server/src/routes/dashboard.js` — main dashboard payload, plus
   separate `/dashboard/day-in-review` (lazy LLM call) and
   `/dashboard/macro` endpoints.
+- **Field research** (`services/transcription.js`, `claimExtraction.js`,
+  `corroboration.js`, `routes/research.js`, `pages/FieldResearch.jsx`) —
+  primary research: interviews with people who touch a business, and the
+  claim ledger built from them. The chain is ResearchSource (who) →
+  Interview (conversation + consent + transcript) → ResearchClaim (one
+  assertion pinned to a speaker and a millisecond offset).
+
+  **The integrity gate is `locateQuote`.** The model returns the exact
+  words it is relying on; we find those words in the transcript
+  ourselves and derive the timestamp from the match. A claim whose quote
+  can't be located verbatim is DROPPED, and the drop count is returned
+  so a spike (the model paraphrasing instead of quoting) is visible.
+  Never add an endpoint that accepts a hand-written claim with a
+  hand-typed timestamp — a footnote would stop guaranteeing anyone said
+  the words. Quotes crossing a speaker change get `speaker: null` rather
+  than a guessed attribution.
+
+  **Corroboration counts independent employers, not claims.** Two
+  colleagues repeating each other is `clustered`, not `corroborated` —
+  that distinction is the one that stops a thesis being talked into.
+  Unknown employer counts as its own line, never folded in.
+
+  Consent is checked before audio is stored, not after. Quarantined
+  interviews stay for the audit trail but leave every citable read path.
+  Needs `ELEVENLABS_API_KEY` (scribe_v2; scribe_v1 was withdrawn July
+  '26) — absent it, interviews still log and transcribe later.
 - `server/src/services/newsFeeds.js` — keyless public RSS wires (Federal
   Reserve press releases, WSJ Markets, CNBC, MarketWatch) merged into
   `/terminal/top-news` alongside Finnhub. The Fed feed is the point: it

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { NavLink } from 'react-router-dom';
 import {
+  Mic,
   LayoutDashboard,
   CalendarDays,
   LineChart,
@@ -53,7 +54,10 @@ const NAV_SECTIONS = [
     ],
   },
   {
-    items: [{ to: '/library', label: 'Library', icon: BookOpen }],
+    items: [
+      { to: '/library', label: 'Library', icon: BookOpen },
+      { to: '/field-research', label: 'Field Research', icon: Mic },
+    ],
   },
   {
     items: [

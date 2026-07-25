@@ -33,6 +33,7 @@ import presidentReviewRoutes from './routes/presidentReview.js';
 import terminalRoutes from './routes/terminal.js';
 import secDocProxyRoutes from './routes/secDocProxy.js';
 import notesRoutes from './routes/notes.js';
+import researchRoutes from './routes/research.js';
 import { ensureRecurringMeetings } from './services/recurringMeetings.js';
 import cron from 'node-cron';
 import { regenerate as regenerateDayInReview } from './services/dayInReview.js';
@@ -139,6 +140,7 @@ app.use('/api/president-review', presidentReviewRoutes);
 app.use('/api/terminal/sec-doc-proxy', secDocProxyRoutes);
 app.use('/api/terminal', terminalRoutes);
 app.use('/api/notes', notesRoutes);
+app.use('/api/research', researchRoutes);
 
 // Generic error handler. Logs the full error server-side for debugging but
 // never leaks internal details (stack traces, Prisma error bodies, etc.) to

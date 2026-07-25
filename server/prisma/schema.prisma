@@ -97,6 +97,10 @@ model User {
   presidentReviewsGiven    PresidentReview[] @relation("PresidentReviewReviewer")
   presidentReviewsReceived PresidentReview[] @relation("PresidentReviewPresident")
   researchNotes            ResearchNote[]
+  researchSourcesCreated   ResearchSource[] @relation("ResearchSourceCreator")
+  interviewsConducted      Interview[]      @relation("InterviewInterviewer")
+  interviewsScreened       Interview[]      @relation("InterviewScreener")
+  researchClaimsVerified   ResearchClaim[]  @relation("ResearchClaimVerifier")
 }
 
 // Chat channels are addressed by a simple string:
@@ -798,4 +802,143 @@ model ResearchNote {
 
   @@unique([userId, ticker])
   @@index([userId])
+}
+
+// ── Field research ───────────────────────────────────────────────────
+//
+// Primary research: what we learned by talking to people who actually
+// touch a business — former employees, distributors, customers,
+// competitors. The house rule is that no fact enters a report without a
+// pinned source, and these three tables are that rule made structural.
+// A Claim cannot exist except as an assertion made by an identified
+// speaker at a known moment in a recorded conversation.
+//
+// The chain is: ResearchSource (who) → Interview (the conversation, its
+// transcript and its consent) → ResearchClaim (one assertion, pinned to
+// speaker + millisecond offset). A report cites claim ids; anyone can
+// walk a citation back to the audio and hear it said.
+
+// Someone we interview. Separate from Interview because a good source
+// gets called again across quarters, and their relationship to the
+// company — which is what governs the MNPI risk — belongs to the person,
+// not to any one conversation.
+model ResearchSource {
+  id           Int      @id @default(autoincrement())
+  // How we refer to them in reports. Sources are often promised
+  // anonymity, so the alias is the citable identity and `fullName`
+  // stays internal.
+  alias        String
+  fullName     String?
+  role         String?
+  employer     String?
+  // FormerEmployee | CurrentEmployee | Customer | Distributor |
+  // Supplier | Competitor | IndustryExpert | Other. Kept as a string so
+  // adding a category is a code change, not a migration. CurrentEmployee
+  // is the high-risk one — see Interview.mnpiRisk.
+  relationship String
+  // Tickers this person can credibly speak to.
+  tickers      String[] @default([])
+  notes        String?
+  createdById  Int?
+  createdBy    User?    @relation("ResearchSourceCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  interviews   Interview[]
+
+  @@index([relationship])
+}
+
+// One conversation. Holds the recording reference, the diarized
+// transcript, and the compliance record for the call.
+model Interview {
+  id            Int      @id @default(autoincrement())
+  sourceId      Int
+  source        ResearchSource @relation(fields: [sourceId], references: [id], onDelete: Restrict)
+  // The company under study. Nullable for industry-level calls that
+  // aren't about one name.
+  ticker        String?
+  title         String
+  conductedAt   DateTime
+  interviewerId Int?
+  interviewer   User?    @relation("InterviewInterviewer", fields: [interviewerId], references: [id], onDelete: SetNull)
+
+  // Draft | Recorded | Transcribed | Extracted | Quarantined
+  status        String   @default("Draft")
+
+  // "onedrive:ITEM_ID" — the audio, stored the same way every other
+  // member upload is.
+  recordingRef  String?
+  // Plain reading copy of the transcript.
+  transcript    String?
+  // The diarized word stream from scribe_v2: [{text, startMs, endMs,
+  // speaker}]. This is the evidence of record — claims index into it by
+  // offset, so it is written once and never edited in place. A
+  // correction is a new claim annotation, not a rewrite.
+  transcriptWords Json?
+  // Which scribe model produced it, for later re-runs.
+  transcriptModel String?
+  durationMs    Int?
+
+  // ── Compliance ──
+  // Recording someone without consent is both unlawful in two-party
+  // states and fatal to a source relationship. No transcript is
+  // accepted for an interview without this set.
+  consentObtained Boolean @default(false)
+  consentNote     String?
+  // low | elevated | prohibited. Elevated is the default for anyone
+  // still inside the company; prohibited quarantines the interview so
+  // its claims can never be cited.
+  mnpiRisk        String  @default("low")
+  screenedAt      DateTime?
+  screenedById    Int?
+  screenedBy      User?   @relation("InterviewScreener", fields: [screenedById], references: [id], onDelete: SetNull)
+  // Set when an interview is judged to contain material non-public
+  // information. Quarantined interviews stay in the archive for the
+  // audit trail but are excluded from every claim query.
+  quarantined     Boolean @default(false)
+  quarantineNote  String?
+
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  claims        ResearchClaim[]
+
+  @@index([ticker, conductedAt(sort: Desc)])
+  @@index([sourceId])
+  @@index([status])
+}
+
+// A single assertion, pinned to who said it and when. This is the unit a
+// report cites. `startMs`/`endMs` index into the parent interview's
+// transcriptWords, which is why that column is immutable.
+model ResearchClaim {
+  id          Int      @id @default(autoincrement())
+  interviewId Int
+  interview   Interview @relation(fields: [interviewId], references: [id], onDelete: Cascade)
+  ticker      String?
+  // The assertion in the speaker's own words where possible.
+  text        String
+  // Verbatim supporting quote, for the footnote.
+  quote       String?
+  speaker     String?
+  startMs     Int
+  endMs       Int?
+  // Short normalized subject ("rebate structure", "store traffic") so
+  // claims from different interviews can be triangulated against each
+  // other.
+  topic       String?
+  // fact | opinion | forecast. A forecast from a distributor is not the
+  // same kind of evidence as a fact about their own invoices, and a
+  // report should never blur them.
+  kind        String   @default("fact")
+  // 0.0-1.0, the extractor's confidence that the claim is faithfully
+  // pulled from the transcript. NOT a judgement of whether it is true.
+  extractionConfidence Float?
+  // Set by a human who has listened back and agreed the pin is right.
+  verifiedById Int?
+  verifiedBy   User?   @relation("ResearchClaimVerifier", fields: [verifiedById], references: [id], onDelete: SetNull)
+  verifiedAt   DateTime?
+  createdAt   DateTime @default(now())
+
+  @@index([ticker, topic])
+  @@index([interviewId])
 }
