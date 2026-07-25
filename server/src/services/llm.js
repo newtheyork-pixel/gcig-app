@@ -275,7 +275,18 @@ export async function llmChat({
 // plus an `active` field — the provider that would serve the next
 // request (first reachable in priority order).
 
-export async function probeProviders({ timeoutMs = 6000 } = {}) {
+// The local box shares one 16 GB card with the Optimize grading models,
+// so the Fund's 9 GB model is regularly evicted and has to be re-read
+// from disk on the next call. A measured cold load runs ~11s, against a
+// 6s probe budget — which is why this page reported the GPU "down" while
+// the tunnel was healthy and real requests (25s budget) were succeeding.
+// A health check that is stricter than the code path it reports on
+// manufactures outages, so the local probe gets room for a cold load.
+// Cloud providers keep the short budget: they have no cold start, and a
+// genuinely dead key should fail fast rather than stall the page.
+const LOCAL_PROBE_TIMEOUT_MS = 20_000;
+
+export async function probeProviders({ timeoutMs = 6000, localTimeoutMs = LOCAL_PROBE_TIMEOUT_MS } = {}) {
   const status = {
     local: { configured: !!process.env.LOCAL_LLM_URL, ok: false, latencyMs: null, error: null, model: null },
     anthropic: { configured: !!process.env.ANTHROPIC_API_KEY, ok: false, latencyMs: null, error: null, model: null },
@@ -293,12 +304,17 @@ export async function probeProviders({ timeoutMs = 6000 } = {}) {
       model: process.env.LOCAL_LLM_MODEL || DEFAULT_LOCAL_MODEL,
       messages: ping,
       temperature: 0,
-      timeoutMs,
+      timeoutMs: localTimeoutMs,
     });
     status.local.latencyMs = Date.now() - t;
     status.local.model = process.env.LOCAL_LLM_MODEL || DEFAULT_LOCAL_MODEL;
     if (r.ok) {
       status.local.ok = true;
+      // Healthy but slow means the model was paged back into VRAM. Worth
+      // surfacing: it explains a one-off slow first request, and a page
+      // that shows "ok" with no nuance invites the opposite confusion to
+      // the one this timeout fix just removed.
+      status.local.cold = status.local.latencyMs > 6000;
     } else {
       status.local.error = r.status
         ? `HTTP ${r.status}${r.detail ? ' — ' + r.detail : ''}`
