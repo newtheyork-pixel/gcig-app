@@ -25,17 +25,25 @@ import path from 'node:path';
 import os from 'node:os';
 
 const API = process.env.GCIG_API || 'https://gcig-api.onrender.com/api';
-const TOKEN = process.env.GCIG_TOKEN;
+let TOKEN = process.env.GCIG_TOKEN;
 const DRY = process.argv.includes('--dry-run');
 const EXTRACT = process.argv.includes('--extract');
 
 const LINDT = path.join(os.homedir(), 'repos/Lindt');
 const DOWNLOADS = path.join(os.homedir(), 'Downloads');
 
-if (!TOKEN && !DRY) {
-  console.error('GCIG_TOKEN is not set. Run with --dry-run to see the plan,');
-  console.error("or get a token: localStorage.getItem('gcig_token') in the browser console.");
-  process.exit(1);
+// Ask for the token rather than requiring it on the command line. A JWT
+// pasted into a shell is a quoting hazard — angle brackets are redirects,
+// and any stray character turns a 298 MB ingest into a cryptic zsh error
+// before a single byte moves. Prompting sidesteps the shell entirely, and
+// keeps the token out of shell history.
+async function promptForToken() {
+  const readline = await import('node:readline/promises');
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  console.log('Get your token: thegriffinfund.org → Profile → Security → API Token → Copy token\n');
+  const answer = (await rl.question('Paste token: ')).trim();
+  rl.close();
+  return answer;
 }
 
 // Files that are build output or working scratch rather than research.
@@ -215,6 +223,14 @@ const loadState = () =>
 const saveState = (st) => fs.writeFileSync(STATE, JSON.stringify(st, null, 2));
 
 async function main() {
+  if (!TOKEN && !DRY) {
+    TOKEN = await promptForToken();
+    if (!TOKEN) {
+      console.error('No token given — nothing to do.');
+      process.exit(1);
+    }
+  }
+
   const files = fs.existsSync(LINDT) ? walk(LINDT) : [];
   const present = INTERVIEWS.filter((i) =>
     fs.existsSync(path.join(i.dir === 'downloads' ? DOWNLOADS : path.join(LINDT, 'outreach'), i.file))
