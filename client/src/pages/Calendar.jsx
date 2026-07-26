@@ -85,6 +85,8 @@ export default function Calendar() {
   // Pitch — and they're scoped server-side so unrelated members
   // can't see meetings they aren't in.
   const [pitchMeetings, setPitchMeetings] = useState([]);
+  const [loadError, setLoadError] = useState(null);
+  const [loadingCore, setLoadingCore] = useState(2);
 
   async function loadLeaderLunch() {
     try {
@@ -103,13 +105,31 @@ export default function Calendar() {
     }
   }
 
+  // The two feeds the calendar is actually made of. Both were
+  // uncaught, so a failed request painted an empty month — which on a
+  // calendar is a perfectly ordinary sight and says nothing is wrong.
+  // The optional extras above already swallow their own failures on
+  // purpose: a member who cannot see leader lunches should get a
+  // calendar without them, not an error.
   async function loadPitches() {
-    const { data } = await api.get('/pitches');
-    setPitches(data);
+    try {
+      const { data } = await api.get('/pitches');
+      setPitches(data);
+    } catch (e) {
+      setLoadError(e.response?.data?.error || e.message || 'Could not load pitches');
+    } finally {
+      setLoadingCore((n) => n - 1);
+    }
   }
   async function loadEvents() {
-    const { data } = await api.get('/events');
-    setEvents(data);
+    try {
+      const { data } = await api.get('/events');
+      setEvents(data);
+    } catch (e) {
+      setLoadError(e.response?.data?.error || e.message || 'Could not load events');
+    } finally {
+      setLoadingCore((n) => n - 1);
+    }
   }
   async function loadUsers() {
     const { data } = await api.get('/users');
@@ -380,6 +400,26 @@ export default function Calendar() {
           </div>
         }
       />
+
+      {loadError && (
+        <div className="mb-4 rounded-lg border border-red-300 bg-red-50 p-4 text-sm text-red-900">
+          <div className="font-semibold">The calendar is incomplete.</div>
+          <div className="mt-1">{loadError}</div>
+          <div className="mt-1 text-red-800/80">
+            Anything that failed to load is missing from the month below, not absent from the diary.
+          </div>
+          <button
+            type="button"
+            onClick={() => { setLoadError(null); setLoadingCore(2); loadPitches(); loadEvents(); }}
+            className="mt-2 rounded-lg border border-red-300 bg-white px-3 py-1 text-xs font-semibold text-red-900 hover:bg-red-100"
+          >
+            Try again
+          </button>
+        </div>
+      )}
+      {loadingCore > 0 && !loadError && (
+        <div className="mb-4 text-sm text-navy-400">Loading the calendar…</div>
+      )}
 
       <Card>
         <div className="mb-3 flex flex-wrap items-center gap-4 text-xs text-navy-400">
