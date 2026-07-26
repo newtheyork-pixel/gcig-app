@@ -466,7 +466,11 @@ router.post('/projects/:id/targets', canResearch, async (req, res) => {
         employer: employer ? String(employer).slice(0, 200) : null,
         role: role ? String(role).slice(0, 200) : null,
         channel: channel ? String(channel).slice(0, 300) : null,
-        notes: notes ? String(notes).slice(0, 2000) : null,
+        // Generous: a target's notes hold the whole correspondence —
+        // why we picked them, the email sent, their reply, the outcome.
+        // Truncating that to a couple of lines loses the only record of
+        // what was actually said to a person.
+        notes: notes ? String(notes).slice(0, 20_000) : null,
         createdById: req.user?.id ?? null,
       },
     });
@@ -491,7 +495,7 @@ router.patch('/targets/:id', canResearch, async (req, res) => {
     if (req.body.status !== 'Identified') data.lastContactAt = new Date();
   }
   if (req.body?.notes !== undefined) {
-    data.notes = req.body.notes ? String(req.body.notes).slice(0, 2000) : null;
+    data.notes = req.body.notes ? String(req.body.notes).slice(0, 20_000) : null;
   }
   if (req.body?.sourceId !== undefined) {
     const sid = Number(req.body.sourceId);

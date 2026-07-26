@@ -914,7 +914,16 @@ function Coverage({ project, onChanged }) {
 function Targets({ project, onChanged }) {
   const [f, setF] = useState({ name: '', relationship: 'FormerEmployee', employer: '', channel: '' });
   const [saving, setSaving] = useState(false);
+  const [openId, setOpenId] = useState(null);
   const fn = project.funnel || {};
+  const open = (project.targets || []).find((t) => t.id === openId);
+
+  // One person, everything we have on them. The list is for scanning;
+  // this is for actually reading what was said — which is why the reply
+  // and the email we sent live here in full rather than truncated.
+  if (open) {
+    return <TargetDetail target={open} onBack={() => setOpenId(null)} onChanged={onChanged} />;
+  }
 
   async function add() {
     setSaving(true);
@@ -987,7 +996,15 @@ function Targets({ project, onChanged }) {
           <tbody>
             {project.targets.map((t) => (
               <tr key={t.id}>
-                <td className="sym">{t.name}</td>
+                <td className="sym">
+                  <a
+                    href="#"
+                    onClick={(e) => { e.preventDefault(); setOpenId(t.id); }}
+                    title="Open the full record"
+                  >
+                    {t.name}
+                  </a>
+                </td>
                 <td>{t.relationship}</td>
                 <td>{t.employer || '—'}</td>
                 <td>
@@ -1133,6 +1150,110 @@ function VisitRow({ visit: v, project, onChanged }) {
           ))}
         </select>
       </div>
+    </div>
+  );
+}
+
+// Everything held on one outreach contact.
+//
+// The notes field carries the whole correspondence in labelled sections —
+// why they were approached, the email sent, their reply, the outcome —
+// because a list row can only ever show a summary, and the reply is the
+// part that decides what to do next. Rendered as sections rather than a
+// wall of text so the reply is findable at a glance.
+function TargetDetail({ target: t, onBack, onChanged }) {
+  const [status, setStatus] = useState(t.status);
+  const [saving, setSaving] = useState(false);
+
+  // Notes are stored as "HEADING\ntext" blocks separated by blank lines.
+  // Anything that doesn't match that shape is shown as-is rather than
+  // dropped — an older record should still be readable.
+  const sections = String(t.notes || '')
+    .split(/\n\n+/)
+    .map((block) => {
+      const nl = block.indexOf('\n');
+      const head = nl > 0 ? block.slice(0, nl) : null;
+      const isHeading = head && /^[A-Z][A-Z \-/&]{3,}$/.test(head.trim());
+      return isHeading
+        ? { heading: head.trim(), body: block.slice(nl + 1).trim() }
+        : { heading: null, body: block.trim() };
+    })
+    .filter((s) => s.body);
+
+  async function move(next) {
+    setSaving(true);
+    setStatus(next);
+    await api.patch(`/research/targets/${t.id}`, { status: next }).catch(() => {});
+    setSaving(false);
+    onChanged();
+  }
+
+  return (
+    <div style={{ display: 'grid', gap: 10 }}>
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+        <TermButton onClick={onBack}>← Outreach</TermButton>
+        <select
+          style={{ ...termInput, flex: '0 0 150px' }}
+          value={status}
+          disabled={saving}
+          onChange={(e) => move(e.target.value)}
+        >
+          {TARGET_STATUSES.map((s) => <option key={s} value={s}>{s}</option>)}
+        </select>
+      </div>
+
+      <div className="term-panel-header">
+        <span className="name">{t.name}</span>
+      </div>
+
+      <div style={{ color: 'var(--term-fg-dim)', fontSize: 12 }}>
+        {[t.role, t.employer].filter(Boolean).join(' · ') || 'No title or employer recorded'}
+      </div>
+      <div style={{ color: 'var(--term-fg-muted)', fontSize: 11 }}>
+        {t.relationship}
+        {t.channel ? ` · ${t.channel}` : ''}
+        {t.lastContactAt ? ` · last contact ${fmtDate(t.lastContactAt)}` : ' · never contacted'}
+      </div>
+
+      {sections.length === 0 ? (
+        <div className="term-loading">Nothing recorded beyond the name.</div>
+      ) : (
+        sections.map((s, i) => (
+          <div key={i}>
+            {s.heading ? (
+              <div
+                style={{
+                  color: 'var(--term-amber, var(--term-white))',
+                  fontSize: 10,
+                  letterSpacing: 0.6,
+                  marginBottom: 2,
+                }}
+              >
+                {s.heading}
+              </div>
+            ) : null}
+            <pre
+              style={{
+                whiteSpace: 'pre-wrap',
+                wordBreak: 'break-word',
+                fontFamily: 'inherit',
+                fontSize: 11,
+                lineHeight: 1.5,
+                color: 'var(--term-fg-dim)',
+                margin: 0,
+                // The sent email runs long; cap it so the reply below
+                // stays reachable without a scroll hunt.
+                maxHeight: 260,
+                overflowY: 'auto',
+                borderLeft: '2px solid var(--term-border)',
+                paddingLeft: 8,
+              }}
+            >
+              {s.body}
+            </pre>
+          </div>
+        ))
+      )}
     </div>
   );
 }

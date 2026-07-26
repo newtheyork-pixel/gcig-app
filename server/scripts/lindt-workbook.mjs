@@ -143,7 +143,7 @@ export async function extractOutreach(file) {
     .slice(1)
     .filter((r) => r.B && looksLikeContact(r))
     .map((r) => {
-      const base = { date: r.A, who: r.B, why: r.C, email: r.D, response: r.F, outcome: r.G };
+      const base = { date: r.A, who: r.B, why: r.C, email: r.D, emailSent: r.E, response: r.F, outcome: r.G };
       const { name, employer, role } = splitWho(r.B);
       return {
         ...base, name, employer, role,

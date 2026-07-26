@@ -349,8 +349,16 @@ async function main() {
         relationship: 'Other',
         employer: t.employer, role: t.role,
         channel: t.email ? `email: ${t.email}` : null,
-        notes: [t.why && `Why: ${t.why}`, t.outcome && `Outcome: ${t.outcome}`]
-          .filter(Boolean).join('\n\n').slice(0, 2000) || null,
+        // The whole correspondence, so clicking a name shows what was
+        // actually said rather than a summary of it. Their reply is the
+        // most valuable line in the record and was previously dropped.
+        notes: [
+          t.why && `WHY WE APPROACHED THEM\n${t.why}`,
+          t.email && `ADDRESS\n${t.email}`,
+          t.emailSent && `EMAIL WE SENT\n${t.emailSent}`,
+          t.response && `THEIR REPLY\n${t.response}`,
+          t.outcome && `OUTCOME\n${t.outcome}`,
+        ].filter(Boolean).join('\n\n').slice(0, 20_000) || null,
       },
     });
     // Status is a separate PATCH because create always starts at
