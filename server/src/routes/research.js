@@ -1166,7 +1166,7 @@ async function cleanAssumptions(raw, projectId) {
 router.post('/projects/:id/valuations', canResearch, async (req, res) => {
   const projectId = Number(req.params.id);
   if (!Number.isInteger(projectId)) return res.status(400).json({ error: 'Bad id' });
-  const { kind, name, bear, base, bull, priceAtWrite, note, assumptions, currency } = req.body || {};
+  const { kind, name, bear, base, bull, priceAtWrite, note, assumptions, currency, buyBelow, reviewBy } = req.body || {};
   if (!name) return res.status(400).json({ error: 'name is required' });
   try {
     const project = await prisma.researchProject.findUnique({ where: { id: projectId } });
@@ -1188,6 +1188,8 @@ router.post('/projects/:id/valuations', canResearch, async (req, res) => {
         currency: /^[A-Za-z]{3}$/.test(String(currency || ''))
           ? String(currency).toUpperCase()
           : 'USD',
+        buyBelow: num(buyBelow),
+        reviewBy: reviewBy ? new Date(reviewBy) : null,
         note: note ? String(note).slice(0, 4000) : null,
         assumptions: clean.assumptions,
         createdById: req.user?.id ?? null,
@@ -1210,9 +1212,14 @@ router.patch('/valuations/:id', canResearch, async (req, res) => {
     const data = {};
     if (b.name !== undefined) data.name = String(b.name).slice(0, 200);
     if (b.kind !== undefined && VALUATION_KINDS.has(b.kind)) data.kind = b.kind;
-    for (const k of ['bear', 'base', 'bull', 'priceAtWrite']) {
+    for (const k of ['bear', 'base', 'bull', 'priceAtWrite', 'buyBelow']) {
       if (b[k] !== undefined) data[k] = num(b[k]);
     }
+    // Moving the level re-arms it. Otherwise raising a watch you have
+    // already been alerted on stays silent at the new number, which is
+    // the opposite of what changing it means.
+    if (b.buyBelow !== undefined) data.alertedAt = null;
+    if (b.reviewBy !== undefined) data.reviewBy = b.reviewBy ? new Date(b.reviewBy) : null;
     if (b.note !== undefined) data.note = b.note ? String(b.note).slice(0, 4000) : null;
     if (b.currency !== undefined && /^[A-Za-z]{3}$/.test(String(b.currency))) {
       data.currency = String(b.currency).toUpperCase();

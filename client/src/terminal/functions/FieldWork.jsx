@@ -1085,6 +1085,32 @@ function ValuationRow({ v, project, onChanged }) {
         </div>
       </div>
 
+      {/* The watch. A valuation saying a name is cheap does nothing on
+          its own — somebody has to be looking on the day it gets there,
+          and nobody refreshes a quote daily for a name they do not own. */}
+      {v.buyBelow ? (
+        <div style={{ fontSize: 11, marginTop: 3 }}>
+          <span style={{ color: 'var(--term-fg-muted)' }}>watching for </span>
+          <span style={{ color: 'var(--term-white)' }}>{money(v.buyBelow, v.currency)}</span>
+          {v.alertedAt ? (
+            <span style={{ color: 'var(--term-positive)' }}> · reached {fmtDate(v.alertedAt)}</span>
+          ) : (
+            <span style={{ color: 'var(--term-fg-muted)' }}> · not there yet</span>
+          )}
+          {/* A model written before the last earnings report is a claim
+              about facts that have since been restated. Acting on a
+              price alert off one is the failure this label exists to
+              prevent. */}
+          {v.reviewBy && new Date(v.reviewBy) < new Date() ? (
+            <span style={{ color: 'var(--term-negative)' }}>
+              {' '}· PAST REVIEW ({fmtDate(v.reviewBy)}) — re-run before acting
+            </span>
+          ) : v.reviewBy ? (
+            <span style={{ color: 'var(--term-fg-muted)' }}> · review by {fmtDate(v.reviewBy)}</span>
+          ) : null}
+        </div>
+      ) : null}
+
       <div style={{ display: 'flex', gap: 8, marginTop: 4, alignItems: 'center', flexWrap: 'wrap' }}>
         <a
           href="#"
@@ -1144,7 +1170,7 @@ function ValuationRow({ v, project, onChanged }) {
 }
 
 function ValuationForm({ project, onDone, setFlash }) {
-  const [f, setF] = useState({ kind: 'dcf', name: '', bear: '', base: '', bull: '', priceAtWrite: '', note: '', currency: 'USD' });
+  const [f, setF] = useState({ kind: 'dcf', name: '', bear: '', base: '', bull: '', priceAtWrite: '', note: '', currency: 'USD', buyBelow: '', reviewBy: '' });
   const [rows, setRows] = useState(() => SUGGESTED.dcf.map((label) => ({ label, value: '', claimId: '' })));
   const [saving, setSaving] = useState(false);
 
@@ -1204,7 +1230,7 @@ function ValuationForm({ project, onDone, setFlash }) {
         />
       </div>
       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-        {[['bear', 'Bear $'], ['base', 'Base $'], ['bull', 'Bull $'], ['priceAtWrite', 'Price now $']].map(([k, ph]) => (
+        {[['bear', 'Bear'], ['base', 'Base'], ['bull', 'Bull'], ['priceAtWrite', 'Price now'], ['buyBelow', 'Tell me below']].map(([k, ph]) => (
           <input
             key={k}
             style={{ ...termInput, flex: '1 1 88px' }}
@@ -1255,6 +1281,20 @@ function ValuationForm({ project, onDone, setFlash }) {
         >
           + another input
         </a>
+      </div>
+
+      <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+        <span style={{ color: 'var(--term-fg-muted)', fontSize: 10 }}>Re-check after</span>
+        <input
+          style={{ ...termInput, flex: '0 1 140px' }}
+          type="date"
+          title="Usually the next reporting date. Past this, the panel says the model is stale rather than letting it look current."
+          value={f.reviewBy}
+          onChange={(e) => setF({ ...f, reviewBy: e.target.value })}
+        />
+        <span style={{ color: 'var(--term-fg-muted)', fontSize: 10 }}>
+          usually the next earnings date
+        </span>
       </div>
 
       <textarea

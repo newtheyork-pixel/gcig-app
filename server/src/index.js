@@ -36,6 +36,7 @@ import notesRoutes from './routes/notes.js';
 import researchRoutes from './routes/research.js';
 import { ensureRecurringMeetings } from './services/recurringMeetings.js';
 import cron from 'node-cron';
+import { checkBuyLevels } from './services/buyLevelWatch.js';
 import { regenerate as regenerateDayInReview } from './services/dayInReview.js';
 import { scrapeAndStoreDailyRates } from './services/gsamRates.js';
 import { refreshUniverse as refreshPriceUniverse } from './services/priceHistory.js';
@@ -193,6 +194,33 @@ cron.schedule(
 // at 9pm ET catches the most recent publication without thrashing if
 // the file goes up late. Weekends fail gracefully — the PDF is just
 // yesterday's, so the upsert is a no-op.
+// Buy levels, once a day after the close. Intraday would mean alerting
+// on a print that is gone by the time anyone reads it; this is a
+// research trigger, not a trading one, and the question it answers —
+// "has this come to a price we said we liked?" — is a question about
+// where a name closed.
+cron.schedule(
+  '30 16 * * 1-5',
+  () => {
+    checkBuyLevels()
+      .then((r) => {
+        if (r.checked === 0) return;
+        console.log(
+          `[cron] buy-levels: ${r.checked} watched, ${r.crossed} crossed, ` +
+            `${r.cleared} re-armed, ${r.unpriced} unpriced`
+        );
+        for (const a of r.alerts) {
+          console.log(
+            `[cron] BUY LEVEL HIT ${a.ticker} at ${a.price} ${a.currency} ` +
+              `(watch ${a.buyBelow})${a.stale ? ' — VALUATION IS PAST ITS REVIEW DATE' : ''}`
+          );
+        }
+      })
+      .catch((err) => console.error('[cron] buy-levels failed:', err.message));
+  },
+  { timezone: 'America/New_York' }
+);
+
 cron.schedule(
   '0 21 * * *',
   () => {

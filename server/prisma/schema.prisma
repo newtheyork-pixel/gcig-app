@@ -1215,6 +1215,19 @@ model ResearchValuation {
   // cosmetic slip, it is a different number. Defaults to USD because
   // most of the book is, but it is stored rather than assumed.
   currency    String   @default("USD")
+  // The price we would actually want to be told about. A valuation that
+  // concludes the shares are worth more than they cost is an opinion
+  // until somebody is watching the gap close — and nobody refreshes a
+  // quote daily for a name they do not own.
+  buyBelow    Float?
+  // Set when the level was last announced, so a name that sits below it
+  // for a fortnight is reported once rather than every morning. Cleared
+  // when it climbs back above, so the NEXT crossing is news again.
+  alertedAt   DateTime?
+  // A model is only good until the facts under it move. Set to the next
+  // reporting date, this is what makes the panel say a valuation is
+  // stale rather than letting a March DCF look current in August.
+  reviewBy    DateTime?
   // [{ label, value, unit?, claimId?, note? }] — the inputs that drive
   // the cases. claimId points at a ResearchClaim when the assumption
   // came from primary research rather than being picked; validated on
