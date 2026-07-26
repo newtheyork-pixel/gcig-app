@@ -121,11 +121,27 @@ export function splitWho(who) {
   };
 }
 
+// A genuine contact row carries either an email address or an explicit
+// "no email" note in column D, plus a reason in column C.
+//
+// This filter exists because the Outreach sheet is not one table. Below
+// the contact list sits a second block — the von Cramon call's findings,
+// with its own "What he said / outcome" header — and column B there
+// holds prose like "Tree crop -> supply can't respond for years". Taking
+// every row with a value in B swept eight interview findings into the
+// funnel as people, which both inflated the outreach count and put
+// evidence somewhere it can never be cited from.
+function looksLikeContact(r) {
+  const hasAddressColumn = !!(r.D && r.D.trim());
+  const hasReason = !!(r.C && r.C.trim());
+  return hasAddressColumn && hasReason;
+}
+
 export async function extractOutreach(file) {
   const rows = await readSheet(file, 'Outreach');
   return rows
     .slice(1)
-    .filter((r) => r.B)
+    .filter((r) => r.B && looksLikeContact(r))
     .map((r) => {
       const base = { date: r.A, who: r.B, why: r.C, email: r.D, response: r.F, outcome: r.G };
       const { name, employer, role } = splitWho(r.B);
