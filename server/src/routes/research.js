@@ -1140,8 +1140,9 @@ router.post('/projects/:id/answer-scan', canResearch, heavyLimiter, async (req, 
 
       for (const iv of interviews) {
         const words = iv.transcriptWords;
-        const answer = await scanForAnswer({ words, turns: rebuildTurns(words) }, q.text);
-        if (answer?.rejected) unsupported += answer.rejected;
+        const scan = await scanForAnswer({ words, turns: rebuildTurns(words) }, q.text);
+        unsupported += scan.rejected;
+        const answer = scan.answer;
         if (!answer) continue;
 
         // The extractor may already have pulled this passage and simply

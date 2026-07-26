@@ -39,7 +39,7 @@ const reply = (scan, check = { supported: true }) => async ({ messages }) =>
   JSON.stringify(isCheck(messages) ? check : scan);
 
 test('pins a located answer to its real span and speaker', async () => {
-  const hit = await scanForAnswer(IV, Q, {
+  const { answer: hit } = await scanForAnswer(IV, Q, {
     llmChat: reply({
       found: true,
       answer: 'They refill to capacity.',
@@ -57,7 +57,7 @@ test('drops an answer whose quote is not in the tape', async () => {
   // The whole point. Told what answer to look for, a model will
   // sometimes produce a plausible one — "about a dozen" is exactly the
   // shape of reply this question invites, and nobody said it.
-  const hit = await scanForAnswer(IV, Q, {
+  const { answer: hit } = await scanForAnswer(IV, Q, {
     llmChat: reply({
       found: true,
       answer: 'They put back about a dozen.',
@@ -71,7 +71,7 @@ test('drops an answer whose quote is not in the tape', async () => {
 test('a partial answer is kept, and marked partial', async () => {
   // Half of a compound question answered is evidence. Discarding it
   // makes the question look like one nobody was ever asked.
-  const hit = await scanForAnswer(IV, Q, {
+  const { answer: hit } = await scanForAnswer(IV, Q, {
     llmChat: reply({
       found: true,
       answer: 'They refill to capacity, but did not split it by brand.',
@@ -90,7 +90,7 @@ test('a whole answer beats a more confident partial one', async () => {
   // two replies to choose between.
   const long = { words: WORDS, turns: [...TURNS, ...Array.from({ length: 400 }, () => ({ speaker: 'speaker_1', text: 'and so on and so forth' }))] };
   let n = 0;
-  const hit = await scanForAnswer(long, Q, {
+  const { answer: hit } = await scanForAnswer(long, Q, {
     llmChat: async ({ messages }) => {
       if (isCheck(messages)) return JSON.stringify({ supported: true });
       n += 1;
@@ -111,7 +111,7 @@ test('drops a claim the quote does not actually say', async () => {
   // spoken and locates cleanly; the Hershey comparison in the claim
   // above it was invented. locateQuote cannot catch this — the citation
   // is perfect, which is exactly what makes it dangerous.
-  const hit = await scanForAnswer(
+  const { answer: hit } = await scanForAnswer(
     IV,
     'When restocking, how many Lindt units go back up versus Hershey?',
     {
@@ -129,8 +129,24 @@ test('drops a claim the quote does not actually say', async () => {
   assert.equal(hit, null);
 });
 
+test('rejections are counted even when nothing survives them', async () => {
+  // The first cut hung this count off the surviving answer, so a run
+  // that threw out every candidate reported throwing out none — the
+  // reject counter read zero precisely when it mattered. A scan that
+  // discards four fabrications and one that finds nothing to discard
+  // must not produce the same number.
+  const { answer, rejected } = await scanForAnswer(IV, Q, {
+    llmChat: reply(
+      { found: true, answer: 'They put back twelve units.', quote: 'Pack the whole thing.', confidence: 0.9 },
+      { supported: false }
+    ),
+  });
+  assert.equal(answer, null);
+  assert.equal(rejected, 1);
+});
+
 test('the checker may narrow an overstated claim, and may add caution', async () => {
-  const hit = await scanForAnswer(IV, Q, {
+  const { answer: hit } = await scanForAnswer(IV, Q, {
     llmChat: reply(
       { found: true, answer: 'They put back twelve units.', quote: 'Pack the whole thing.', partial: false, confidence: 0.9 },
       { supported: true, partial: true, answer: 'They refill to capacity.' }
@@ -143,7 +159,7 @@ test('the checker may narrow an overstated claim, and may add caution', async ()
 
 test('an unreachable checker rejects rather than waves through', async () => {
   for (const bad of [async () => null, async () => 'not json', async () => { throw new Error('down'); }]) {
-    const hit = await scanForAnswer(IV, Q, {
+    const { answer: hit } = await scanForAnswer(IV, Q, {
       llmChat: async ({ messages }) =>
         isCheck(messages)
           ? bad()
@@ -154,21 +170,21 @@ test('an unreachable checker rejects rather than waves through', async () => {
 });
 
 test('a model that answers nothing is not an answer', async () => {
-  assert.equal(await scanForAnswer(IV, Q, { llmChat: reply({ found: false }) }), null);
-  assert.equal(await scanForAnswer(IV, Q, { llmChat: async () => null }), null);
-  assert.equal(await scanForAnswer(IV, Q, { llmChat: async () => 'not json' }), null);
+  assert.equal((await scanForAnswer(IV, Q, { llmChat: reply({ found: false }) })).answer, null);
+  assert.equal((await scanForAnswer(IV, Q, { llmChat: async () => null })).answer, null);
+  assert.equal((await scanForAnswer(IV, Q, { llmChat: async () => 'not json' })).answer, null);
   // found:true with nothing behind it is the same as no answer.
-  assert.equal(await scanForAnswer(IV, Q, { llmChat: reply({ found: true }) }), null);
+  assert.equal((await scanForAnswer(IV, Q, { llmChat: reply({ found: true }) })).answer, null);
 });
 
 test('a provider that throws does not take the scan down with it', async () => {
-  const hit = await scanForAnswer(IV, Q, {
+  const { answer: hit } = await scanForAnswer(IV, Q, {
     llmChat: async () => { throw new Error('tunnel down'); },
   });
   assert.equal(hit, null);
 });
 
 test('no transcript and no question are both no-ops', async () => {
-  assert.equal(await scanForAnswer({ words: [], turns: [] }, Q, { llmChat: reply({}) }), null);
-  assert.equal(await scanForAnswer(IV, '', { llmChat: reply({}) }), null);
+  assert.equal((await scanForAnswer({ words: [], turns: [] }, Q, { llmChat: reply({}) })).answer, null);
+  assert.equal((await scanForAnswer(IV, '', { llmChat: reply({}) })).answer, null);
 });

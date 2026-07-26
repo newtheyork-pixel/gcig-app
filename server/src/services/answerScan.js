@@ -73,8 +73,15 @@ const render = (turns) =>
 /**
  * Scan one transcript for the answer to one question.
  *
- * Returns the best located answer, or null. Never throws — a scan is an
- * enhancement, and one bad window must not cost the rest.
+ * Returns { answer, rejected }. `answer` is the best located, checked
+ * answer or null; `rejected` counts answers that located verbatim but
+ * failed the check that the quote says them.
+ *
+ * The count is returned separately from the answer, and not hung off it,
+ * because the case that matters most is the one where every candidate
+ * was rejected — there is no answer left to carry the number, and a run
+ * that threw out four fabrications would otherwise report having thrown
+ * out none. Never throws: one bad window must not cost the rest.
  *
  * @param {object} interview - { words, turns }
  * @param {string} question
@@ -83,7 +90,7 @@ const render = (turns) =>
 export async function scanForAnswer(interview, question, deps = {}) {
   const words = interview?.words || [];
   const turns = interview?.turns || [];
-  if (words.length === 0 || !question) return null;
+  if (words.length === 0 || !question) return { answer: null, rejected: 0 };
   const chat = deps.llmChat || llmChat;
   const verify = deps.entails || entails;
 
@@ -158,6 +165,5 @@ export async function scanForAnswer(interview, question, deps = {}) {
     };
     if (!best || rank(candidate) > rank(best)) best = candidate;
   }
-  if (best) best.rejected = rejected;
-  return best;
+  return { answer: best, rejected };
 }
