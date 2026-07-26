@@ -226,3 +226,39 @@ test('overlap does not duplicate claims in the output', async () => {
   const { claims } = await extractClaims({ words, turns }, { llmChat });
   assert.equal(claims.length, 1);
 });
+
+// The model fails silently on long inputs: it returns a bare `{}`
+// instead of the requested shape. Treating that as "no claims in this
+// window" is how a model failure gets reported as a research finding.
+test('a reply with no claims array counts as a failed window, not an empty one', async () => {
+  const words = [{ text: 'we', startMs: 0, endMs: 100, speaker: 'speaker_1' }];
+  const turns = [{ speaker: 'speaker_1', startMs: 0, endMs: 100, text: 'we' }];
+  const out = await extractClaims({ words, turns }, { llmChat: async () => '{}' });
+  assert.equal(out.claims.length, 0);
+  assert.equal(out.unavailable, true, 'no window answered, so the run is unavailable');
+});
+
+test('a genuinely empty window is not counted as a failure', async () => {
+  const words = [{ text: 'we', startMs: 0, endMs: 100, speaker: 'speaker_1' }];
+  const turns = [{ speaker: 'speaker_1', startMs: 0, endMs: 100, text: 'we' }];
+  const out = await extractClaims({ words, turns }, { llmChat: async () => '{"claims":[]}' });
+  assert.equal(out.failedWindows, 0, 'an explicit empty array is a real answer');
+  assert.ok(!out.unavailable);
+});
+
+test('a partial read reports how much of the transcript actually answered', async () => {
+  // Long enough to need several windows; every other one bails.
+  const turns = Array.from({ length: 60 }, (_, i) => ({
+    speaker: 'speaker_1', startMs: i * 1000, endMs: i * 1000 + 900,
+    text: `we cut rebates ${i} ` + 'z'.repeat(400),
+  }));
+  const words = turns.flatMap((t) =>
+    t.text.split(' ').map((w) => ({ text: w, startMs: t.startMs, endMs: t.endMs, speaker: t.speaker }))
+  );
+  let n = 0;
+  const llmChat = async () => (n++ % 2 ? '{}' : '{"claims":[{"text":"x","quote":"we cut rebates 0","kind":"fact","confidence":1}]}');
+  const out = await extractClaims({ words, turns }, { llmChat });
+  assert.ok(out.windows > 1, 'this transcript needs several windows');
+  assert.ok(out.failedWindows > 0, 'the bailing windows are counted');
+  assert.ok(out.failedWindows < out.windows, 'and some did answer');
+});

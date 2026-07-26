@@ -979,7 +979,7 @@ router.post('/interviews/:id/extract', canResearch, heavyLimiter, async (req, re
     }
 
     const words = interview.transcriptWords;
-    const { claims, dropped, unavailable } = await extractClaims({
+    const { claims, dropped, unavailable, failedWindows, windows } = await extractClaims({
       words,
       turns: rebuildTurns(words),
     });
@@ -1012,6 +1012,10 @@ router.post('/interviews/:id/extract', canResearch, heavyLimiter, async (req, re
 
     res.json({
       extracted: written,
+      // A transcript read in six windows of which two failed has not
+      // been fully read, and the caller must be able to tell.
+      windows,
+      failedWindows,
       // Surfaced deliberately: a spike here means the model started
       // paraphrasing instead of quoting, and that run's output should
       // be treated as suspect.

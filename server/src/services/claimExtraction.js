@@ -24,7 +24,14 @@ import { llmChat } from './llm.js';
 
 // Per-window budget, not a per-transcript one. See chunkTurns below for
 // why the difference matters.
-const MAX_TRANSCRIPT_CHARS = 30_000;
+//
+// Deliberately small. The model degrades badly on long inputs and does
+// so silently: given 30k characters of a real interview it returned a
+// bare `{}` rather than the requested shape, which reads downstream as
+// "no claims here" and is indistinguishable from a quiet transcript. The
+// same window at 12k produced four claims and at 6k produced six. Cost
+// is more round trips; the alternative is confidently losing evidence.
+const MAX_TRANSCRIPT_CHARS = 8_000;
 // Windows overlap so a claim spoken across the seam is still wholly
 // inside at least one of them.
 const WINDOW_OVERLAP_TURNS = 6;
@@ -177,6 +184,7 @@ export async function extractClaims(interview, deps = {}) {
 
   const rows = [];
   let anyResponse = false;
+  let failedWindows = 0;
   for (const [i, window] of windows.entries()) {
     const label = windows.length > 1 ? ` (part ${i + 1} of ${windows.length})` : '';
     const raw = await chat({
@@ -189,16 +197,24 @@ export async function extractClaims(interview, deps = {}) {
       timeoutMs: 120_000,
       preferQuality: true,
     });
-    if (!raw) continue;
-    anyResponse = true;
+    if (!raw) { failedWindows += 1; continue; }
+    let parsed = null;
     try {
-      const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed?.claims)) rows.push(...parsed.claims);
+      parsed = JSON.parse(raw);
     } catch {
       // One unparseable window shouldn't cost the rest of the call.
     }
+    // A reply with no `claims` array is the model failing to answer, NOT
+    // a window with nothing in it. Conflating the two is how a silent
+    // model failure gets reported as a finding.
+    if (!parsed || !Array.isArray(parsed.claims)) {
+      failedWindows += 1;
+      continue;
+    }
+    anyResponse = true;
+    rows.push(...parsed.claims);
   }
-  if (!anyResponse) return { claims: [], dropped: 0, unavailable: true };
+  if (!anyResponse) return { claims: [], dropped: 0, unavailable: true, failedWindows };
   const claims = [];
   let dropped = 0;
 
@@ -249,5 +265,8 @@ export async function extractClaims(interview, deps = {}) {
 
   // Chronological: a claim ledger reads as the conversation went.
   unique.sort((a, b) => a.startMs - b.startMs);
-  return { claims: unique, dropped };
+  // failedWindows is surfaced so a partial extraction is never mistaken
+  // for a complete one — a transcript that returned claims from four of
+  // six windows has not been fully read.
+  return { claims: unique, dropped, failedWindows, windows: windows.length };
 }
