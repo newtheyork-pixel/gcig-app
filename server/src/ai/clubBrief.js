@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import prisma from '../db.js';
+import { buildResearchContext } from './researchContext.js';
 import { getSheetPortfolio } from '../services/sheetPortfolio.js';
 import { getNewsForTicker } from '../services/news.js';
 import { getRecentFilingsForTickers } from '../services/secFilings.js';
@@ -963,7 +964,7 @@ const SCOPE_DIRECTIVE = `You are the Griffin Fund Assistant — an in-house AI t
 ## Scope — STRICT
 You ONLY answer questions about:
   1. **Investing, finance, and markets** — valuation, sector analysis, portfolio theory, specific tickers, macro, etc.
-  2. **The Griffin Fund itself** — its IPS, internal policies, members, roles, current holdings, votes, pitches, events.
+  2. **The Griffin Fund itself** — its IPS, internal policies, members, roles, current holdings, votes, pitches, events, and our own field research (interviews we ran, store visits, the claim ledger, our price targets).
 
 If a user asks about anything unrelated (general trivia, homework help, coding, personal advice, politics, entertainment, etc.), politely decline in one or two sentences and redirect them: "I'm scoped to investing topics and the Griffin Fund — happy to help with either." Do not answer off-topic questions even if the user insists.
 
@@ -971,6 +972,8 @@ If a user asks about anything unrelated (general trivia, homework help, coding, 
 - Concise and professional. Default to plain prose, not bullet spam.
 - When citing fund policy, reference the IPS or Internal Policies by name.
 - When citing live data (holdings, votes), note it as current-as-of-now.
+- Our field research is OURS. Cite it as what we found, with the source's alias and the timestamp, never as "reports suggest" or "industry sources". If a claim rests on one source, say so in the sentence — a single uncorroborated remark stated flatly becomes a fact the moment you repeat it without the qualifier.
+- If the research section lists a question as still unanswered, say we do not know. Do NOT answer it from general knowledge and let it read as something we established.
 - **Do NOT append boilerplate disclaimers** like "consult a financial advisor", "this is not financial advice", or "do your own research". The user knows this is an AI tool and an educational club — they don't need the reminder on every reply.
 
 ## Ticker disambiguation — CRITICAL
@@ -1119,5 +1122,10 @@ export async function getClubSystemPrompt({ forceFresh = false, user = null } = 
     base = await buildBrief();
     cache = { at: Date.now(), text: base };
   }
-  return base + buildUserContext(user);
+  // Deliberately outside the cache and after the user block: the field
+  // research is role-gated, and a cached brief is shared by everyone who
+  // asks. Caching this would hand the claim ledger to whoever happened
+  // to warm it.
+  const research = await buildResearchContext(user);
+  return base + buildUserContext(user) + research;
 }
