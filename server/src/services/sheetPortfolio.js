@@ -234,44 +234,58 @@ export async function readSheetPortfolio({ forceFresh = false } = {}) {
 // price minus previous close. Each row says which source it came from,
 // because a mixed list where some rows are stale and some are live is
 // worse than either if you cannot tell them apart.
-export async function getPortfolioMovers(deps = {}) {
+// Fill in the day move for positions the sheet left blank, from a
+// resolved quote (price minus previous close). Returns the same holdings
+// with `dayChange`/`price` filled where it could and a
+// `dayChangeSource` on every non-cash row, because a table silently
+// mixing stale sheet cells with live quotes is worse than either when
+// you cannot tell them apart.
+//
+// Shared rather than inlined in MOVR: the same blank cells feed the PM
+// panel, the Portfolio page and the AI brief, and fixing one panel while
+// the others still show gaps just moves the confusion.
+export async function withResolvedDayChange(holdings, deps = {}) {
   const resolve = deps.resolveQuotes || resolveQuotes;
+  const need = holdings
+    .filter((h) => !h.isCash && h.ticker && (h.dayChange == null || h.price == null))
+    .map((h) => h.ticker);
+  if (!need.length) {
+    return holdings.map((h) => (h.isCash ? h : { ...h, dayChangeSource: h.dayChange == null ? null : 'sheet' }));
+  }
+  let quotes = {};
+  try {
+    quotes = (await resolve(need)) || {};
+  } catch {
+    // Never let a quote outage cost the rows the sheet did supply.
+    quotes = {};
+  }
+  return holdings.map((h) => {
+    if (h.isCash || !h.ticker) return h;
+    if (h.dayChange != null && h.price != null) return { ...h, dayChangeSource: 'sheet' };
+    const q = quotes[String(h.ticker).toUpperCase()];
+    if (!q || q.dayChange == null || q.price == null) return { ...h, dayChangeSource: null };
+    return {
+      ...h,
+      price: h.price ?? q.price,
+      dayChange: q.dayChange,
+      dayChangeSource: q.source || 'quote',
+    };
+  });
+}
+
+export async function getPortfolioMovers(deps = {}) {
   const load = deps.getSheetPortfolio || getSheetPortfolio;
   const { holdings, fetchedAt } = await load();
 
-  const positions = holdings.filter((h) => !h.isCash && h.ticker);
-  const needQuote = positions
-    .filter((h) => h.dayChange == null || h.price == null)
-    .map((h) => h.ticker);
-
-  let quotes = {};
-  if (needQuote.length) {
-    // Never let a quote outage cost the rows the sheet did supply.
-    try {
-      quotes = (await resolve(needQuote)) || {};
-    } catch {
-      quotes = {};
-    }
-  }
+  const filled = await withResolvedDayChange(holdings, deps);
+  const positions = filled.filter((h) => !h.isCash && h.ticker);
 
   const rows = [];
   let unpriced = 0;
   for (const h of positions) {
-    let last = h.price;
-    let dayUsd = h.dayChange;
-    let source = 'sheet';
-
-    if (dayUsd == null || last == null) {
-      const q = quotes[String(h.ticker).toUpperCase()];
-      if (!q || q.dayChange == null || q.price == null) {
-        unpriced += 1;
-        continue;
-      }
-      last = q.price;
-      dayUsd = q.dayChange;
-      source = q.source || 'quote';
-    }
-
+    const last = h.price;
+    const dayUsd = h.dayChange;
+    if (dayUsd == null || last == null) { unpriced += 1; continue; }
     const prior = last - dayUsd;
     if (!(prior > 0)) { unpriced += 1; continue; }
     rows.push({
@@ -280,7 +294,7 @@ export async function getPortfolioMovers(deps = {}) {
       last,
       dayUsd,
       changePct: dayUsd / prior,
-      source,
+      source: h.dayChangeSource || 'sheet',
     });
   }
 

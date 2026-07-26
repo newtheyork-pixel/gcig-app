@@ -113,7 +113,7 @@ async function fetchQuoteSummary(ticker) {
 }
 import prisma from '../db.js';
 import { verifyJwt, requireSuperAdmin, requireRole } from '../middleware/auth.js';
-import { getSheetPortfolio } from '../services/sheetPortfolio.js';
+import { getSheetPortfolio, withResolvedDayChange } from '../services/sheetPortfolio.js';
 import { getNewsForTicker, extractArticle } from '../services/news.js';
 import { getBusinessSummary } from '../services/secBusinessSummary.js';
 import {
@@ -235,7 +235,12 @@ router.use(verifyJwt);
 // in this mode.
 router.get('/quotes', async (_req, res) => {
   try {
-    const data = await getSheetPortfolio();
+    const raw = await getSheetPortfolio();
+    // The sheet's day-change cells are formulas and are frequently blank
+    // — twelve of thirteen positions on the day this was found — which
+    // left the holdings table showing a dash for almost every row. Fill
+    // from a live quote where it can.
+    const data = { ...raw, holdings: await withResolvedDayChange(raw.holdings) };
 
     // Write a daily snapshot for today from the sheet total + cash.
     if (data.totals.totalValue > 0) {
@@ -1153,7 +1158,9 @@ router.get('/period-returns', async (_req, res) => {
     return res.json(periodReturnsCache.data);
   }
   try {
-    const sheet = await getSheetPortfolio();
+    const raw = await getSheetPortfolio();
+    // 1D comes off the same blank-prone column as the holdings table.
+    const sheet = { ...raw, holdings: await withResolvedDayChange(raw.holdings) };
     const out = {};
     for (const h of sheet.holdings) {
       if (h.isCash) continue;
