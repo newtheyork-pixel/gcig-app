@@ -54,6 +54,7 @@ export default function FieldResearch() {
   const [sources, setSources] = useState([]);
   const [interviews, setInterviews] = useState([]);
   const [ledger, setLedger] = useState({ claims: [], topics: [] });
+  const [projects, setProjects] = useState([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState('');
   const [busy, setBusy] = useState('');
@@ -64,14 +65,16 @@ export default function FieldResearch() {
     setErr('');
     const qs = ticker ? `?ticker=${encodeURIComponent(ticker)}` : '';
     try {
-      const [s, i, c] = await Promise.all([
+      const [s, i, c, pr] = await Promise.all([
         api.get(`/research/sources${qs}`).then((r) => r.data),
         api.get(`/research/interviews${qs}`).then((r) => r.data),
         api.get(`/research/claims${qs}`).then((r) => r.data),
+        api.get(`/research/projects${qs}`).then((r) => r.data).catch(() => []),
       ]);
       setSources(s || []);
       setInterviews(i || []);
       setLedger(c || { claims: [], topics: [] });
+      setProjects(pr || []);
     } catch (e) {
       setErr(e.response?.data?.error || e.message || 'Failed to load');
     } finally {
@@ -155,6 +158,7 @@ export default function FieldResearch() {
       ) : (
         <div className="grid gap-6 lg:grid-cols-2">
           <div className="space-y-6">
+            <ProjectList projects={projects} />
             <NewSource onDone={load} />
             <NewInterview sources={sources} onDone={load} />
             <InterviewList
@@ -576,5 +580,55 @@ function ClaimRow({ claim: c, onChanged }) {
         </button>
       </div>
     </li>
+  );
+}
+
+// Projects, on the page that predates them.
+//
+// This page was built before ResearchProject existed and only ever
+// listed sources, interviews and the claim ledger — so it and the
+// terminal's FLD panel described different worlds. Someone working here
+// could see seventeen interviews and have no idea which project they
+// belonged to, or that questions, site visits and an outreach funnel
+// existed at all.
+//
+// Deliberately read-only. Running a project — writing the brief, setting
+// questions, working the funnel — belongs in FLD where the whole process
+// is in one pane. This is the signpost, not a second implementation of
+// the same thing.
+function ProjectList({ projects }) {
+  if (!projects || projects.length === 0) return null;
+  return (
+    <Card title="Research projects" icon={FileText}>
+      <ul className="divide-y divide-navy-50">
+        {projects.map((p) => (
+          <li key={p.id} className="flex items-baseline justify-between gap-3 py-2">
+            <div className="min-w-0">
+              <p className="truncate text-sm font-semibold text-navy">
+                {p.ticker ? <span className="text-navy-400">{p.ticker} · </span> : null}
+                {p.name}
+              </p>
+              <p className="text-xs text-navy-400">
+                {p._count?.interviews ?? 0} interview
+                {(p._count?.interviews ?? 0) === 1 ? '' : 's'} ·{' '}
+                {p._count?.artifacts ?? 0} file
+                {(p._count?.artifacts ?? 0) === 1 ? '' : 's'} · {p.status}
+              </p>
+            </div>
+            <span className="shrink-0 text-[11px] text-navy-400">
+              open with{' '}
+              <span className="font-mono text-navy">
+                {p.ticker ? `${p.ticker} FLD` : 'FLD'}
+              </span>
+            </span>
+          </li>
+        ))}
+      </ul>
+      <p className="mt-3 text-[11px] text-navy-400">
+        Questions, coverage, the outreach funnel and site visits live in the
+        terminal's FLD panel, where the whole project is in one place. This
+        page covers sources, interviews and the claim ledger.
+      </p>
+    </Card>
   );
 }
