@@ -166,3 +166,63 @@ test('an empty transcript is not sent to the model at all', async () => {
   assert.equal(called, false);
   assert.equal(out.unavailable, true);
 });
+
+// Long interviews were silently losing their substance: a hard 40k-char
+// head-truncation fed the model a 39-minute expert call's opening small
+// talk and discarded the economics, so the richest transcript in the
+// corpus produced zero claims while three-minute store chats produced
+// plenty. These pin the windowing that replaced it.
+import { chunkTurns } from './claimExtraction.js';
+
+const bigTurns = (n, len) =>
+  Array.from({ length: n }, (_, i) => ({
+    speaker: i % 2 ? 'speaker_1' : 'speaker_0',
+    startMs: i * 1000,
+    endMs: i * 1000 + 900,
+    text: `t${i} ` + 'x'.repeat(len),
+  }));
+
+test('a short interview stays a single window', () => {
+  assert.equal(chunkTurns(bigTurns(5, 50)).length, 1);
+});
+
+test('a long interview is split rather than truncated', () => {
+  // ~60k chars of turns against a 30k budget.
+  const chunks = chunkTurns(bigTurns(120, 500));
+  assert.ok(chunks.length >= 2, `expected multiple windows, got ${chunks.length}`);
+});
+
+test('every turn survives somewhere — nothing is dropped off the end', () => {
+  const turns = bigTurns(120, 500);
+  const chunks = chunkTurns(turns);
+  const seen = new Set(chunks.flat().map((t) => t.text));
+  // The old behaviour kept only the head; the failure it caused was
+  // invisible precisely because nothing errored.
+  assert.equal(seen.size, turns.length);
+  assert.ok(seen.has(turns[turns.length - 1].text), 'the final turn must be covered');
+});
+
+test('windows overlap so a claim on the seam is wholly inside one of them', () => {
+  const chunks = chunkTurns(bigTurns(120, 500));
+  const firstEnd = chunks[0][chunks[0].length - 1].text;
+  assert.ok(chunks[1].some((t) => t.text === firstEnd), 'tail of window 1 repeats in window 2');
+});
+
+test('a single oversized turn still yields a window rather than an empty set', () => {
+  const chunks = chunkTurns([{ speaker: 'speaker_0', startMs: 0, endMs: 1, text: 'y'.repeat(90_000) }]);
+  assert.equal(chunks.length, 1);
+});
+
+test('overlap does not duplicate claims in the output', async () => {
+  // Both windows report the same statement; the ledger must show it once.
+  const words = [
+    { text: 'we', startMs: 0, endMs: 100, speaker: 'speaker_1' },
+    { text: 'cut', startMs: 100, endMs: 200, speaker: 'speaker_1' },
+    { text: 'rebates', startMs: 200, endMs: 300, speaker: 'speaker_1' },
+  ];
+  const turns = [{ speaker: 'speaker_1', startMs: 0, endMs: 300, text: 'we cut rebates' }];
+  const llmChat = async () =>
+    JSON.stringify({ claims: [{ text: 'Rebates were cut', quote: 'we cut rebates', kind: 'fact', confidence: 1 }] });
+  const { claims } = await extractClaims({ words, turns }, { llmChat });
+  assert.equal(claims.length, 1);
+});

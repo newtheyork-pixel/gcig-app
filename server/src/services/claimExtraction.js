@@ -22,7 +22,12 @@ import { llmChat } from './llm.js';
 // A forecast from a distributor is not evidence in the way an invoice
 // fact is, and a report that blurs them is overstating what it knows.
 
-const MAX_TRANSCRIPT_CHARS = 40_000;
+// Per-window budget, not a per-transcript one. See chunkTurns below for
+// why the difference matters.
+const MAX_TRANSCRIPT_CHARS = 30_000;
+// Windows overlap so a claim spoken across the seam is still wholly
+// inside at least one of them.
+const WINDOW_OVERLAP_TURNS = 6;
 
 const SYSTEM_PROMPT = `You extract citable claims from an interview transcript for an investment research team. The interview is with an industry source — a former employee, distributor, customer, or competitor of a company under study.
 
@@ -116,13 +121,39 @@ function spanSpeaker(words, from, to) {
   return first;
 }
 
-function buildTranscriptForModel(turns) {
-  const text = turns
+function renderTurns(turns) {
+  return turns
     .map((t) => `${t.speaker ? t.speaker.replace(/^speaker_/, 'Speaker ') : 'Unknown'}: ${t.text}`)
     .join('\n');
-  return text.length > MAX_TRANSCRIPT_CHARS
-    ? text.slice(0, MAX_TRANSCRIPT_CHARS)
-    : text;
+}
+
+// Split a long interview into overlapping windows.
+//
+// This replaces a hard head-truncation, which was silently the worst
+// possible choice for exactly the interviews worth having. A 39-minute
+// expert call opens with rapport — schools, where everyone grew up —
+// and gets to the substance later. Cutting at 40k characters fed the
+// model the small talk and threw away the economics, so the richest
+// transcript in the corpus yielded zero claims while three-minute store
+// chats yielded plenty. Long conversations are now covered end to end.
+export function chunkTurns(turns, budget = MAX_TRANSCRIPT_CHARS) {
+  const chunks = [];
+  let current = [];
+  let size = 0;
+  for (const t of turns) {
+    const len = (t.text || '').length + 16; // + speaker label
+    if (size + len > budget && current.length) {
+      chunks.push(current);
+      // Carry the tail forward so a claim spanning the boundary is
+      // wholly present in the next window too.
+      current = current.slice(-WINDOW_OVERLAP_TURNS);
+      size = current.reduce((n, x) => n + (x.text || '').length + 16, 0);
+    }
+    current.push(t);
+    size += len;
+  }
+  if (current.length) chunks.push(current);
+  return chunks;
 }
 
 /**
@@ -142,26 +173,32 @@ export async function extractClaims(interview, deps = {}) {
   if (words.length === 0) return { claims: [], dropped: 0, unavailable: true };
 
   const chat = deps.llmChat || llmChat;
-  const raw = await chat({
-    messages: [
-      { role: 'system', content: SYSTEM_PROMPT },
-      { role: 'user', content: `Transcript:\n${buildTranscriptForModel(turns)}` },
-    ],
-    jsonMode: true,
-    temperature: 0,
-    timeoutMs: 120_000,
-    preferQuality: true,
-  });
-  if (!raw) return { claims: [], dropped: 0, unavailable: true };
+  const windows = chunkTurns(turns);
 
-  let parsed;
-  try {
-    parsed = JSON.parse(raw);
-  } catch {
-    return { claims: [], dropped: 0, unavailable: true };
+  const rows = [];
+  let anyResponse = false;
+  for (const [i, window] of windows.entries()) {
+    const label = windows.length > 1 ? ` (part ${i + 1} of ${windows.length})` : '';
+    const raw = await chat({
+      messages: [
+        { role: 'system', content: SYSTEM_PROMPT },
+        { role: 'user', content: `Transcript${label}:\n${renderTurns(window)}` },
+      ],
+      jsonMode: true,
+      temperature: 0,
+      timeoutMs: 120_000,
+      preferQuality: true,
+    });
+    if (!raw) continue;
+    anyResponse = true;
+    try {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed?.claims)) rows.push(...parsed.claims);
+    } catch {
+      // One unparseable window shouldn't cost the rest of the call.
+    }
   }
-
-  const rows = Array.isArray(parsed?.claims) ? parsed.claims : [];
+  if (!anyResponse) return { claims: [], dropped: 0, unavailable: true };
   const claims = [];
   let dropped = 0;
 
@@ -198,7 +235,19 @@ export async function extractClaims(interview, deps = {}) {
     });
   }
 
+  // Overlapping windows can surface the same statement twice. Dedupe on
+  // where it was said, not on the wording, since two windows can phrase
+  // the same claim slightly differently.
+  const seen = new Set();
+  const unique = [];
+  for (const c of claims) {
+    const key = `${c.startMs}:${c.quote.slice(0, 60).toLowerCase()}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    unique.push(c);
+  }
+
   // Chronological: a claim ledger reads as the conversation went.
-  claims.sort((a, b) => a.startMs - b.startMs);
-  return { claims, dropped };
+  unique.sort((a, b) => a.startMs - b.startMs);
+  return { claims: unique, dropped };
 }
