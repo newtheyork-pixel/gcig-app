@@ -309,7 +309,7 @@ function ProjectPane({ id, onBack }) {
         </div>
       ) : null}
 
-      <ComplianceStrip interviews={p.interviews} />
+      <ComplianceStrip interviews={p.interviews} onOpen={() => setTab('mnpi')} />
 
       {/* Transcription is a paid API configured server-side. If the key
           isn't set, say so here rather than letting someone wait out a
@@ -995,6 +995,33 @@ function Coverage({ project, onChanged }) {
               </TermButton>
             </div>
 
+            {/* The answer itself, not just a count of answers. A row
+                reading "SUPPORTED · 3 claims" tells you a question was
+                answered without telling you what the answer was, which
+                is the only part anyone actually wants. Show the best one
+                inline; the rest are a click away. */}
+            {openQ !== q.questionId && q.claimCount > 0 ? (() => {
+              const top = (project.claims || [])
+                .filter((c) => c.questionId === q.questionId)
+                .sort((a, b) => (b.extractionConfidence || 0) - (a.extractionConfidence || 0))[0];
+              if (!top) return null;
+              return (
+                <div style={{ fontSize: 11, paddingLeft: 14, marginTop: 2 }}>
+                  <span style={{ color: 'var(--term-white)' }}>{top.text}</span>
+                  {top.quote ? (
+                    <span style={{ color: 'var(--term-fg-muted)', fontStyle: 'italic' }}>
+                      {' '}— “{top.quote.length > 90 ? `${top.quote.slice(0, 90)}…` : top.quote}”
+                    </span>
+                  ) : null}
+                  {q.claimCount > 1 ? (
+                    <span style={{ color: 'var(--term-fg-muted)' }}>
+                      {' '}+{q.claimCount - 1} more
+                    </span>
+                  ) : null}
+                </div>
+              );
+            })() : null}
+
             {openQ === q.questionId ? (
               <div style={{ display: 'grid', gap: 6, margin: '6px 0 4px 14px' }}>
                 {(project.claims || [])
@@ -1384,7 +1411,7 @@ function TargetDetail({ target: t, onBack, onChanged }) {
 // Compliance state is the kind of thing that has to be visible without
 // being asked for, because the failure mode is someone citing evidence
 // they were never allowed to use.
-function ComplianceStrip({ interviews }) {
+function ComplianceStrip({ interviews, onOpen }) {
   const list = interviews || [];
   if (list.length === 0) return null;
 
@@ -1398,9 +1425,16 @@ function ComplianceStrip({ interviews }) {
   const clean =
     !quarantined.length && !elevated.length && !unscreened.length && !noConsent.length;
 
+  // A count with no way through to the thing counted is a dead end: the
+  // strip said ELEVATED: 1 and there was no route from there to which
+  // interview, or why. Every chip now opens the panel that explains it.
   const chip = (label, n, color, title) =>
     n > 0 ? (
-      <span title={title} style={{ color, fontSize: 10, letterSpacing: 0.5, marginRight: 12 }}>
+      <span
+        title={`${title} Click to review.`}
+        onClick={onOpen}
+        style={{ color, fontSize: 10, letterSpacing: 0.5, marginRight: 12, cursor: 'pointer', textDecoration: 'underline dotted' }}
+      >
         {label}: {n}
       </span>
     ) : null;
@@ -1495,6 +1529,16 @@ function ComplianceRow({ interview: i, onChanged }) {
   const [showNote, setShowNote] = useState(false);
   const screen = i.screenResult || {};
 
+  async function rescreen() {
+    setBusy(true);
+    try {
+      await api.post(`/research/interviews/${i.id}/screen`);
+      onChanged();
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function decide(action) {
     setBusy(true);
     try {
@@ -1510,12 +1554,20 @@ function ComplianceRow({ interview: i, onChanged }) {
   }
 
   // Lead with what the model found, in its words.
+  //
+  // The last fallback used to read "Flagged for review", which is the
+  // one thing a reviewer cannot act on: a risk level and no reason for
+  // it. That is exactly the state interviews ingested before the screen
+  // recorded its findings are in, and the elevated one in the Lindt
+  // project sat there with nothing behind the word. Say plainly that the
+  // reason was never stored, and offer to go and get it.
+  const noFinding = !screen.reason && !i.quarantineNote && i.consentObtained && i.screenedAt;
   const finding =
     screen.reason ||
     i.quarantineNote ||
     (!i.consentObtained ? 'No consent to record was captured for this interview.' : null) ||
     (!i.screenedAt ? 'This transcript has not been screened yet.' : null) ||
-    'Flagged for review.';
+    `Risk is ${String(i.mnpiRisk).toUpperCase()} but no reason was recorded — this interview was screened before findings were stored. Re-screen it before deciding.`;
 
   return (
     <div style={{ borderTop: '1px dotted var(--term-border)', paddingTop: 6 }}>
@@ -1551,6 +1603,14 @@ function ComplianceRow({ interview: i, onChanged }) {
       ) : null}
 
       <div style={{ display: 'flex', gap: 6, marginTop: 4, alignItems: 'center', flexWrap: 'wrap' }}>
+        {/* Offered first where there is no finding: deciding is the wrong
+            next action when nothing has told you what you are deciding
+            about. */}
+        {noFinding || screen.modelAvailable === false ? (
+          <TermButton onClick={rescreen} disabled={busy}>
+            {busy ? 'Screening…' : 'Re-screen'}
+          </TermButton>
+        ) : null}
         <TermButton onClick={() => decide(i.quarantined ? 'release' : 'note')} disabled={busy}>
           {i.quarantined ? 'Release' : 'Cleared'}
         </TermButton>

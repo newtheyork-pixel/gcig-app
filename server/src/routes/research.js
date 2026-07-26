@@ -744,6 +744,24 @@ router.post('/interviews', canResearch, async (req, res) => {
         consentObtained: !!consentObtained,
         consentNote: consentNote ? String(consentNote).slice(0, 1000) : null,
         mnpiRisk: risk,
+        // A risk level with no stated reason is unreviewable — the panel
+        // can show ELEVATED and then has nothing to justify it, so the
+        // reviewer is asked to clear or quarantine on the strength of a
+        // coloured word. Record why it was raised at the moment it is
+        // raised; the transcript screen overwrites this with its own
+        // finding when one runs.
+        screenResult:
+          risk === 'low'
+            ? undefined
+            : {
+                risk,
+                reason:
+                  mnpiRisk && ['low', 'elevated', 'prohibited'].includes(mnpiRisk)
+                    ? 'Risk was set by hand when the interview was created.'
+                    : 'The source is a current employee of the company under research, so this starts elevated regardless of what was said.',
+                hits: [],
+                modelAvailable: null,
+              },
         quarantined: risk === 'prohibited',
         projectId: Number.isInteger(Number(projectId)) ? Number(projectId) : null,
         // Recorded against the person who opened the interview. The
@@ -1355,6 +1373,58 @@ router.get('/compliance', async (_req, res) => {
   } catch (err) {
     console.error('research/compliance failed:', err.message);
     res.status(500).json({ error: 'Could not load the compliance view' });
+  }
+});
+
+// Re-run the MNPI screen on a transcript already stored.
+//
+// Interviews ingested before the screen recorded its findings carry a
+// risk level and no explanation, which is the one state a reviewer
+// cannot act on. This also covers a screen that ran while the model was
+// down and got only the keyword pass.
+router.post('/interviews/:id/screen', canResearch, heavyLimiter, async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) return res.status(400).json({ error: 'Bad id' });
+  try {
+    const interview = await prisma.interview.findUnique({
+      where: { id },
+      include: { source: { select: { relationship: true } } },
+    });
+    if (!interview) return res.status(404).json({ error: 'Not found' });
+    if (!interview.transcript) {
+      return res.status(409).json({ error: 'There is no transcript to screen.' });
+    }
+
+    const screen = await screenTranscript(interview.transcript, {
+      relationship: interview.source?.relationship,
+    });
+
+    // Same pessimism as the ingest path: a re-run may raise the risk and
+    // must never talk the record down below what a person set by hand.
+    const order = { low: 0, elevated: 1, prohibited: 2 };
+    const risk =
+      order[screen.risk] >= order[interview.mnpiRisk] ? screen.risk : interview.mnpiRisk;
+
+    const updated = await prisma.interview.update({
+      where: { id },
+      data: {
+        mnpiRisk: risk,
+        screenedAt: new Date(),
+        screenedById: req.user?.id ?? null,
+        quarantined: interview.quarantined || risk === RISK.PROHIBITED,
+        screenResult: {
+          risk: screen.risk,
+          reason: screen.reason,
+          hits: screen.hits,
+          modelAvailable: screen.modelAvailable,
+        },
+      },
+      select: { id: true, mnpiRisk: true, quarantined: true, screenResult: true },
+    });
+    res.json(updated);
+  } catch (err) {
+    console.error('research/screen failed:', err.message);
+    res.status(502).json({ error: 'The MNPI screen could not run' });
   }
 });
 
