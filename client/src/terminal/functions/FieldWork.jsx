@@ -730,9 +730,27 @@ function Interviews({ project, onChanged, setFlash }) {
       {project.interviews.length === 0 ? (
         <div className="term-loading">No interviews on this project yet.</div>
       ) : (
-        project.interviews.map((i) => (
-          <InterviewRow key={i.id} interview={i} onChanged={onChanged} setFlash={setFlash} />
-        ))
+        <>
+          {/* What the list owes you, before scrolling it. */}
+          {(() => {
+            const iv = project.interviews;
+            const noTranscript = iv.filter((x) => !x.quarantined && !x.transcript).length;
+            const notExtracted = iv.filter(
+              (x) => !x.quarantined && x.transcript && (x._count?.claims ?? 0) === 0
+            ).length;
+            if (!noTranscript && !notExtracted) return null;
+            return (
+              <div style={{ color: 'var(--term-fg-muted)', fontSize: 11 }}>
+                {noTranscript ? `${noTranscript} awaiting a transcript` : ''}
+                {noTranscript && notExtracted ? ' · ' : ''}
+                {notExtracted ? `${notExtracted} transcribed but never extracted` : ''}
+              </div>
+            );
+          })()}
+          {project.interviews.map((i) => (
+            <InterviewRow key={i.id} interview={i} onChanged={onChanged} setFlash={setFlash} />
+          ))}
+        </>
       )}
     </div>
   );
@@ -827,16 +845,49 @@ function InterviewRow({ interview: i, onChanged, setFlash }) {
   }
 
   return (
-    <div style={{ borderTop: '1px dotted var(--term-border)', paddingTop: 6 }}>
+    <div
+      style={{
+        borderTop: '1px dotted var(--term-border)',
+        // The state of an interview is the thing you scan this list for
+        // — which ones still owe you work — and it was a word buried in
+        // a muted meta line between the employer and the claim count.
+        borderLeft: `2px solid ${
+          i.quarantined || !i.consentObtained
+            ? 'var(--term-negative)'
+            : !i.transcript
+            ? 'var(--term-amber, var(--term-white))'
+            : (i._count?.claims ?? 0) === 0
+            ? 'var(--term-amber, var(--term-white))'
+            : 'var(--term-positive)'
+        }`,
+        paddingTop: 6,
+        paddingLeft: 8,
+      }}
+    >
       <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap' }}>
         <div style={{ minWidth: 0 }}>
-          <div style={{ color: 'var(--term-white)', fontSize: 12 }}>{i.title}</div>
+          <div style={{ color: 'var(--term-white)', fontSize: 12 }}>
+            {i.title}
+            {/* What this row still needs, in the words of the next
+                action rather than a status noun. "Transcribed" does not
+                tell you that nothing has been pulled out of it yet. */}
+            {i.quarantined ? (
+              <span style={{ color: 'var(--term-negative)', fontSize: 10 }}> · QUARANTINED</span>
+            ) : !i.consentObtained ? (
+              <span style={{ color: 'var(--term-negative)', fontSize: 10 }}> · NO CONSENT</span>
+            ) : !i.transcript ? (
+              <span style={{ color: 'var(--term-amber, var(--term-white))', fontSize: 10 }}> · needs a transcript</span>
+            ) : (i._count?.claims ?? 0) === 0 ? (
+              <span style={{ color: 'var(--term-amber, var(--term-white))', fontSize: 10 }}> · not extracted yet</span>
+            ) : null}
+          </div>
           <div style={{ color: 'var(--term-fg-muted)', fontSize: 10 }}>
             {i.source?.alias}
-            {i.source?.employer ? ` · ${i.source.employer}` : ''} · {fmtDate(i.conductedAt)} ·{' '}
-            {i.status} · {i._count?.claims ?? 0} claims
-            {!i.consentObtained ? ' · NO CONSENT' : ''}
-            {i.quarantined ? ' · QUARANTINED' : ''}
+            {i.source?.employer ? ` · ${i.source.employer}` : ''} · {fmtDate(i.conductedAt)}
+            {' · '}
+            <span style={{ color: (i._count?.claims ?? 0) ? 'var(--term-white)' : undefined }}>
+              {i._count?.claims ?? 0} claims
+            </span>
           </div>
         </div>
         <div style={{ display: 'flex', gap: 6 }}>
