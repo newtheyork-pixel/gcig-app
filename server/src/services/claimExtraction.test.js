@@ -2,6 +2,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { extractClaims, locateQuote } from './claimExtraction.js';
 
+// Every located claim now also faces a check that the quote actually
+// says it. That check is the subject of claimCheck.test.js; here it is
+// stubbed to agree, so these tests stay about locating and pinning.
+const OK = async () => ({ supported: true });
+
 // locateQuote is the integrity gate of the whole evidence chain. If it
 // matches loosely, a paraphrased or invented quote gets stored with a
 // real-looking timestamp and a reader following the citation hears
@@ -144,7 +149,7 @@ test('keeps a locatable claim and pins it to the transcript', async () => {
         confidence: 0.92,
       }],
     });
-  const { claims, dropped } = await extractClaims(INTERVIEW, { llmChat });
+  const { claims, dropped } = await extractClaims(INTERVIEW, { llmChat, entails: OK });
   assert.equal(dropped, 0);
   assert.equal(claims.length, 1);
   assert.equal(claims[0].startMs, 2500);
@@ -162,7 +167,7 @@ test('drops a claim whose quote is not in the transcript', async () => {
         { text: 'Invented', quote: 'we lost the Walmart account', kind: 'fact', confidence: 0.99 },
       ],
     });
-  const { claims, dropped } = await extractClaims(INTERVIEW, { llmChat });
+  const { claims, dropped } = await extractClaims(INTERVIEW, { llmChat, entails: OK });
   assert.equal(claims.length, 1);
   assert.equal(claims[0].text, 'Real');
   assert.equal(dropped, 1, 'the drop is counted so a spike is visible');
@@ -171,7 +176,7 @@ test('drops a claim whose quote is not in the transcript', async () => {
 test('an unknown kind falls back to fact rather than being invented', async () => {
   const llmChat = async () =>
     JSON.stringify({ claims: [{ text: 'T', quote: 'in Q2', kind: 'speculation', confidence: 1 }] });
-  const { claims } = await extractClaims(INTERVIEW, { llmChat });
+  const { claims } = await extractClaims(INTERVIEW, { llmChat, entails: OK });
   assert.equal(claims[0].kind, 'fact');
 });
 
@@ -183,7 +188,7 @@ test('confidence is clamped into range', async () => {
         { text: 'B', quote: 'cut the rebate', kind: 'fact', confidence: -2 },
       ],
     });
-  const { claims } = await extractClaims(INTERVIEW, { llmChat });
+  const { claims } = await extractClaims(INTERVIEW, { llmChat, entails: OK });
   const byText = Object.fromEntries(claims.map((c) => [c.text, c.extractionConfidence]));
   assert.equal(byText.A, 1);
   assert.equal(byText.B, 0);
@@ -197,7 +202,7 @@ test('claims come back in chronological order', async () => {
         { text: 'earlier', quote: 'We cut', kind: 'fact', confidence: 1 },
       ],
     });
-  const { claims } = await extractClaims(INTERVIEW, { llmChat });
+  const { claims } = await extractClaims(INTERVIEW, { llmChat, entails: OK });
   assert.deepEqual(claims.map((c) => c.text), ['earlier', 'later']);
 });
 
@@ -211,7 +216,7 @@ test('a down model yields no claims and says so, rather than throwing', async ()
 test('an empty transcript is not sent to the model at all', async () => {
   let called = false;
   const llmChat = async () => { called = true; return '{"claims":[]}'; };
-  const out = await extractClaims({ words: [], turns: [] }, { llmChat });
+  const out = await extractClaims({ words: [], turns: [] }, { llmChat, entails: OK });
   assert.equal(called, false);
   assert.equal(out.unavailable, true);
 });
@@ -272,7 +277,7 @@ test('overlap does not duplicate claims in the output', async () => {
   const turns = [{ speaker: 'speaker_1', startMs: 0, endMs: 300, text: 'we cut rebates' }];
   const llmChat = async () =>
     JSON.stringify({ claims: [{ text: 'Rebates were cut', quote: 'we cut rebates', kind: 'fact', confidence: 1 }] });
-  const { claims } = await extractClaims({ words, turns }, { llmChat });
+  const { claims } = await extractClaims({ words, turns }, { llmChat, entails: OK });
   assert.equal(claims.length, 1);
 });
 
@@ -306,7 +311,7 @@ test('a partial read reports how much of the transcript actually answered', asyn
   );
   let n = 0;
   const llmChat = async () => (n++ % 2 ? '{}' : '{"claims":[{"text":"x","quote":"we cut rebates 0","kind":"fact","confidence":1}]}');
-  const out = await extractClaims({ words, turns }, { llmChat });
+  const out = await extractClaims({ words, turns }, { llmChat, entails: OK });
   assert.ok(out.windows > 1, 'this transcript needs several windows');
   assert.ok(out.failedWindows > 0, 'the bailing windows are counted');
   assert.ok(out.failedWindows < out.windows, 'and some did answer');

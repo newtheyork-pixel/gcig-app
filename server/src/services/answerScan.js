@@ -1,5 +1,6 @@
 import { llmChat, RESEARCH_LOCAL_MODEL } from './llm.js';
 import { locateQuote } from './claimExtraction.js';
+import { entails } from './claimCheck.js';
 
 // Reads a transcript looking for the answer to one specific question.
 //
@@ -46,69 +47,6 @@ Reply with strict JSON only:
 or
 {"found": false}`;
 
-// Deliberately shown the question and the quote and NOTHING else — no
-// surrounding transcript. That is exactly what a reader following the
-// footnote gets, and a claim that needs more context than the citation
-// carries is a claim the citation does not support.
-const CHECK_PROMPT = `You are checking whether a proposed answer is honestly supported by a quote.
-
-You will see a QUESTION, a verbatim QUOTE from an interview, and a PROPOSED ANSWER written from it. You do NOT get the rest of the transcript, on purpose: a reader following this citation will hear only this quote.
-
-Reject the proposed answer if it states anything the quote does not say. Be strict about these, which are the common failures:
-  - naming a brand, product, number, direction or comparison the quote never mentions
-  - turning "I'm not sure" or a guess into a finding
-  - answering a different question than the one asked
-
-Accept it if the quote plainly says it, allowing for the question supplying the subject — for "How often do reps come?", the quote "once a week" is a complete answer.
-
-If the quote supports only part of what was asked, accept it with "partial": true.
-
-If you accept it but the wording overstates the quote, rewrite it in "answer" so it says only what the quote says.
-
-Reply with strict JSON only:
-{"supported": true, "partial": false, "answer": "..."}
-or
-{"supported": false}`;
-
-// Returns { supported, partial, answer }. A checker that cannot be
-// reached rejects — an unverifiable claim is not a claim, and the whole
-// reason this pass exists is that the failure it catches looks perfect
-// from the outside.
-async function entails(chat, question, quote, proposed) {
-  let raw;
-  try {
-    raw = await chat({
-      messages: [
-        { role: 'system', content: CHECK_PROMPT },
-        {
-          role: 'user',
-          content: `QUESTION\n${question}\n\nQUOTE\n"${quote}"\n\nPROPOSED ANSWER\n${proposed}`,
-        },
-      ],
-      jsonMode: true,
-      temperature: 0,
-      timeoutMs: 60_000,
-      localModel: RESEARCH_LOCAL_MODEL,
-    });
-  } catch {
-    return { supported: false };
-  }
-  if (!raw) return { supported: false };
-  try {
-    const p = JSON.parse(raw);
-    if (p?.supported !== true) return { supported: false };
-    return {
-      supported: true,
-      partial: p.partial === true,
-      answer: typeof p.answer === 'string' && p.answer.trim()
-        ? p.answer.trim().slice(0, 500)
-        : null,
-    };
-  } catch {
-    return { supported: false };
-  }
-}
-
 function windows(turns, budget = MAX_CHARS) {
   const out = [];
   let cur = [];
@@ -147,6 +85,7 @@ export async function scanForAnswer(interview, question, deps = {}) {
   const turns = interview?.turns || [];
   if (words.length === 0 || !question) return null;
   const chat = deps.llmChat || llmChat;
+  const verify = deps.entails || entails;
 
   let best = null;
   let rejected = 0;
@@ -190,7 +129,7 @@ export async function scanForAnswer(interview, question, deps = {}) {
     // checked out and the claim was invented — the worst possible
     // combination, and more likely here than in the general extractor
     // because this pass has been told what it is hoping to find.
-    const check = await entails(chat, question, parsed.quote, parsed.answer);
+    const check = await verify(chat, question, parsed.quote, parsed.answer);
     if (!check.supported) {
       rejected += 1;
       continue;
@@ -205,7 +144,6 @@ export async function scanForAnswer(interview, question, deps = {}) {
     // more confident — a model is often surest about the easy half.
     const rank = (a) => (a.partial ? 0 : 1) * 10 + a.extractionConfidence;
     const candidate = {
-      text: String(parsed.answer).trim().slice(0, 500),
       quote: String(parsed.quote).trim(),
       startMs: located.startMs,
       endMs: located.endMs,

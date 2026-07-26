@@ -1,4 +1,5 @@
 import { llmChat, RESEARCH_LOCAL_MODEL } from './llm.js';
+import { entails } from './claimCheck.js';
 
 // Pulls citable claims out of an interview transcript.
 //
@@ -258,6 +259,7 @@ export async function extractClaims(interview, deps = {}) {
   if (words.length === 0) return { claims: [], dropped: 0, unavailable: true };
 
   const chat = deps.llmChat || llmChat;
+  const check = deps.entails || entails;
   const windows = chunkTurns(turns);
 
   const rows = [];
@@ -296,6 +298,7 @@ export async function extractClaims(interview, deps = {}) {
   if (!anyResponse) return { claims: [], dropped: 0, unavailable: true, failedWindows };
   const claims = [];
   let dropped = 0;
+  let unsupported = 0;
 
   for (const row of rows) {
     const text = String(row?.text || '').trim();
@@ -312,12 +315,25 @@ export async function extractClaims(interview, deps = {}) {
       dropped += 1;
       continue;
     }
+    // Locating the quote proves the words were spoken. It does not prove
+    // the claim written above them is a fair reading, and that failure
+    // wears a perfect citation — real timestamp, right speaker, verbatim
+    // quote, invented assertion. It reached the Lindt ledger: "It's like
+    // 44% to Amazon, 60% to Lindt" was written up as a 44/56 split
+    // because 44 and 56 sum to 100, and "But the stuff over there sell a
+    // lot" became a ranking of three brands nobody named.
+    const verdict = await check(chat, null, quote, text);
+    if (!verdict.supported) {
+      unsupported += 1;
+      continue;
+    }
     const kind = ['fact', 'opinion', 'forecast'].includes(row?.kind)
       ? row.kind
       : 'fact';
     const confidence = Number(row?.confidence);
     claims.push({
-      text,
+      // Narrowed to what the quote carries where the checker rewrote it.
+      text: verdict.answer || text,
       quote,
       topic: String(row?.topic || '').trim().toLowerCase().slice(0, 60) || null,
       kind,
@@ -347,5 +363,5 @@ export async function extractClaims(interview, deps = {}) {
   // failedWindows is surfaced so a partial extraction is never mistaken
   // for a complete one — a transcript that returned claims from four of
   // six windows has not been fully read.
-  return { claims: unique, dropped, failedWindows, windows: windows.length };
+  return { claims: unique, dropped, unsupported, failedWindows, windows: windows.length };
 }

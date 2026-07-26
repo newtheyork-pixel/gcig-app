@@ -1000,7 +1000,7 @@ router.post('/interviews/:id/extract', canResearch, heavyLimiter, async (req, re
     }
 
     const words = interview.transcriptWords;
-    const { claims, dropped, unavailable, failedWindows, windows } = await extractClaims({
+    const { claims, dropped, unsupported, unavailable, failedWindows, windows } = await extractClaims({
       words,
       turns: rebuildTurns(words),
     });
@@ -1062,6 +1062,10 @@ router.post('/interviews/:id/extract', canResearch, heavyLimiter, async (req, re
       // paraphrasing instead of quoting, and that run's output should
       // be treated as suspect.
       droppedUnlocatable: dropped,
+      // Located verbatim, but the claim written above the quote said
+      // more than the quote does. A different failure from the one
+      // above and a worse one, because the citation checks out.
+      droppedUnsupported: unsupported,
     });
   } catch (err) {
     console.error('research/extract failed:', err.message);
