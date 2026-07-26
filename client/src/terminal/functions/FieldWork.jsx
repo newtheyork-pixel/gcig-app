@@ -1594,20 +1594,6 @@ function Coverage({ project, onChanged }) {
         <TermButton onClick={add} disabled={saving || !text}>Add</TermButton>
       </div>
 
-      {cov.questions.length > 0 ? (
-        <div style={{ color: 'var(--term-fg-muted)', fontSize: 11 }}>
-          {s.supported || 0} supported · {s.thin || 0} thin ·{' '}
-          {s.unaddressed || 0} no evidence
-          {s.contested ? ` · ${s.contested} contested` : ''}
-          {s.openAndUnaddressed
-            ? ` — ${s.openAndUnaddressed} still open with nothing behind them`
-            : ''}
-          {s.unlinkedClaims
-            ? ` · ${s.unlinkedClaims} claim${s.unlinkedClaims === 1 ? '' : 's'} answering something we never asked`
-            : ''}
-        </div>
-      ) : null}
-
       {/* Drafting is only offered once there is evidence to draft from.
           A memo written from nothing is the single most misleading thing
           this system could produce. */}
@@ -1725,22 +1711,43 @@ function Coverage({ project, onChanged }) {
                 {q.claimCount ? (openQ === q.questionId ? '▾ ' : '▸ ') : ''}
                 {q.text}
               </span>
-              <span style={{ color: 'var(--term-fg-muted)', fontSize: 10 }}>
-                {q.claimCount} claim{q.claimCount === 1 ? '' : 's'} ·{' '}
-                {q.independentLines} independent
-                {q.observationCount
-                  ? ` · ${q.observationCount} observed at ${q.distinctLocations} site${q.distinctLocations === 1 ? '' : 's'}`
-                  : ''}
-                {q.forecastCount ? ` · ${q.forecastCount} forecast` : ''}
+              {/* Independence, site spread and forecast counts are what
+                  you want when weighing ONE question, not while scanning
+                  thirty. They move to the tooltip and to the expanded
+                  view; the row keeps the one number that says whether
+                  there is anything here at all. */}
+              <span
+                style={{ color: 'var(--term-fg-muted)', fontSize: 10, whiteSpace: 'nowrap' }}
+                title={[
+                  `${q.claimCount} claim${q.claimCount === 1 ? '' : 's'}`,
+                  `${q.independentLines} independent line${q.independentLines === 1 ? '' : 's'}`,
+                  q.observationCount
+                    ? `${q.observationCount} observed at ${q.distinctLocations} site${q.distinctLocations === 1 ? '' : 's'}`
+                    : null,
+                  q.forecastCount ? `${q.forecastCount} forecast` : null,
+                ].filter(Boolean).join(' · ')}
+              >
+                {q.claimCount || '—'}
               </span>
               {/* Closing a question is a person's call. Coverage informs
-                  it; it never makes it. */}
-              <TermButton
-                onClick={() => setStatus(q.questionId, q.status === 'Answered' ? 'Open' : 'Answered')}
-                title={q.status === 'Answered' ? 'Reopen' : 'Mark answered'}
+                  it; it never makes it. Shown as a mark rather than a
+                  button because thirty buttons down a list is most of
+                  what made this screen shout. */}
+              <a
+                href="#"
+                onClick={(e) => {
+                  e.preventDefault();
+                  setStatus(q.questionId, q.status === 'Answered' ? 'Open' : 'Answered');
+                }}
+                title={q.status === 'Answered' ? 'Reopen this question' : 'Mark this question answered'}
+                style={{
+                  fontSize: 10,
+                  color: q.status === 'Answered' ? 'var(--term-positive)' : 'var(--term-fg-muted)',
+                  whiteSpace: 'nowrap',
+                }}
               >
-                {q.status === 'Answered' ? 'Answered' : 'Mark answered'}
-              </TermButton>
+                {q.status === 'Answered' ? '✓ answered' : 'mark answered'}
+              </a>
             </div>
 
             {/* The answer itself, not just a count of answers. A row
@@ -1754,18 +1761,18 @@ function Coverage({ project, onChanged }) {
                 .sort((a, b) => (b.extractionConfidence || 0) - (a.extractionConfidence || 0))[0];
               if (!top) return null;
               return (
-                <div style={{ fontSize: 11, paddingLeft: 14, marginTop: 2 }}>
-                  <span style={{ color: 'var(--term-white)' }}>{top.text}</span>
-                  {top.quote ? (
-                    <span style={{ color: 'var(--term-fg-muted)', fontStyle: 'italic' }}>
-                      {' '}— “{top.quote.length > 90 ? `${top.quote.slice(0, 90)}…` : top.quote}”
-                    </span>
-                  ) : null}
-                  {q.claimCount > 1 ? (
-                    <span style={{ color: 'var(--term-fg-muted)' }}>
-                      {' '}+{q.claimCount - 1} more
-                    </span>
-                  ) : null}
+                // One line. The answer and its quote and a "+2 more" was
+                // three lines of text per question, thirty-one times over
+                // — the answer alone is what you are scanning for, and
+                // the quote is one click away with everything else.
+                <div
+                  style={{
+                    fontSize: 11, paddingLeft: 14, marginTop: 1, color: 'var(--term-fg-dim)',
+                    overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                  }}
+                  title={top.quote ? `“${top.quote}”` : undefined}
+                >
+                  {top.text}
                 </div>
               );
             })() : null}

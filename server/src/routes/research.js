@@ -124,7 +124,20 @@ router.get('/projects/:id', async (req, res) => {
         },
         interviews: {
           orderBy: { conductedAt: 'desc' },
-          include: {
+          // Explicit columns, because `include` returns every scalar and
+          // one of them is transcriptWords — the per-word timing array
+          // the extractor needs and the browser never opens. It was 1.3 MB
+          // of a 1.9 MB payload, shipped on every open of the panel, to
+          // be parsed and thrown away. The transcript TEXT stays: that is
+          // what the Transcript button shows.
+          select: {
+            id: true, title: true, ticker: true, conductedAt: true, status: true,
+            durationMs: true, transcript: true, transcriptModel: true,
+            consentObtained: true, consentNote: true, attestedAt: true,
+            mnpiRisk: true, screenedAt: true, screenResult: true,
+            quarantined: true, quarantineNote: true,
+            reviewedAt: true, reviewNote: true,
+            projectId: true, sourceId: true, createdAt: true,
             source: { select: SOURCE_PUBLIC },
             _count: { select: { claims: true } },
           },
