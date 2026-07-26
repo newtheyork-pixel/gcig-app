@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import AsyncSection from '../components/AsyncSection';
 import { Link } from 'react-router-dom';
 import { Plus, KeyRound, Trash2, ShieldCheck, ShieldOff, LogOut } from 'lucide-react';
 import api from '../api/client.js';
@@ -29,10 +30,20 @@ export default function Members({ embedded = false } = {}) {
   const [modalOpen, setModalOpen] = useState(false);
   const [form, setForm] = useState({ name: '', email: '', role: 'JuniorAnalyst' });
   const [tempPassword, setTempPassword] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(null);
 
   async function load() {
-    const { data } = await api.get('/users');
-    setUsers(data);
+    setLoadError(null);
+    try {
+      const { data } = await api.get('/users');
+      setUsers(data);
+    } catch (e) {
+      // An empty roster and a failed request rendered the same table.
+      setLoadError(e.response?.data?.error || e.message || 'Could not load members');
+    } finally {
+      setLoading(false);
+    }
   }
   useEffect(() => {
     load();
@@ -165,6 +176,14 @@ export default function Members({ embedded = false } = {}) {
         {/* Mobile: one card per member. Role is editable via select; extra roles,
             industries, and admin actions collapse into an expandable footer so the
             default row stays scannable. */}
+        <AsyncSection
+          loading={loading}
+          error={loadError}
+          retry={() => { setLoading(true); load(); }}
+          empty={users.length === 0}
+          emptyText="No members yet."
+          loadingText="Loading members…"
+        >
         <ul className="divide-y divide-navy-50 md:hidden">
           {users.map((u) => (
             <li key={u.id} className="py-3">
@@ -370,6 +389,7 @@ export default function Members({ embedded = false } = {}) {
             </tbody>
           </table>
         </div>
+        </AsyncSection>
       </Card>
 
       <Modal open={modalOpen} onClose={() => setModalOpen(false)} title="Invite Member">

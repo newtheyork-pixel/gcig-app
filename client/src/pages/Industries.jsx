@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import AsyncSection from '../components/AsyncSection';
 import { Plus, Trash2, Crown, X } from 'lucide-react';
 import api from '../api/client.js';
 import { useAuth } from '../context/AuthContext.jsx';
@@ -53,11 +54,22 @@ export default function Industries() {
   const [newLeaderId, setNewLeaderId] = useState('');
   const [memberModal, setMemberModal] = useState(null); // industry or null
   const [addUserId, setAddUserId] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(null);
 
   async function load() {
-    const [i, u] = await Promise.all([api.get('/industries'), api.get('/users')]);
-    setIndustries(i.data);
-    setUsers(u.data);
+    setLoadError(null);
+    try {
+      const [i, u] = await Promise.all([api.get('/industries'), api.get('/users')]);
+      setIndustries(i.data);
+      setUsers(u.data);
+    } catch (e) {
+      // Without this the rejection was unhandled and the page simply
+      // stayed empty — indistinguishable from a club with no industries.
+      setLoadError(e.response?.data?.error || e.message || 'Could not load industries');
+    } finally {
+      setLoading(false);
+    }
   }
 
   useEffect(() => {
@@ -174,14 +186,14 @@ export default function Industries() {
         </div>
       )}
 
-      {industries.length === 0 ? (
-        <Card>
-          <div className="py-12 text-center text-navy-400">
-            No industries yet.{' '}
-            {isAdmin && 'Click "New Industry" to create the first one.'}
-          </div>
-        </Card>
-      ) : (
+      <AsyncSection
+        loading={loading}
+        error={loadError}
+        retry={() => { setLoading(true); load(); }}
+        empty={industries.length === 0}
+        emptyText={`No industries yet.${isAdmin ? ' Click "New Industry" to create the first one.' : ''}`}
+        loadingText="Loading industries…"
+      >
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
           {industries.map((ind) => (
             <Card key={ind.id}>
@@ -259,7 +271,7 @@ export default function Industries() {
             </Card>
           ))}
         </div>
-      )}
+      </AsyncSection>
 
       <Modal open={createOpen} onClose={() => setCreateOpen(false)} title="New Industry">
         <form onSubmit={handleCreate} className="space-y-3">
