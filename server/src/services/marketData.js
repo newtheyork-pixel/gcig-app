@@ -3,6 +3,10 @@
 // so both are safe to pull on every dashboard / holding-detail load
 // with sensible caching.
 
+// Reported EPS comes from SEC XBRL, not Finnhub — see the fallback in
+// getEarnings for why.
+import { getStatements } from './secFundamentals.js';
+
 const FINNHUB_BASE = 'https://finnhub.io/api/v1';
 const DEFAULT_TIMEOUT_MS = 8_000;
 
@@ -209,7 +213,53 @@ export async function getEarnings(ticker) {
         ? { date: upcomingRow.date, epsEstimate: upcomingRow.epsEstimate ?? null }
         : null,
       history,
+      // Where the reported numbers came from, so the panel can say.
+      actualsSource: history.length ? 'finnhub' : null,
     };
+
+    // Finnhub's calendar reliably carries FUTURE estimates but almost
+    // never `epsActual` for quarters already reported on the free tier,
+    // so `history` comes back empty for nearly every ticker and the
+    // panel's whole beat/miss table silently renders nothing. Fall back
+    // to reported EPS from SEC XBRL, which is keyless and authoritative.
+    //
+    // Deliberately actuals-only: SEC periods are fiscal labels with no
+    // report date, and pairing them to Finnhub's calendar dates means
+    // inferring each filer's fiscal calendar. Getting that wrong lines an
+    // estimate up against the wrong quarter and produces a beat/miss
+    // figure that is confidently incorrect — worse than an honest gap.
+    if (data.history.length === 0) {
+      try {
+        const stmts = await getStatements(upper, 'quarterly');
+        const epsRow = Object.values(stmts?.income || {}).find((r) =>
+          /diluted eps/i.test(r?.label || '')
+        );
+        const periods = stmts?.periods || [];
+        if (epsRow && Array.isArray(epsRow.values) && periods.length) {
+          const rows = [];
+          for (let i = 0; i < periods.length; i++) {
+            const v = epsRow.values[i];
+            if (v == null) continue;
+            rows.push({
+              period: periods[i].label || periods[i].period,
+              fy: periods[i].fy,
+              fp: periods[i].fp,
+              date: null,
+              epsEstimate: null,
+              epsActual: v,
+              surprisePct: null,
+            });
+          }
+          rows.sort((a, b) =>
+            b.fy - a.fy || String(b.fp).localeCompare(String(a.fp))
+          );
+          data.history = rows.slice(0, 12);
+          data.actualsSource = 'sec';
+        }
+      } catch (err) {
+        console.warn(`getEarnings(${upper}) SEC fallback failed:`, err.message);
+      }
+    }
   } catch (err) {
     console.warn(`getEarnings(${upper}) failed:`, err.message);
     data = { upcoming: null, history: [] };

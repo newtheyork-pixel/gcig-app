@@ -149,6 +149,8 @@ export default function Earnings({ ticker }) {
 
   const upcoming = data.upcoming || null;
   const history = Array.isArray(data.history) ? data.history : [];
+  // Reported EPS from SEC filings carries no estimate to beat or miss.
+  const fromSec = data.actualsSource === 'sec';
   const hasData = upcoming || history.length > 0;
   const dleft = upcoming ? daysUntil(upcoming.date) : null;
 
@@ -213,31 +215,48 @@ export default function Earnings({ ticker }) {
               <thead>
                 <tr>
                   <th>Period</th>
-                  <th>Reported</th>
-                  <th className="num">EPS Est</th>
+                  {/* The estimate and surprise columns only exist when
+                      the wire carried an estimate against the reported
+                      quarter. When actuals come from SEC filings there is
+                      nothing to compare against, and three columns of
+                      dashes reads as broken rather than unavailable. */}
+                  {fromSec ? null : <th>Reported</th>}
+                  {fromSec ? null : <th className="num">EPS Est</th>}
                   <th className="num">EPS Act</th>
-                  <th className="num">Surprise</th>
+                  {fromSec ? null : <th className="num">Surprise</th>}
                 </tr>
               </thead>
               <tbody>
                 {history.map((h, i) => (
-                  <tr key={`${h.date}-${i}`}>
+                  <tr key={`${h.period}-${h.date || i}`}>
                     <td className="sym">{h.period}</td>
-                    <td>{fmtDate(h.date)}</td>
-                    <td className="num">{fmtEps(h.epsEstimate)}</td>
+                    {fromSec ? null : <td>{fmtDate(h.date)}</td>}
+                    {fromSec ? null : <td className="num">{fmtEps(h.epsEstimate)}</td>}
                     <td className="num">{fmtEps(h.epsActual)}</td>
-                    <td
-                      className={`num ${
-                        h.surprisePct == null ? '' : h.surprisePct >= 0 ? 'pos' : 'neg'
-                      }`}
-                    >
-                      {fmtSurprise(h.surprisePct)}
-                    </td>
+                    {fromSec ? null : (
+                      <td
+                        className={`num ${
+                          h.surprisePct == null ? '' : h.surprisePct >= 0 ? 'pos' : 'neg'
+                        }`}
+                      >
+                        {fmtSurprise(h.surprisePct)}
+                      </td>
+                    )}
                   </tr>
                 ))}
               </tbody>
             </table>
           )}
+
+          {fromSec ? (
+            <div style={{ color: 'var(--term-fg-muted)', fontSize: 10 }}>
+              Reported EPS from SEC filings (diluted, as filed). The news
+              wire carries analyst estimates for upcoming quarters but not
+              for ones already reported, so there is no beat/miss to show
+              against these — the trend is real, the surprise column is
+              simply not available.
+            </div>
+          ) : null}
         </>
       )}
 
