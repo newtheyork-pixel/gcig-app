@@ -104,6 +104,7 @@ model User {
   interviewsReviewed       Interview[]      @relation("InterviewReviewer")
   researchClaimsVerified   ResearchClaim[]  @relation("ResearchClaimVerifier")
   researchProjectsCreated  ResearchProject[]  @relation("ResearchProjectCreator")
+  researchValuations       ResearchValuation[] @relation("ResearchValuationAuthor")
   researchArtifacts        ResearchArtifact[] @relation("ResearchArtifactUploader")
   researchTargets          ResearchTarget[]   @relation("ResearchTargetCreator")
   siteVisits               SiteVisit[]        @relation("SiteVisitVisitor")
@@ -1018,6 +1019,7 @@ model ResearchProject {
   questions   ResearchQuestion[]
   targets     ResearchTarget[]
   visits      SiteVisit[]
+  valuations  ResearchValuation[]
 
   @@index([ticker, updatedAt(sort: Desc)])
   @@index([status])
@@ -1172,4 +1174,54 @@ model SiteObservation {
 
   @@index([visitId])
   @@index([questionId])
+}
+
+// What the work concluded a share is worth, and what it assumed to get
+// there.
+//
+// The spreadsheet can live in artifacts, but a file is not a finding: a
+// number nobody can restate without opening it is a number nobody argues
+// with. So the outputs come out — bear, base, bull, because a single
+// point estimate hides how much of the answer is the assumptions — and
+// the assumptions that drive them are recorded beside them.
+//
+// The point of putting this next to the claim ledger is that an
+// assumption can cite it. "Restock twice a week" is a number somebody
+// said on a recording at a timestamp; "12% revenue growth" is usually
+// nobody's number at all. Keeping both in one project makes the
+// difference visible instead of letting them look alike in a model.
+model ResearchValuation {
+  id          Int      @id @default(autoincrement())
+  projectId   Int
+  project     ResearchProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  ticker      String?
+  // dcf | merger | comps | other. A merger model asks different
+  // questions of the same company — what multiple was paid, not what the
+  // cash flows are worth — so the kind changes which assumptions the UI
+  // asks for.
+  kind        String   @default("dcf")
+  name        String
+  // The three cases. Nullable because a model in progress has a base
+  // long before it has a defensible bear, and forcing a placeholder in
+  // would put a made-up number where a missing one belongs.
+  bear        Float?
+  base        Float?
+  bull        Float?
+  // Share price the targets were struck against, so an upside figure
+  // stays honest as the market moves.
+  priceAtWrite Float?
+  // [{ label, value, unit?, claimId?, note? }] — the inputs that drive
+  // the cases. claimId points at a ResearchClaim when the assumption
+  // came from primary research rather than being picked; validated on
+  // write against claims in this same project.
+  assumptions Json?
+  note        String?
+  asOf        DateTime @default(now())
+  createdById Int?
+  createdBy   User?    @relation("ResearchValuationAuthor", fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([projectId])
+  @@index([ticker, asOf(sort: Desc)])
 }

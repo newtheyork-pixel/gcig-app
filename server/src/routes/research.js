@@ -131,6 +131,10 @@ router.get('/projects/:id', async (req, res) => {
         },
         questions: { orderBy: [{ rank: 'asc' }, { id: 'asc' }] },
         targets: { orderBy: { updatedAt: 'desc' } },
+        valuations: {
+          orderBy: { asOf: 'desc' },
+          include: { createdBy: { select: { id: true, name: true } } },
+        },
         visits: {
           orderBy: { visitedAt: 'desc' },
           include: {
@@ -1094,6 +1098,126 @@ router.post('/interviews/:id/extract', canResearch, heavyLimiter, async (req, re
   } catch (err) {
     console.error('research/extract failed:', err.message);
     res.status(502).json({ error: 'Claim extraction failed' });
+  }
+});
+
+// ── Valuation ────────────────────────────────────────────────────────
+//
+// What the work concluded a share is worth. The spreadsheet can sit in
+// artifacts; this is the part someone can argue with without opening it.
+
+const VALUATION_KINDS = new Set(['dcf', 'merger', 'comps', 'other']);
+
+const num = (v) => {
+  if (v === null || v === undefined || v === '') return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+};
+
+// Assumptions are the reason this lives next to the claim ledger. An
+// assumption that cites a claim is a number somebody said on a recording
+// at a timestamp; one that cites nothing is a number we picked. Both are
+// legitimate — a discount rate is nobody's quote — but they must not look
+// alike, so a claimId is verified to exist in THIS project and dropped
+// if it does not. A citation that silently points nowhere is worse than
+// no citation, because it reads as sourced.
+async function cleanAssumptions(raw, projectId) {
+  if (!Array.isArray(raw)) return { assumptions: [], droppedCitations: 0 };
+  const wanted = new Set(
+    raw.map((a) => Number(a?.claimId)).filter(Number.isInteger)
+  );
+  let valid = new Set();
+  if (wanted.size) {
+    const found = await prisma.researchClaim.findMany({
+      where: { id: { in: [...wanted] }, interview: { projectId, ...CITABLE } },
+      select: { id: true },
+    });
+    valid = new Set(found.map((c) => c.id));
+  }
+  let droppedCitations = 0;
+  const assumptions = raw.slice(0, 60).map((a) => {
+    const claimId = Number(a?.claimId);
+    const keep = Number.isInteger(claimId) && valid.has(claimId);
+    if (Number.isInteger(claimId) && !keep) droppedCitations += 1;
+    return {
+      label: String(a?.label || '').slice(0, 120),
+      value: String(a?.value ?? '').slice(0, 80),
+      unit: a?.unit ? String(a.unit).slice(0, 24) : null,
+      note: a?.note ? String(a.note).slice(0, 300) : null,
+      claimId: keep ? claimId : null,
+    };
+  }).filter((a) => a.label);
+  return { assumptions, droppedCitations };
+}
+
+router.post('/projects/:id/valuations', canResearch, async (req, res) => {
+  const projectId = Number(req.params.id);
+  if (!Number.isInteger(projectId)) return res.status(400).json({ error: 'Bad id' });
+  const { kind, name, bear, base, bull, priceAtWrite, note, assumptions } = req.body || {};
+  if (!name) return res.status(400).json({ error: 'name is required' });
+  try {
+    const project = await prisma.researchProject.findUnique({ where: { id: projectId } });
+    if (!project) return res.status(404).json({ error: 'Not found' });
+    const clean = await cleanAssumptions(assumptions, projectId);
+    const row = await prisma.researchValuation.create({
+      data: {
+        projectId,
+        ticker: project.ticker,
+        kind: VALUATION_KINDS.has(kind) ? kind : 'dcf',
+        name: String(name).slice(0, 200),
+        bear: num(bear),
+        base: num(base),
+        bull: num(bull),
+        priceAtWrite: num(priceAtWrite),
+        note: note ? String(note).slice(0, 4000) : null,
+        assumptions: clean.assumptions,
+        createdById: req.user?.id ?? null,
+      },
+    });
+    res.status(201).json({ ...row, droppedCitations: clean.droppedCitations });
+  } catch (err) {
+    console.error('research/valuation create failed:', err.message);
+    res.status(500).json({ error: 'Could not save the valuation' });
+  }
+});
+
+router.patch('/valuations/:id', canResearch, async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) return res.status(400).json({ error: 'Bad id' });
+  try {
+    const existing = await prisma.researchValuation.findUnique({ where: { id } });
+    if (!existing) return res.status(404).json({ error: 'Not found' });
+    const b = req.body || {};
+    const data = {};
+    if (b.name !== undefined) data.name = String(b.name).slice(0, 200);
+    if (b.kind !== undefined && VALUATION_KINDS.has(b.kind)) data.kind = b.kind;
+    for (const k of ['bear', 'base', 'bull', 'priceAtWrite']) {
+      if (b[k] !== undefined) data[k] = num(b[k]);
+    }
+    if (b.note !== undefined) data.note = b.note ? String(b.note).slice(0, 4000) : null;
+    let droppedCitations = 0;
+    if (b.assumptions !== undefined) {
+      const clean = await cleanAssumptions(b.assumptions, existing.projectId);
+      data.assumptions = clean.assumptions;
+      droppedCitations = clean.droppedCitations;
+    }
+    const row = await prisma.researchValuation.update({ where: { id }, data });
+    res.json({ ...row, droppedCitations });
+  } catch (err) {
+    console.error('research/valuation update failed:', err.message);
+    res.status(500).json({ error: 'Could not update the valuation' });
+  }
+});
+
+router.delete('/valuations/:id', canResearch, async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) return res.status(400).json({ error: 'Bad id' });
+  try {
+    await prisma.researchValuation.delete({ where: { id } });
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('research/valuation delete failed:', err.message);
+    res.status(500).json({ error: 'Could not delete the valuation' });
   }
 });
 

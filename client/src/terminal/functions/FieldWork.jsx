@@ -340,6 +340,7 @@ function ProjectPane({ id, onBack }) {
           ['targets', `Outreach (${p.funnel?.total ?? 0})`],
           ['interviews', `Interviews (${p.interviews.length})`],
           ['visits', `Visits (${p.visits?.length ?? 0})`],
+          ['valuation', `Valuation (${p.valuations?.length ?? 0})`],
           ['ledger', `Ledger (${p.claims.length})`],
           ['files', `Files (${p.artifacts.length})`],
           ['mnpi', 'Compliance'],
@@ -355,6 +356,7 @@ function ProjectPane({ id, onBack }) {
       </div>
 
       {tab === 'coverage' ? <Coverage project={p} onChanged={load} /> : null}
+      {tab === 'valuation' ? <Valuation project={p} onChanged={load} setFlash={setFlash} /> : null}
       {tab === 'targets' ? <Targets project={p} onChanged={load} /> : null}
       {tab === 'visits' ? <Visits project={p} onChanged={load} setFlash={setFlash} /> : null}
       {tab === 'ledger' ? <Ledger project={p} onChanged={load} /> : null}
@@ -844,6 +846,296 @@ function InterviewRow({ interview: i, onChanged, setFlash }) {
           {i.transcript}
         </pre>
       ) : null}
+    </div>
+  );
+}
+
+// What the work concluded a share is worth, and what it assumed.
+//
+// Three cases rather than one number, because a single point estimate
+// hides how much of the answer is the assumptions — and the assumptions
+// sit underneath where they can be read. An assumption that cites a claim
+// came off a recording at a timestamp; one that cites nothing is a figure
+// somebody chose. Both are legitimate and they must not look alike.
+const VAL_KINDS = [
+  ['dcf', 'DCF'],
+  ['merger', 'Merger / M&A'],
+  ['comps', 'Comps'],
+  ['other', 'Other'],
+];
+
+// The inputs each kind of model actually turns on. Offered as a starting
+// set so the assumption list is not a blank box — a merger model is
+// asking what multiple was paid, not what the cash flows are worth.
+const SUGGESTED = {
+  dcf: ['Revenue growth', 'EBIT margin', 'WACC', 'Terminal growth', 'Tax rate', 'Shares out'],
+  merger: ['Offer price', 'P/E paid', 'Target P/E before', 'EV/EBITDA paid', 'Premium to undisturbed', 'Synergies', 'Accretion / dilution'],
+  comps: ['Peer P/E', 'Peer EV/EBITDA', 'Our P/E', 'Growth vs peers'],
+  other: ['P/E', 'Growth'],
+};
+
+const money = (v) => (v === null || v === undefined ? '—' : `$${Number(v).toFixed(2)}`);
+
+function upside(target, ref) {
+  if (target == null || !ref) return null;
+  return ((Number(target) - Number(ref)) / Number(ref)) * 100;
+}
+
+function Valuation({ project, onChanged, setFlash }) {
+  const [adding, setAdding] = useState(false);
+  const list = project.valuations || [];
+
+  return (
+    <div style={{ display: 'grid', gap: 10 }}>
+      {adding ? (
+        <ValuationForm
+          project={project}
+          onDone={(saved) => { setAdding(false); if (saved) onChanged(); }}
+          setFlash={setFlash}
+        />
+      ) : (
+        <div>
+          <TermButton onClick={() => setAdding(true)}>+ New valuation</TermButton>
+        </div>
+      )}
+
+      {list.length === 0 ? (
+        <div className="term-loading">
+          No valuation yet. The spreadsheet can go in Files — this is the
+          part someone can argue with without opening it.
+        </div>
+      ) : (
+        list.map((v) => <ValuationRow key={v.id} v={v} project={project} onChanged={onChanged} />)
+      )}
+    </div>
+  );
+}
+
+function ValuationRow({ v, project, onChanged }) {
+  const [open, setOpen] = useState(false);
+  const ref = v.priceAtWrite;
+  const claimById = new Map((project.claims || []).map((c) => [c.id, c]));
+  const kindLabel = (VAL_KINDS.find(([k]) => k === v.kind) || [null, v.kind])[1];
+
+  async function remove() {
+    await api.delete(`/research/valuations/${v.id}`).catch(() => {});
+    onChanged();
+  }
+
+  const cell = (label, val) => {
+    const up = upside(val, ref);
+    return (
+      <div style={{ minWidth: 92 }}>
+        <div style={{ color: 'var(--term-fg-muted)', fontSize: 10, letterSpacing: 0.5 }}>{label}</div>
+        <div style={{ color: 'var(--term-white)', fontSize: 13 }}>{money(val)}</div>
+        {up === null ? null : (
+          <div style={{ fontSize: 10, color: up >= 0 ? 'var(--term-positive)' : 'var(--term-negative)' }}>
+            {up >= 0 ? '+' : ''}{up.toFixed(0)}%
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  return (
+    <div style={{ borderTop: '1px dotted var(--term-border)', paddingTop: 6 }}>
+      <div style={{ display: 'flex', gap: 8, alignItems: 'baseline', flexWrap: 'wrap' }}>
+        <span style={{ color: 'var(--term-fg-muted)', fontSize: 10, letterSpacing: 0.5 }}>
+          {String(kindLabel).toUpperCase()}
+        </span>
+        <span style={{ color: 'var(--term-white)', fontSize: 12, flex: 1, minWidth: 160 }}>{v.name}</span>
+        <span style={{ color: 'var(--term-fg-muted)', fontSize: 10 }}>
+          {fmtDate(v.asOf)}{v.createdBy?.name ? ` · ${v.createdBy.name}` : ''}
+        </span>
+      </div>
+
+      <div style={{ display: 'flex', gap: 18, marginTop: 4, flexWrap: 'wrap' }}>
+        {cell('BEAR', v.bear)}
+        {cell('BASE', v.base)}
+        {cell('BULL', v.bull)}
+        {/* Upside is meaningless without saying what it is against, and a
+            stale reference price quietly turns into a wrong percentage. */}
+        <div style={{ minWidth: 92 }}>
+          <div style={{ color: 'var(--term-fg-muted)', fontSize: 10, letterSpacing: 0.5 }}>
+            {ref ? 'VS' : 'NO REF PRICE'}
+          </div>
+          <div style={{ color: 'var(--term-fg-dim)', fontSize: 13 }}>{ref ? money(ref) : '—'}</div>
+          {ref ? (
+            <div style={{ color: 'var(--term-fg-muted)', fontSize: 10 }}>at write</div>
+          ) : (
+            <div style={{ color: 'var(--term-fg-muted)', fontSize: 10 }}>upside not shown</div>
+          )}
+        </div>
+      </div>
+
+      <div style={{ display: 'flex', gap: 8, marginTop: 4, alignItems: 'center', flexWrap: 'wrap' }}>
+        <a
+          href="#"
+          style={{ color: 'var(--term-fg-muted)', fontSize: 10 }}
+          onClick={(e) => { e.preventDefault(); setOpen((o) => !o); }}
+        >
+          {open ? 'hide assumptions' : `${(v.assumptions || []).length} assumption${(v.assumptions || []).length === 1 ? '' : 's'}`}
+        </a>
+        <a
+          href="#"
+          style={{ color: 'var(--term-fg-muted)', fontSize: 10 }}
+          onClick={(e) => { e.preventDefault(); if (window.confirm(`Delete "${v.name}"?`)) remove(); }}
+        >
+          delete
+        </a>
+      </div>
+
+      {open ? (
+        <div style={{ display: 'grid', gap: 3, marginTop: 4, paddingLeft: 8 }}>
+          {(v.assumptions || []).length === 0 ? (
+            <div style={{ color: 'var(--term-fg-muted)', fontSize: 11 }}>
+              None recorded — the cases above cannot be restated without the file.
+            </div>
+          ) : (
+            (v.assumptions || []).map((a, i) => {
+              const c = a.claimId ? claimById.get(a.claimId) : null;
+              return (
+                <div key={i} style={{ fontSize: 11 }}>
+                  <span style={{ color: 'var(--term-fg-dim)' }}>{a.label}</span>{' '}
+                  <span style={{ color: 'var(--term-white)' }}>{a.value}{a.unit ? ` ${a.unit}` : ''}</span>
+                  {c ? (
+                    <span style={{ color: 'var(--term-positive)', fontSize: 10 }}>
+                      {' '}· from the tape: “{(c.quote || c.text || '').slice(0, 70)}” {c.stamp}
+                    </span>
+                  ) : (
+                    <span style={{ color: 'var(--term-fg-muted)', fontSize: 10 }}> · assumed</span>
+                  )}
+                  {a.note ? <span style={{ color: 'var(--term-fg-muted)', fontSize: 10 }}> · {a.note}</span> : null}
+                </div>
+              );
+            })
+          )}
+        </div>
+      ) : null}
+
+      {v.note ? (
+        <div style={{ color: 'var(--term-fg-dim)', fontSize: 11, marginTop: 3 }}>{v.note}</div>
+      ) : null}
+    </div>
+  );
+}
+
+function ValuationForm({ project, onDone, setFlash }) {
+  const [f, setF] = useState({ kind: 'dcf', name: '', bear: '', base: '', bull: '', priceAtWrite: '', note: '' });
+  const [rows, setRows] = useState(() => SUGGESTED.dcf.map((label) => ({ label, value: '', claimId: '' })));
+  const [saving, setSaving] = useState(false);
+
+  function setKind(kind) {
+    setF((p) => ({ ...p, kind }));
+    // Only replace a template the user has not typed into.
+    setRows((prev) =>
+      prev.some((r) => r.value)
+        ? prev
+        : (SUGGESTED[kind] || []).map((label) => ({ label, value: '', claimId: '' }))
+    );
+  }
+
+  async function save() {
+    setSaving(true);
+    try {
+      const { data } = await api.post(`/research/projects/${project.id}/valuations`, {
+        ...f,
+        assumptions: rows
+          .filter((r) => r.label && r.value)
+          .map((r) => ({ label: r.label, value: r.value, claimId: r.claimId ? Number(r.claimId) : null })),
+      });
+      if (data.droppedCitations) {
+        setFlash({
+          bad: true,
+          text: `Saved, but ${data.droppedCitations} assumption citation(s) pointed at a claim that is not in this project and were cleared.`,
+        });
+      }
+      onDone(true);
+    } catch (e) {
+      setFlash({ bad: true, text: e.response?.data?.error || 'Could not save the valuation' });
+      setSaving(false);
+    }
+  }
+
+  const claims = project.claims || [];
+
+  return (
+    <div style={{ border: '1px solid var(--term-border)', padding: 8, display: 'grid', gap: 6 }}>
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+        <select style={{ ...termInput, flex: '0 1 130px' }} value={f.kind} onChange={(e) => setKind(e.target.value)}>
+          {VAL_KINDS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+        </select>
+        <input
+          style={{ ...termInput, flex: '2 1 200px' }}
+          placeholder="Name — e.g. Base DCF, Jul 26"
+          value={f.name}
+          onChange={(e) => setF({ ...f, name: e.target.value })}
+        />
+      </div>
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+        {[['bear', 'Bear $'], ['base', 'Base $'], ['bull', 'Bull $'], ['priceAtWrite', 'Price now $']].map(([k, ph]) => (
+          <input
+            key={k}
+            style={{ ...termInput, flex: '1 1 88px' }}
+            placeholder={ph}
+            inputMode="decimal"
+            value={f[k]}
+            onChange={(e) => setF({ ...f, [k]: e.target.value })}
+          />
+        ))}
+      </div>
+
+      <div style={{ color: 'var(--term-fg-muted)', fontSize: 10, letterSpacing: 0.5, marginTop: 2 }}>
+        ASSUMPTIONS — cite a claim where the number came from the research
+      </div>
+      {rows.map((r, i) => (
+        <div key={i} style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+          <input
+            style={{ ...termInput, flex: '1 1 130px' }}
+            placeholder="Input"
+            value={r.label}
+            onChange={(e) => setRows(rows.map((x, n) => (n === i ? { ...x, label: e.target.value } : x)))}
+          />
+          <input
+            style={{ ...termInput, flex: '0 1 90px' }}
+            placeholder="Value"
+            value={r.value}
+            onChange={(e) => setRows(rows.map((x, n) => (n === i ? { ...x, value: e.target.value } : x)))}
+          />
+          <select
+            style={{ ...termInput, flex: '1 1 170px' }}
+            value={r.claimId}
+            onChange={(e) => setRows(rows.map((x, n) => (n === i ? { ...x, claimId: e.target.value } : x)))}
+          >
+            <option value="">assumed (no source)</option>
+            {claims.map((c) => (
+              <option key={c.id} value={c.id}>
+                {(c.text || '').slice(0, 60)} — {c.stamp}
+              </option>
+            ))}
+          </select>
+        </div>
+      ))}
+      <div>
+        <a
+          href="#"
+          style={{ color: 'var(--term-fg-muted)', fontSize: 10 }}
+          onClick={(e) => { e.preventDefault(); setRows([...rows, { label: '', value: '', claimId: '' }]); }}
+        >
+          + another input
+        </a>
+      </div>
+
+      <textarea
+        style={{ ...termInput, resize: 'vertical', minHeight: 50 }}
+        placeholder="What drives the spread between the cases?"
+        value={f.note}
+        onChange={(e) => setF({ ...f, note: e.target.value })}
+      />
+      <div style={{ display: 'flex', gap: 6 }}>
+        <TermButton onClick={save} disabled={saving || !f.name}>{saving ? 'Saving…' : 'Save'}</TermButton>
+        <TermButton onClick={() => onDone(false)} disabled={saving}>Cancel</TermButton>
+      </div>
     </div>
   );
 }
