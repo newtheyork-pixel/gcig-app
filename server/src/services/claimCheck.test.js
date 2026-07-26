@@ -57,6 +57,15 @@ test('nothing to check is not something that passes', async () => {
   assert.equal(called, false, 'should not have gone to the model at all');
 });
 
+test('context is passed through when given, and not fabricated when not', async () => {
+  let seen = null;
+  const spy = async ({ messages }) => { seen = messages; return JSON.stringify({ supported: true }); };
+  await entails(spy, null, 'once a week', 'The Lindt vendor comes weekly.', 'Speaker 0: how often does Lindt restock?');
+  assert.match(seen[1].content, /CONTEXT\nSpeaker 0: how often does Lindt restock\?/);
+  await entails(spy, null, 'once a week', 'They come weekly.');
+  assert.doesNotMatch(seen[1].content, /CONTEXT/);
+});
+
 test('a question is offered to the checker when there is one, and not invented when there is not', async () => {
   let seen = null;
   const spy = async ({ messages }) => {
@@ -68,7 +77,8 @@ test('a question is offered to the checker when there is one, and not invented w
 
   await entails(spy, null, 'once a week', 'They come weekly.');
   assert.doesNotMatch(seen[1].content, /QUESTION/);
-  // A standalone claim is read with nothing beside it, so the checker is
-  // told to treat an unstated subject as drift rather than context.
-  assert.match(seen[0].content, /stand up on its own/);
+  // A standalone claim is read with no question beside it, so the
+  // conversation around the quote is the only thing that can supply a
+  // subject — and the checker is told to look there.
+  assert.match(seen[0].content, /no question beside them|no question beside it/);
 });

@@ -136,7 +136,7 @@ export async function scanForAnswer(interview, question, deps = {}) {
     // checked out and the claim was invented — the worst possible
     // combination, and more likely here than in the general extractor
     // because this pass has been told what it is hoping to find.
-    const check = await verify(chat, question, parsed.quote, parsed.answer);
+    const check = await verify(chat, question, parsed.quote, parsed.answer, render(win));
     if (!check.supported) {
       rejected += 1;
       continue;

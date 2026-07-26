@@ -293,7 +293,11 @@ export async function extractClaims(interview, deps = {}) {
       continue;
     }
     anyResponse = true;
-    rows.push(...parsed.claims);
+    // Carry the window each claim came out of, so the check can see the
+    // conversation the speaker was having and tell a subject supplied by
+    // context from one invented outright.
+    const ctx = renderTurns(window);
+    rows.push(...parsed.claims.map((c) => (c && typeof c === 'object' ? { ...c, __context: ctx } : c)));
   }
   if (!anyResponse) return { claims: [], dropped: 0, unavailable: true, failedWindows };
   const claims = [];
@@ -322,7 +326,9 @@ export async function extractClaims(interview, deps = {}) {
     // 44% to Amazon, 60% to Lindt" was written up as a 44/56 split
     // because 44 and 56 sum to 100, and "But the stuff over there sell a
     // lot" became a ranking of three brands nobody named.
-    const verdict = await check(chat, null, quote, text);
+    // The window this claim came out of is the context that can supply
+    // a subject the quote leaves implicit.
+    const verdict = await check(chat, null, quote, text, row.__context || null);
     if (!verdict.supported) {
       unsupported += 1;
       continue;
