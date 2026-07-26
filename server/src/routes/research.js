@@ -497,6 +497,25 @@ router.patch('/targets/:id', canResearch, async (req, res) => {
     const sid = Number(req.body.sourceId);
     data.sourceId = Number.isInteger(sid) ? sid : null;
   }
+  // Identity fields are correctable. A target list is usually assembled
+  // from prose — a spreadsheet column of "Name (Title, Company, notes)" —
+  // and whatever parsed it the first time will have got some of them
+  // wrong. Employer especially: it decides whether two voices corroborate
+  // or merely cluster, so leaving a bad value in place quietly distorts
+  // the evidence later.
+  if (req.body?.name) data.name = String(req.body.name).slice(0, 200);
+  if (req.body?.employer !== undefined) {
+    data.employer = req.body.employer ? String(req.body.employer).slice(0, 200) : null;
+  }
+  if (req.body?.role !== undefined) {
+    data.role = req.body.role ? String(req.body.role).slice(0, 200) : null;
+  }
+  if (req.body?.relationship) {
+    data.relationship = String(req.body.relationship).slice(0, 60);
+  }
+  if (req.body?.channel !== undefined) {
+    data.channel = req.body.channel ? String(req.body.channel).slice(0, 300) : null;
+  }
   try {
     res.json(await prisma.researchTarget.update({ where: { id }, data }));
   } catch (err) {
