@@ -609,6 +609,29 @@ Hit-rate stats count `Approved` toward Voted Yes too.
 
 ## Recent fixes / playbook notes
 
+- **Claims that located perfectly and said something else (Jul '26)**:
+  `locateQuote` proves the words were spoken. It says nothing about
+  whether the sentence written above them is a fair reading, and that
+  failure is worse than a claim that fails to locate, because the
+  citation checks out — real timestamp, right speaker, verbatim quote,
+  invented assertion. In the Lindt ledger "It's like 44% to Amazon, 60%
+  to Lindt" had been written up as a **44/56** split (the model tidied
+  the figures so they would sum to 100), "But the stuff over there sell a
+  lot" became a ranking of three named brands, and "I'm guessing this
+  I'm not sure" became "Lindt products do not have a clear best seller".
+  Now gated by `services/claimCheck.js`, which both the extractor and the
+  answer scan run behind. It fails closed: anything other than an
+  explicit yes is a no, and an unreachable checker rejects — failing
+  open would be worse than no check, because the ledger would then carry
+  claims that *look* checked.
+  **The tuning matters as much as the gate.** The first cut judged a
+  claim against the quote alone and rejected 37 of 62 — most of them
+  honest, because a subject the speaker was plainly discussing is not a
+  fabrication and a citation here walks back to audio anyone can play.
+  The rule that works: **context licenses the SUBJECT, never the
+  CONTENT.** A figure, brand or comparison in neither the quote nor the
+  surrounding turns was invented. Same audit, 23 rejected instead of 37,
+  and the right set falls.
 - **Field research was running on the 7b (Jul '26)**: the answer scan
   reported no answer in a transcript that had been read by hand and
   plainly contained one. Putting the same prompt and the same tape
