@@ -311,6 +311,8 @@ function ProjectPane({ id, onBack }) {
         </div>
       ) : null}
 
+      <ProjectStatus project={p} />
+
       <ComplianceStrip interviews={p.interviews} onOpen={() => setTab('mnpi')} />
 
       {/* Transcription is a paid API configured server-side. If the key
@@ -336,21 +338,33 @@ function ProjectPane({ id, onBack }) {
 
       <div className="term-tabs">
         {[
-          ['coverage', `Questions (${p.questions?.length ?? 0})`],
+          // Counts on a tab should say where the work is, not how much
+          // furniture is behind it. "Questions (31)" is the size of the
+          // guide; the number worth surfacing is how many still have
+          // nothing against them.
+          ['coverage', `Questions (${p.questions?.length ?? 0})`, p.coverage?.summary?.unaddressed || 0],
           ['targets', `Outreach (${p.funnel?.total ?? 0})`],
           ['interviews', `Interviews (${p.interviews.length})`],
           ['visits', `Visits (${p.visits?.length ?? 0})`],
           ['valuation', `Valuation (${p.valuations?.length ?? 0})`],
           ['ledger', `Ledger (${p.claims.length})`],
           ['files', `Files (${p.artifacts.length})`],
-          ['mnpi', 'Compliance'],
-        ].map(([k, label]) => (
+          [
+            'mnpi',
+            'Compliance',
+            (p.interviews || []).filter(
+              (i) => !i.reviewedAt && (i.quarantined || i.mnpiRisk !== 'low' || !i.consentObtained)
+            ).length,
+          ],
+        ].map(([k, label, pending]) => (
           <button
             key={k}
             className={`term-tab${tab === k ? ' active' : ''}`}
             onClick={() => setTab(k)}
+            title={pending ? `${pending} outstanding` : undefined}
           >
             {label}
+            {pending ? <span className="term-tab-n"> {pending}</span> : null}
           </button>
         ))}
       </div>
@@ -1323,12 +1337,100 @@ function Files({ project, onChanged, setFlash, onOpenDoc }) {
 // The first thing you should see on opening a project, because "which
 // questions are still open with nothing behind them" is next week's
 // call list.
+// Where the project actually stands, above the tabs.
+//
+// Opening a project gave you its name, its brief and a row of tabs — an
+// index of what is inside, and no answer to the question anyone actually
+// arrives with, which is whether this is nearly done or barely started.
+// That answer existed, spread across three tabs as numbers you had to
+// hold in your head and compare.
+//
+// The bar is the questions, in the proportion they are actually in.
+// Everything else is a count with a name next to it, and the ones that
+// represent work outstanding are coloured; the rest stay muted so they
+// do not compete.
+function ProjectStatus({ project }) {
+  const cov = project.coverage?.summary || {};
+  const supported = cov.supported || 0;
+  const thin = cov.thin || 0;
+  const contested = cov.contested || 0;
+  const none = cov.unaddressed || 0;
+  const total = supported + thin + contested + none;
+
+  const interviews = project.interviews?.length || 0;
+  const transcribed = (project.interviews || []).filter((i) => i.transcript).length;
+  const claims = project.claims?.length || 0;
+  const unlinked = cov.unlinkedClaims || 0;
+  const flagged = (project.interviews || []).filter(
+    (i) => !i.reviewedAt && (i.quarantined || i.mnpiRisk !== 'low' || !i.consentObtained)
+  ).length;
+
+  if (total === 0 && interviews === 0) return null;
+
+  const seg = (n, color, label) =>
+    n === 0 ? null : (
+      <div
+        key={label}
+        title={`${n} ${label}`}
+        style={{ width: `${(n / total) * 100}%`, background: color, height: '100%' }}
+      />
+    );
+
+  const stat = (value, label, tone) => (
+    <span style={{ whiteSpace: 'nowrap' }}>
+      <span style={{ color: tone || 'var(--term-white)', fontWeight: 700 }}>{value}</span>{' '}
+      <span style={{ color: 'var(--term-fg-muted)' }}>{label}</span>
+    </span>
+  );
+
+  return (
+    <div style={{ display: 'grid', gap: 5 }}>
+      {total > 0 ? (
+        <>
+          <div
+            style={{
+              display: 'flex', height: 6, width: '100%', overflow: 'hidden',
+              border: '1px solid var(--term-border)', background: 'var(--term-bg, #000)',
+            }}
+          >
+            {seg(supported, 'var(--term-positive)', 'supported')}
+            {seg(thin, 'var(--term-amber, #C9A84C)', 'thin')}
+            {seg(contested, 'var(--term-negative)', 'contested')}
+            {seg(none, 'var(--term-border)', 'no evidence')}
+          </div>
+          <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', fontSize: 11 }}>
+            {stat(supported, 'supported', 'var(--term-positive)')}
+            {stat(thin, 'thin', 'var(--term-amber, var(--term-white))')}
+            {contested ? stat(contested, 'contested', 'var(--term-negative)') : null}
+            {stat(none, 'no evidence', none ? 'var(--term-white)' : undefined)}
+          </div>
+        </>
+      ) : null}
+
+      <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', fontSize: 11 }}>
+        {/* Transcribed is called out separately from interviews because an
+            interview with no transcript yields no claims — it is logged
+            work, not evidence, and the two counts drifting apart is the
+            thing worth seeing. */}
+        {stat(interviews, interviews === 1 ? 'interview' : 'interviews')}
+        {transcribed !== interviews
+          ? stat(interviews - transcribed, 'awaiting transcript', 'var(--term-amber, var(--term-white))')
+          : null}
+        {stat(claims, claims === 1 ? 'claim' : 'claims')}
+        {unlinked ? stat(unlinked, 'answering nothing asked', 'var(--term-amber, var(--term-white))') : null}
+        {flagged ? stat(flagged, 'needing a compliance decision', 'var(--term-negative)') : null}
+      </div>
+    </div>
+  );
+}
+
 function Coverage({ project, onChanged }) {
   const [text, setText] = useState('');
   const [saving, setSaving] = useState(false);
   const [drafting, setDrafting] = useState(false);
   const [draftNote, setDraftNote] = useState(null);
   const [openQ, setOpenQ] = useState(null);
+  const [qFilter, setQFilter] = useState('all');
   const [scanning, setScanning] = useState(false);
   const [scanNote, setScanNote] = useState(null);
   const cov = project.coverage || { questions: [], summary: {} };
@@ -1501,16 +1603,58 @@ function Coverage({ project, onChanged }) {
         </div>
       ) : null}
 
+      {/* Thirty-one questions in one flat list is a wall, and the ones
+          that matter — the open ones with nothing behind them — are
+          scattered through it in guide order. */}
+      {cov.questions.length > 6 ? (
+        <div style={{ fontSize: 10, letterSpacing: 0.5 }}>
+          {[
+            ['all', `ALL ${cov.questions.length}`],
+            ['open', `STILL OPEN ${cov.questions.filter((q) => q.coverage === 'unaddressed' || q.coverage === 'thin').length}`],
+            ['none', `NO EVIDENCE ${s.unaddressed || 0}`],
+            ['done', `SUPPORTED ${s.supported || 0}`],
+          ].map(([k, label]) => (
+            <a
+              key={k}
+              href="#"
+              onClick={(e) => { e.preventDefault(); setQFilter(k); }}
+              style={{
+                marginRight: 12,
+                color: qFilter === k ? 'var(--term-white)' : 'var(--term-fg-muted)',
+                textDecoration: qFilter === k ? 'underline' : 'none',
+              }}
+            >
+              {label}
+            </a>
+          ))}
+        </div>
+      ) : null}
+
       {cov.questions.length === 0 ? (
         <div className="term-loading">
           No questions yet. Write what the project is meant to answer before
           the calls start — it is what tells you when you are done.
         </div>
       ) : (
-        cov.questions.map((q) => (
+        cov.questions
+          .filter(
+            (q) =>
+              qFilter === 'all' ||
+              (qFilter === 'open' && (q.coverage === 'unaddressed' || q.coverage === 'thin')) ||
+              (qFilter === 'none' && q.coverage === 'unaddressed') ||
+              (qFilter === 'done' && q.coverage === 'supported')
+          )
+          .map((q) => (
           <div
             key={q.questionId}
-            style={{ borderTop: '1px dotted var(--term-border)', paddingTop: 6 }}
+            style={{
+              borderTop: '1px dotted var(--term-border)',
+              // A coloured edge makes the state scannable down the list
+              // without reading a single label.
+              borderLeft: `2px solid ${COVERAGE_COLOR[q.coverage] || 'var(--term-border)'}`,
+              paddingTop: 6,
+              paddingLeft: 8,
+            }}
           >
             <div style={{ display: 'flex', gap: 8, alignItems: 'baseline', flexWrap: 'wrap' }}>
               <span style={{ color: COVERAGE_COLOR[q.coverage], fontSize: 10, letterSpacing: 0.5 }}>
@@ -1602,6 +1746,23 @@ function Coverage({ project, onChanged }) {
           </div>
         ))
       )}
+
+      {/* A filter that matches nothing is good news on this screen, and
+          a blank pane does not say so. */}
+      {cov.questions.length > 0 &&
+      qFilter !== 'all' &&
+      cov.questions.filter(
+        (q) =>
+          (qFilter === 'open' && (q.coverage === 'unaddressed' || q.coverage === 'thin')) ||
+          (qFilter === 'none' && q.coverage === 'unaddressed') ||
+          (qFilter === 'done' && q.coverage === 'supported')
+      ).length === 0 ? (
+        <div style={{ color: 'var(--term-positive)', fontSize: 11 }}>
+          {qFilter === 'done'
+            ? 'Nothing is fully supported yet.'
+            : 'None — nothing outstanding in this bucket.'}
+        </div>
+      ) : null}
     </div>
   );
 }
