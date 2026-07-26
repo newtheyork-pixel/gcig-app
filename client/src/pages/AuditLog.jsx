@@ -17,12 +17,26 @@ const ACTION_COLOR = {
 export default function AuditLog({ embedded = false } = {}) {
   const [logs, setLogs] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(null);
+
+  // Without a catch, a failed request never cleared `loading` and the
+  // page span forever on "Loading…" with nothing to act on. On the
+  // security audit trail, the two states a reader must never confuse
+  // are "no events were recorded" and "we could not read the record".
+  const load = () => {
+    setLoadError(null);
+    setLoading(true);
+    api
+      .get('/audit')
+      .then(({ data }) => setLogs(data))
+      .catch((e) =>
+        setLoadError(e.response?.data?.error || e.message || 'Could not load the audit log')
+      )
+      .finally(() => setLoading(false));
+  };
 
   useEffect(() => {
-    api.get('/audit').then(({ data }) => {
-      setLogs(data);
-      setLoading(false);
-    });
+    load();
   }, []);
 
   return (
@@ -37,6 +51,21 @@ export default function AuditLog({ embedded = false } = {}) {
       <Card>
         {loading ? (
           <div className="py-8 text-center text-navy-400">Loading…</div>
+        ) : loadError ? (
+          <div className="rounded-lg border border-red-300 bg-red-50 p-4 text-sm text-red-900">
+            <div className="font-semibold">The audit log didn’t load.</div>
+            <div className="mt-1">{loadError}</div>
+            <div className="mt-1 text-red-800/80">
+              This is not the same as there being nothing to show.
+            </div>
+            <button
+              type="button"
+              onClick={load}
+              className="mt-2 rounded-lg border border-red-300 bg-white px-3 py-1 text-xs font-semibold text-red-900 hover:bg-red-100"
+            >
+              Try again
+            </button>
+          </div>
         ) : logs.length === 0 ? (
           <div className="py-8 text-center text-navy-400">No events yet.</div>
         ) : (

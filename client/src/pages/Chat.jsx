@@ -212,7 +212,14 @@ export default function Chat() {
             ref={scrollRef}
             className="flex-1 overflow-y-auto px-3 py-3 space-y-3 md:px-5 md:py-4"
           >
-            {messages.length === 0 ? (
+            {messages.length === 0 && error ? (
+              // The error also renders by the composer, but the pane was
+              // simultaneously inviting you to say hi in a channel that
+              // had failed to load. Two answers, one of them wrong.
+              <div className="py-12 text-center text-sm text-red-800">
+                This channel didn’t load — {error}
+              </div>
+            ) : messages.length === 0 ? (
               <div className="py-12 text-center text-sm text-navy-400">
                 No messages yet — say hi 👋
               </div>
