@@ -18,6 +18,11 @@ from sea_tracker.normalize import normalize_message
 
 logger = logging.getLogger(__name__)
 
+# Long enough not to spam a healthy run, short enough that a dead stream
+# is visible within one working session rather than at the next daily
+# batch.
+HEARTBEAT_INTERVAL_S = 300.0
+
 
 class Streamer(Protocol):
     def stream(self) -> AsyncIterator[dict[str, Any]]: ...
@@ -56,6 +61,19 @@ async def run_collector(
     last_publish = asyncio.get_event_loop().time()
     seen = 0
 
+    # A collector receiving nothing was indistinguishable from a healthy
+    # one: the only log lines on this path were two warnings inside
+    # ais_client, so a stream that connects and delivers zero messages
+    # wrote nothing at all. It ran that way for eighteen days while the
+    # tanker page reported zero departures from every Gulf terminal as
+    # though it were a reading. The heartbeat below is the line that
+    # would have caught it on day one, and it must fire on zero —
+    # logging only when data arrives reproduces the original silence.
+    logger.info("collector starting: db=%s publish_interval=%ss", db_path, publish_interval_s)
+    seen_at_last_beat = 0
+    last_beat = asyncio.get_event_loop().time()
+    first_message_logged = False
+
     try:
         async for payload in client.stream():
             norm = normalize_message(payload)
@@ -65,7 +83,25 @@ async def run_collector(
                     buffer_vessels.append(norm.vessel_update)
                 seen += 1
 
+            if norm is not None and not first_message_logged:
+                first_message_logged = True
+                logger.info("first AIS message decoded — stream is live")
+
             now = asyncio.get_event_loop().time()
+
+            # Fires whether or not anything arrived. "0 in the last 300s"
+            # is the whole point.
+            if (now - last_beat) >= HEARTBEAT_INTERVAL_S:
+                delta = seen - seen_at_last_beat
+                logger.log(
+                    logging.INFO if delta else logging.WARNING,
+                    "heartbeat: %d messages in last %.0fs (total %d)%s",
+                    delta, now - last_beat, seen,
+                    "" if delta else " — connected but receiving nothing",
+                )
+                seen_at_last_beat = seen
+                last_beat = now
+
             if (now - last_flush) >= flush_interval_s or seen >= 5000:
                 if buffer_msgs:
                     batch_insert_messages(con, buffer_msgs)
