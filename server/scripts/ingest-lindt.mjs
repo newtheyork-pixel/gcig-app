@@ -23,6 +23,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import { extractOutreach, extractStoreVisits } from './lindt-workbook.mjs';
 
 const API = process.env.GCIG_API || 'https://gcig-api.onrender.com/api';
 let TOKEN = process.env.GCIG_TOKEN;
@@ -30,6 +31,10 @@ const DRY = process.argv.includes('--dry-run');
 const EXTRACT = process.argv.includes('--extract');
 
 const LINDT = path.join(os.homedir(), 'repos/Lindt');
+// "Lindt Main.xlsx" is the system of record for the campaign: who was
+// emailed, who replied, which addresses were dead, and the structured
+// store-visit findings. None of that lives in the markdown files.
+const WORKBOOK = path.join(os.homedir(), 'repos/Lindt/model/Lindt Main.xlsx');
 const DOWNLOADS = path.join(os.homedir(), 'Downloads');
 
 // Ask for the token rather than requiring it on the command line. A JWT
@@ -219,7 +224,7 @@ function walk(dir, base = dir) {
 // run's resume state.
 const STATE = process.env.GCIG_STATE || path.join(os.homedir(), '.gcig-lindt-ingest.json');
 const loadState = () =>
-  fs.existsSync(STATE) ? JSON.parse(fs.readFileSync(STATE, 'utf8')) : { sources: {}, interviews: {}, artifacts: {}, visits: {} };
+  fs.existsSync(STATE) ? JSON.parse(fs.readFileSync(STATE, 'utf8')) : { sources: {}, interviews: {}, artifacts: {}, visits: {}, targets: {} };
 const saveState = (st) => fs.writeFileSync(STATE, JSON.stringify(st, null, 2));
 
 async function main() {
@@ -235,14 +240,16 @@ async function main() {
   const present = INTERVIEWS.filter((i) =>
     fs.existsSync(path.join(i.dir === 'downloads' ? DOWNLOADS : path.join(LINDT, 'outreach'), i.file))
   );
-  const visits = [...new Set(present.filter((t) => t.location).map((t) => t.location))];
+  const workbookVisits = fs.existsSync(WORKBOOK) ? await extractStoreVisits(WORKBOOK) : [];
+  const outreach = fs.existsSync(WORKBOOK) ? await extractOutreach(WORKBOOK) : [];
   const sources = [...new Set(present.map((t) => t.alias))];
 
   const bytes = files.reduce((n, f) => n + fs.statSync(path.join(LINDT, f)).size, 0);
   console.log(`Lindt corpus:  ${files.length} files, ${(bytes / 1e6).toFixed(0)} MB`);
   console.log(`Transcripts:   ${present.length} of ${INTERVIEWS.length}`);
   console.log(`Sources:       ${sources.length} distinct (CVS 969 2nd Ave spans two parts)`);
-  console.log(`Site visits:   ${visits.length}`);
+  console.log(`Site visits:   ${workbookVisits.length} from the workbook, ${workbookVisits.reduce((n, v) => n + v.observations.length, 0)} observations`);
+  console.log(`Outreach:      ${outreach.length} tracked contacts`);
   console.log(`Questions:     ${QUESTIONS.length}\n`);
 
   if (DRY) {
@@ -254,6 +261,9 @@ async function main() {
     // Employer spread is what decides corroboration vs clustering, so it
     // is worth eyeballing before the run rather than after.
     console.log('Interviews by employer:', byEmployer);
+    const funnel = {};
+    for (const t of outreach) funnel[t.status] = (funnel[t.status] || 0) + 1;
+    console.log('Outreach funnel:', funnel);
     const missing = INTERVIEWS.filter((i) => !present.includes(i)).map((i) => i.file);
     if (missing.length) console.log('MISSING transcripts:', missing);
     console.log('\nDry run — nothing uploaded.');
@@ -261,6 +271,7 @@ async function main() {
   }
 
   const st = loadState();
+  if (!st.targets) st.targets = {};
 
   if (!st.projectId) {
     const project = await call('/research/projects', {
@@ -297,23 +308,64 @@ async function main() {
     console.log(`${st.questionIds.length} questions added`);
   }
 
-  for (const location of visits) {
-    if (st.visits[location]) continue;
-    // Visit dates come from the interview recorded there, so a store
-    // visit is dated when it happened rather than when it was uploaded.
-    const at = present.find((t) => t.location === location)?.date;
-    const v = await call(`/research/projects/${st.projectId}/visits`, {
+  // Site visits come from the workbook, not from transcript filenames.
+  // The sheet knows things the filenames do not — notably that CVS
+  // Harlem "recording 1 of 2" and "recording 2 of 2" are the SAME
+  // physical store. Treating those as two locations would have inflated
+  // the distinct-location count, which is exactly what promotes a
+  // question from thin to supported.
+  for (const v of workbookVisits) {
+    if (st.visits[v.location]) continue;
+    const created = await call(`/research/projects/${st.projectId}/visits`, {
       method: 'POST',
       json: {
-        location,
-        visitedAt: at ? new Date(`${at}T12:00:00Z`).toISOString() : undefined,
-        notes: 'Store visit — staff interview recorded; see the linked interview for the transcript.',
+        location: v.location,
+        visitedAt: v.date ? new Date(`${v.date}T12:00:00Z`).toISOString() : undefined,
+        notes: v.notes.join(' | ').slice(0, 10_000) || null,
       },
     });
-    st.visits[location] = v.id;
+    st.visits[v.location] = created.id;
     saveState(st);
+    // Each Topic/Finding pair from the sheet is one observation.
+    for (const o of v.observations) {
+      await call(`/research/visits/${created.id}/observations`, {
+        method: 'POST', json: { text: o.text, topic: o.topic },
+      }).catch(() => {});
+    }
   }
-  console.log(`${Object.keys(st.visits).length} site visits logged`);
+  const obsTotal = workbookVisits.reduce((n, v) => n + v.observations.length, 0);
+  console.log(`${Object.keys(st.visits).length} site visits logged, ${obsTotal} observations`);
+
+  // The outreach funnel: everyone emailed, with the status the tracker's
+  // own outcome text supports.
+  let newTargets = 0;
+  for (const t of outreach) {
+    const key = `${t.name}|${t.email || ''}`;
+    if (st.targets[key]) continue;
+    const created = await call(`/research/projects/${st.projectId}/targets`, {
+      method: 'POST',
+      json: {
+        name: t.name,
+        relationship: 'Other',
+        employer: t.employer, role: t.role,
+        channel: t.email ? `email: ${t.email}` : null,
+        notes: [t.why && `Why: ${t.why}`, t.outcome && `Outcome: ${t.outcome}`]
+          .filter(Boolean).join('\n\n').slice(0, 2000) || null,
+      },
+    });
+    // Status is a separate PATCH because create always starts at
+    // Identified, and the PATCH is what stamps lastContactAt.
+    if (t.status !== 'Identified') {
+      await call(`/research/targets/${created.id}`, {
+        method: 'PATCH', json: { status: t.status },
+      }).catch(() => {});
+    }
+    st.targets[key] = created.id;
+    newTargets += 1;
+    if (newTargets % 25 === 0) saveState(st);
+  }
+  saveState(st);
+  console.log(`${newTargets} outreach targets loaded (${outreach.length} in the tracker)`);
 
   let imported = 0, skipped = 0;
   for (const t of present) {
