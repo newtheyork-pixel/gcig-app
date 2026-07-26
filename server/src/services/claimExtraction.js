@@ -1,4 +1,4 @@
-import { llmChat } from './llm.js';
+import { llmChat, RESEARCH_LOCAL_MODEL } from './llm.js';
 
 // Pulls citable claims out of an interview transcript.
 //
@@ -274,6 +274,7 @@ export async function extractClaims(interview, deps = {}) {
       temperature: 0,
       timeoutMs: 120_000,
       preferQuality: true,
+      localModel: RESEARCH_LOCAL_MODEL,
     });
     if (!raw) { failedWindows += 1; continue; }
     let parsed = null;

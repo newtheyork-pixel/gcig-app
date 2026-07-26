@@ -1,4 +1,4 @@
-import { llmChat } from './llm.js';
+import { llmChat, RESEARCH_LOCAL_MODEL } from './llm.js';
 import { locateQuote } from './claimExtraction.js';
 
 // Reads a transcript looking for the answer to one specific question.
@@ -33,13 +33,16 @@ An answer does not have to be phrased like the question. Real answers in intervi
 
 But do not stretch. If nobody addresses the question, say so. The interviewer ASKING the question is not an answer — only what the source says back counts.
 
+Some questions ask for several things at once — a count AND a comparison across brands, say. If the passage answers PART of it, that still counts: report it with "partial": true and say in the answer which part is covered and which is not. A partial answer is real evidence. Discarding it is how a question ends up looking like nobody was ever asked.
+
 If there is an answer, return:
   "answer" — one plain sentence stating what the answer is.
   "quote"  — the EXACT words from the transcript, copied character for character, including "um", "uh", false starts and filler. It must appear verbatim or the answer is discarded. Prefer a short exact quote over a long tidied one.
+  "partial" — true if it answers only part of what was asked.
   "confidence" — 0.0 to 1.0 that this really does answer the question.
 
 Reply with strict JSON only:
-{"found": true, "answer": "...", "quote": "...", "confidence": 0.8}
+{"found": true, "answer": "...", "quote": "...", "partial": false, "confidence": 0.8}
 or
 {"found": false}`;
 
@@ -94,7 +97,7 @@ export async function scanForAnswer(interview, question, deps = {}) {
         jsonMode: true,
         temperature: 0,
         timeoutMs: 90_000,
-        preferQuality: true,
+        localModel: RESEARCH_LOCAL_MODEL,
       });
     } catch {
       continue;
@@ -118,16 +121,19 @@ export async function scanForAnswer(interview, question, deps = {}) {
     // Several windows can each offer an answer; keep the most confident
     // rather than the first, since the clearest statement is often later
     // in a conversation than the first mention.
-    if (!best || score > best.extractionConfidence) {
-      best = {
-        text: String(parsed.answer).trim().slice(0, 500),
-        quote: String(parsed.quote).trim(),
-        startMs: located.startMs,
-        endMs: located.endMs,
-        speaker: located.speaker,
-        extractionConfidence: score,
-      };
-    }
+    // A whole answer beats a partial one even if the partial came back
+    // more confident — a model is often surest about the easy half.
+    const rank = (a) => (a.partial ? 0 : 1) * 10 + a.extractionConfidence;
+    const candidate = {
+      text: String(parsed.answer).trim().slice(0, 500),
+      quote: String(parsed.quote).trim(),
+      startMs: located.startMs,
+      endMs: located.endMs,
+      speaker: located.speaker,
+      partial: parsed.partial === true,
+      extractionConfidence: score,
+    };
+    if (!best || rank(candidate) > rank(best)) best = candidate;
   }
   return best;
 }

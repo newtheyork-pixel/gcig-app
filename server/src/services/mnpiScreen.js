@@ -1,4 +1,4 @@
-import { llmChat } from './llm.js';
+import { llmChat, RESEARCH_LOCAL_MODEL } from './llm.js';
 
 // Screens an interview transcript for material non-public information.
 //
@@ -135,6 +135,7 @@ export async function screenTranscript(transcript, opts = {}, deps = {}) {
       temperature: 0,
       timeoutMs: 60_000,
       preferQuality: true,
+      localModel: RESEARCH_LOCAL_MODEL,
     });
     if (raw) {
       const parsed = JSON.parse(raw);

@@ -1,4 +1,4 @@
-import { llmChat } from './llm.js';
+import { llmChat, RESEARCH_LOCAL_MODEL } from './llm.js';
 import { COVERAGE } from './questionCoverage.js';
 
 // Drafts the memo at the end of a field-research project.
@@ -202,6 +202,7 @@ export async function synthesize(project, coverage, deps = {}) {
     temperature: 0.2,
     timeoutMs: 180_000,
     preferQuality: true,
+    localModel: RESEARCH_LOCAL_MODEL,
   });
   if (!raw) {
     return { draft: null, unavailable: true, reason: 'The research model is unavailable right now.' };

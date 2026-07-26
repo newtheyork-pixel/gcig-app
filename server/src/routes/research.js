@@ -1152,13 +1152,19 @@ router.post('/projects/:id/answer-scan', canResearch, heavyLimiter, async (req, 
               speaker: answer.speaker,
               startMs: answer.startMs,
               endMs: answer.endMs,
-              topic: 'answer',
+              // Partiality is recorded on the claim, not just in the
+              // response, so a half-answer stays legible as a half-answer
+              // in the ledger long after this run is forgotten.
+              topic: answer.partial ? 'answer (partial)' : 'answer',
               kind: 'fact',
               extractionConfidence: answer.extractionConfidence,
             },
           });
           created += 1;
-          hits.push({ interviewId: iv.id, title: iv.title, claimId: row.id, adopted: false });
+          hits.push({
+            interviewId: iv.id, title: iv.title, claimId: row.id,
+            adopted: false, partial: answer.partial,
+          });
         }
       }
       perQuestion.push({ questionId: q.id, question: q.text, hits });

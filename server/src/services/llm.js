@@ -17,6 +17,16 @@
 //   OPENAI_MODEL            Defaults to gpt-4.1-mini.
 
 const DEFAULT_LOCAL_MODEL = 'qwen2.5:14b-instruct-q4_K_M';
+
+// The model field research runs on, independent of whatever the global
+// default has drifted to. Reading a transcript for the answer to a
+// question is a reasoning task, not a summarising one, and it degrades
+// silently rather than loudly — a model too small to make the inference
+// returns "no answer here", which is indistinguishable from a transcript
+// that genuinely has none. That failure is invisible in a way a wrong
+// summary is not, so this path names its own weights.
+export const RESEARCH_LOCAL_MODEL =
+  process.env.RESEARCH_LLM_MODEL || 'qwen2.5:14b-instruct-q4_K_M';
 const DEFAULT_ANTHROPIC_MODEL = 'claude-haiku-4-5-20251001';
 const DEFAULT_OPENAI_MODEL = 'gpt-4.1-mini';
 const DEFAULT_TIMEOUT_MS = 25_000;
@@ -189,13 +199,22 @@ function logFailure(provider, result) {
 // Individual provider callers, keyed by name. Each returns the shared
 // { ok, content, ... } result shape and is a no-op (returns null) when its
 // env isn't configured, so the runner can just skip it.
-function runProvider(name, { messages, temperature, jsonMode, timeoutMs }) {
+function runProvider(name, { messages, temperature, jsonMode, timeoutMs, localModel }) {
   if (name === 'local') {
     if (!process.env.LOCAL_LLM_URL) return null;
     return callEndpoint({
       endpoint: `${normalizeBase(process.env.LOCAL_LLM_URL)}/chat/completions`,
       apiKey: process.env.LOCAL_LLM_API_KEY,
-      model: process.env.LOCAL_LLM_MODEL || DEFAULT_LOCAL_MODEL,
+      // A caller may name the local model it needs. The global default is
+      // tuned for cheap bulk work — ranking headlines, summarising an
+      // article — and the box is shared, so it drifts down to whatever
+      // was small enough to co-resident with another project's models.
+      // Field research does not survive that: on the same transcript and
+      // the same prompt, the 7b answered "nothing here" where the 14b
+      // returned the quote with 0.9 confidence. Naming the model per call
+      // rather than repinning the global keeps the bigger weights loaded
+      // only for the runs that actually need them.
+      model: localModel || process.env.LOCAL_LLM_MODEL || DEFAULT_LOCAL_MODEL,
       messages,
       temperature,
       jsonMode,
@@ -247,6 +266,7 @@ export async function llmChat({
   jsonMode,
   timeoutMs,
   preferQuality = false,
+  localModel,
 } = {}) {
   if (!Array.isArray(messages) || messages.length === 0) return null;
   const effectiveTimeoutMs =
@@ -261,6 +281,7 @@ export async function llmChat({
       temperature,
       jsonMode,
       timeoutMs: effectiveTimeoutMs,
+      localModel,
     });
     if (!result) continue; // provider not configured
     if (result.ok && result.content) return result.content;
