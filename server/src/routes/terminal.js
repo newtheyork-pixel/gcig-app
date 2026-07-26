@@ -69,6 +69,8 @@ const KNOWN_FUNCTIONS = [
   { id: 'GIP', label: 'Intraday Price', summary: 'Today\'s intraday price line with pre/post-market, vs prior close.' },
   { id: 'CN', label: 'Company News', summary: 'Latest news headlines for the focused ticker.' },
   { id: 'FA', label: 'Financial Analysis', summary: 'Multi-year fundamentals deep dive.' },
+  { id: 'GF', label: 'Graph Fundamentals', summary: 'Revenue, margins, EPS and cash flow plotted over time from SEC XBRL.' },
+  { id: 'FIL', label: 'Filings', summary: 'Recent SEC filings (8-K / 10-Q / 10-K / DEF 14A / Form 4) with an AI read of each.' },
   { id: 'PEER', label: 'Peers', summary: 'Sector peer comparison table.' },
   { id: 'INSDR', label: 'Insider Activity', summary: 'Form 4 insider buys/sells overlaid on the price chart.' },
   { id: 'EARN', label: 'Earnings', summary: 'Next report date + estimate and a trailing EPS beat/miss history.' },
