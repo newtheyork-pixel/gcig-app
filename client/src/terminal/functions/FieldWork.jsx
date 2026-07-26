@@ -1119,10 +1119,16 @@ function ValuationRow({ v, project, onChanged }) {
                     <span style={{ color: 'var(--term-positive)', fontSize: 10 }}>
                       {' '}· from the tape: “{(c.quote || c.text || '').slice(0, 70)}” {c.stamp}
                     </span>
+                  ) : a.note ? (
+                    // A figure off a filing is sourced, not assumed —
+                    // "assumed · AR2025 p.169" says two contradictory
+                    // things about the same number. Where provenance was
+                    // recorded, it replaces the word rather than
+                    // trailing it.
+                    <span style={{ color: 'var(--term-fg-dim)', fontSize: 10 }}> · {a.note}</span>
                   ) : (
                     <span style={{ color: 'var(--term-fg-muted)', fontSize: 10 }}> · assumed</span>
                   )}
-                  {a.note ? <span style={{ color: 'var(--term-fg-muted)', fontSize: 10 }}> · {a.note}</span> : null}
                 </div>
               );
             })
