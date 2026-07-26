@@ -796,6 +796,8 @@ function Coverage({ project, onChanged }) {
   const [saving, setSaving] = useState(false);
   const [drafting, setDrafting] = useState(false);
   const [draftNote, setDraftNote] = useState(null);
+  const [scanning, setScanning] = useState(false);
+  const [scanNote, setScanNote] = useState(null);
   const cov = project.coverage || { questions: [], summary: {} };
   const s = cov.summary || {};
 
@@ -817,6 +819,37 @@ function Coverage({ project, onChanged }) {
       setDraftNote({ bad: true, text: e.response?.data?.error || 'Could not draft the memo' });
     } finally {
       setDrafting(false);
+    }
+  }
+
+  // Re-reads every transcript asking each unanswered question directly.
+  // The extractor sweeps for what is substantive and links afterwards,
+  // which misses answers that do not read as assertions — "pack the
+  // whole thing" is not a claim about anything until you know it was the
+  // reply to how many units go back on the shelf.
+  async function scanAnswers() {
+    setScanning(true);
+    setScanNote(null);
+    try {
+      const { data } = await api.post(`/research/projects/${project.id}/answer-scan`);
+      setScanNote(
+        data.scanned === 0
+          ? { text: 'Every question already has evidence behind it.' }
+          : {
+              text:
+                `Read ${data.interviews} transcript${data.interviews === 1 ? '' : 's'} against ` +
+                `${data.scanned} unanswered question${data.scanned === 1 ? '' : 's'} — ` +
+                (data.found === 0
+                  ? 'no answers in the tape. They are genuinely unasked or unanswered.'
+                  : `answered ${data.found} of them (${data.created} new, ` +
+                    `${data.linkedExisting} already extracted but never linked).`),
+            }
+      );
+      onChanged();
+    } catch (e) {
+      setScanNote({ bad: true, text: e.response?.data?.error || 'Answer scan failed' });
+    } finally {
+      setScanning(false);
     }
   }
 
@@ -881,6 +914,28 @@ function Coverage({ project, onChanged }) {
           </span>
         </div>
       ) : null}
+
+      {(s.unaddressed || 0) > 0 && project.interviews?.some((i) => i.transcript) ? (
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          <TermButton onClick={scanAnswers} disabled={scanning}>
+            {scanning ? 'Reading transcripts…' : `Scan tape for the ${s.unaddressed} unanswered`}
+          </TermButton>
+          <span style={{ color: 'var(--term-fg-muted)', fontSize: 10 }}>
+            Asks each one against every transcript. Quotes still have to locate.
+          </span>
+        </div>
+      ) : null}
+      {scanNote ? (
+        <div
+          style={{
+            fontSize: 11,
+            color: scanNote.bad ? 'var(--term-negative)' : 'var(--term-fg-muted)',
+          }}
+        >
+          {scanNote.text}
+        </div>
+      ) : null}
+
       {draftNote ? (
         <div
           style={{

@@ -5,6 +5,7 @@ import prisma from '../db.js';
 import { verifyJwt, requireRole } from '../middleware/auth.js';
 import { transcribe, isConfigured as transcriptionConfigured, formatStamp, parseTranscriptText } from '../services/transcription.js';
 import { extractClaims } from '../services/claimExtraction.js';
+import { scanForAnswer } from '../services/answerScan.js';
 import { assessTopics, formatCitation } from '../services/corroboration.js';
 import { assessCoverage, funnel } from '../services/questionCoverage.js';
 import { synthesize } from '../services/synthesis.js';
@@ -1061,6 +1062,119 @@ router.post('/interviews/:id/extract', canResearch, heavyLimiter, async (req, re
   } catch (err) {
     console.error('research/extract failed:', err.message);
     res.status(502).json({ error: 'Claim extraction failed' });
+  }
+});
+
+// Sweep a project's transcripts for answers to its open questions.
+//
+// The extract-then-link pipeline reads a transcript once, asks what is
+// substantive, and matches the results to questions afterwards. That
+// misses answers that do not read as assertions. "Pack the whole thing"
+// is not a claim about anything; asked how many units go back on the
+// shelf, it is the answer. This runs the other direction — one question
+// at a time, against the tape — and it exists because a question showing
+// no evidence has two very different causes: nobody answered it, or we
+// did not look for the answer. Those must not look alike.
+//
+// Defaults to questions that currently have nothing, since re-reading
+// every transcript for every question is a lot of model time to spend
+// confirming what is already known.
+router.post('/projects/:id/answer-scan', canResearch, heavyLimiter, async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) return res.status(400).json({ error: 'Bad id' });
+
+  const only = Array.isArray(req.body?.questionIds)
+    ? req.body.questionIds.map(Number).filter(Number.isInteger)
+    : null;
+
+  try {
+    const project = await prisma.researchProject.findUnique({ where: { id } });
+    if (!project) return res.status(404).json({ error: 'Not found' });
+
+    const questions = await prisma.researchQuestion.findMany({
+      where: { projectId: id, ...(only ? { id: { in: only } } : {}) },
+      include: { _count: { select: { claims: true } } },
+      orderBy: { rank: 'asc' },
+    });
+    // Without an explicit list, only chase what has nothing.
+    const targets = only ? questions : questions.filter((q) => q._count.claims === 0);
+    if (targets.length === 0) {
+      return res.json({ scanned: 0, found: 0, linkedExisting: 0, created: 0, questions: [] });
+    }
+
+    const interviews = await prisma.interview.findMany({
+      where: { projectId: id, quarantined: false, transcriptWords: { not: null } },
+      select: { id: true, ticker: true, title: true, transcriptWords: true },
+    });
+    if (interviews.length === 0) {
+      return res.status(409).json({ error: 'No transcribed interviews in this project.' });
+    }
+
+    const perQuestion = [];
+    let created = 0;
+    let linkedExisting = 0;
+
+    for (const q of targets) {
+      const hits = [];
+      for (const iv of interviews) {
+        const words = iv.transcriptWords;
+        const answer = await scanForAnswer({ words, turns: rebuildTurns(words) }, q.text);
+        if (!answer) continue;
+
+        // The extractor may already have pulled this passage and simply
+        // never linked it. Adopting that row rather than writing a second
+        // one keeps a single claim per thing-that-was-said; two rows over
+        // one sentence would read as two sources agreeing.
+        const existing = await prisma.researchClaim.findFirst({
+          where: {
+            interviewId: iv.id,
+            startMs: { gte: answer.startMs - 1500, lte: answer.startMs + 1500 },
+          },
+        });
+
+        if (existing) {
+          if (existing.questionId !== q.id) {
+            await prisma.researchClaim.update({
+              where: { id: existing.id },
+              data: { questionId: q.id },
+            });
+            linkedExisting += 1;
+          }
+          hits.push({ interviewId: iv.id, title: iv.title, claimId: existing.id, adopted: true });
+        } else {
+          const row = await prisma.researchClaim.create({
+            data: {
+              interviewId: iv.id,
+              ticker: iv.ticker,
+              questionId: q.id,
+              text: answer.text,
+              quote: answer.quote,
+              speaker: answer.speaker,
+              startMs: answer.startMs,
+              endMs: answer.endMs,
+              topic: 'answer',
+              kind: 'fact',
+              extractionConfidence: answer.extractionConfidence,
+            },
+          });
+          created += 1;
+          hits.push({ interviewId: iv.id, title: iv.title, claimId: row.id, adopted: false });
+        }
+      }
+      perQuestion.push({ questionId: q.id, question: q.text, hits });
+    }
+
+    res.json({
+      scanned: targets.length,
+      interviews: interviews.length,
+      found: perQuestion.filter((q) => q.hits.length > 0).length,
+      created,
+      linkedExisting,
+      questions: perQuestion,
+    });
+  } catch (err) {
+    console.error('research/answer-scan failed:', err.message);
+    res.status(502).json({ error: 'Answer scan failed' });
   }
 });
 
