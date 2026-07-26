@@ -1138,7 +1138,7 @@ function ValuationRow({ v, project, onChanged }) {
 }
 
 function ValuationForm({ project, onDone, setFlash }) {
-  const [f, setF] = useState({ kind: 'dcf', name: '', bear: '', base: '', bull: '', priceAtWrite: '', note: '' });
+  const [f, setF] = useState({ kind: 'dcf', name: '', bear: '', base: '', bull: '', priceAtWrite: '', note: '', currency: 'USD' });
   const [rows, setRows] = useState(() => SUGGESTED.dcf.map((label) => ({ label, value: '', claimId: '' })));
   const [saving, setSaving] = useState(false);
 
@@ -1187,6 +1187,14 @@ function ValuationForm({ project, onDone, setFlash }) {
           placeholder="Name — e.g. Base DCF, Jul 26"
           value={f.name}
           onChange={(e) => setF({ ...f, name: e.target.value })}
+        />
+        <input
+          style={{ ...termInput, flex: '0 1 70px' }}
+          placeholder="CCY"
+          maxLength={3}
+          title="Currency of the three cases — CHF, EUR, GBP. Defaults to USD."
+          value={f.currency}
+          onChange={(e) => setF({ ...f, currency: e.target.value.toUpperCase() })}
         />
       </div>
       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>

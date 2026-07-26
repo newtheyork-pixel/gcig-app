@@ -1166,7 +1166,7 @@ async function cleanAssumptions(raw, projectId) {
 router.post('/projects/:id/valuations', canResearch, async (req, res) => {
   const projectId = Number(req.params.id);
   if (!Number.isInteger(projectId)) return res.status(400).json({ error: 'Bad id' });
-  const { kind, name, bear, base, bull, priceAtWrite, note, assumptions } = req.body || {};
+  const { kind, name, bear, base, bull, priceAtWrite, note, assumptions, currency } = req.body || {};
   if (!name) return res.status(400).json({ error: 'name is required' });
   try {
     const project = await prisma.researchProject.findUnique({ where: { id: projectId } });
@@ -1182,6 +1182,12 @@ router.post('/projects/:id/valuations', canResearch, async (req, res) => {
         base: num(base),
         bull: num(bull),
         priceAtWrite: num(priceAtWrite),
+        // Three letters, upper-cased. A free-text currency is a currency
+        // that eventually reads "swiss francs" in one row and "CHF" in
+        // the next and cannot be compared.
+        currency: /^[A-Za-z]{3}$/.test(String(currency || ''))
+          ? String(currency).toUpperCase()
+          : 'USD',
         note: note ? String(note).slice(0, 4000) : null,
         assumptions: clean.assumptions,
         createdById: req.user?.id ?? null,
@@ -1208,6 +1214,9 @@ router.patch('/valuations/:id', canResearch, async (req, res) => {
       if (b[k] !== undefined) data[k] = num(b[k]);
     }
     if (b.note !== undefined) data.note = b.note ? String(b.note).slice(0, 4000) : null;
+    if (b.currency !== undefined && /^[A-Za-z]{3}$/.test(String(b.currency))) {
+      data.currency = String(b.currency).toUpperCase();
+    }
     let droppedCitations = 0;
     if (b.assumptions !== undefined) {
       const clean = await cleanAssumptions(b.assumptions, existing.projectId);

@@ -1210,6 +1210,11 @@ model ResearchValuation {
   // Share price the targets were struck against, so an upside figure
   // stays honest as the market moves.
   priceAtWrite Float?
+  // The currency the three cases are in. Lindt trades at CHF 95,600 a
+  // registered share; rendering that with a dollar sign is not a
+  // cosmetic slip, it is a different number. Defaults to USD because
+  // most of the book is, but it is stored rather than assumed.
+  currency    String   @default("USD")
   // [{ label, value, unit?, claimId?, note? }] — the inputs that drive
   // the cases. claimId points at a ResearchClaim when the assumption
   // came from primary research rather than being picked; validated on
