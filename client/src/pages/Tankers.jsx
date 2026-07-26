@@ -20,6 +20,7 @@ function relativeTime(iso) {
 export default function Tankers() {
   const [snapshot, setSnapshot] = useState(null);
   const [configured, setConfigured] = useState(true);
+  const [feed, setFeed] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [selectedVessel, setSelectedVessel] = useState(null);
@@ -28,6 +29,7 @@ export default function Tankers() {
     try {
       const res = await getLatestSnapshot();
       setConfigured(res.configured !== false);
+      setFeed(res.feed || null);
       setSnapshot(res.snapshot || null);
       setError(null);
     } catch (e) {
@@ -100,6 +102,23 @@ export default function Tankers() {
       {!loading && error && (
         <div className="rounded-lg border border-red-300 bg-red-50 p-4 text-sm text-red-900">
           {error}
+        </div>
+      )}
+
+      {/* The panels below render 0 as readily as they render 40, so a dead
+          feed looks like an empty Gulf. Say it once, at the top, before
+          anyone reads a single figure. */}
+      {!loading && configured && feed && !feed.ais.live && (
+        <div className="rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm text-amber-900">
+          <div className="font-semibold">AIS feed is not reporting.</div>
+          <div className="mt-1">{feed.ais.reason}</div>
+          <div className="mt-1 text-amber-800/80">
+            Treat every AIS-derived figure below — departures, anchored counts,
+            Hormuz throughput, laden/ballast — as unavailable rather than zero.
+            {feed.sar?.live
+              ? ' The satellite (SAR) readings are on a separate feed and are current.'
+              : ''}
+          </div>
         </div>
       )}
 

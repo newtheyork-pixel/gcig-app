@@ -139,6 +139,54 @@ router.post(
 // ── In-app reads (members only) ──────────────────────────────────────
 router.use(verifyJwt);
 
+// A snapshot the publisher stopped updating still returns a full,
+// well-formed payload — every AIS signal reading 0 with a timestamp
+// beside it. Zero tanker departures from Saudi, Iraq, Iran and Kuwait
+// is not a measurement, it is an outage wearing a number, and the page
+// had no way to tell the difference. It ran that way for eighteen days.
+//
+// So freshness is computed here and returned as `feed`, per source: the
+// AIS side and the SAR side come from different credentials on the same
+// box and fail independently — SAR was healthy and current throughout.
+const FEED_STALE_MS = 6 * 60 * 60 * 1000;
+
+function feedHealth(row) {
+  const payload = row.payload || {};
+  const now = Date.now();
+  const snapshotAt = row.snapshotAt ? new Date(row.snapshotAt).getTime() : null;
+  const ageMs = snapshotAt ? now - snapshotAt : null;
+
+  // The AIS half is live only if vessels are still arriving. A snapshot
+  // can be republished on schedule while carrying nothing new.
+  const seen6h = payload?.coverage?.vessels_last_6h ?? null;
+  const aisLive = ageMs != null && ageMs < FEED_STALE_MS && (seen6h ?? 0) > 0;
+
+  const sarAt = payload?.derived?.sarStraitVessels?.asOf
+    ? new Date(payload.derived.sarStraitVessels.asOf).getTime()
+    : null;
+  const sarAgeMs = sarAt ? now - sarAt : null;
+
+  return {
+    ais: {
+      live: aisLive,
+      ageMs,
+      vesselsLast6h: seen6h,
+      vesselsLast24h: payload?.coverage?.vessels_last_24h ?? null,
+      // Named plainly so the UI does not have to guess at a reason.
+      reason: aisLive
+        ? null
+        : (seen6h ?? 0) === 0
+        ? 'No AIS positions received recently — the collector is running but ingesting nothing. Every AIS-derived figure below is a default, not a reading.'
+        : 'The snapshot has not been republished recently.',
+    },
+    sar: {
+      live: sarAgeMs != null && sarAgeMs < 4 * 24 * 60 * 60 * 1000,
+      ageMs: sarAgeMs,
+      asOf: payload?.derived?.sarStraitVessels?.asOf ?? null,
+    },
+  };
+}
+
 router.get('/latest', async (_req, res) => {
   const row = await prisma.seaSnapshot.findUnique({ where: { id: 1 } });
   if (!row) {
@@ -146,6 +194,7 @@ router.get('/latest', async (_req, res) => {
   }
   return res.json({
     configured: true,
+    feed: feedHealth(row),
     snapshot: {
       snapshotAt: row.snapshotAt,
       vesselCount: row.vesselCount,
