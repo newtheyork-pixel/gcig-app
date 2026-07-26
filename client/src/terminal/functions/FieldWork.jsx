@@ -111,7 +111,7 @@ export default function FieldWork({ ticker }) {
     <div className="term-panel">
       <div className="term-panel-header">
         {ticker ? <span className="ticker">{ticker.toUpperCase()}</span> : null}
-        <span className="name">Field Research</span>
+        <span className="name">Research</span>
       </div>
 
       <NewProject ticker={ticker} onDone={loadList} />
@@ -652,7 +652,7 @@ function Interviews({ project, onChanged, setFlash }) {
             {saving ? 'Adding…' : 'Add interview'}
           </TermButton>
           <span style={{ color: 'var(--term-fg-muted)', fontSize: 10, marginLeft: 8 }}>
-            Add sources on the Field Research page.
+            Pick a source, or add someone new above.
           </span>
         </div>
       </div>

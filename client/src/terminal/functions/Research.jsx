@@ -213,7 +213,7 @@ export default function Research({ ticker }) {
     <div className="term-panel">
       <div className="term-panel-header">
         {ticker ? <span className="ticker">{ticker.toUpperCase()}</span> : null}
-        <span className="name">Internal Research</span>
+        <span className="name">Archive</span>
       </div>
 
       <input

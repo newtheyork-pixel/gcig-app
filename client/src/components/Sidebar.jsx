@@ -56,7 +56,7 @@ const NAV_SECTIONS = [
   {
     items: [
       { to: '/library', label: 'Library', icon: BookOpen },
-      { to: '/field-research', label: 'Field Research', icon: Mic },
+      { to: '/field-research', label: 'Research', icon: Mic },
     ],
   },
   {

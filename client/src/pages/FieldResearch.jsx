@@ -114,7 +114,7 @@ export default function FieldResearch() {
     <>
       <PageHeader
         kicker="Primary Research"
-        title="Field Research"
+        title="Research"
         subtitle="Interviews with people who touch the business — and the claim ledger built from them."
       />
 

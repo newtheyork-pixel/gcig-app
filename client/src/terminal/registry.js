@@ -93,12 +93,12 @@ export const FUNCTIONS = [
   // transcripts, files and the pinned claim ledger. Ticker-optional —
   // `FLD` lists every project, `AIT FLD` scopes to one name. Wide and
   // tall because it is a workspace, not a readout.
-  { id: 'FLD', label: 'Field Research', help: 'Field-research projects: interview guides, recordings, transcripts, files and the pinned claim ledger.', requires: null, component: FieldWork, w: 860, h: 680 },
+  { id: 'FLD', label: 'Research', help: 'Research projects: the brief, questions, outreach, interviews and transcripts, store visits, files, and the pinned claim ledger.', requires: null, component: FieldWork, w: 860, h: 680 },
   // Ticker-optional: `RSCH` opens the whole archive, `AIT RSCH` scopes
   // it. Wider/taller than the default because this pane is read, not
   // scanned — prose at 580px wraps every few words. FLD is what we went
   // and found; RSCH is what we already wrote up.
-  { id: 'RSCH', label: 'Internal Research', help: 'The club\'s own reports & pitch decks — full text and AI summaries, readable inline.', requires: null, component: Research, w: 800, h: 640 },
+  { id: 'RSCH', label: 'Archive', help: 'The club\'s own reports & pitch decks — full text and AI summaries, readable inline.', requires: null, component: Research, w: 800, h: 640 },
   { id: 'MGMT', label: 'Management & Board', help: 'CEO, board, comp & interlocking boards from the latest DEF 14A.', requires: 'ticker', component: Governance },
   { id: 'WEI', label: 'World Indices', help: 'Global index snapshot.', requires: null, component: WorldIndices },
   { id: 'TOP', label: 'Top News', help: 'Market-wide top headlines.', requires: null, component: TopNews, w: 780, h: 620 },
