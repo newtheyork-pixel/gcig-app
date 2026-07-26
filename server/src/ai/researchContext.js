@@ -32,6 +32,21 @@ import { formatStamp } from '../services/transcription.js';
 
 const MIN_RANK = ROLE_RANK.Analyst;
 
+// A hard ceiling on this section, in characters.
+//
+// It is appended to the end of an already long prompt, and a model with
+// a bounded window drops the tail first. Silent truncation is the worst
+// outcome available here: the model does not know evidence was cut, so
+// it answers as though we never gathered it — which is exactly how the
+// first version produced "industry norms suggest 1 to 2 times per week"
+// under a heading claiming it was our research.
+//
+// So the budget is explicit, and when it bites the block SAYS what was
+// dropped. A model told "12 further findings were omitted for length"
+// can say it does not have them to hand. A model handed a quietly
+// shortened list cannot tell that anything is missing.
+const MAX_CHARS = 9_000;
+
 // Interviews whose claims may be repeated to anyone. Quarantined is the
 // obvious exclusion. The subtler one is an interview the screen flagged
 // and no person has cleared: it may contain material non-public
@@ -141,34 +156,63 @@ export async function buildResearchContext(user) {
         const employers = new Set(
           rows.map((c) => c.interview?.source?.employer || `unknown:${c.id}`)
         );
-        const lines = [`- **${q.text}** — ${employers.size} independent source(s)`];
-        for (const c of rows.slice(0, 4)) {
+        // Tight. This block sits at the very end of a long prompt, and
+        // a model with a bounded window drops the tail first: the first
+        // cut ran to 20 KB — twice the IPS and policies together — and
+        // the model answered a question we HAVE evidence for by
+        // reaching for industry norms instead, having never seen it.
+        // Fewer, shorter lines that survive beat complete ones that do
+        // not arrive.
+        const lines = [
+          `- **${q.text}**` +
+            (employers.size === 1 ? ' — SINGLE SOURCE, uncorroborated' : ` — ${employers.size} independent sources`),
+        ];
+        for (const c of rows.slice(0, 3)) {
           const src = c.interview?.source;
-          const who = [src?.alias, src?.relationship, src?.employer]
-            .filter(Boolean)
-            .join(', ');
+          const who = [src?.alias, src?.employer].filter(Boolean).join(', ');
           lines.push(
-            `    - ${c.text}${c.quote ? ` — "${c.quote.slice(0, 160)}"` : ''} ` +
-              `[${who || 'source withheld'}, ${fmtDay(c.interview?.conductedAt)}, ${formatStamp(c.startMs)}]` +
-              (employers.size === 1 ? ' — SINGLE SOURCE, uncorroborated' : '')
+            `    - ${c.text}${c.quote ? ` ("${c.quote.slice(0, 90)}")` : ''}` +
+              ` [${who || 'source withheld'}, ${formatStamp(c.startMs)}]`
           );
         }
+        if (rows.length > 3) lines.push(`    - (+${rows.length - 3} more on this question)`);
         answered.push(lines.join('\n'));
       }
 
-      if (answered.length) out.push('', '**What we found**', ...answered);
+      if (answered.length) {
+        out.push(
+          '',
+          '**What we found.** Answer from these lines and nothing else. If the',
+          'question being asked is not covered below, say we did not establish',
+          'it — do NOT substitute industry norms, typical practice or a',
+          'plausible range, and never place such a substitute under a heading',
+          'that says this is our research. That is inventing a finding.',
+          '',
+          ...answered
+        );
+      }
       if (open.length) {
         out.push(
           '',
-          `**Still unanswered (${open.length})** — we have no evidence either way on these. ` +
-            'Do not fill the gap from general knowledge and present it as our finding:',
-          ...open.slice(0, 12).map((t) => `- ${t}`)
+          `**Asked but never answered (${open.length}).** We have no evidence either ` +
+            'way. Saying so is the correct answer:',
+          ...open.slice(0, 8).map((t) => `- ${t}`)
         );
       }
       out.push('');
     }
 
-    return out.join('\n');
+    const text = out.join('\n');
+    if (text.length <= MAX_CHARS) return text;
+
+    // Trim on a line boundary so a citation is never cut in half — half
+    // a quote with a timestamp still attached is worse than no quote.
+    const kept = text.slice(0, MAX_CHARS);
+    const trimmed = kept.slice(0, kept.lastIndexOf('\n'));
+    const droppedLines = text.slice(trimmed.length).split('\n').filter((l) => l.trim()).length;
+    return `${trimmed}\n\n_(${droppedLines} further line(s) of research were omitted here for length. ` +
+      `If asked about something not listed above, say we may have it on file but it is not in front of you — ` +
+      `do not answer from general knowledge as though it were ours.)_`;
   } catch (err) {
     console.warn('researchContext failed:', err.message);
     return '';
