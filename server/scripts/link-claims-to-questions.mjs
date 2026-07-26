@@ -8,36 +8,26 @@ const qs=p.questions||[], claims=p.claims||[];
 console.log(`${claims.length} claims, ${qs.length} questions\n`);
 qs.forEach((q,i)=>console.log(`  Q${q.id}: ${q.text.slice(0,80)}`));
 
-const SYS=`You map research claims to the questions a project set out to answer.
+const SYS = `You map research claims to the questions a project set out to answer.
 
-You are given numbered QUESTIONS and numbered CLAIMS from field interviews about premium chocolate retail.
+You are given numbered QUESTIONS and numbered CLAIMS from field interviews.
 
 For each claim, decide which ONE question it is EVIDENCE FOR OR AGAINST, or none.
 
-The bar is high. A claim must be about the same SUBJECT as the question, not merely share a word or a number with it.
+The test is SUBJECT. A claim belongs to a question when it speaks to the thing that question asks about. A shared number or a shared word is not enough on its own — but a difference in wording is not a reason to reject a claim that plainly answers the question.
 
-Worked examples of what NOT to do:
-  Q: "Does Lindt hold roughly 20% of the premium chocolate shelf?"
-  Claim: "30% of stock sells in the first half of the week"
-  -> null. This is about restock timing. It shares the shape of a percentage and nothing else.
+  "premium chocolate is restocked twice a week"        -> a question about restock frequency. Link it.
+  "Hershey's sells more than premium chocolate by far" -> a question comparing Lindt to mainstream brands. Link it.
+  "we put up about six Lindt and a case of Hershey"    -> a question about per-brand replacement counts. Link it.
+  "30% of stock sells in the first half of the week"   -> a question about SHELF SHARE. No. It is about sell-through timing and shares only the shape of a percentage.
 
-  Q: "Does Lindt hold roughly 20% of the premium chocolate shelf?"
-  Claim: "no, like, just like I said, like 30% done"
-  -> null. This is a staffer describing how far through a restock they are.
-
-  Q: "Is the premium buyer price-insensitive enough to absorb repeated increases?"
-  Claim: "Hershey's sells more because they are cheaper"
-  -> null. That is about the mainstream buyer choosing on price, which is a different population.
-
-A shelf-share question needs a claim about facings, shelf space, or share of the set.
-A price-sensitivity question needs a claim about how buyers responded to a price change.
-A pass-through question needs a claim about costs moving into prices.
+Match to the MOST SPECIFIC question that fits. If a claim answers both a narrow question and a broad one, choose the narrow one.
 
 Reply with strict JSON only:
 {"links":[{"claimIndex":0,"questionId":12,"why":"under 10 words"}]}
 Use questionId null for no link. "claimIndex" MUST match the input number.
 
-Most claims will be null. That is the expected outcome and it is correct — field research turns up plenty that answers something nobody asked. A padded coverage number is worse than an honest gap, because it tells the team a question is settled when nothing has actually been established.`;
+Claims that answer nothing asked are normal and should be left null. But do not leave a claim unlinked merely because it is phrased differently from the question. A padded coverage number is a lie; so is an empty one.`;
 ;
 
 const qList=qs.map(q=>`Q${q.id}: ${q.text}`).join('\n');
