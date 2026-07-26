@@ -1097,6 +1097,14 @@ function ValuationRow({ v, project, onChanged }) {
           ) : (
             <span style={{ color: 'var(--term-fg-muted)' }}> · not there yet</span>
           )}
+          {/* A watch with nobody on it fires into a log file. Worth
+              saying on the row rather than discovering the day it
+              triggers. */}
+          {(v.watchers || []).length === 0 ? (
+            <span style={{ color: 'var(--term-amber, var(--term-white))' }}> · NOBODY IS EMAILED</span>
+          ) : (
+            <span style={{ color: 'var(--term-fg-muted)' }}> · emails {v.watchers.length}</span>
+          )}
           {/* A model written before the last earnings report is a claim
               about facts that have since been restated. Acting on a
               price alert off one is the failure this label exists to
@@ -1170,7 +1178,7 @@ function ValuationRow({ v, project, onChanged }) {
 }
 
 function ValuationForm({ project, onDone, setFlash }) {
-  const [f, setF] = useState({ kind: 'dcf', name: '', bear: '', base: '', bull: '', priceAtWrite: '', note: '', currency: 'USD', buyBelow: '', reviewBy: '' });
+  const [f, setF] = useState({ kind: 'dcf', name: '', bear: '', base: '', bull: '', priceAtWrite: '', note: '', currency: 'USD', buyBelow: '', reviewBy: '', watchers: '' });
   const [rows, setRows] = useState(() => SUGGESTED.dcf.map((label) => ({ label, value: '', claimId: '' })));
   const [saving, setSaving] = useState(false);
 
@@ -1189,6 +1197,7 @@ function ValuationForm({ project, onDone, setFlash }) {
     try {
       const { data } = await api.post(`/research/projects/${project.id}/valuations`, {
         ...f,
+        watchers: String(f.watchers || '').split(',').map((x) => x.trim()).filter(Boolean),
         assumptions: rows
           .filter((r) => r.label && r.value)
           .map((r) => ({ label: r.label, value: r.value, claimId: r.claimId ? Number(r.claimId) : null })),
@@ -1281,6 +1290,17 @@ function ValuationForm({ project, onDone, setFlash }) {
         >
           + another input
         </a>
+      </div>
+
+      <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+        <span style={{ color: 'var(--term-fg-muted)', fontSize: 10 }}>Email when hit</span>
+        <input
+          style={{ ...termInput, flex: '1 1 240px' }}
+          placeholder="comma-separated addresses"
+          title="Who gets the email when the buy level is reached. Stored on this valuation, not derived from roles — officers change, watches should not."
+          value={f.watchers}
+          onChange={(e) => setF({ ...f, watchers: e.target.value })}
+        />
       </div>
 
       <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>

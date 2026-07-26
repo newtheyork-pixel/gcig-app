@@ -1,5 +1,6 @@
 import prisma from '../db.js';
 import { resolveQuotes } from './portfolioQuotes.js';
+import { sendBuyLevelEmail } from './email.js';
 
 // Watches the gap between what we think a name is worth and what it costs.
 //
@@ -68,13 +69,9 @@ export async function checkBuyLevels(deps = {}) {
     const clearlyAbove = price > level * (1 + HYSTERESIS);
 
     if (below && !v.alertedAt) {
-      await prisma.researchValuation.update({
-        where: { id: v.id },
-        data: { alertedAt: new Date() },
-      });
       crossed += 1;
       const stale = v.reviewBy ? new Date(v.reviewBy).getTime() < Date.now() : false;
-      alerts.push({
+      const alert = {
         valuationId: v.id,
         projectId: v.project?.id ?? null,
         project: v.project?.name ?? null,
@@ -90,7 +87,33 @@ export async function checkBuyLevels(deps = {}) {
         stale,
         reviewBy: v.reviewBy ?? null,
         source: q.source || null,
-      });
+      };
+
+      // Send BEFORE marking it announced. The other order means a send
+      // that fails leaves the row flagged as told-about and the crossing
+      // is never mentioned again — the one event the whole watch exists
+      // to catch, lost to a transient SMTP error.
+      const to = (v.watchers || []).filter((e) => /@/.test(e));
+      let notified = false;
+      if (to.length) {
+        try {
+          await sendBuyLevelEmail(to, alert);
+          notified = true;
+        } catch (err) {
+          console.error(`[buy-levels] email failed for ${v.ticker}:`, err.message);
+        }
+      }
+
+      // Only mark it announced if somebody was actually told, or there
+      // was nobody to tell. A failed send stays un-announced so tomorrow
+      // tries again.
+      if (notified || to.length === 0) {
+        await prisma.researchValuation.update({
+          where: { id: v.id },
+          data: { alertedAt: new Date() },
+        });
+      }
+      alerts.push({ ...alert, notified, recipients: to.length });
     } else if (clearlyAbove && v.alertedAt) {
       // Re-arm. Without this the second crossing is silent, which is the
       // one people actually wait for.

@@ -1228,6 +1228,12 @@ model ResearchValuation {
   // reporting date, this is what makes the panel say a valuation is
   // stale rather than letting a March DCF look current in August.
   reviewBy    DateTime?
+  // Who gets told when the level is hit. Email addresses rather than
+  // user ids, and stored on the valuation rather than inferred from a
+  // role: the President of a student club changes every year, so a
+  // role-based list would quietly hand next year's officers a watch
+  // they never set and drop the people who did the work.
+  watchers    String[]
   // [{ label, value, unit?, claimId?, note? }] — the inputs that drive
   // the cases. claimId points at a ResearchClaim when the assumption
   // came from primary research rather than being picked; validated on

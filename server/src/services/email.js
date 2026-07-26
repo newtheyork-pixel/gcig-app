@@ -238,6 +238,79 @@ export async function sendPitchAssignmentEmail(
 // everyone stays private. `bodyHtml` is pre-escaped HTML (the route converts
 // newlines → <br> so the sender doesn't need to know HTML). `senderName` is
 // rendered as a human "from" line inside the template.
+// A name has come to the price we said we would buy it at.
+//
+// The whole point of the watch is that nobody is refreshing a quote for
+// a name they do not own yet, so this email is the entire mechanism —
+// if it does not arrive, the feature does not exist.
+//
+// Two things it must not do. It must not read like a recommendation:
+// it reports that a level someone set has been reached, and the decision
+// is still theirs. And it must not hide that the model behind the level
+// may be out of date — a price alert off a valuation written before the
+// last earnings report is worse than no alert, because it arrives with
+// the authority of work nobody has revisited.
+export async function sendBuyLevelEmail(toEmails, alert) {
+  if (!Array.isArray(toEmails) || toEmails.length === 0) {
+    throw new Error('No recipients');
+  }
+  const {
+    ticker, name, project, price, buyBelow, currency = 'USD',
+    base, stale, reviewBy, source,
+  } = alert;
+  const money = (n) =>
+    n == null ? '—' : currency === 'USD'
+      ? `$${Number(n).toLocaleString()}`
+      : `${Number(n).toLocaleString()} ${currency}`;
+
+  const staleBlock = stale
+    ? `<div style="margin: 16px 0; padding: 12px 14px; border: 1px solid #B91C1C; background: #FEF2F2; color: #7F1D1D; font-size: 13px; line-height: 1.5;">
+         <strong>This valuation is past its review date${reviewBy ? ` (${new Date(reviewBy).toISOString().slice(0, 10)})` : ''}.</strong>
+         The level was set against numbers that have not been revisited since. Re-run the model before acting on this.
+       </div>`
+    : '';
+
+  await getTransporter().sendMail({
+    from: from(),
+    to: from(),
+    bcc: toEmails,
+    subject: `${ticker} at ${money(price)} — your buy level of ${money(buyBelow)} has been reached`,
+    html: `
+      <div style="font-family: 'Inter', system-ui, sans-serif; max-width: 560px; margin: 0 auto; padding: 32px;">
+        <div style="text-align: center; margin-bottom: 24px;">
+          <h1 style="color: #1B2A4A; font-size: 20px; margin: 0; font-family: Georgia, serif; letter-spacing: -0.01em;">The Griffin Fund</h1>
+          <p style="color: #C9A84C; font-size: 11px; text-transform: uppercase; letter-spacing: 2px; margin: 4px 0 0;">
+            Buy level reached
+          </p>
+        </div>
+
+        <p style="color: #1B2A4A; font-size: 15px; line-height: 1.6; margin: 0 0 16px;">
+          <strong>${ticker}</strong> closed at <strong>${money(price)}</strong>, at or below the
+          ${money(buyBelow)} level set on <em>${name}</em>${project ? ` (${project})` : ''}.
+        </p>
+
+        ${staleBlock}
+
+        <table style="width: 100%; border-collapse: collapse; font-size: 13px; color: #1B2A4A; margin: 16px 0;">
+          <tr><td style="padding: 6px 0; color: #3A4D78;">Close</td><td style="padding: 6px 0; text-align: right;"><strong>${money(price)}</strong></td></tr>
+          <tr><td style="padding: 6px 0; color: #3A4D78;">Your buy level</td><td style="padding: 6px 0; text-align: right;">${money(buyBelow)}</td></tr>
+          ${base != null ? `<tr><td style="padding: 6px 0; color: #3A4D78;">Base case</td><td style="padding: 6px 0; text-align: right;">${money(base)}</td></tr>` : ''}
+        </table>
+
+        <p style="color: #3A4D78; font-size: 12px; line-height: 1.6; margin: 16px 0 0;">
+          You are getting this because the level was reached for the first time since it was set.
+          You will not be told again while it stays there — if it climbs back above and returns,
+          that is a fresh email.
+        </p>
+        <p style="color: #64748B; font-size: 11px; line-height: 1.6; margin: 12px 0 0;">
+          This reports a level you set. It is not a recommendation, and nothing has been bought.
+          ${source ? `Price from ${source}.` : ''}
+        </p>
+      </div>
+    `,
+  });
+}
+
 export async function sendBroadcastEmail(
   toEmails,
   { subject, bodyHtml, senderName, audienceLabel }

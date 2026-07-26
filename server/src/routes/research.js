@@ -1121,6 +1121,17 @@ router.post('/interviews/:id/extract', canResearch, heavyLimiter, async (req, re
 
 const VALUATION_KINDS = new Set(['dcf', 'merger', 'comps', 'other']);
 
+// Watcher addresses. Deduped and lower-cased so the same person added
+// twice with different capitalisation is not emailed twice, and anything
+// without an @ is dropped rather than stored to fail later inside the
+// mailer, where nobody would see it.
+const emails = (v) =>
+  Array.isArray(v)
+    ? [...new Set(
+        v.map((e) => String(e || '').trim().toLowerCase()).filter((e) => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e))
+      )].slice(0, 20)
+    : [];
+
 const num = (v) => {
   if (v === null || v === undefined || v === '') return null;
   const n = Number(v);
@@ -1190,6 +1201,7 @@ router.post('/projects/:id/valuations', canResearch, async (req, res) => {
           : 'USD',
         buyBelow: num(buyBelow),
         reviewBy: reviewBy ? new Date(reviewBy) : null,
+        watchers: emails(req.body?.watchers),
         note: note ? String(note).slice(0, 4000) : null,
         assumptions: clean.assumptions,
         createdById: req.user?.id ?? null,
@@ -1220,6 +1232,7 @@ router.patch('/valuations/:id', canResearch, async (req, res) => {
     // the opposite of what changing it means.
     if (b.buyBelow !== undefined) data.alertedAt = null;
     if (b.reviewBy !== undefined) data.reviewBy = b.reviewBy ? new Date(b.reviewBy) : null;
+    if (b.watchers !== undefined) data.watchers = emails(b.watchers);
     if (b.note !== undefined) data.note = b.note ? String(b.note).slice(0, 4000) : null;
     if (b.currency !== undefined && /^[A-Za-z]{3}$/.test(String(b.currency))) {
       data.currency = String(b.currency).toUpperCase();
