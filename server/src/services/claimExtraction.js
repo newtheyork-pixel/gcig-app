@@ -253,6 +253,52 @@ export function chunkTurns(turns, budget = MAX_TRANSCRIPT_CHARS) {
  * @param {object} interview - { words, turns }
  * @param {object} deps - injectable chat, for tests
  */
+const REPAIR_PROMPT = `You wrote a claim from an interview transcript, but the quote you gave for it does not appear in the transcript word for word — so it cannot be used.
+
+You will see the TRANSCRIPT and the CLAIM. Find the words that support the claim and copy them EXACTLY as they appear: same wording, same punctuation, same "um" and "uh" and false starts. Do not tidy anything.
+
+Two hard rules:
+  - ONE contiguous run of words. Do not join passages from different places, even if both support the claim. Stitching a speaker's separated words into one sentence puts words in their mouth they never said in that order.
+  - ONE speaker. If the support is split across a question and an answer, quote only the answer.
+
+If no single contiguous passage supports the claim, say so — that is a normal and correct outcome, and far better than a quote that does not exist.
+
+Reply with strict JSON only:
+{"quote": "..."}
+or
+{"quote": null}`;
+
+// One more attempt at the exact words, before a claim is thrown away.
+//
+// Returns the repaired quote or null. Anchors nothing itself — the
+// caller still has to locate it — so this can only recover claims, never
+// admit one that could not be found.
+async function repairQuote(chat, context, claim) {
+  if (!context || !claim) return null;
+  let raw;
+  try {
+    raw = await chat({
+      messages: [
+        { role: 'system', content: REPAIR_PROMPT },
+        { role: 'user', content: `TRANSCRIPT\n${context}\n\nCLAIM\n${claim}` },
+      ],
+      jsonMode: true,
+      temperature: 0,
+      timeoutMs: 60_000,
+      localModel: RESEARCH_LOCAL_MODEL,
+    });
+  } catch {
+    return null;
+  }
+  if (!raw) return null;
+  try {
+    const q = JSON.parse(raw)?.quote;
+    return typeof q === 'string' && q.trim() ? q.trim() : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function extractClaims(interview, deps = {}) {
   const words = interview?.words || [];
   const turns = interview?.turns || [];
@@ -311,13 +357,29 @@ export async function extractClaims(interview, deps = {}) {
       dropped += 1;
       continue;
     }
-    const located = locateQuote(words, quote);
+    let located = locateQuote(words, quote);
+    let finalQuote = quote;
     if (!located) {
-      // The model cited words that aren't in the transcript. Dropping is
-      // the only safe move: a claim with no locatable evidence is
-      // exactly the thing the pinned-source rule exists to prevent.
-      dropped += 1;
-      continue;
+      // The model cited words that aren't in the transcript verbatim.
+      // Usually that is not invention, it is tidying: it summarised
+      // across two sentences, or stitched a speaker's separated words
+      // into one. locateQuote refuses both, correctly — but the drop
+      // rate is not evenly spread. Short store-visit exchanges lose
+      // nothing; a 47,000-character call with an economist lost 29 of
+      // 40, and that is the single most substantive source in the
+      // project being read at a quarter of its value.
+      //
+      // So ask once more for the actual words before giving up. This
+      // loosens nothing: the repaired quote faces the same locateQuote
+      // and the same entailment check, and a claim that still cannot be
+      // anchored is still dropped.
+      const repaired = await repairQuote(chat, row.__context, text);
+      located = repaired ? locateQuote(words, repaired) : null;
+      if (!located) {
+        dropped += 1;
+        continue;
+      }
+      finalQuote = repaired;
     }
     // Locating the quote proves the words were spoken. It does not prove
     // the claim written above them is a fair reading, and that failure
@@ -328,7 +390,7 @@ export async function extractClaims(interview, deps = {}) {
     // lot" became a ranking of three brands nobody named.
     // The window this claim came out of is the context that can supply
     // a subject the quote leaves implicit.
-    const verdict = await check(chat, null, quote, text, row.__context || null);
+    const verdict = await check(chat, null, finalQuote, text, row.__context || null);
     if (!verdict.supported) {
       unsupported += 1;
       continue;
@@ -340,7 +402,7 @@ export async function extractClaims(interview, deps = {}) {
     claims.push({
       // Narrowed to what the quote carries where the checker rewrote it.
       text: verdict.answer || text,
-      quote,
+      quote: finalQuote,
       topic: String(row?.topic || '').trim().toLowerCase().slice(0, 60) || null,
       kind,
       extractionConfidence: Number.isFinite(confidence)

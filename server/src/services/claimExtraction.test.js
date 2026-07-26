@@ -158,6 +158,54 @@ test('keeps a locatable claim and pins it to the transcript', async () => {
   assert.equal(claims[0].extractionConfidence, 0.92);
 });
 
+// The repair pass: one more attempt at the exact words before a claim
+// is thrown away. It must recover honest claims without becoming a way
+// in for ones that cannot be anchored.
+const isRepair = (m) => /does not appear in the transcript word for word/.test(m[0].content);
+
+test('a paraphrased quote is repaired rather than lost', async () => {
+  // "We reduced the rebate by 200bps" is the model tidying, not
+  // inventing — the words are there, just not as written.
+  const llmChat = async ({ messages }) => {
+    if (isRepair(messages)) return JSON.stringify({ quote: 'cut the rebate by 200 basis points' });
+    return JSON.stringify({
+      claims: [{ text: 'The rebate was cut by 200bps in Q2.', quote: 'We reduced the rebate by 200bps', kind: 'fact', confidence: 0.9 }],
+    });
+  };
+  const { claims, dropped } = await extractClaims(INTERVIEW, { llmChat, entails: OK });
+  assert.equal(dropped, 0);
+  assert.equal(claims.length, 1);
+  // The stored quote is the one that actually locates, never the
+  // paraphrase — a citation must reproduce what a listener would hear.
+  assert.equal(claims[0].quote, 'cut the rebate by 200 basis points');
+  assert.equal(claims[0].startMs, 2500);
+});
+
+test('repair cannot smuggle in words that are not in the tape', async () => {
+  for (const repaired of [{ quote: 'we slashed the rebate entirely' }, { quote: null }, {}]) {
+    const llmChat = async ({ messages }) =>
+      isRepair(messages)
+        ? JSON.stringify(repaired)
+        : JSON.stringify({ claims: [{ text: 'A claim.', quote: 'nowhere in this transcript', kind: 'fact' }] });
+    const { claims, dropped } = await extractClaims(INTERVIEW, { llmChat, entails: OK });
+    assert.equal(claims.length, 0, JSON.stringify(repaired));
+    assert.equal(dropped, 1);
+  }
+});
+
+test('a repaired quote still has to survive the entailment check', async () => {
+  const llmChat = async ({ messages }) =>
+    isRepair(messages)
+      ? JSON.stringify({ quote: 'cut the rebate by 200 basis points' })
+      : JSON.stringify({ claims: [{ text: 'Rebates were cut across every region.', quote: 'we reduced rebates globally', kind: 'fact' }] });
+  const { claims, unsupported } = await extractClaims(INTERVIEW, {
+    llmChat,
+    entails: async () => ({ supported: false }),
+  });
+  assert.equal(claims.length, 0);
+  assert.equal(unsupported, 1);
+});
+
 test('drops a claim whose quote is not in the transcript', async () => {
   // A hallucinated claim must never reach the ledger, however plausible.
   const llmChat = async () =>
