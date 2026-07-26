@@ -796,6 +796,7 @@ function Coverage({ project, onChanged }) {
   const [saving, setSaving] = useState(false);
   const [drafting, setDrafting] = useState(false);
   const [draftNote, setDraftNote] = useState(null);
+  const [openQ, setOpenQ] = useState(null);
   const [scanning, setScanning] = useState(false);
   const [scanNote, setScanNote] = useState(null);
   const cov = project.coverage || { questions: [], summary: {} };
@@ -962,7 +963,18 @@ function Coverage({ project, onChanged }) {
               <span style={{ color: COVERAGE_COLOR[q.coverage], fontSize: 10, letterSpacing: 0.5 }}>
                 {COVERAGE_LABEL[q.coverage]}
               </span>
-              <span style={{ color: 'var(--term-white)', fontSize: 12, flex: 1, minWidth: 200 }}>
+              {/* A coverage label is a summary of evidence, and a summary
+                  nobody can open is just an assertion. One click gets to
+                  the words somebody actually said. */}
+              <span
+                onClick={() => setOpenQ(openQ === q.questionId ? null : q.questionId)}
+                style={{
+                  color: 'var(--term-white)', fontSize: 12, flex: 1, minWidth: 200,
+                  cursor: q.claimCount ? 'pointer' : 'default',
+                }}
+                title={q.claimCount ? 'Show the evidence' : undefined}
+              >
+                {q.claimCount ? (openQ === q.questionId ? '▾ ' : '▸ ') : ''}
                 {q.text}
               </span>
               <span style={{ color: 'var(--term-fg-muted)', fontSize: 10 }}>
@@ -982,6 +994,31 @@ function Coverage({ project, onChanged }) {
                 {q.status === 'Answered' ? 'Answered' : 'Mark answered'}
               </TermButton>
             </div>
+
+            {openQ === q.questionId ? (
+              <div style={{ display: 'grid', gap: 6, margin: '6px 0 4px 14px' }}>
+                {(project.claims || [])
+                  .filter((c) => c.questionId === q.questionId)
+                  .map((c) => (
+                    <div key={c.id} style={{ fontSize: 11 }}>
+                      <span style={{ color: 'var(--term-fg-muted)' }}>
+                        {c.origin === 'answer-scan' ? 'scan' : 'extract'}
+                        {c.topic === 'answer (partial)' ? ' · answers part of it' : ''}
+                        {' · '}{c.stamp}
+                      </span>
+                      <div style={{ color: 'var(--term-white)' }}>{c.text}</div>
+                      {c.quote ? (
+                        <div style={{ color: 'var(--term-fg-muted)', fontStyle: 'italic' }}>
+                          “{c.quote}”
+                        </div>
+                      ) : null}
+                      <div style={{ color: 'var(--term-fg-muted)', fontSize: 10 }}>
+                        {c.citation}
+                      </div>
+                    </div>
+                  ))}
+              </div>
+            ) : null}
           </div>
         ))
       )}
