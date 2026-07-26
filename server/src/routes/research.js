@@ -1016,15 +1016,18 @@ router.post('/interviews/:id/extract', canResearch, heavyLimiter, async (req, re
     // wording is not.
     const priorLinks = new Map();
     for (const c of await prisma.researchClaim.findMany({
-      where: { interviewId: id, questionId: { not: null } },
+      where: { interviewId: id, questionId: { not: null }, origin: 'extract' },
       select: { startMs: true, questionId: true },
     })) {
       priorLinks.set(c.startMs, c.questionId);
     }
 
     const written = await prisma.$transaction(async (tx) => {
+      // Only the extractor's own rows. Claims found by reading the
+      // transcript against a specific question are a different reading of
+      // the same tape and are not this run's to throw away.
       await tx.researchClaim.deleteMany({
-        where: { interviewId: id, verifiedById: null },
+        where: { interviewId: id, verifiedById: null, origin: 'extract' },
       });
       if (claims.length === 0) return 0;
       const created = await tx.researchClaim.createMany({
@@ -1039,6 +1042,7 @@ router.post('/interviews/:id/extract', canResearch, heavyLimiter, async (req, re
           topic: c.topic,
           kind: c.kind,
           extractionConfidence: c.extractionConfidence,
+          origin: 'extract',
           // Restored if a claim at this offset was linked before.
           questionId: priorLinks.get(c.startMs) ?? null,
         })),
@@ -1157,6 +1161,7 @@ router.post('/projects/:id/answer-scan', canResearch, heavyLimiter, async (req, 
               // in the ledger long after this run is forgotten.
               topic: answer.partial ? 'answer (partial)' : 'answer',
               kind: 'fact',
+              origin: 'answer-scan',
               extractionConfidence: answer.extractionConfidence,
             },
           });

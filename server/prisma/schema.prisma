@@ -971,6 +971,13 @@ model ResearchClaim {
   // claim into a pre-written bucket would quietly discard it.
   questionId  Int?
   question    ResearchQuestion? @relation(fields: [questionId], references: [id], onDelete: SetNull)
+  // How this claim came to exist: "extract" from the general sweep of a
+  // transcript, "answer-scan" from reading it against one question.
+  // Re-extraction wipes and rewrites what the extractor produced, and
+  // without this it would take the scan's findings with it — silently,
+  // along with every question link on them. Two different ways of
+  // reading the same tape, and only one of them owns those rows.
+  origin      String   @default("extract")
   // Set by a human who has listened back and agreed the pin is right.
   verifiedById Int?
   verifiedBy   User?   @relation("ResearchClaimVerifier", fields: [verifiedById], references: [id], onDelete: SetNull)
