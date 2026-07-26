@@ -378,6 +378,14 @@ function ProjectPane({ id, onBack }) {
 }
 
 function Ledger({ project, onChanged }) {
+  // Linking a claim to a question is a per-claim dropdown, which is fine
+  // for six claims and useless for seventy: the two dozen that answer
+  // nothing yet are scattered through the topics and there was no way to
+  // see them as a set. They are the actual work queue.
+  const [only, setOnly] = useState('all');
+  const unlinked = project.claims.filter((c) => !c.questionId).length;
+  const unverified = project.claims.filter((c) => !c.verifiedById).length;
+
   if (project.claims.length === 0) {
     return (
       <div className="term-loading">
@@ -385,25 +393,68 @@ function Ledger({ project, onChanged }) {
       </div>
     );
   }
+  const match = (c) =>
+    only === 'all' ||
+    (only === 'unlinked' && !c.questionId) ||
+    (only === 'unverified' && !c.verifiedById) ||
+    (only === 'scan' && c.origin === 'answer-scan');
+
   const byTopic = new Map();
   for (const c of project.claims) {
+    if (!match(c)) continue;
     const k = c.topic || '(untopiced)';
     if (!byTopic.has(k)) byTopic.set(k, []);
     byTopic.get(k).push(c);
   }
+  const shown = [...byTopic.values()].reduce((n, a) => n + a.length, 0);
+
+  const chip = (key, label) => (
+    <a
+      href="#"
+      onClick={(e) => { e.preventDefault(); setOnly(key); }}
+      style={{
+        fontSize: 10, letterSpacing: 0.5, marginRight: 10,
+        color: only === key ? 'var(--term-white)' : 'var(--term-fg-muted)',
+        textDecoration: only === key ? 'underline' : 'none',
+      }}
+    >
+      {label}
+    </a>
+  );
+
   return (
     <div style={{ display: 'grid', gap: 14 }}>
-      {project.topics.map((t) => (
+      <div>
+        {chip('all', `ALL ${project.claims.length}`)}
+        {chip('unlinked', `ANSWERS NOTHING ASKED ${unlinked}`)}
+        {chip('unverified', `NOT LISTENED BACK ${unverified}`)}
+        {chip('scan', 'FOUND BY SCAN')}
+        {only !== 'all' && shown === 0 ? (
+          <span style={{ color: 'var(--term-positive)', fontSize: 11 }}>— none, nothing to do here</span>
+        ) : null}
+      </div>
+      {project.topics.map((t) =>
+        (byTopic.get(t.topic) || []).length === 0 ? null : (
         <div key={t.topic}>
           <div style={{ display: 'flex', gap: 8, alignItems: 'baseline', flexWrap: 'wrap' }}>
             <span style={{ color: 'var(--term-white)', fontWeight: 700 }}>{t.topic}</span>
             <span style={{ color: SUPPORT_COLOR[t.support], fontSize: 10, letterSpacing: 0.5 }}>
               {SUPPORT_LABEL[t.support] || t.support}
             </span>
+            {/* Triangulation is computed across the whole topic, so with
+                a filter on it would sit above a subset and describe
+                something the reader cannot see. Say what is shown
+                instead of implying the corroboration applies to it. */}
             <span style={{ color: 'var(--term-fg-muted)', fontSize: 10 }}>
-              {t.distinctSources} src · {t.independentLines} independent
-              {t.opinionCount ? ` · ${t.opinionCount} opinion` : ''}
-              {t.forecastCount ? ` · ${t.forecastCount} forecast` : ''}
+              {only === 'all' ? (
+                <>
+                  {t.distinctSources} src · {t.independentLines} independent
+                  {t.opinionCount ? ` · ${t.opinionCount} opinion` : ''}
+                  {t.forecastCount ? ` · ${t.forecastCount} forecast` : ''}
+                </>
+              ) : (
+                `${(byTopic.get(t.topic) || []).length} of ${t.claimCount ?? '?'} shown · support is for the whole topic`
+              )}
             </span>
           </div>
           <div style={{ display: 'grid', gap: 6, marginTop: 4 }}>
@@ -453,7 +504,8 @@ function Ledger({ project, onChanged }) {
             ))}
           </div>
         </div>
-      ))}
+        )
+      )}
     </div>
   );
 }
