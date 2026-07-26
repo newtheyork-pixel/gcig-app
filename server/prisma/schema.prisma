@@ -100,6 +100,8 @@ model User {
   researchSourcesCreated   ResearchSource[] @relation("ResearchSourceCreator")
   interviewsConducted      Interview[]      @relation("InterviewInterviewer")
   interviewsScreened       Interview[]      @relation("InterviewScreener")
+  interviewsAttested       Interview[]      @relation("InterviewAttester")
+  interviewsReviewed       Interview[]      @relation("InterviewReviewer")
   researchClaimsVerified   ResearchClaim[]  @relation("ResearchClaimVerifier")
   researchProjectsCreated  ResearchProject[]  @relation("ResearchProjectCreator")
   researchArtifacts        ResearchArtifact[] @relation("ResearchArtifactUploader")
@@ -902,6 +904,21 @@ model Interview {
   // audit trail but are excluded from every claim query.
   quarantined     Boolean @default(false)
   quarantineNote  String?
+
+  // Pre-call attestation. The screen catches MNPI after the fact; this
+  // is the part that shapes the conversation before it happens, which is
+  // where compliance actually works. Recorded per interview because it
+  // is a statement about THAT call, not a setting.
+  attestedAt      DateTime?
+  attestedById    Int?
+  attestedBy      User?     @relation("InterviewAttester", fields: [attestedById], references: [id], onDelete: SetNull)
+  // A person's decision after reading a flagged transcript. Distinct
+  // from the automated screen: a machine flag that nobody has looked at
+  // is an open question, not a judgement.
+  reviewedAt      DateTime?
+  reviewedById    Int?
+  reviewedBy      User?     @relation("InterviewReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)
+  reviewNote      String?
 
   // Nullable on purpose: a one-off call, or one logged before anyone
   // opened a project, is still a real interview.

@@ -715,7 +715,7 @@ router.get('/interviews/:id', async (req, res) => {
 });
 
 router.post('/interviews', canResearch, async (req, res) => {
-  const { sourceId, ticker, title, conductedAt, consentObtained, consentNote, mnpiRisk, projectId } = req.body || {};
+  const { sourceId, ticker, title, conductedAt, consentObtained, consentNote, mnpiRisk, projectId, attested } = req.body || {};
   if (!sourceId || !title) {
     return res.status(400).json({ error: 'sourceId and title are required' });
   }
@@ -745,6 +745,11 @@ router.post('/interviews', canResearch, async (req, res) => {
         mnpiRisk: risk,
         quarantined: risk === 'prohibited',
         projectId: Number.isInteger(Number(projectId)) ? Number(projectId) : null,
+        // Recorded against the person who opened the interview. The
+        // screen catches MNPI after the call; this is the commitment
+        // made before it, which is where compliance actually bites.
+        attestedAt: attested ? new Date() : null,
+        attestedById: attested ? req.user?.id ?? null : null,
       },
       include: { source: { select: SOURCE_PUBLIC } },
     });
@@ -1101,6 +1106,94 @@ router.post('/claims/:id/verify', canResearch, async (req, res) => {
   } catch (err) {
     console.error('research/verify failed:', err.message);
     res.status(500).json({ error: 'Could not update claim' });
+  }
+});
+
+// Record a person's judgement on a screened interview.
+//
+// Separate from the automated screen on purpose. The screen produces a
+// flag; a flag nobody has read is an open question, not a decision. This
+// is where someone says "I read it, here is what I concluded" — and it
+// is the only thing that should ever clear an elevated interview for
+// use, because a model's low-confidence pass is not a sign-off.
+router.post('/interviews/:id/review', canResearch, async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) return res.status(400).json({ error: 'Bad id' });
+  const note = req.body?.note ? String(req.body.note).slice(0, 2000) : null;
+  if (!note) {
+    // A review with no reasoning is a click, not a judgement, and would
+    // give a flagged interview the appearance of having been cleared.
+    return res.status(400).json({ error: 'Say what you concluded — a review needs a note.' });
+  }
+  try {
+    const data = {
+      reviewedAt: new Date(),
+      reviewedById: req.user?.id ?? null,
+      reviewNote: note,
+    };
+    // A reviewer may release a quarantine, but never silently: the
+    // release is stamped with who did it and why.
+    if (req.body?.release === true) {
+      data.quarantined = false;
+      data.status = 'Extracted';
+      data.quarantineNote = `Released after review: ${note}`.slice(0, 1000);
+    }
+    if (req.body?.quarantine === true) {
+      data.quarantined = true;
+      data.status = 'Quarantined';
+      data.quarantineNote = `Quarantined on review: ${note}`.slice(0, 1000);
+    }
+    const iv = await prisma.interview.update({
+      where: { id },
+      data,
+      select: { id: true, quarantined: true, status: true, mnpiRisk: true, reviewedAt: true },
+    });
+    res.json(iv);
+  } catch (err) {
+    console.error('research/review failed:', err.message);
+    res.status(500).json({ error: 'Could not record the review' });
+  }
+});
+
+// Everything needing a compliance decision, across every project.
+// Compliance that you have to remember to go looking for is compliance
+// that gets skipped.
+router.get('/compliance', async (_req, res) => {
+  try {
+    const interviews = await prisma.interview.findMany({
+      where: {
+        OR: [
+          { quarantined: true },
+          { mnpiRisk: { not: 'low' } },
+          { consentObtained: false },
+          { screenedAt: null },
+          { attestedAt: null },
+        ],
+      },
+      orderBy: [{ quarantined: 'desc' }, { conductedAt: 'desc' }],
+      include: {
+        source: { select: SOURCE_PUBLIC },
+        project: { select: { id: true, name: true, ticker: true } },
+        reviewedBy: { select: { id: true, name: true } },
+      },
+    });
+    const total = await prisma.interview.count();
+    res.json({
+      total,
+      needsAttention: interviews.map((i) => ({
+        id: i.id, title: i.title, ticker: i.ticker,
+        project: i.project, source: i.source,
+        conductedAt: i.conductedAt,
+        mnpiRisk: i.mnpiRisk, quarantined: i.quarantined,
+        consentObtained: i.consentObtained,
+        screened: !!i.screenedAt, attested: !!i.attestedAt,
+        reviewedAt: i.reviewedAt, reviewedBy: i.reviewedBy, reviewNote: i.reviewNote,
+        quarantineNote: i.quarantineNote,
+      })),
+    });
+  } catch (err) {
+    console.error('research/compliance failed:', err.message);
+    res.status(500).json({ error: 'Could not load the compliance view' });
   }
 });
 

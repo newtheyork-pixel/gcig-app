@@ -340,6 +340,7 @@ function ProjectPane({ id, onBack }) {
           ['visits', `Visits (${p.visits?.length ?? 0})`],
           ['ledger', `Ledger (${p.claims.length})`],
           ['files', `Files (${p.artifacts.length})`],
+          ['mnpi', 'Compliance'],
         ].map(([k, label]) => (
           <button
             key={k}
@@ -358,6 +359,7 @@ function ProjectPane({ id, onBack }) {
       {tab === 'interviews' ? (
         <Interviews project={p} onChanged={load} setFlash={setFlash} />
       ) : null}
+      {tab === 'mnpi' ? <Compliance project={p} onChanged={load} /> : null}
       {tab === 'files' ? (
         <Files project={p} onChanged={load} setFlash={setFlash} onOpenDoc={setDoc} />
       ) : null}
@@ -454,7 +456,7 @@ function Ledger({ project, onChanged }) {
 
 function Interviews({ project, onChanged, setFlash }) {
   const [sources, setSources] = useState([]);
-  const [form, setForm] = useState({ sourceId: '', title: '', consent: false });
+  const [form, setForm] = useState({ sourceId: '', title: '', consent: false, attested: false });
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -470,8 +472,9 @@ function Interviews({ project, onChanged, setFlash }) {
         ticker: project.ticker,
         projectId: project.id,
         consentObtained: form.consent,
+        attested: form.attested,
       });
-      setForm({ sourceId: '', title: '', consent: false });
+      setForm({ sourceId: '', title: '', consent: false, attested: false });
       onChanged();
     } catch (e) {
       setFlash({ bad: true, text: e.response?.data?.error || 'Could not create' });
@@ -512,6 +515,27 @@ function Interviews({ project, onChanged, setFlash }) {
           {/* Consent is checked before audio is accepted, not after —
               recording without it is unlawful in two-party states. */}
           Source consented to recording (required before audio upload)
+        </label>
+        {/* The attestation is the part that changes behaviour. The
+            screen reads the transcript afterwards; this is read before
+            the call, which is when it can still stop a question being
+            asked. */}
+        <label style={{ color: 'var(--term-fg-dim)', fontSize: 11, display: 'flex', gap: 6, alignItems: 'flex-start' }}>
+          <input
+            type="checkbox"
+            checked={form.attested}
+            onChange={(e) => setForm({ ...form, attested: e.target.checked })}
+            style={{ marginTop: 2 }}
+          />
+          <span>
+            I will not ask for material non-public information.
+            <span style={{ color: 'var(--term-fg-muted)' }}>
+              {' '}Off limits: unreleased results, guidance not yet issued,
+              unannounced deals or contracts, pending regulatory action,
+              departures not yet public. Their own commercial terms, what
+              they observed, and industry conditions are all fair game.
+            </span>
+          </span>
         </label>
         <div>
           <TermButton onClick={create} disabled={saving || !form.sourceId || !form.title}>
@@ -1322,6 +1346,117 @@ function ComplianceStrip({ interviews }) {
           </span>
         </>
       )}
+    </div>
+  );
+}
+
+// The compliance queue: every interview needing a human decision.
+//
+// The screen produces flags; a flag nobody has read is an open question,
+// not a judgement. Nothing here clears itself — an elevated interview
+// stays elevated until a person reads the transcript and writes down
+// what they concluded, because a model's low-confidence pass is not a
+// sign-off and should never look like one.
+function Compliance({ project, onChanged }) {
+  const list = project.interviews || [];
+  const needs = list.filter(
+    (i) => i.quarantined || i.mnpiRisk !== 'low' || !i.consentObtained || !i.screenedAt || !i.attestedAt
+  );
+
+  if (needs.length === 0) {
+    return (
+      <div style={{ color: 'var(--term-positive)', fontSize: 12 }}>
+        All {list.length} interview{list.length === 1 ? '' : 's'} consented,
+        attested, screened and clear. Nothing awaiting a decision.
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ display: 'grid', gap: 10 }}>
+      <div style={{ color: 'var(--term-fg-muted)', fontSize: 11 }}>
+        {needs.length} of {list.length} interview{list.length === 1 ? '' : 's'} need
+        a decision. Reviewing requires writing down what you concluded — the
+        note is the record, not the click.
+      </div>
+      {needs.map((i) => (
+        <ComplianceRow key={i.id} interview={i} onChanged={onChanged} />
+      ))}
+    </div>
+  );
+}
+
+function ComplianceRow({ interview: i, onChanged }) {
+  const [note, setNote] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+
+  async function review(action) {
+    if (!note.trim()) {
+      setErr('Write what you concluded first.');
+      return;
+    }
+    setBusy(true);
+    setErr('');
+    try {
+      await api.post(`/research/interviews/${i.id}/review`, {
+        note,
+        release: action === 'release',
+        quarantine: action === 'quarantine',
+      });
+      setNote('');
+      onChanged();
+    } catch (e) {
+      setErr(e.response?.data?.error || 'Could not record the review');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const issues = [
+    i.quarantined && ['QUARANTINED', 'var(--term-negative)'],
+    !i.quarantined && i.mnpiRisk !== 'low' && [`MNPI ${String(i.mnpiRisk).toUpperCase()}`, 'var(--term-amber, var(--term-white))'],
+    !i.consentObtained && ['NO CONSENT', 'var(--term-negative)'],
+    !i.screenedAt && ['UNSCREENED', 'var(--term-amber, var(--term-white))'],
+    !i.attestedAt && ['NO ATTESTATION', 'var(--term-fg-muted)'],
+  ].filter(Boolean);
+
+  return (
+    <div style={{ borderTop: '1px dotted var(--term-border)', paddingTop: 6 }}>
+      <div style={{ color: 'var(--term-white)', fontSize: 12 }}>{i.title}</div>
+      <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', margin: '2px 0' }}>
+        {issues.map(([label, color]) => (
+          <span key={label} style={{ color, fontSize: 10, letterSpacing: 0.5 }}>{label}</span>
+        ))}
+        <span style={{ color: 'var(--term-fg-muted)', fontSize: 10 }}>
+          {i.source?.alias}
+          {i.source?.relationship === 'CurrentEmployee' ? ' · current employee' : ''}
+        </span>
+      </div>
+      {i.quarantineNote ? (
+        <div style={{ color: 'var(--term-fg-dim)', fontSize: 11 }}>{i.quarantineNote}</div>
+      ) : null}
+      {i.reviewedAt ? (
+        <div style={{ color: 'var(--term-fg-muted)', fontSize: 10 }}>
+          Reviewed {fmtDate(i.reviewedAt)}: {i.reviewNote}
+        </div>
+      ) : null}
+
+      <div style={{ display: 'flex', gap: 6, marginTop: 4, flexWrap: 'wrap' }}>
+        <input
+          style={{ ...termInput, flex: '1 1 240px', fontSize: 11 }}
+          placeholder="What did you conclude after reading it?"
+          value={note}
+          onChange={(e) => setNote(e.target.value)}
+        />
+        <TermButton onClick={() => review('note')} disabled={busy}>Record</TermButton>
+        {i.quarantined ? (
+          <TermButton onClick={() => review('release')} disabled={busy}>Release</TermButton>
+        ) : (
+          <TermButton onClick={() => review('quarantine')} disabled={busy}>Quarantine</TermButton>
+        )}
+      </div>
+      {err ? <div style={{ color: 'var(--term-negative)', fontSize: 10 }}>{err}</div> : null}
     </div>
   );
 }
