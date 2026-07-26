@@ -828,30 +828,51 @@ function Coverage({ project, onChanged }) {
   // which misses answers that do not read as assertions — "pack the
   // whole thing" is not a claim about anything until you know it was the
   // reply to how many units go back on the shelf.
+  // One request per question, not one for the lot.
+  //
+  // Reading seventeen transcripts against one question is already a
+  // minute of model time; doing it for every open question in a single
+  // request runs past the proxy's patience and comes back 502 with
+  // nothing to show for the work already done. Looping keeps each
+  // request short, lets the count climb while it runs, and means a
+  // question that times out costs only itself.
   async function scanAnswers() {
+    const open = (cov.questions || []).filter((q) => q.claimCount === 0);
+    if (open.length === 0) {
+      setScanNote({ text: 'Every question already has evidence behind it.' });
+      return;
+    }
     setScanning(true);
     setScanNote(null);
-    try {
-      const { data } = await api.post(`/research/projects/${project.id}/answer-scan`);
-      setScanNote(
-        data.scanned === 0
-          ? { text: 'Every question already has evidence behind it.' }
-          : {
-              text:
-                `Read ${data.interviews} transcript${data.interviews === 1 ? '' : 's'} against ` +
-                `${data.scanned} unanswered question${data.scanned === 1 ? '' : 's'} — ` +
-                (data.found === 0
-                  ? 'no answers in the tape. They are genuinely unasked or unanswered.'
-                  : `answered ${data.found} of them (${data.created} new, ` +
-                    `${data.linkedExisting} already extracted but never linked).`),
-            }
-      );
-      onChanged();
-    } catch (e) {
-      setScanNote({ bad: true, text: e.response?.data?.error || 'Answer scan failed' });
-    } finally {
-      setScanning(false);
+    let found = 0;
+    let created = 0;
+    let linked = 0;
+    let failed = 0;
+    for (const [n, q] of open.entries()) {
+      setScanNote({ text: `Reading the tape against question ${n + 1} of ${open.length}…` });
+      try {
+        const { data } = await api.post(`/research/projects/${project.id}/answer-scan`, {
+          questionIds: [q.questionId],
+        });
+        if (data.found) found += 1;
+        created += data.created || 0;
+        linked += data.linkedExisting || 0;
+      } catch {
+        // A question that times out or errors costs only itself, but it
+        // has NOT been searched and must not be counted as searched.
+        failed += 1;
+      }
     }
+    setScanNote({
+      bad: failed > 0 && found === 0,
+      text:
+        (found === 0
+          ? `No answers in the tape for ${open.length - failed} question${open.length - failed === 1 ? '' : 's'}. They are genuinely unasked or unanswered.`
+          : `Answered ${found} of ${open.length - failed} (${created} new, ${linked} already extracted but never linked).`) +
+        (failed ? ` ${failed} question${failed === 1 ? '' : 's'} could not be searched — re-run to cover ${failed === 1 ? 'it' : 'them'}.` : ''),
+    });
+    setScanning(false);
+    onChanged();
   }
 
   async function add() {
