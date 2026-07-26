@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import AsyncSection from '../components/AsyncSection';
 import { format } from 'date-fns';
 import { Search, FileText, Eye } from 'lucide-react';
 import api from '../api/client.js';
@@ -9,11 +10,19 @@ import FilePreviewModal from '../components/FilePreviewModal.jsx';
 
 export default function PreviousPitches({ embedded = false } = {}) {
   const [pitches, setPitches] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(null);
   const [query, setQuery] = useState('');
   const [preview, setPreview] = useState(null);
 
   useEffect(() => {
-    api.get('/pitches').then((r) => setPitches(r.data));
+    api
+      .get('/pitches')
+      .then((r) => setPitches(r.data))
+      // The rejection was dropped entirely, leaving the page on its
+      // empty array and reading as an archive with nothing in it.
+      .catch((e) => setLoadError(e.response?.data?.error || e.message || 'Could not load pitches'))
+      .finally(() => setLoading(false));
   }, []);
 
   const filtered = useMemo(() => {
@@ -48,13 +57,17 @@ export default function PreviousPitches({ embedded = false } = {}) {
           />
         </div>
 
-        {filtered.length === 0 ? (
-          <div className="py-12 text-center text-navy-400">
-            {pitches.some((p) => p.slideshowUrl)
+        <AsyncSection
+          loading={loading}
+          error={loadError}
+          empty={filtered.length === 0}
+          emptyText={
+            pitches.some((p) => p.slideshowUrl)
               ? 'No pitches match your search.'
-              : 'No pitch slideshows linked yet.'}
-          </div>
-        ) : (
+              : 'No pitch slideshows linked yet.'
+          }
+          loadingText="Loading pitches…"
+        >
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {filtered.map((p) => {
               const presenterNames =
@@ -101,7 +114,7 @@ export default function PreviousPitches({ embedded = false } = {}) {
               );
             })}
           </div>
-        )}
+        </AsyncSection>
       </Card>
       {preview && (
         <FilePreviewModal

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import AsyncSection from '../components/AsyncSection';
 import { format } from 'date-fns';
 import { Plus, Search, Eye, Trash2 } from 'lucide-react';
 import api from '../api/client.js';
@@ -30,9 +31,19 @@ export default function Reports({ embedded = false } = {}) {
   const [error, setError] = useState('');
   const [preview, setPreview] = useState(null);
 
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(null);
+
   async function load() {
-    const { data } = await api.get('/reports');
-    setReports(data);
+    setLoadError(null);
+    try {
+      const { data } = await api.get('/reports');
+      setReports(data);
+    } catch (e) {
+      setLoadError(e.response?.data?.error || e.message || 'Could not load reports');
+    } finally {
+      setLoading(false);
+    }
   }
   useEffect(() => {
     load();
@@ -115,9 +126,20 @@ export default function Reports({ embedded = false } = {}) {
           />
         </div>
 
-        {filtered.length === 0 ? (
-          <div className="py-12 text-center text-navy-400">No reports yet.</div>
-        ) : (
+        <AsyncSection
+          loading={loading}
+          error={loadError}
+          retry={() => { setLoading(true); load(); }}
+          empty={filtered.length === 0}
+          // A search that matches nothing is not an empty archive, and
+          // "No reports yet" over a full one reads as data loss.
+          emptyText={
+            reports.length === 0
+              ? 'No reports yet.'
+              : `No reports match “${query}”.`
+          }
+          loadingText="Loading reports…"
+        >
           <ul className="divide-y divide-navy-50">
             {filtered.map((r) => (
               <li key={r.id} className="py-4">
@@ -175,7 +197,7 @@ export default function Reports({ embedded = false } = {}) {
               </li>
             ))}
           </ul>
-        )}
+        </AsyncSection>
       </Card>
 
       <Modal open={modalOpen} onClose={() => setModalOpen(false)} title="Add Report">
