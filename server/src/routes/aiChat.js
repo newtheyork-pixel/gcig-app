@@ -2,7 +2,7 @@ import { Router } from 'express';
 import rateLimit from 'express-rate-limit';
 import prisma from '../db.js';
 import { verifyJwt } from '../middleware/auth.js';
-import { llmChat } from '../services/llm.js';
+import { llmChat, RESEARCH_LOCAL_MODEL } from '../services/llm.js';
 import { getClubSystemPrompt } from '../ai/clubBrief.js';
 
 // The Griffin Fund AI Assistant — conversational endpoint backed by the
@@ -176,7 +176,20 @@ router.post('/', chatLimiter, async (req, res) => {
   ];
 
   const startedAt = Date.now();
-  const reply = await llmChat({ messages: modelMessages, temperature: temp });
+  // The same weights the research pipeline uses, and for the same
+  // reason. Asked to quote our own DCF verbatim, the small model
+  // returned "$75 per share" and an EV/EBITDA of 12.0x — figures that
+  // appear nowhere in our data, presented as a quotation from our
+  // research. It is not a retrieval gap: the model could read back the
+  // section heading correctly, then invented the contents beneath it.
+  // A model that fabricates a citation is worse than one that declines,
+  // because the fabrication carries the authority of the section it
+  // claims to be quoting.
+  const reply = await llmChat({
+    messages: modelMessages,
+    temperature: temp,
+    localModel: RESEARCH_LOCAL_MODEL,
+  });
   const latencyMs = Date.now() - startedAt;
 
   if (!reply) {
