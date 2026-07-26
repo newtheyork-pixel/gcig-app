@@ -86,31 +86,60 @@ function normalizeForMatch(s) {
  *
  * Exported for tests: this function is the integrity gate.
  */
+// A real interview is full of backchannel: the interviewer says "Yeah",
+// "Right", "Mm-hmm" while the source is mid-sentence. The source's
+// sentence is one statement, and the transcript splits it in three. A
+// strictly contiguous match rejects those quotes, which on a 39-minute
+// expert call threw away more real claims than it caught.
+//
+// So a match may step over words belonging to a DIFFERENT speaker, up to
+// this many in a row. It may never step over the speaker's own words —
+// that would let two separate things they said be stitched into one
+// sentence they never uttered, which is exactly the fabrication this
+// gate exists to stop.
+const MAX_INTERJECTION_WORDS = 8;
+
 export function locateQuote(words, quote) {
   const needle = normalizeForMatch(quote).split(' ').filter(Boolean);
   if (needle.length === 0) return null;
 
-  // Token list parallel to `words`, so an index here is an index there.
   const hay = words.map((w) => normalizeForMatch(w.text));
 
-  for (let i = 0; i + needle.length <= hay.length; i++) {
-    let hit = true;
-    for (let j = 0; j < needle.length; j++) {
-      if (hay[i + j] !== needle[j]) {
-        hit = false;
-        break;
+  for (let i = 0; i < hay.length; i++) {
+    if (hay[i] !== needle[0]) continue;
+    const speaker = words[i].speaker ?? null;
+    let j = 1;      // next needle word to match
+    let k = i + 1;  // cursor in the transcript
+    let lastHit = i;
+    let ok = true;
+
+    while (j < needle.length && k < hay.length) {
+      if ((words[k].speaker ?? null) !== speaker) {
+        // Someone else spoke. Allow a short interjection, then give up.
+        let skipped = 0;
+        while (k < hay.length && (words[k].speaker ?? null) !== speaker && skipped < MAX_INTERJECTION_WORDS) {
+          k += 1;
+          skipped += 1;
+        }
+        if (k >= hay.length || (words[k].speaker ?? null) !== speaker) { ok = false; break; }
+        continue;
       }
+      // Same speaker: the next word must be the next word of the quote.
+      // Skipping here would splice two separate statements together.
+      if (hay[k] !== needle[j]) { ok = false; break; }
+      lastHit = k;
+      j += 1;
+      k += 1;
     }
-    if (hit) {
-      const first = words[i];
-      const last = words[i + needle.length - 1];
+
+    if (ok && j === needle.length) {
       return {
-        startMs: first.startMs,
-        endMs: last.endMs ?? last.startMs,
-        // Attribution comes from the transcript, never from the model.
-        // If the span crosses a speaker change the quote is spliced and
-        // cannot be safely attributed to anyone.
-        speaker: spanSpeaker(words, i, i + needle.length - 1),
+        startMs: words[i].startMs,
+        endMs: words[lastHit].endMs ?? words[lastHit].startMs,
+        // Every matched word belongs to one speaker by construction, so
+        // attribution is safe. Unlabelled audio still yields null rather
+        // than a guess.
+        speaker,
       };
     }
   }

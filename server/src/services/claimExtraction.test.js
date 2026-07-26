@@ -61,13 +61,62 @@ test('rejects a spliced quote that skips words', () => {
   assert.equal(locateQuote(WORDS, 'cut the rebate in Q2'), null);
 });
 
-test('refuses to attribute a quote that crosses a speaker change', () => {
-  // The span is genuinely present, but half of it is the interviewer.
-  // Attributing it to either voice would be an invention, so speaker is
-  // null and the caller can see the quote is unattributable.
-  const hit = locateQuote(WORDS, 'changed? We cut');
-  assert.ok(hit, 'the span does exist');
-  assert.equal(hit.speaker, null);
+test('rejects a quote that spans two speakers', () => {
+  // Half of this is the interviewer's question and half the source's
+  // answer. It reads as a contiguous span in the file but it is not a
+  // statement by one person, so it must not become a citable claim at
+  // all. (An earlier version returned it with a null speaker; refusing
+  // outright is the stricter and more honest answer.)
+  assert.equal(locateQuote(WORDS, 'changed? We cut'), null);
+});
+
+test('steps over a short interviewer backchannel mid-sentence', () => {
+  // The single most common shape in a real interview: the source is
+  // talking, the interviewer says "Yeah", the source continues. That is
+  // one statement and must remain quotable.
+  const words = [
+    { text: 'it', startMs: 0, endMs: 100, speaker: 'speaker_1' },
+    { text: 'is', startMs: 100, endMs: 200, speaker: 'speaker_1' },
+    { text: 'easier', startMs: 200, endMs: 300, speaker: 'speaker_1' },
+    { text: 'Yeah', startMs: 300, endMs: 400, speaker: 'speaker_0' },
+    { text: 'close', startMs: 400, endMs: 500, speaker: 'speaker_1' },
+    { text: 'to', startMs: 500, endMs: 600, speaker: 'speaker_1' },
+    { text: 'consumption', startMs: 600, endMs: 700, speaker: 'speaker_1' },
+  ];
+  const hit = locateQuote(words, 'it is easier close to consumption');
+  assert.ok(hit, 'the interjection must not break the quote');
+  assert.equal(hit.speaker, 'speaker_1');
+  assert.equal(hit.startMs, 0);
+  assert.equal(hit.endMs, 700);
+});
+
+test('still refuses to skip the speaker\'s OWN words', () => {
+  // Stepping over the other voice is tolerance for conversation.
+  // Stepping over this speaker's own words would stitch two separate
+  // statements into one sentence they never said — the exact
+  // fabrication this gate exists to prevent.
+  const words = [
+    { text: 'we', startMs: 0, endMs: 100, speaker: 'speaker_1' },
+    { text: 'cut', startMs: 100, endMs: 200, speaker: 'speaker_1' },
+    { text: 'rebates', startMs: 200, endMs: 300, speaker: 'speaker_1' },
+    { text: 'and', startMs: 300, endMs: 400, speaker: 'speaker_1' },
+    { text: 'raised', startMs: 400, endMs: 500, speaker: 'speaker_1' },
+    { text: 'prices', startMs: 500, endMs: 600, speaker: 'speaker_1' },
+  ];
+  assert.equal(locateQuote(words, 'we cut prices'), null);
+});
+
+test('a long interjection is not stepped over', () => {
+  // A brief "Yeah" is backchannel. Ten words from the other party is a
+  // different exchange, and joining across it would misrepresent both.
+  const words = [
+    { text: 'it', startMs: 0, endMs: 100, speaker: 'speaker_1' },
+    ...Array.from({ length: 12 }, (_, i) => ({
+      text: `w${i}`, startMs: 100 + i * 10, endMs: 110 + i * 10, speaker: 'speaker_0',
+    })),
+    { text: 'happened', startMs: 400, endMs: 500, speaker: 'speaker_1' },
+  ];
+  assert.equal(locateQuote(words, 'it happened'), null);
 });
 
 test('empty or junk quotes locate nothing', () => {

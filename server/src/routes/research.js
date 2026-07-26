@@ -40,9 +40,12 @@ const upload = multer({
 
 // Transcription costs real money per minute and extraction burns GPU
 // time. Generous for genuine use, tight enough to stop a loop.
+// 20/hour was too tight for real use: re-extracting a project's
+// interviews after a prompt change is a normal thing to do and hits it
+// immediately. Still bounded, so a runaway loop cannot burn the GPU.
 const heavyLimiter = rateLimit({
   windowMs: 60 * 60 * 1000,
-  max: 20,
+  max: 80,
   keyGenerator: (req) => `research-heavy:${req.user?.id || req.ip}`,
   message: { error: 'Transcription rate limit reached. Try again later.' },
   standardHeaders: true,
