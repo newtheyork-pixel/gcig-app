@@ -919,6 +919,11 @@ model Interview {
   reviewedById    Int?
   reviewedBy      User?     @relation("InterviewReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)
   reviewNote      String?
+  // What the screen actually found: its reason and the phrases that
+  // tripped it. Without this the panel can only say "elevated" and has
+  // to ask a person what they think, which inverts the job — the model
+  // is supposed to do the catching.
+  screenResult    Json?
 
   // Nullable on purpose: a one-off call, or one logged before anyone
   // opened a project, is still a real interview.

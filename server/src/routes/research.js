@@ -844,6 +844,12 @@ router.post(
             screen.risk === RISK.PROHIBITED
               ? `Auto-quarantined by MNPI screen: ${screen.reason}`
               : null,
+          screenResult: {
+            risk: screen.risk,
+            reason: screen.reason,
+            hits: screen.hits,
+            modelAvailable: screen.modelAvailable,
+          },
         },
         select: { id: true, status: true, durationMs: true, transcriptModel: true, mnpiRisk: true, quarantined: true },
       });
@@ -943,6 +949,12 @@ router.post('/interviews/:id/transcript', canResearch, async (req, res) => {
           screen.risk === RISK.PROHIBITED
             ? `Auto-quarantined by MNPI screen: ${screen.reason}`
             : null,
+        screenResult: {
+          risk: screen.risk,
+          reason: screen.reason,
+          hits: screen.hits,
+          modelAvailable: screen.modelAvailable,
+        },
       },
       select: { id: true, status: true, durationMs: true, transcriptModel: true, mnpiRisk: true, quarantined: true },
     });
@@ -1119,12 +1131,11 @@ router.post('/claims/:id/verify', canResearch, async (req, res) => {
 router.post('/interviews/:id/review', canResearch, async (req, res) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id)) return res.status(400).json({ error: 'Bad id' });
+  // Optional. The model does the catching and states what it found; a
+  // reviewer is confirming or overriding that, which is usually a click.
+  // Demanding a written conclusion on every interview turned compliance
+  // into paperwork and buried the one finding that mattered.
   const note = req.body?.note ? String(req.body.note).slice(0, 2000) : null;
-  if (!note) {
-    // A review with no reasoning is a click, not a judgement, and would
-    // give a flagged interview the appearance of having been cleared.
-    return res.status(400).json({ error: 'Say what you concluded — a review needs a note.' });
-  }
   try {
     const data = {
       reviewedAt: new Date(),
@@ -1167,8 +1178,8 @@ router.get('/compliance', async (_req, res) => {
           { mnpiRisk: { not: 'low' } },
           { consentObtained: false },
           { screenedAt: null },
-          { attestedAt: null },
         ],
+        reviewedAt: null,
       },
       orderBy: [{ quarantined: 'desc' }, { conductedAt: 'desc' }],
       include: {

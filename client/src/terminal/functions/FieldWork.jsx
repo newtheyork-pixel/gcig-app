@@ -1350,113 +1350,137 @@ function ComplianceStrip({ interviews }) {
   );
 }
 
-// The compliance queue: every interview needing a human decision.
+// What the screen caught, and nothing else.
 //
-// The screen produces flags; a flag nobody has read is an open question,
-// not a judgement. Nothing here clears itself — an elevated interview
-// stays elevated until a person reads the transcript and writes down
-// what they concluded, because a model's low-confidence pass is not a
-// sign-off and should never look like one.
+// The first version of this listed every interview missing an
+// attestation and asked the reader to write what they concluded about
+// each one. That inverted the job: the model is supposed to do the
+// catching, and seventeen empty note boxes buried the single interview
+// that had actually been flagged. Now the panel states the finding, shows
+// the phrase that tripped it, and offers one decision.
 function Compliance({ project, onChanged }) {
   const list = project.interviews || [];
-  const needs = list.filter(
-    (i) => i.quarantined || i.mnpiRisk !== 'low' || !i.consentObtained || !i.screenedAt || !i.attestedAt
+  // Missing attestation is a pre-call gap, not a review item — it says
+  // nothing about whether this transcript contains anything wrong.
+  const flagged = list.filter(
+    (i) => !i.reviewedAt && (i.quarantined || i.mnpiRisk !== 'low' || !i.consentObtained || !i.screenedAt)
   );
-
-  if (needs.length === 0) {
-    return (
-      <div style={{ color: 'var(--term-positive)', fontSize: 12 }}>
-        All {list.length} interview{list.length === 1 ? '' : 's'} consented,
-        attested, screened and clear. Nothing awaiting a decision.
-      </div>
-    );
-  }
+  const noAttestation = list.filter((i) => !i.attestedAt).length;
 
   return (
     <div style={{ display: 'grid', gap: 10 }}>
-      <div style={{ color: 'var(--term-fg-muted)', fontSize: 11 }}>
-        {needs.length} of {list.length} interview{list.length === 1 ? '' : 's'} need
-        a decision. Reviewing requires writing down what you concluded — the
-        note is the record, not the click.
-      </div>
-      {needs.map((i) => (
-        <ComplianceRow key={i.id} interview={i} onChanged={onChanged} />
-      ))}
+      {flagged.length === 0 ? (
+        <div style={{ color: 'var(--term-positive)', fontSize: 12 }}>
+          Screened {list.length} interview{list.length === 1 ? '' : 's'}. Nothing flagged
+          — no material non-public information found, consent recorded throughout.
+        </div>
+      ) : (
+        <>
+          <div style={{ color: 'var(--term-fg-muted)', fontSize: 11 }}>
+            The screen flagged {flagged.length} of {list.length} interview
+            {list.length === 1 ? '' : 's'}. Everything else came back clean.
+          </div>
+          {flagged.map((i) => (
+            <ComplianceRow key={i.id} interview={i} onChanged={onChanged} />
+          ))}
+        </>
+      )}
+
+      {noAttestation > 0 ? (
+        <div style={{ color: 'var(--term-fg-muted)', fontSize: 10, borderTop: '1px dotted var(--term-border)', paddingTop: 6 }}>
+          {noAttestation} interview{noAttestation === 1 ? '' : 's'} carry no pre-call
+          attestation. These were imported, so there was no call to attest to —
+          new interviews opened here record one.
+        </div>
+      ) : null}
     </div>
   );
 }
 
 function ComplianceRow({ interview: i, onChanged }) {
-  const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState('');
+  const [note, setNote] = useState('');
+  const [showNote, setShowNote] = useState(false);
+  const screen = i.screenResult || {};
 
-  async function review(action) {
-    if (!note.trim()) {
-      setErr('Write what you concluded first.');
-      return;
-    }
+  async function decide(action) {
     setBusy(true);
-    setErr('');
     try {
       await api.post(`/research/interviews/${i.id}/review`, {
-        note,
+        note: note || null,
         release: action === 'release',
         quarantine: action === 'quarantine',
       });
-      setNote('');
       onChanged();
-    } catch (e) {
-      setErr(e.response?.data?.error || 'Could not record the review');
-    } finally {
+    } catch {
       setBusy(false);
     }
   }
 
-  const issues = [
-    i.quarantined && ['QUARANTINED', 'var(--term-negative)'],
-    !i.quarantined && i.mnpiRisk !== 'low' && [`MNPI ${String(i.mnpiRisk).toUpperCase()}`, 'var(--term-amber, var(--term-white))'],
-    !i.consentObtained && ['NO CONSENT', 'var(--term-negative)'],
-    !i.screenedAt && ['UNSCREENED', 'var(--term-amber, var(--term-white))'],
-    !i.attestedAt && ['NO ATTESTATION', 'var(--term-fg-muted)'],
-  ].filter(Boolean);
+  // Lead with what the model found, in its words.
+  const finding =
+    screen.reason ||
+    i.quarantineNote ||
+    (!i.consentObtained ? 'No consent to record was captured for this interview.' : null) ||
+    (!i.screenedAt ? 'This transcript has not been screened yet.' : null) ||
+    'Flagged for review.';
 
   return (
     <div style={{ borderTop: '1px dotted var(--term-border)', paddingTop: 6 }}>
-      <div style={{ color: 'var(--term-white)', fontSize: 12 }}>{i.title}</div>
-      <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', margin: '2px 0' }}>
-        {issues.map(([label, color]) => (
-          <span key={label} style={{ color, fontSize: 10, letterSpacing: 0.5 }}>{label}</span>
-        ))}
+      <div style={{ display: 'flex', gap: 8, alignItems: 'baseline', flexWrap: 'wrap' }}>
+        <span
+          style={{
+            color: i.quarantined ? 'var(--term-negative)' : 'var(--term-amber, var(--term-white))',
+            fontSize: 10, letterSpacing: 0.5,
+          }}
+        >
+          {i.quarantined ? 'QUARANTINED' : !i.consentObtained ? 'NO CONSENT' : `MNPI ${String(i.mnpiRisk).toUpperCase()}`}
+        </span>
+        <span style={{ color: 'var(--term-white)', fontSize: 12 }}>{i.title}</span>
         <span style={{ color: 'var(--term-fg-muted)', fontSize: 10 }}>
           {i.source?.alias}
           {i.source?.relationship === 'CurrentEmployee' ? ' · current employee' : ''}
         </span>
       </div>
-      {i.quarantineNote ? (
-        <div style={{ color: 'var(--term-fg-dim)', fontSize: 11 }}>{i.quarantineNote}</div>
-      ) : null}
-      {i.reviewedAt ? (
-        <div style={{ color: 'var(--term-fg-muted)', fontSize: 10 }}>
-          Reviewed {fmtDate(i.reviewedAt)}: {i.reviewNote}
+
+      <div style={{ color: 'var(--term-fg-dim)', fontSize: 11, marginTop: 2 }}>{finding}</div>
+
+      {/* The phrases that tripped the keyword pass, so the reader can
+          judge without opening the transcript. */}
+      {(screen.hits || []).slice(0, 3).map((h, n) => (
+        <div key={n} style={{ color: 'var(--term-fg-muted)', fontSize: 10, paddingLeft: 8 }}>
+          · {h.why}: “{String(h.excerpt).slice(0, 110)}”
+        </div>
+      ))}
+      {screen.modelAvailable === false ? (
+        <div style={{ color: 'var(--term-fg-muted)', fontSize: 10, paddingLeft: 8 }}>
+          · keyword pass only — the model was unavailable, so this is not a full clearance
         </div>
       ) : null}
 
-      <div style={{ display: 'flex', gap: 6, marginTop: 4, flexWrap: 'wrap' }}>
-        <input
-          style={{ ...termInput, flex: '1 1 240px', fontSize: 11 }}
-          placeholder="What did you conclude after reading it?"
-          value={note}
-          onChange={(e) => setNote(e.target.value)}
-        />
-        <TermButton onClick={() => review('note')} disabled={busy}>Record</TermButton>
-        {i.quarantined ? (
-          <TermButton onClick={() => review('release')} disabled={busy}>Release</TermButton>
-        ) : (
-          <TermButton onClick={() => review('quarantine')} disabled={busy}>Quarantine</TermButton>
-        )}
+      <div style={{ display: 'flex', gap: 6, marginTop: 4, alignItems: 'center', flexWrap: 'wrap' }}>
+        <TermButton onClick={() => decide(i.quarantined ? 'release' : 'note')} disabled={busy}>
+          {i.quarantined ? 'Release' : 'Cleared'}
+        </TermButton>
+        {!i.quarantined ? (
+          <TermButton onClick={() => decide('quarantine')} disabled={busy}>Quarantine</TermButton>
+        ) : null}
+        <a
+          href="#"
+          style={{ color: 'var(--term-fg-muted)', fontSize: 10 }}
+          onClick={(e) => { e.preventDefault(); setShowNote((v) => !v); }}
+        >
+          {showNote ? 'hide note' : 'add a note'}
+        </a>
+        {showNote ? (
+          <input
+            style={{ ...termInput, flex: '1 1 200px', fontSize: 11 }}
+            placeholder="Optional — why you decided that"
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+          />
+        ) : null}
       </div>
-      {err ? <div style={{ color: 'var(--term-negative)', fontSize: 10 }}>{err}</div> : null}
     </div>
   );
 }
