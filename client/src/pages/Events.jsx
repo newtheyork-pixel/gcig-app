@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import ErrorNotice from '../components/ErrorNotice';
 import { Calendar, dateFnsLocalizer } from 'react-big-calendar';
 import { format, parse, startOfWeek, getDay } from 'date-fns';
 import enUS from 'date-fns/locale/en-US';
@@ -115,17 +116,13 @@ export default function Events() {
       />
 
       {loadError && (
-        <div className="mb-4 rounded-lg border border-red-300 bg-red-50 p-4 text-sm text-red-900">
-          <div className="font-semibold">Events didn’t load.</div>
-          <div className="mt-1">{loadError}</div>
-          <button
-            type="button"
-            onClick={() => { setLoading(true); load(); }}
-            className="mt-2 rounded-lg border border-red-300 bg-white px-3 py-1 text-xs font-semibold text-red-900 hover:bg-red-100"
-          >
-            Try again
-          </button>
-        </div>
+        <ErrorNotice
+          className="mb-4"
+          title="Events didn’t load."
+          message={loadError}
+          hint="The month below is showing whatever loaded before the failure, not an empty diary."
+          onRetry={() => { setLoading(true); load(); }}
+        />
       )}
       {loading && !loadError && (
         <div className="mb-4 text-sm text-navy-400">Loading events…</div>

@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import ErrorNotice from '../components/ErrorNotice';
 import { format } from 'date-fns';
 import api from '../api/client.js';
 import PageHeader from '../components/PageHeader.jsx';
@@ -52,20 +53,12 @@ export default function AuditLog({ embedded = false } = {}) {
         {loading ? (
           <div className="py-8 text-center text-navy-400">Loading…</div>
         ) : loadError ? (
-          <div className="rounded-lg border border-red-300 bg-red-50 p-4 text-sm text-red-900">
-            <div className="font-semibold">The audit log didn’t load.</div>
-            <div className="mt-1">{loadError}</div>
-            <div className="mt-1 text-red-800/80">
-              This is not the same as there being nothing to show.
-            </div>
-            <button
-              type="button"
-              onClick={load}
-              className="mt-2 rounded-lg border border-red-300 bg-white px-3 py-1 text-xs font-semibold text-red-900 hover:bg-red-100"
-            >
-              Try again
-            </button>
-          </div>
+          <ErrorNotice
+            title="The audit log didn’t load."
+            message={loadError}
+            hint="This is not the same as there being nothing to show."
+            onRetry={load}
+          />
         ) : logs.length === 0 ? (
           <div className="py-8 text-center text-navy-400">No events yet.</div>
         ) : (

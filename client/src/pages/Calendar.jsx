@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import ErrorNotice from '../components/ErrorNotice';
 import { Calendar as BigCalendar, dateFnsLocalizer } from 'react-big-calendar';
 import { format, parse, startOfWeek, getDay } from 'date-fns';
 import enUS from 'date-fns/locale/en-US';
@@ -402,20 +403,13 @@ export default function Calendar() {
       />
 
       {loadError && (
-        <div className="mb-4 rounded-lg border border-red-300 bg-red-50 p-4 text-sm text-red-900">
-          <div className="font-semibold">The calendar is incomplete.</div>
-          <div className="mt-1">{loadError}</div>
-          <div className="mt-1 text-red-800/80">
-            Anything that failed to load is missing from the month below, not absent from the diary.
-          </div>
-          <button
-            type="button"
-            onClick={() => { setLoadError(null); setLoadingCore(2); loadPitches(); loadEvents(); }}
-            className="mt-2 rounded-lg border border-red-300 bg-white px-3 py-1 text-xs font-semibold text-red-900 hover:bg-red-100"
-          >
-            Try again
-          </button>
-        </div>
+        <ErrorNotice
+          className="mb-4"
+          title="The calendar is incomplete."
+          message={loadError}
+          hint="Anything that failed to load is missing from the month below, not absent from the diary."
+          onRetry={() => { setLoadError(null); setLoadingCore(2); loadPitches(); loadEvents(); }}
+        />
       )}
       {loadingCore > 0 && !loadError && (
         <div className="mb-4 text-sm text-navy-400">Loading the calendar…</div>

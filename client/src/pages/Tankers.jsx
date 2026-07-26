@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import ErrorNotice from '../components/ErrorNotice';
 import { RefreshCw } from 'lucide-react';
 import { getLatestSnapshot } from '../api/sea';
 import DerivedPanel from './tankers/DerivedPanel';
@@ -55,7 +56,15 @@ export default function Tankers() {
     <div className="space-y-4">
       <div className="flex items-end justify-between">
         <div>
-          <h1 className="text-2xl font-semibold text-navy">Tanker Tracker</h1>
+          {/* Matches the kicker-over-serif-title rhythm every other page
+              uses; this one had its own sans h1. */}
+          <div className="mb-2 flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.25em] text-gold-700">
+            <span className="h-px w-6 bg-gold" />
+            Persian Gulf
+          </div>
+          <h1 className="font-serif text-2xl font-semibold leading-tight text-navy md:text-3xl">
+            Tanker Tracker
+          </h1>
           <p className="text-sm text-navy/60">
             Refreshed every 2 min. Vessels shown were seen in the last 6 hours
             via free terrestrial AIS — coverage is concentrated near the UAE
@@ -100,9 +109,7 @@ export default function Tankers() {
       )}
 
       {!loading && error && (
-        <div className="rounded-lg border border-red-300 bg-red-50 p-4 text-sm text-red-900">
-          {error}
-        </div>
+        <ErrorNotice title="The tracker didn’t load." message={error} />
       )}
 
       {/* The panels below render 0 as readily as they render 40, so a dead

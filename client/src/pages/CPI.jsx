@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { GOLD, NAVY } from '../theme';
 import {
   AreaChart,
   Area,
@@ -316,8 +317,8 @@ export default function CPI() {
             <ComposedChart data={fanChartData} margin={{ top: 10, right: 30, left: 0, bottom: 0 }}>
               <defs>
                 <linearGradient id="bandFill" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="#C9A84C" stopOpacity={0.32} />
-                  <stop offset="100%" stopColor="#C9A84C" stopOpacity={0.05} />
+                  <stop offset="0%" stopColor={GOLD.DEFAULT} stopOpacity={0.32} />
+                  <stop offset="100%" stopColor={GOLD.DEFAULT} stopOpacity={0.05} />
                 </linearGradient>
               </defs>
               <CartesianGrid strokeDasharray="3 3" stroke="#E2E8F0" />
@@ -329,7 +330,7 @@ export default function CPI() {
               />
               <Tooltip
                 content={<CpiTooltip />}
-                cursor={{ stroke: '#C9A84C', strokeOpacity: 0.4, strokeWidth: 1 }}
+                cursor={{ stroke: GOLD.DEFAULT, strokeOpacity: 0.4, strokeWidth: 1 }}
               />
               {/* 80% band as area between lo and hi. The custom tooltip
                   reads lo/hi directly off the row, so we don't surface
@@ -355,19 +356,19 @@ export default function CPI() {
               <Line
                 type="monotone"
                 dataKey="yoy"
-                stroke="#1B2A4A"
+                stroke={NAVY.DEFAULT}
                 strokeWidth={2.5}
-                dot={{ r: 4, fill: '#1B2A4A' }}
+                dot={{ r: 4, fill: NAVY.DEFAULT }}
                 isAnimationActive={false}
                 name="Released"
               />
               <Line
                 type="monotone"
                 dataKey="forecast"
-                stroke="#C9A84C"
+                stroke={GOLD.DEFAULT}
                 strokeWidth={2.5}
                 strokeDasharray="5 4"
-                dot={{ r: 4, fill: '#C9A84C' }}
+                dot={{ r: 4, fill: GOLD.DEFAULT }}
                 isAnimationActive={false}
                 name="Forecast"
               />
@@ -472,7 +473,7 @@ export default function CPI() {
                     />
                     <Tooltip
                       content={<HistoryTooltip />}
-                      cursor={{ stroke: '#C9A84C', strokeOpacity: 0.4, strokeWidth: 1 }}
+                      cursor={{ stroke: GOLD.DEFAULT, strokeOpacity: 0.4, strokeWidth: 1 }}
                     />
                     {/* Older calls render as bare dots fading with distance —
                         a fan of guesses converging on each print. Only the
@@ -481,7 +482,7 @@ export default function CPI() {
                       type="monotone"
                       dataKey="p3"
                       stroke="none"
-                      dot={{ r: 3.5, fill: '#C9A84C', fillOpacity: 0.3, strokeWidth: 0 }}
+                      dot={{ r: 3.5, fill: GOLD.DEFAULT, fillOpacity: 0.3, strokeWidth: 0 }}
                       isAnimationActive={false}
                       name="+3 mo call"
                     />
@@ -489,17 +490,17 @@ export default function CPI() {
                       type="monotone"
                       dataKey="p2"
                       stroke="none"
-                      dot={{ r: 3.5, fill: '#C9A84C', fillOpacity: 0.55, strokeWidth: 0 }}
+                      dot={{ r: 3.5, fill: GOLD.DEFAULT, fillOpacity: 0.55, strokeWidth: 0 }}
                       isAnimationActive={false}
                       name="+2 mo call"
                     />
                     <Line
                       type="monotone"
                       dataKey="p1"
-                      stroke="#C9A84C"
+                      stroke={GOLD.DEFAULT}
                       strokeWidth={2.5}
                       strokeDasharray="5 4"
-                      dot={{ r: 4, fill: '#C9A84C' }}
+                      dot={{ r: 4, fill: GOLD.DEFAULT }}
                       connectNulls
                       isAnimationActive={false}
                       name="+1 mo call"
@@ -507,9 +508,9 @@ export default function CPI() {
                     <Line
                       type="monotone"
                       dataKey="actual"
-                      stroke="#1B2A4A"
+                      stroke={NAVY.DEFAULT}
                       strokeWidth={2.5}
-                      dot={{ r: 4, fill: '#1B2A4A' }}
+                      dot={{ r: 4, fill: NAVY.DEFAULT }}
                       connectNulls
                       isAnimationActive={false}
                       name="Released"

@@ -1,4 +1,5 @@
 import { Fragment, useEffect, useMemo, useState } from 'react';
+import { GOLD, NAVY } from '../theme';
 import { format, subDays, subMonths, subYears, startOfYear } from 'date-fns';
 import {
   AreaChart,
@@ -680,8 +681,8 @@ export default function Portfolio() {
                 <AreaChart data={displayData} margin={{ top: 10, right: 10, bottom: 0, left: 0 }}>
                   <defs>
                     <linearGradient id="navyFill" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor="#1B2A4A" stopOpacity={0.25} />
-                      <stop offset="100%" stopColor="#1B2A4A" stopOpacity={0} />
+                      <stop offset="0%" stopColor={NAVY.DEFAULT} stopOpacity={0.25} />
+                      <stop offset="100%" stopColor={NAVY.DEFAULT} stopOpacity={0} />
                     </linearGradient>
                   </defs>
                   <CartesianGrid vertical={false} stroke="#E8EBF2" strokeDasharray="3 3" />
@@ -712,18 +713,18 @@ export default function Portfolio() {
                     labelFormatter={(_, payload) => payload?.[0]?.payload?.tooltipLabel || ''}
                     contentStyle={{
                       borderRadius: 8,
-                      borderColor: '#C9A84C',
+                      borderColor: GOLD.DEFAULT,
                       fontSize: 12,
                     }}
                   />
                   <Area
                     type="monotone"
                     dataKey="percent"
-                    stroke="#1B2A4A"
+                    stroke={NAVY.DEFAULT}
                     strokeWidth={2.5}
                     fill="url(#navyFill)"
                     dot={false}
-                    activeDot={{ r: 5, fill: '#C9A84C', stroke: '#1B2A4A', strokeWidth: 2 }}
+                    activeDot={{ r: 5, fill: GOLD.DEFAULT, stroke: NAVY.DEFAULT, strokeWidth: 2 }}
                   />
                 </AreaChart>
               </ResponsiveContainer>
@@ -1218,8 +1219,8 @@ function CashSubCard({ ticker, name, balance, interest, rate }) {
 // Palette for sector slices — navy/gold anchors plus enough supporting hues
 // to cover typical S&P sectors without repeating.
 const SECTOR_COLORS = [
-  '#1B2A4A', // navy
-  '#C9A84C', // gold
+  NAVY.DEFAULT, // navy
+  GOLD.DEFAULT, // gold
   '#3B5998',
   '#8C99BB',
   '#B48A3C',
@@ -1291,7 +1292,7 @@ function SectorAllocation({ holdings, totalValue }) {
                   ]}
                   contentStyle={{
                     borderRadius: 8,
-                    borderColor: '#C9A84C',
+                    borderColor: GOLD.DEFAULT,
                     fontSize: 12,
                   }}
                 />
@@ -1411,7 +1412,7 @@ function PortfolioHero({
         className="pointer-events-none absolute inset-0 opacity-[0.06]"
         style={{
           backgroundImage:
-            'linear-gradient(to right, #C9A84C 1px, transparent 1px), linear-gradient(to bottom, #C9A84C 1px, transparent 1px)',
+            `linear-gradient(to right, ${GOLD.DEFAULT} 1px, transparent 1px), linear-gradient(to bottom, ${GOLD.DEFAULT} 1px, transparent 1px)`,
           backgroundSize: '48px 48px',
         }}
       />
@@ -1469,8 +1470,8 @@ function PortfolioHero({
                 >
                   <defs>
                     <linearGradient id="heroSparkGold" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor="#C9A84C" stopOpacity={0.55} />
-                      <stop offset="100%" stopColor="#C9A84C" stopOpacity={0} />
+                      <stop offset="0%" stopColor={GOLD.DEFAULT} stopOpacity={0.55} />
+                      <stop offset="100%" stopColor={GOLD.DEFAULT} stopOpacity={0} />
                     </linearGradient>
                   </defs>
                   <XAxis dataKey="ts" hide />
@@ -1478,7 +1479,7 @@ function PortfolioHero({
                   <Tooltip
                     contentStyle={{
                       borderRadius: 8,
-                      border: '1px solid #C9A84C',
+                      border: `1px solid ${GOLD.DEFAULT}`,
                       background: 'rgba(27,42,74,0.92)',
                       color: 'white',
                       fontSize: 11,
@@ -1489,7 +1490,7 @@ function PortfolioHero({
                   <Area
                     type="monotone"
                     dataKey="value"
-                    stroke="#C9A84C"
+                    stroke={GOLD.DEFAULT}
                     strokeWidth={2}
                     fill="url(#heroSparkGold)"
                     dot={false}
