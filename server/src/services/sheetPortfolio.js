@@ -1,6 +1,7 @@
 import { parse } from 'csv-parse/sync';
 import prisma from '../db.js';
 import { getDbPortfolio } from './dbPortfolio.js';
+import { resolveQuotes } from './portfolioQuotes.js';
 
 // Pulls the club portfolio directly from a Google Sheet published as "Anyone with
 // the link can view". Every fetch hits the CSV export URL, which forces Google
@@ -225,21 +226,61 @@ export async function readSheetPortfolio({ forceFresh = false } = {}) {
 // per-share move over the prior share price: dayChange / (price -
 // dayChange). An earlier cut divided it by position value and
 // produced percentages ~100x too small.
-export async function getPortfolioMovers() {
-  const { holdings, fetchedAt } = await getSheetPortfolio();
+// The sheet's day-change cells are populated by spreadsheet formulas and
+// are mostly empty in practice — 12 of 13 positions on the day this was
+// found, which left MOVR ranking a single holding and reading like a
+// quiet market rather than a missing column. Positions the sheet has
+// nothing for fall back to a resolved quote, where the day move is
+// price minus previous close. Each row says which source it came from,
+// because a mixed list where some rows are stale and some are live is
+// worse than either if you cannot tell them apart.
+export async function getPortfolioMovers(deps = {}) {
+  const resolve = deps.resolveQuotes || resolveQuotes;
+  const load = deps.getSheetPortfolio || getSheetPortfolio;
+  const { holdings, fetchedAt } = await load();
+
+  const positions = holdings.filter((h) => !h.isCash && h.ticker);
+  const needQuote = positions
+    .filter((h) => h.dayChange == null || h.price == null)
+    .map((h) => h.ticker);
+
+  let quotes = {};
+  if (needQuote.length) {
+    // Never let a quote outage cost the rows the sheet did supply.
+    try {
+      quotes = (await resolve(needQuote)) || {};
+    } catch {
+      quotes = {};
+    }
+  }
 
   const rows = [];
-  for (const h of holdings) {
-    if (h.isCash) continue;
-    if (h.dayChange == null || h.price == null) continue;
-    const prior = h.price - h.dayChange;
-    if (!(prior > 0)) continue;
+  let unpriced = 0;
+  for (const h of positions) {
+    let last = h.price;
+    let dayUsd = h.dayChange;
+    let source = 'sheet';
+
+    if (dayUsd == null || last == null) {
+      const q = quotes[String(h.ticker).toUpperCase()];
+      if (!q || q.dayChange == null || q.price == null) {
+        unpriced += 1;
+        continue;
+      }
+      last = q.price;
+      dayUsd = q.dayChange;
+      source = q.source || 'quote';
+    }
+
+    const prior = last - dayUsd;
+    if (!(prior > 0)) { unpriced += 1; continue; }
     rows.push({
       ticker: h.ticker,
       name: h.name || h.ticker,
-      last: h.price,
-      dayUsd: h.dayChange,
-      changePct: h.dayChange / prior,
+      last,
+      dayUsd,
+      changePct: dayUsd / prior,
+      source,
     });
   }
 
@@ -248,6 +289,10 @@ export async function getPortfolioMovers() {
   return {
     asOf: fetchedAt ? String(fetchedAt).slice(0, 10) : null,
     count: rows.length,
+    // A panel showing 3 of 13 holdings must not read as a 3-holding
+    // book. Surfaced so the UI can say what it could not price.
+    positions: positions.length,
+    unpriced,
     rows,
   };
 }

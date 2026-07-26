@@ -156,7 +156,12 @@ export default function Movers({ onOpen }) {
         <span className="ticker">MOVR</span>
         <span className="name">
           Portfolio{data.asOf ? ` · as of ${data.asOf}` : ''}
-          {data.count ? ` · ${data.count} holdings` : ''}
+          {/* "13 holdings" over a list of three is the kind of quiet
+              wrongness that gets read straight past. Say the ratio when
+              they differ. */}
+          {data.count
+            ? ` · ${data.count}${data.positions && data.positions !== data.count ? ` of ${data.positions}` : ''} holdings`
+            : ''}
         </span>
       </div>
 
@@ -165,10 +170,20 @@ export default function Movers({ onOpen }) {
         {briefLoading ? 'Generating…' : brief || 'No brief available.'}
       </div>
 
+      {/* An unpriced position is not a flat position. Without this the
+          panel looks like a complete ranking of a smaller book. */}
+      {data.unpriced ? (
+        <div style={{ color: 'var(--term-fg-muted)', fontSize: 11 }}>
+          {data.unpriced} position{data.unpriced === 1 ? '' : 's'} could not be
+          priced — neither the sheet nor a live quote had a previous close, so
+          {data.unpriced === 1 ? ' it is' : ' they are'} missing from this ranking.
+        </div>
+      ) : null}
+
       {rows.length === 0 ? (
         <div className="term-loading">
-          No daily moves on the book — the positions sheet returned no non-cash
-          holdings with a day change.
+          No daily moves on the book — neither the positions sheet nor a live
+          quote could price a single non-cash holding today.
         </div>
       ) : (
         <table className="term-table">
