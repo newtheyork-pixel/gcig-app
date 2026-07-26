@@ -618,7 +618,7 @@ function ProjectList({ projects }) {
             <span className="shrink-0 text-[11px] text-navy-400">
               open with{' '}
               <span className="font-mono text-navy">
-                {p.ticker ? `${p.ticker} FLD` : 'FLD'}
+                {p.ticker ? `${p.ticker} RSCH` : 'RSCH'}
               </span>
             </span>
           </li>

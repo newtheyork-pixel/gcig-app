@@ -89,16 +89,22 @@ export const FUNCTIONS = [
   { id: 'CMP', label: 'Compare', help: '2–4 tickers side by side: live price, day %, valuation.', requires: null, component: Compare },
   { id: 'ICLUSTER', label: 'Insider Clusters', help: 'Multi-insider buy clusters across your book (last 60d).', requires: null, component: InsiderClusters },
   { id: 'NOTE', label: 'Notes', help: 'Your private research notes for this ticker (saved to your profile).', requires: 'ticker', component: Notes },
-  // Our own primary research on a company: brief, guides, recordings,
-  // transcripts, files and the pinned claim ledger. Ticker-optional —
-  // `FLD` lists every project, `AIT FLD` scopes to one name. Wide and
-  // tall because it is a workspace, not a readout.
-  { id: 'FLD', label: 'Research', help: 'Research projects: the brief, questions, outreach, interviews and transcripts, store visits, files, and the pinned claim ledger.', requires: null, component: FieldWork, w: 860, h: 680 },
-  // Ticker-optional: `RSCH` opens the whole archive, `AIT RSCH` scopes
+  // The whole research effort on a company, whatever form it takes:
+  // the brief and the questions, who we contacted, interviews and
+  // transcripts, site visits, the valuation model, the filings and data
+  // behind it, and the claim ledger. Ticker-optional — `RSCH` lists
+  // every project, `AIT RSCH` scopes to one name. Wide and tall because
+  // it is a workspace, not a readout.
+  //
+  // It answered to FLD while it was only fieldwork. FLD still opens it,
+  // because a code someone has in their fingers should not stop working
+  // to serve a rename.
+  { id: 'RSCH', aliases: ['FLD'], label: 'Research', help: 'Everything on one name: the brief and questions, outreach, interviews and transcripts, site visits, valuation models, filings and data, and the claim ledger with every claim pinned to a source and timestamp.', requires: null, component: FieldWork, w: 860, h: 680 },
+  // Ticker-optional: `ARCH` opens the whole archive, `AIT ARCH` scopes
   // it. Wider/taller than the default because this pane is read, not
-  // scanned — prose at 580px wraps every few words. FLD is what we went
-  // and found; RSCH is what we already wrote up.
-  { id: 'RSCH', label: 'Archive', help: 'The club\'s own reports & pitch decks — full text and AI summaries, readable inline.', requires: null, component: Research, w: 800, h: 640 },
+  // scanned — prose at 580px wraps every few words. RSCH is the work and
+  // the evidence; ARCH is what we already wrote up from it.
+  { id: 'ARCH', label: 'Archive', help: 'The club\'s own reports & pitch decks — full text and AI summaries, readable inline.', requires: null, component: Research, w: 800, h: 640 },
   { id: 'MGMT', label: 'Management & Board', help: 'CEO, board, comp & interlocking boards from the latest DEF 14A.', requires: 'ticker', component: Governance },
   { id: 'WEI', label: 'World Indices', help: 'Global index snapshot.', requires: null, component: WorldIndices },
   { id: 'TOP', label: 'Top News', help: 'Market-wide top headlines.', requires: null, component: TopNews, w: 780, h: 620 },
@@ -111,8 +117,13 @@ export const FUNCTIONS = [
   { id: 'MACRO', label: 'Macro Sensitivity', help: 'Portfolio sensitivity to 10Y, oil, USD, VIX, SPY (1y OLS).', requires: null, component: MacroSensitivity },
 ];
 
-export const FUNCTION_BY_ID = Object.fromEntries(FUNCTIONS.map((f) => [f.id, f]));
-export const FUNCTION_IDS = new Set(FUNCTIONS.map((f) => f.id));
+// Aliases resolve to the same function but are deliberately kept out of
+// FUNCTIONS itself, so a retired code still works from the command bar
+// without showing up twice in the function list or the autocomplete.
+export const FUNCTION_BY_ID = Object.fromEntries(
+  FUNCTIONS.flatMap((f) => [[f.id, f], ...(f.aliases || []).map((a) => [a, f])])
+);
+export const FUNCTION_IDS = new Set(Object.keys(FUNCTION_BY_ID));
 
 export function getFunction(id) {
   return FUNCTION_BY_ID[String(id || '').toUpperCase()] || null;

@@ -23,6 +23,8 @@ import PDFModal from '../../components/PDFModal.jsx';
 const KINDS = [
   ['guide', 'Interview guide'],
   ['script', 'Script'],
+  ['model', 'Valuation model / DCF'],
+  ['filing', 'Filing or earnings call'],
   ['document', 'Document'],
   ['data', 'Data'],
   ['photo', 'Photo'],

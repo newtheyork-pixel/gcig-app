@@ -76,8 +76,14 @@ const SOURCE_PUBLIC = {
 // research someone can reproduce next year and a folder nobody can
 // reconstruct.
 
+// Kinds exist so a project can be read at a glance, not to police what
+// belongs. A name worked properly is not only interviews: there is a
+// valuation model, the filings and transcripts it was built from, the
+// comps, the notes. Anything without a home lands in `other` rather than
+// being kept in someone's Downloads folder, which is the only outcome
+// that actually loses work.
 const ARTIFACT_KINDS = new Set([
-  'guide', 'script', 'document', 'data', 'photo', 'memo', 'other',
+  'guide', 'script', 'document', 'data', 'model', 'filing', 'photo', 'memo', 'other',
 ]);
 const PROJECT_STATUSES = new Set(['Open', 'Fieldwork', 'Synthesis', 'Closed']);
 
