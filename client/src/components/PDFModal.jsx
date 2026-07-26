@@ -105,6 +105,22 @@ export function embedUrl(url, mime) {
 // than guessing from the URL.
 const NON_EMBEDDABLE_EXTS = /\.(pptx?|docx?|xlsx?|zip|rar|7z|tar|gz)(?:[?#].*)?$/i;
 
+// An image is not a document, and putting one in an iframe makes the
+// browser render it as a standalone image document at its natural size.
+// A 3,000-pixel store photo then fills the frame at 1:1 — it reads as
+// "stuck zoomed in", and because the frame grows past the panel the
+// header and its close button go out of reach. Images want an <img> that
+// is told to fit.
+const IMAGE_EXTS = /\.(jpe?g|png|gif|webp|bmp|avif|heic|heif|tiff?|svg)(?:[?#].*)?$/i;
+
+export function imageLike(url, mime, title) {
+  if (mime && /^image\//i.test(mime)) return true;
+  for (const s of [title, url]) {
+    if (typeof s === 'string' && IMAGE_EXTS.test(s)) return true;
+  }
+  return false;
+}
+
 export function embeddable(url, mime) {
   if (!url) return false;
   if (isManagedFile(url)) return false; // resolved asynchronously instead
@@ -147,6 +163,7 @@ export default function PDFModal({ url, title, mime, onClose }) {
   const [managedSrc, setManagedSrc] = useState(null);
   const [resolving, setResolving] = useState(false);
   const [converted, setConverted] = useState(false);
+  const [imgFailed, setImgFailed] = useState(false);
 
   useEffect(() => {
     if (!url || !isManagedFile(url)) {
@@ -230,6 +247,10 @@ export default function PDFModal({ url, title, mime, onClose }) {
     };
   }, [url]);
 
+  // Otherwise one unrenderable image leaves every file opened after it
+  // showing the download fallback.
+  useEffect(() => { setImgFailed(false); }, [url]);
+
   // Conditional mount lives last so the hooks above always run in the
   // same order. Parent may also just not render us at all.
   if (!url) return null;
@@ -240,6 +261,7 @@ export default function PDFModal({ url, title, mime, onClose }) {
   // is decided synchronously from the URL itself.
   const src = managed ? managedSrc : embedUrl(url, mime);
   const canEmbed = managed ? !!managedSrc : embeddable(url, mime);
+  const isImage = imageLike(url, mime, title);
 
   // The "Open in new tab" affordance has two routes. For external URLs
   // we just window.open them. For managed onedrive: refs the URL is a
@@ -343,7 +365,20 @@ export default function PDFModal({ url, title, mime, onClose }) {
             <div className="flex h-full items-center justify-center px-4 text-center text-sm text-navy-400">
               Loading preview…
             </div>
-          ) : canEmbed && src ? (
+          ) : isImage && src && !imgFailed ? (
+            <div className="flex h-full w-full items-center justify-center p-2">
+              <img
+                src={src}
+                alt={title || 'Image'}
+                className="max-h-full max-w-full object-contain"
+                // HEIC comes straight off an iPhone and only Safari will
+                // paint it. A broken image icon would look like our bug
+                // rather than a format the browser cannot read, so fall
+                // through to the panel that offers the download.
+                onError={() => setImgFailed(true)}
+              />
+            </div>
+          ) : canEmbed && src && !isImage ? (
             <iframe
               src={src}
               title={title || 'Document'}
