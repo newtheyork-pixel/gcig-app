@@ -45,7 +45,11 @@ const MIN_RANK = ROLE_RANK.Analyst;
 // dropped. A model told "12 further findings were omitted for length"
 // can say it does not have them to hand. A model handed a quietly
 // shortened list cannot tell that anything is missing.
-const MAX_CHARS = 9_000;
+// Raised from 9,000 when the valuation inputs moved in: a comps model
+// carries its finding in its assumptions, so those lines are evidence
+// rather than padding, and the alternative was findings being pushed out
+// by the models that are supposed to answer to them.
+const MAX_CHARS = 12_000;
 
 // Interviews whose claims may be repeated to anyone. Quarantined is the
 // obvious exclusion. The subtler one is an interview the screen flagged
@@ -90,9 +94,13 @@ export async function buildResearchContext(user) {
       '',
       '---',
       '',
-      '## Our Own Field Research',
-      '_Primary research this club went out and did: interviews we ran,_',
-      '_stores we visited, and the claim ledger built from them. Every_',
+      '## Our Own Research and Valuation',
+      '_Primary research this club went out and did — interviews we ran,_',
+      '_stores we visited, the claim ledger built from them, AND our own_',
+      '_valuation models with their inputs. If someone asks what our DCF_',
+      '_says, what multiple we have the name on, or what we found in the_',
+      '_field, the answer is in this section and nowhere else. Do NOT_',
+      '_answer such a question with a generic method explanation. Every_',
       '_claim below is pinned to a recording at a timestamp and can be_',
       '_played back. This is OUR work — cite it as ours, not as "reports_',
       '_suggest". Alias the source; never invent a real name for one._',
@@ -125,14 +133,39 @@ export async function buildResearchContext(user) {
 
       const valuations = p.valuations || [];
       if (valuations.length) {
-        out.push('', '**Our price targets**');
+        out.push('', '**Our valuation work — these are OUR numbers, cite them as ours**');
         for (const v of valuations) {
-          const money = (n) => (n == null ? '—' : `$${Number(n).toFixed(2)}`);
+          // Currency off the row. A DCF in francs rendered with a dollar
+          // sign is a different number, and the model will repeat
+          // whatever sign it is given.
+          const ccy = v.currency || 'USD';
+          const money = (n) =>
+            n == null ? null : ccy === 'USD' ? `$${Number(n).toLocaleString()}` : `${Number(n).toLocaleString()} ${ccy}`;
+
+          const cases = [money(v.bear), money(v.base), money(v.bull)].filter(Boolean);
           out.push(
-            `- ${v.name} (${v.kind}): bear ${money(v.bear)} / base ${money(v.base)} / bull ${money(v.bull)}` +
-              (v.priceAtWrite ? `, struck against ${money(v.priceAtWrite)}` : '') +
-              ` — as of ${new Date(v.asOf).toISOString().slice(0, 10)}`
+            `- **${v.name}** (${v.kind}, as of ${new Date(v.asOf).toISOString().slice(0, 10)})` +
+              (cases.length === 3
+                ? `: bear ${money(v.bear)} / base ${money(v.base)} / bull ${money(v.bull)}`
+                : '') +
+              (v.priceAtWrite ? `, against a mark of ${money(v.priceAtWrite)}` : '')
           );
+
+          // A multiple-based method has no price cases, and printing
+          // "bear — / base — / bull —" told the model the work was empty
+          // when the entire finding was sitting in the assumptions. The
+          // inputs ARE the output for a comps model.
+          for (const a of (v.assumptions || []).slice(0, 10)) {
+            if (!a?.label) continue;
+            out.push(
+              `    - ${a.label}: ${a.value}${a.unit ? ` ${a.unit}` : ''}` +
+                (a.note ? ` (${a.note})` : '')
+            );
+          }
+          // The note carries the judgement — that the base case sits
+          // below the current price, that the multiple compressed 42%.
+          // Dropping it left only figures with nothing said about them.
+          if (v.note) out.push(`    - Read: ${v.note.slice(0, 320)}`);
         }
       }
 
