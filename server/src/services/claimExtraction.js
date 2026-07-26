@@ -57,6 +57,14 @@ Rules:
 - If the source hedges ("I think", "maybe"), that is an opinion, not a fact.
 - The quote must be a contiguous span of the transcript, long enough to locate but not a whole paragraph.
 
+COPYING THE QUOTE IS THE PART THAT MATTERS MOST. This is spoken conversation, transcribed as spoken. It is full of "um", "uh", "like", "you know", false starts, repeated words and stray "Okay" / "Yeah" / "Right". Copy all of it, exactly as it appears, including the filler. Do NOT tidy the sentence.
+
+  Transcript:  So they kind of have fallen off a little bit on terms of competition. Okay. So I feel like Lindt
+  WRONG quote: "fallen off a little bit on terms of competition. So I feel like Lindt"   <- dropped "Okay."
+  RIGHT quote: "fallen off a little bit on terms of competition"                        <- stop before the filler
+
+If cleaning it up is tempting, choose a SHORTER span that needs no cleaning. A short exact quote is worth far more than a long tidied one, because a quote that does not match the transcript character for character is discarded and the claim is lost with it. When in doubt, quote less.
+
 Reply with strict JSON only, no prose, no code fences:
 {"claims":[{"text":"...","quote":"...","topic":"...","kind":"fact","confidence":0.9}]}
 If the transcript contains no substantive claims, return {"claims":[]}.`;
@@ -100,6 +108,18 @@ function normalizeForMatch(s) {
 const MAX_INTERJECTION_WORDS = 8;
 
 export function locateQuote(words, quote) {
+  // An ellipsis is the model telling us where it left material out —
+  // ordinary quoting convention, and it turned out to be the single
+  // largest cause of dropped claims on a real interview. Honour it:
+  // every fragment still has to appear verbatim, in order, from one
+  // speaker. Nothing is taken on trust, we simply stop pretending the
+  // speaker said one unbroken sentence when the model said otherwise.
+  const parts = String(quote || '')
+    .split(/\s*(?:\.{3,}|…)\s*/)
+    .map((x) => x.trim())
+    .filter(Boolean);
+  if (parts.length > 1) return locateElided(words, parts);
+
   const needle = normalizeForMatch(quote).split(' ').filter(Boolean);
   if (needle.length === 0) return null;
 
@@ -144,6 +164,35 @@ export function locateQuote(words, quote) {
     }
   }
   return null;
+}
+
+// Locate a quote the model wrote with elisions. Each fragment must be
+// found verbatim, each after the last, and all from the same speaker —
+// so this can never join two different people, nor reorder what one
+// person said. The reported span runs from the first fragment's start to
+// the last fragment's end, which is the honest extent of the passage.
+function locateElided(words, parts) {
+  let cursor = 0;
+  let speaker;
+  let startMs = null;
+  let endMs = null;
+
+  for (const part of parts) {
+    const tail = words.slice(cursor);
+    const hit = locateQuote(tail, part);
+    if (!hit) return null;
+    if (speaker === undefined) speaker = hit.speaker;
+    // Every fragment must come from the same voice. A quote assembled
+    // from two speakers is not a statement anyone made.
+    else if (hit.speaker !== speaker) return null;
+    if (startMs === null) startMs = hit.startMs;
+    endMs = hit.endMs;
+    // Advance past this fragment so the next one must follow it.
+    const at = tail.findIndex((w) => w.startMs === hit.startMs);
+    cursor += (at === -1 ? 0 : at) + 1;
+  }
+  if (startMs === null || !speaker) return null;
+  return { startMs, endMs, speaker };
 }
 
 // One speaker across the whole span, or null. A quote that straddles a

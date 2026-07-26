@@ -311,3 +311,49 @@ test('a partial read reports how much of the transcript actually answered', asyn
   assert.ok(out.failedWindows > 0, 'the bailing windows are counted');
   assert.ok(out.failedWindows < out.windows, 'and some did answer');
 });
+
+// Elided quotes. The model writes "a... b" when it leaves material out —
+// ordinary quoting convention, and the largest single cause of dropped
+// claims on a real 39-minute interview. Each fragment must still be
+// verbatim, in order, from one speaker.
+const ELIDE_WORDS = [
+  { text: 'Lindt', startMs: 0, endMs: 100, speaker: 'speaker_1' },
+  { text: 'really', startMs: 100, endMs: 200, speaker: 'speaker_1' },
+  { text: 'pushes', startMs: 200, endMs: 300, speaker: 'speaker_1' },
+  { text: 'the', startMs: 300, endMs: 400, speaker: 'speaker_1' },
+  { text: 'premium', startMs: 400, endMs: 500, speaker: 'speaker_1' },
+  { text: 'angle', startMs: 500, endMs: 600, speaker: 'speaker_1' },
+  { text: 'aiming', startMs: 600, endMs: 700, speaker: 'speaker_1' },
+  { text: 'high', startMs: 700, endMs: 800, speaker: 'speaker_1' },
+];
+
+test('an elided quote locates when every fragment is verbatim', () => {
+  const hit = locateQuote(ELIDE_WORDS, 'Lindt really pushes... aiming high');
+  assert.ok(hit, 'the ellipsis marks an elision, not a failure');
+  assert.equal(hit.startMs, 0, 'span starts at the first fragment');
+  assert.equal(hit.endMs, 800, 'and ends at the last');
+  assert.equal(hit.speaker, 'speaker_1');
+});
+
+test('a unicode ellipsis works the same as three dots', () => {
+  assert.ok(locateQuote(ELIDE_WORDS, 'Lindt really… aiming high'));
+});
+
+test('fragments must appear in order', () => {
+  // Reversing them would let the model rearrange what someone said.
+  assert.equal(locateQuote(ELIDE_WORDS, 'aiming high... Lindt really'), null);
+});
+
+test('an elided quote with an invented fragment is still rejected', () => {
+  assert.equal(locateQuote(ELIDE_WORDS, 'Lindt really... margins collapsed'), null);
+});
+
+test('elision cannot be used to join two speakers', () => {
+  const words = [
+    { text: 'we', startMs: 0, endMs: 100, speaker: 'speaker_1' },
+    { text: 'cut', startMs: 100, endMs: 200, speaker: 'speaker_1' },
+    { text: 'interesting', startMs: 200, endMs: 300, speaker: 'speaker_0' },
+    { text: 'question', startMs: 300, endMs: 400, speaker: 'speaker_0' },
+  ];
+  assert.equal(locateQuote(words, 'we cut... interesting question'), null);
+});
