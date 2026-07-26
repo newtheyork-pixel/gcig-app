@@ -46,6 +46,69 @@ Reply with strict JSON only:
 or
 {"found": false}`;
 
+// Deliberately shown the question and the quote and NOTHING else — no
+// surrounding transcript. That is exactly what a reader following the
+// footnote gets, and a claim that needs more context than the citation
+// carries is a claim the citation does not support.
+const CHECK_PROMPT = `You are checking whether a proposed answer is honestly supported by a quote.
+
+You will see a QUESTION, a verbatim QUOTE from an interview, and a PROPOSED ANSWER written from it. You do NOT get the rest of the transcript, on purpose: a reader following this citation will hear only this quote.
+
+Reject the proposed answer if it states anything the quote does not say. Be strict about these, which are the common failures:
+  - naming a brand, product, number, direction or comparison the quote never mentions
+  - turning "I'm not sure" or a guess into a finding
+  - answering a different question than the one asked
+
+Accept it if the quote plainly says it, allowing for the question supplying the subject — for "How often do reps come?", the quote "once a week" is a complete answer.
+
+If the quote supports only part of what was asked, accept it with "partial": true.
+
+If you accept it but the wording overstates the quote, rewrite it in "answer" so it says only what the quote says.
+
+Reply with strict JSON only:
+{"supported": true, "partial": false, "answer": "..."}
+or
+{"supported": false}`;
+
+// Returns { supported, partial, answer }. A checker that cannot be
+// reached rejects — an unverifiable claim is not a claim, and the whole
+// reason this pass exists is that the failure it catches looks perfect
+// from the outside.
+async function entails(chat, question, quote, proposed) {
+  let raw;
+  try {
+    raw = await chat({
+      messages: [
+        { role: 'system', content: CHECK_PROMPT },
+        {
+          role: 'user',
+          content: `QUESTION\n${question}\n\nQUOTE\n"${quote}"\n\nPROPOSED ANSWER\n${proposed}`,
+        },
+      ],
+      jsonMode: true,
+      temperature: 0,
+      timeoutMs: 60_000,
+      localModel: RESEARCH_LOCAL_MODEL,
+    });
+  } catch {
+    return { supported: false };
+  }
+  if (!raw) return { supported: false };
+  try {
+    const p = JSON.parse(raw);
+    if (p?.supported !== true) return { supported: false };
+    return {
+      supported: true,
+      partial: p.partial === true,
+      answer: typeof p.answer === 'string' && p.answer.trim()
+        ? p.answer.trim().slice(0, 500)
+        : null,
+    };
+  } catch {
+    return { supported: false };
+  }
+}
+
 function windows(turns, budget = MAX_CHARS) {
   const out = [];
   let cur = [];
@@ -86,6 +149,7 @@ export async function scanForAnswer(interview, question, deps = {}) {
   const chat = deps.llmChat || llmChat;
 
   let best = null;
+  let rejected = 0;
   for (const win of windows(turns)) {
     let raw;
     try {
@@ -116,6 +180,22 @@ export async function scanForAnswer(interview, question, deps = {}) {
     const located = locateQuote(words, parsed.quote);
     if (!located) continue;
 
+    // And the second gate, which locateQuote cannot provide: the claim
+    // has to be what the quote SAYS. Locating a quote proves the words
+    // were spoken, not that the sentence written above them is a fair
+    // reading of them. On the first live run this scan produced "Lindt
+    // restocks to full capacity, while Hershey's restocks more
+    // frequently and in larger quantities" over a verbatim quote that
+    // mentions neither Hershey nor capacity. Every word of the citation
+    // checked out and the claim was invented — the worst possible
+    // combination, and more likely here than in the general extractor
+    // because this pass has been told what it is hoping to find.
+    const check = await entails(chat, question, parsed.quote, parsed.answer);
+    if (!check.supported) {
+      rejected += 1;
+      continue;
+    }
+
     const conf = Number(parsed.confidence);
     const score = Number.isFinite(conf) ? Math.max(0, Math.min(1, conf)) : 0.5;
     // Several windows can each offer an answer; keep the most confident
@@ -130,10 +210,16 @@ export async function scanForAnswer(interview, question, deps = {}) {
       startMs: located.startMs,
       endMs: located.endMs,
       speaker: located.speaker,
-      partial: parsed.partial === true,
+      // The checker sees the citation as a reader will, so when it
+      // rewrites the answer to fit the quote, its wording wins.
+      text: check.answer || String(parsed.answer).trim().slice(0, 500),
+      // Pessimistic: either pass may call it partial, neither may
+      // downgrade the other's caution.
+      partial: parsed.partial === true || check.partial === true,
       extractionConfidence: score,
     };
     if (!best || rank(candidate) > rank(best)) best = candidate;
   }
+  if (best) best.rejected = rejected;
   return best;
 }

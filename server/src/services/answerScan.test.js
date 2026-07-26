@@ -30,7 +30,13 @@ const TURNS = [
 const IV = { words: WORDS, turns: TURNS };
 const Q = 'When restocking, how many units go back on the shelf?';
 
-const reply = (obj) => async () => JSON.stringify(obj);
+// Two model passes run per window — find the answer, then check the
+// answer is what the quote says — so a stub has to answer both. Default
+// the checker to "supported" so each test exercises the one thing it is
+// about.
+const isCheck = (m) => /checking whether a proposed answer/.test(m[0].content);
+const reply = (scan, check = { supported: true }) => async ({ messages }) =>
+  JSON.stringify(isCheck(messages) ? check : scan);
 
 test('pins a located answer to its real span and speaker', async () => {
   const hit = await scanForAnswer(IV, Q, {
@@ -85,7 +91,8 @@ test('a whole answer beats a more confident partial one', async () => {
   const long = { words: WORDS, turns: [...TURNS, ...Array.from({ length: 400 }, () => ({ speaker: 'speaker_1', text: 'and so on and so forth' }))] };
   let n = 0;
   const hit = await scanForAnswer(long, Q, {
-    llmChat: async () => {
+    llmChat: async ({ messages }) => {
+      if (isCheck(messages)) return JSON.stringify({ supported: true });
       n += 1;
       return JSON.stringify(
         n === 1
@@ -97,6 +104,53 @@ test('a whole answer beats a more confident partial one', async () => {
   assert.ok(n > 1, 'expected more than one window');
   assert.equal(hit.partial, false);
   assert.equal(hit.text, 'all of it');
+});
+
+test('drops a claim the quote does not actually say', async () => {
+  // The real failure this gate exists for. Every word of the quote was
+  // spoken and locates cleanly; the Hershey comparison in the claim
+  // above it was invented. locateQuote cannot catch this — the citation
+  // is perfect, which is exactly what makes it dangerous.
+  const hit = await scanForAnswer(
+    IV,
+    'When restocking, how many Lindt units go back up versus Hershey?',
+    {
+      llmChat: reply(
+        {
+          found: true,
+          answer: 'Lindt refills to capacity while Hershey restocks more often and in larger quantities.',
+          quote: 'Pack the whole thing.',
+          confidence: 0.9,
+        },
+        { supported: false }
+      ),
+    }
+  );
+  assert.equal(hit, null);
+});
+
+test('the checker may narrow an overstated claim, and may add caution', async () => {
+  const hit = await scanForAnswer(IV, Q, {
+    llmChat: reply(
+      { found: true, answer: 'They put back twelve units.', quote: 'Pack the whole thing.', partial: false, confidence: 0.9 },
+      { supported: true, partial: true, answer: 'They refill to capacity.' }
+    ),
+  });
+  assert.equal(hit.text, 'They refill to capacity.');
+  // Neither pass may talk the other out of its caution.
+  assert.equal(hit.partial, true);
+});
+
+test('an unreachable checker rejects rather than waves through', async () => {
+  for (const bad of [async () => null, async () => 'not json', async () => { throw new Error('down'); }]) {
+    const hit = await scanForAnswer(IV, Q, {
+      llmChat: async ({ messages }) =>
+        isCheck(messages)
+          ? bad()
+          : JSON.stringify({ found: true, answer: 'They refill to capacity.', quote: 'Pack the whole thing.', confidence: 0.9 }),
+    });
+    assert.equal(hit, null);
+  }
 });
 
 test('a model that answers nothing is not an answer', async () => {

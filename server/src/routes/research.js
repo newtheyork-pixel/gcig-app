@@ -1117,12 +1117,27 @@ router.post('/projects/:id/answer-scan', canResearch, heavyLimiter, async (req, 
     const perQuestion = [];
     let created = 0;
     let linkedExisting = 0;
+    let unsupported = 0;
 
     for (const q of targets) {
       const hits = [];
+
+      // A re-run replaces this scan's own earlier answers to this
+      // question rather than layering on them. The first live run wrote
+      // a claim asserting a Hershey comparison over a quote that never
+      // mentioned Hershey; without this, tightening the check would
+      // leave that sitting in the ledger forever, since the pass that
+      // now rejects it would simply never look at it again. Only its own
+      // unverified rows — a person's verification is not ours to undo,
+      // and the extractor's rows belong to the extractor.
+      await prisma.researchClaim.deleteMany({
+        where: { questionId: q.id, origin: 'answer-scan', verifiedById: null },
+      });
+
       for (const iv of interviews) {
         const words = iv.transcriptWords;
         const answer = await scanForAnswer({ words, turns: rebuildTurns(words) }, q.text);
+        if (answer?.rejected) unsupported += answer.rejected;
         if (!answer) continue;
 
         // The extractor may already have pulled this passage and simply
@@ -1181,6 +1196,11 @@ router.post('/projects/:id/answer-scan', canResearch, heavyLimiter, async (req, 
       found: perQuestion.filter((q) => q.hits.length > 0).length,
       created,
       linkedExisting,
+      // Answers that located verbatim but did not survive the check that
+      // the quote actually says them. Worth watching: a spike means the
+      // scan is reaching, and reaching is how a fabricated comparison
+      // ends up wearing a real citation.
+      unsupported,
       questions: perQuestion,
     });
   } catch (err) {
