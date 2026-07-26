@@ -609,6 +609,30 @@ Hit-rate stats count `Approved` toward Voted Yes too.
 
 ## Recent fixes / playbook notes
 
+- **Field research was running on the 7b (Jul '26)**: the answer scan
+  reported no answer in a transcript that had been read by hand and
+  plainly contained one. Putting the same prompt and the same tape
+  through both local models settled it — `qwen2.5:7b` returned "nothing
+  found", `qwen2.5:14b` returned the quote at 0.9 confidence. Render's
+  `LOCAL_LLM_MODEL` had been pinned to the 7b (the box is shared with
+  Optimize and its model set drifts down to whatever co-resides), so
+  every claim extracted for the Lindt project came through the small
+  model. Fixed with a per-call `localModel` on `llmChat`; the four
+  research services (`claimExtraction`, `answerScan`, `mnpiScreen`,
+  `synthesis`) now name `RESEARCH_LOCAL_MODEL` rather than inheriting a
+  global default that is deliberately tuned for cheap bulk work.
+  **The lesson is the failure mode, not the model**: a model too small
+  for a reasoning task does not return a wrong answer you would catch in
+  review, it returns *no* answer — which is byte-for-byte what an honest
+  empty result looks like. Any path where the model's silence is a
+  meaningful output should name its own weights, and a suspiciously fast
+  empty run is worth timing before it is believed.
+- **`OPENAI_API_KEY` on Render is invalid (Jul '26, open)**:
+  `/api/system/llm-status` returns `HTTP 401 — Incorrect API key`. Every
+  `preferQuality` call therefore burns a round trip before falling
+  through to local. Harmless but wasteful; either replace the key or
+  unset it.
+
 - **Document preview 400'd everywhere (Jul '26)**: every in-app preview
   failed with `Preview URL fetch failed (400) … "API not found"`. Root
   cause was not our code — Graph's `/preview` action simply isn't

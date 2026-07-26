@@ -9,6 +9,8 @@
 // Config:
 //   LOCAL_LLM_URL           Base URL of the local endpoint; blank disables.
 //   LOCAL_LLM_MODEL         Defaults to qwen2.5:14b-instruct-q4_K_M.
+//   RESEARCH_LLM_MODEL      Local weights for field research, which does
+//                           not survive the small model. Same default.
 //   LOCAL_LLM_API_KEY       Optional bearer if the tunnel is protected.
 //   LOCAL_LLM_TIMEOUT_MS    Shared default timeout. Defaults to 25000.
 //   ANTHROPIC_API_KEY       Enables Claude. Preferred cloud provider.
