@@ -48,10 +48,21 @@ export default function Pitches() {
   const [industries, setIndustries] = useState([]);
   const [selected, setSelected] = useState(null);
   const [preview, setPreview] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(null);
 
   async function load() {
-    const { data } = await api.get('/pitches');
-    setPitches(data);
+    setLoadError(null);
+    try {
+      const { data } = await api.get('/pitches');
+      setPitches(data);
+    } catch (e) {
+      // Pitches render into a calendar, where an empty month and a
+      // failed fetch are the same picture.
+      setLoadError(e.response?.data?.error || e.message || 'Could not load pitches');
+    } finally {
+      setLoading(false);
+    }
   }
 
   async function loadUsers() {
@@ -170,6 +181,23 @@ export default function Pitches() {
           )
         }
       />
+
+      {loadError && (
+        <div className="mb-4 rounded-lg border border-red-300 bg-red-50 p-4 text-sm text-red-900">
+          <div className="font-semibold">Pitches didn't load.</div>
+          <div className="mt-1">{loadError}</div>
+          <button
+            type="button"
+            onClick={() => { setLoading(true); load(); }}
+            className="mt-2 rounded-lg border border-red-300 bg-white px-3 py-1 text-xs font-semibold text-red-900 hover:bg-red-100"
+          >
+            Try again
+          </button>
+        </div>
+      )}
+      {loading && !loadError && (
+        <div className="mb-4 text-sm text-navy-400">Loading pitches…</div>
+      )}
 
       <Card>
         <div style={{ height: 600 }}>

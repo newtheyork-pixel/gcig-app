@@ -27,10 +27,21 @@ export default function Events() {
   const [modalOpen, setModalOpen] = useState(false);
   const [form, setForm] = useState(emptyForm());
   const [selected, setSelected] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(null);
 
   async function load() {
-    const { data } = await api.get('/events');
-    setEvents(data);
+    setLoadError(null);
+    try {
+      const { data } = await api.get('/events');
+      setEvents(data);
+    } catch (e) {
+      // An empty month is a legitimate calendar view, so a silent
+      // failure here looks like a quiet term rather than a broken page.
+      setLoadError(e.response?.data?.error || e.message || 'Could not load events');
+    } finally {
+      setLoading(false);
+    }
   }
   useEffect(() => {
     load();
@@ -102,6 +113,23 @@ export default function Events() {
           </AdminOnly>
         }
       />
+
+      {loadError && (
+        <div className="mb-4 rounded-lg border border-red-300 bg-red-50 p-4 text-sm text-red-900">
+          <div className="font-semibold">Events didn’t load.</div>
+          <div className="mt-1">{loadError}</div>
+          <button
+            type="button"
+            onClick={() => { setLoading(true); load(); }}
+            className="mt-2 rounded-lg border border-red-300 bg-white px-3 py-1 text-xs font-semibold text-red-900 hover:bg-red-100"
+          >
+            Try again
+          </button>
+        </div>
+      )}
+      {loading && !loadError && (
+        <div className="mb-4 text-sm text-navy-400">Loading events…</div>
+      )}
 
       <Card>
         <div style={{ height: 600 }}>
