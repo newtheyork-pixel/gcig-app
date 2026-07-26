@@ -454,10 +454,101 @@ function Ledger({ project, onChanged }) {
   );
 }
 
+const RELATIONSHIPS = [
+  ['FormerEmployee', 'Former employee'],
+  ['CurrentEmployee', 'Current employee'],
+  ['Customer', 'Customer'],
+  ['Distributor', 'Distributor / retailer'],
+  ['Supplier', 'Supplier'],
+  ['Competitor', 'Competitor'],
+  ['IndustryExpert', 'Industry expert'],
+  ['Other', 'Other'],
+];
+
+// Alias is what appears in every citation; the real name never leaves
+// the server. Relationship is not bookkeeping — a current employee
+// starts the interview at elevated MNPI risk on the strength of this
+// field alone, which is why it is required and not free text.
+function NewSource({ ticker, onDone }) {
+  const [f, setF] = useState({ alias: '', fullName: '', role: '', employer: '', relationship: '' });
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState(null);
+
+  async function save() {
+    setSaving(true);
+    setErr(null);
+    try {
+      const { data } = await api.post('/research/sources', {
+        ...f,
+        tickers: ticker ? [ticker] : [],
+      });
+      onDone(data);
+    } catch (e) {
+      setErr(e.response?.data?.error || 'Could not add the source');
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div style={{ border: '1px solid var(--term-border)', padding: 8, display: 'grid', gap: 6 }}>
+      <div style={{ color: 'var(--term-fg-muted)', fontSize: 10, letterSpacing: 0.5 }}>
+        NEW SOURCE
+      </div>
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+        <input
+          style={{ ...termInput, flex: '1 1 150px' }}
+          placeholder="Alias — how they appear in citations"
+          value={f.alias}
+          onChange={(e) => setF({ ...f, alias: e.target.value })}
+        />
+        <select
+          style={{ ...termInput, flex: '1 1 150px' }}
+          value={f.relationship}
+          onChange={(e) => setF({ ...f, relationship: e.target.value })}
+        >
+          <option value="">Relationship to the company…</option>
+          {RELATIONSHIPS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+        </select>
+      </div>
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+        <input
+          style={{ ...termInput, flex: '1 1 130px' }}
+          placeholder="Real name (never cited)"
+          value={f.fullName}
+          onChange={(e) => setF({ ...f, fullName: e.target.value })}
+        />
+        <input
+          style={{ ...termInput, flex: '1 1 110px' }}
+          placeholder="Role"
+          value={f.role}
+          onChange={(e) => setF({ ...f, role: e.target.value })}
+        />
+        <input
+          style={{ ...termInput, flex: '1 1 110px' }}
+          placeholder="Employer"
+          value={f.employer}
+          onChange={(e) => setF({ ...f, employer: e.target.value })}
+        />
+      </div>
+      {err ? <div style={{ color: 'var(--term-negative)', fontSize: 11 }}>{err}</div> : null}
+      <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+        <TermButton onClick={save} disabled={saving || !f.alias || !f.relationship}>
+          {saving ? 'Adding…' : 'Add source'}
+        </TermButton>
+        <TermButton onClick={() => onDone(null)} disabled={saving}>Cancel</TermButton>
+        <span style={{ color: 'var(--term-fg-muted)', fontSize: 10 }}>
+          Only the alias is ever cited.
+        </span>
+      </div>
+    </div>
+  );
+}
+
 function Interviews({ project, onChanged, setFlash }) {
   const [sources, setSources] = useState([]);
   const [form, setForm] = useState({ sourceId: '', title: '', consent: false, attested: false });
   const [saving, setSaving] = useState(false);
+  const [newSource, setNewSource] = useState(false);
 
   useEffect(() => {
     api.get('/research/sources').then(({ data }) => setSources(data || [])).catch(() => {});
@@ -485,12 +576,27 @@ function Interviews({ project, onChanged, setFlash }) {
 
   return (
     <div style={{ display: 'grid', gap: 10 }}>
+      {newSource ? (
+        <NewSource
+          ticker={project.ticker}
+          onDone={(created) => {
+            setNewSource(false);
+            if (created) {
+              setSources((prev) => [created, ...prev]);
+              setForm((f) => ({ ...f, sourceId: String(created.id) }));
+            }
+          }}
+        />
+      ) : null}
       <div style={{ display: 'grid', gap: 6 }}>
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
           <select
             style={{ ...termInput, flex: '1 1 180px' }}
             value={form.sourceId}
-            onChange={(e) => setForm({ ...form, sourceId: e.target.value })}
+            onChange={(e) => {
+              if (e.target.value === '__new') { setNewSource(true); return; }
+              setForm({ ...form, sourceId: e.target.value });
+            }}
           >
             <option value="">Source…</option>
             {sources.map((s) => (
@@ -498,6 +604,10 @@ function Interviews({ project, onChanged, setFlash }) {
                 {s.alias}{s.employer ? ` — ${s.employer}` : ''}
               </option>
             ))}
+            {/* You meet the source before you log them. Sending someone
+                to another page to write down who they just spoke to is
+                how a call ends up never being recorded at all. */}
+            <option value="__new">+ someone new…</option>
           </select>
           <input
             style={{ ...termInput, flex: '2 1 200px' }}
@@ -559,6 +669,9 @@ function Interviews({ project, onChanged, setFlash }) {
 }
 
 function InterviewRow({ interview: i, onChanged, setFlash }) {
+  const [pasting, setPasting] = useState(false);
+  const [viewing, setViewing] = useState(false);
+  const [text, setText] = useState('');
   const fileRef = useRef(null);
   const [busy, setBusy] = useState('');
 
@@ -596,6 +709,29 @@ function InterviewRow({ interview: i, onChanged, setFlash }) {
     } finally {
       setBusy('');
       if (fileRef.current) fileRef.current.value = '';
+    }
+  }
+
+  async function importText() {
+    setBusy('text');
+    setFlash(null);
+    try {
+      const { data } = await api.post(`/research/interviews/${i.id}/transcript`, { text });
+      const bits = [`Imported ${data.wordCount ?? ''} words.`.replace('  ', ' ')];
+      // The screen runs on the way in, and its verdict is the thing
+      // worth saying — an import that quietly landed something flagged
+      // would be the whole point of the screen defeated.
+      if (data.mnpiRisk && data.mnpiRisk !== 'low') {
+        bits.push(`MNPI screen: ${String(data.mnpiRisk).toUpperCase()}. See Compliance.`);
+      }
+      setFlash({ bad: data.quarantined, text: bits.join(' ') });
+      setText('');
+      setPasting(false);
+      onChanged();
+    } catch (e) {
+      setFlash({ bad: true, text: e.response?.data?.error || 'Could not import the transcript' });
+    } finally {
+      setBusy(null);
     }
   }
 
@@ -648,6 +784,25 @@ function InterviewRow({ interview: i, onChanged, setFlash }) {
           >
             {busy === 'upload' ? 'Transcribing…' : 'Audio'}
           </TermButton>
+          {/* Not every conversation is a recording. Plenty are a call
+              you took notes on, or a transcript that already exists
+              somewhere else — and without a way in, those never become
+              evidence at all. */}
+          <TermButton
+            onClick={() => { setPasting((v) => !v); setViewing(false); }}
+            disabled={!i.consentObtained}
+            title={i.consentObtained ? 'Paste a transcript or your notes' : 'Consent required first'}
+          >
+            {pasting ? 'Cancel' : 'Text'}
+          </TermButton>
+          {i.transcript ? (
+            <TermButton
+              onClick={() => { setViewing((v) => !v); setPasting(false); }}
+              title="Read the transcript"
+            >
+              {viewing ? 'Hide' : 'Transcript'}
+            </TermButton>
+          ) : null}
           <TermButton
             onClick={extract}
             disabled={busy === 'extract' || i.quarantined || i.status === 'Draft'}
@@ -656,6 +811,37 @@ function InterviewRow({ interview: i, onChanged, setFlash }) {
           </TermButton>
         </div>
       </div>
+
+      {pasting ? (
+        <div style={{ display: 'grid', gap: 6, marginTop: 6 }}>
+          <textarea
+            style={{ ...termInput, resize: 'vertical', minHeight: 120 }}
+            placeholder={'Paste the transcript, or type up what was said.\n\n[00:00] Speaker 0: …\n[00:14] Speaker 1: …\n\nTimestamps are read per turn if you have them. Without them the whole thing lands as one turn, which still cites but cannot point at a moment.'}
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+          />
+          <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+            <TermButton onClick={importText} disabled={busy === 'text' || !text.trim()}>
+              {busy === 'text' ? 'Importing…' : 'Save transcript'}
+            </TermButton>
+            <span style={{ color: 'var(--term-fg-muted)', fontSize: 10 }}>
+              Screened for MNPI on the way in, the same as a recording.
+            </span>
+          </div>
+        </div>
+      ) : null}
+
+      {viewing ? (
+        <pre
+          style={{
+            marginTop: 6, maxHeight: 320, overflow: 'auto', whiteSpace: 'pre-wrap',
+            color: 'var(--term-fg-dim)', fontSize: 11, fontFamily: 'inherit',
+            border: '1px solid var(--term-border)', padding: 8,
+          }}
+        >
+          {i.transcript}
+        </pre>
+      ) : null}
     </div>
   );
 }
