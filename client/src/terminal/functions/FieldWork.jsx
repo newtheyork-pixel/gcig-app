@@ -309,6 +309,8 @@ function ProjectPane({ id, onBack }) {
         </div>
       ) : null}
 
+      <ComplianceStrip interviews={p.interviews} />
+
       {/* Transcription is a paid API configured server-side. If the key
           isn't set, say so here rather than letting someone wait out a
           long upload to be told at the end. */}
@@ -1253,6 +1255,72 @@ function TargetDetail({ target: t, onBack, onChanged }) {
             </pre>
           </div>
         ))
+      )}
+    </div>
+  );
+}
+
+// Compliance at a glance, above the tabs.
+//
+// The MNPI screen runs on every transcript at ingest, but its result
+// only lived on individual interview rows — so a project could hold a
+// quarantined interview and nothing said so until you went looking.
+// Compliance state is the kind of thing that has to be visible without
+// being asked for, because the failure mode is someone citing evidence
+// they were never allowed to use.
+function ComplianceStrip({ interviews }) {
+  const list = interviews || [];
+  if (list.length === 0) return null;
+
+  const quarantined = list.filter((i) => i.quarantined);
+  const elevated = list.filter((i) => !i.quarantined && i.mnpiRisk === 'elevated');
+  const unscreened = list.filter((i) => !i.screenedAt);
+  const noConsent = list.filter((i) => !i.consentObtained);
+
+  // Silence is the normal state and should read as reassurance, not as
+  // an absence of checking.
+  const clean =
+    !quarantined.length && !elevated.length && !unscreened.length && !noConsent.length;
+
+  const chip = (label, n, color, title) =>
+    n > 0 ? (
+      <span title={title} style={{ color, fontSize: 10, letterSpacing: 0.5, marginRight: 12 }}>
+        {label}: {n}
+      </span>
+    ) : null;
+
+  return (
+    <div
+      style={{
+        borderTop: '1px solid var(--term-border)',
+        borderBottom: '1px solid var(--term-border)',
+        padding: '4px 0',
+        display: 'flex',
+        alignItems: 'baseline',
+        flexWrap: 'wrap',
+      }}
+    >
+      <span style={{ color: 'var(--term-fg-muted)', fontSize: 10, letterSpacing: 0.5, marginRight: 12 }}>
+        MNPI
+      </span>
+      {clean ? (
+        <span style={{ color: 'var(--term-positive)', fontSize: 10, letterSpacing: 0.5 }}>
+          {list.length} interview{list.length === 1 ? '' : 's'} screened · none flagged
+        </span>
+      ) : (
+        <>
+          {chip('QUARANTINED', quarantined.length, 'var(--term-negative)',
+            'Screened as containing material non-public information. Claims excluded from the ledger and from any memo.')}
+          {chip('ELEVATED', elevated.length, 'var(--term-amber, var(--term-white))',
+            'Brushes something sensitive, or the source is a current employee. Read before citing.')}
+          {chip('UNSCREENED', unscreened.length, 'var(--term-amber, var(--term-white))',
+            'No MNPI screen has run on this transcript yet.')}
+          {chip('NO CONSENT', noConsent.length, 'var(--term-negative)',
+            'Consent to record was never recorded for this interview.')}
+          <span style={{ color: 'var(--term-fg-muted)', fontSize: 10 }}>
+            of {list.length}
+          </span>
+        </>
       )}
     </div>
   );
