@@ -990,6 +990,20 @@ router.post('/interviews/:id/extract', canResearch, heavyLimiter, async (req, re
       return res.status(503).json({ error: 'The research model is unavailable right now.' });
     }
 
+    // Re-extraction replaces machine-extracted claims, which silently
+    // destroyed every claim-to-question link a person had made — a
+    // re-run after a prompt change wiped the entire coverage picture and
+    // nothing said so. Carry the links across by where the claim sits in
+    // the recording, which is stable across re-extractions in a way that
+    // wording is not.
+    const priorLinks = new Map();
+    for (const c of await prisma.researchClaim.findMany({
+      where: { interviewId: id, questionId: { not: null } },
+      select: { startMs: true, questionId: true },
+    })) {
+      priorLinks.set(c.startMs, c.questionId);
+    }
+
     const written = await prisma.$transaction(async (tx) => {
       await tx.researchClaim.deleteMany({
         where: { interviewId: id, verifiedById: null },
@@ -1007,6 +1021,8 @@ router.post('/interviews/:id/extract', canResearch, heavyLimiter, async (req, re
           topic: c.topic,
           kind: c.kind,
           extractionConfidence: c.extractionConfidence,
+          // Restored if a claim at this offset was linked before.
+          questionId: priorLinks.get(c.startMs) ?? null,
         })),
       });
       await tx.interview.update({ where: { id }, data: { status: 'Extracted' } });
@@ -1015,6 +1031,7 @@ router.post('/interviews/:id/extract', canResearch, heavyLimiter, async (req, re
 
     res.json({
       extracted: written,
+      relinked: claims.filter((c) => priorLinks.has(c.startMs)).length,
       // A transcript read in six windows of which two failed has not
       // been fully read, and the caller must be able to tell.
       windows,
