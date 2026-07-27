@@ -64,8 +64,30 @@ const REQUIRED = [
     why: 'Does not say the call is unpaid. Expert networks pay for exactly this kind of conversation, so silence lets the recipient assume we do too',
   },
   {
+    // The weakest of the three, and knowingly so. Whether an email
+    // bounds its own scope is a question about meaning, and a regex can
+    // only ask whether it recognises the phrasing. The first cut looked
+    // for "not asking about" and flagged a draft that said "we're ONLY
+    // asking about what you saw during your own time there, not about
+    // anything since you left" — better bounded than the text that
+    // passed, and marked as missing it.
+    //
+    // A check that fires on good writing is how a flag becomes noise
+    // people click past, which costs more than the miss it prevents. So
+    // this recognises the constructions people actually reach for, and
+    // when it is the ONLY thing firing the model's read is usually the
+    // better guide.
     key: 'scope',
-    test: (t) => /not\s+asking\s+about|nothing\s+confidential|already\s+public|business\s+today/i.test(t),
+    test: (t) =>
+      /\b(?:not|never)\s+asking\s+(?:you\s+)?(?:for|about)\b/i.test(t) ||
+      /\bonly\s+asking\s+(?:you\s+)?about\b/i.test(t) ||
+      /\bnot\s+about\s+(?:anything|any)\b/i.test(t) ||
+      /\bnothing\s+confidential\b/i.test(t) ||
+      /\balready\s+public\b/i.test(t) ||
+      /\b(?:business|numbers)\s+today\b/i.test(t) ||
+      /\bown\s+business\b/i.test(t) ||
+      /\bduring\s+your\s+(?:own\s+)?time\s+there\b/i.test(t) ||
+      /\bwhile\s+you\s+were\s+there\b/i.test(t),
     why: 'Does not bound what we are asking for. Recently departed employees need to know we are not after their former employer\'s current business',
   },
 ];
