@@ -487,4 +487,26 @@ router.post('/', chatLimiter, async (req, res) => {
   });
 });
 
+// The assembled system prompt, for looking at.
+//
+// Added because a whole afternoon went into guessing why the assistant
+// could not see the valuations, using the model's own answers as
+// evidence — and those answers turned out to be unreliable: asked
+// whether two strings that ARE in its context were present, it said yes
+// to one and no to the other. Debugging a prompt through the model
+// reading it back is debugging through a witness who cannot read.
+//
+// Super-admin only. It contains the whole brief, including the
+// role-gated research section.
+router.get('/debug/prompt', async (req, res) => {
+  if (!req.user?.isSuperAdmin) return res.status(403).json({ error: 'Forbidden' });
+  const topic = typeof req.query.topic === 'string' ? req.query.topic : '';
+  try {
+    const prompt = await getClubSystemPrompt({ user: req.user, topic, forceFresh: true });
+    res.type('text/plain').send(prompt);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 export default router;
