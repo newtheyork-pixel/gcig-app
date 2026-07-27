@@ -269,17 +269,6 @@ export async function buildResearchContext(user, topic = '') {
         take: 12,
         include: { siteObservations: { take: 3 } },
       });
-      if (visits.length) {
-        out.push('', `**Stores and sites we visited (${visits.length})**`);
-        for (const vis of visits.slice(0, 8)) {
-          const obs = (vis.siteObservations || []).map((o) => o.text).filter(Boolean);
-          out.push(
-            `- ${vis.location || 'unnamed site'}` +
-              (vis.visitedAt ? ` (${new Date(vis.visitedAt).toISOString().slice(0, 10)})` : '') +
-              (obs.length ? `: ${obs.join('; ').slice(0, 220)}` : '')
-          );
-        }
-      }
 
       const answered = [];
       const open = [];
@@ -327,6 +316,26 @@ export async function buildResearchContext(user, topic = '') {
           ...answered
         );
       }
+      // Rendered AFTER the findings, deliberately.
+      //
+      // This section has a hard character budget and the tail is what
+      // gets dropped. With visits above them, 2.7 KB of site notes
+      // survived while 28 lines of findings — each a pinned, timestamped
+      // quote — were cut. Observations are real evidence but they are
+      // the weaker kind: there is no recording to walk back to. If
+      // something has to go, it should be this.
+      if (visits.length) {
+        out.push('', `**Stores and sites we visited (${visits.length})**`);
+        for (const vis of visits.slice(0, 8)) {
+          const obs = (vis.siteObservations || []).map((o) => o.text).filter(Boolean);
+          out.push(
+            `- ${vis.location || 'unnamed site'}` +
+              (vis.visitedAt ? ` (${new Date(vis.visitedAt).toISOString().slice(0, 10)})` : '') +
+              (obs.length ? `: ${obs.join('; ').slice(0, 220)}` : '')
+          );
+        }
+      }
+
       if (open.length) {
         out.push(
           '',
