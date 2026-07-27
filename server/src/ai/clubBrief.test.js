@@ -76,10 +76,25 @@ test('a policy question carries them in full', async () => {
 });
 
 // The prompt must not advertise a capability the process does not have.
-test('with tools off, the prompt says it cannot look anything up', async () => {
-  const p = await getClubSystemPrompt({ topic: 'what is AIT trading at' });
-  assert.match(p, /You cannot look anything up/);
-  assert.match(p, /as of our last sync/);
-  // And must not claim a fetch it cannot perform.
-  assert.ok(!/You can fetch things rather than guessing/.test(p));
+test('the prompt only claims a capability the process actually has', async () => {
+  // The bug this pins: the Tools section was unconditional, so with
+  // tools disabled the model was told "you can fetch things rather than
+  // guessing" — and then reported a cached portfolio price as
+  // "currently trading at" because it had nothing to fetch with.
+  const prev = process.env.AI_CHAT_TOOLS;
+  try {
+    process.env.AI_CHAT_TOOLS = '0';
+    const off = await getClubSystemPrompt({ topic: 'what is AIT trading at', forceFresh: true });
+    assert.match(off, /You cannot look anything up/);
+    assert.match(off, /as of our last sync/);
+    assert.ok(!/You can fetch things rather than guessing/.test(off));
+
+    delete process.env.AI_CHAT_TOOLS;
+    const on = await getClubSystemPrompt({ topic: 'what is AIT trading at', forceFresh: true });
+    assert.match(on, /get_quote/);
+    assert.ok(!/You cannot look anything up/.test(on));
+  } finally {
+    if (prev === undefined) delete process.env.AI_CHAT_TOOLS;
+    else process.env.AI_CHAT_TOOLS = prev;
+  }
 });

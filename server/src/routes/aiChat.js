@@ -389,7 +389,15 @@ router.post('/', chatLimiter, async (req, res) => {
   // So the default is the behaviour that actually works, and the tool
   // path stays in the tree behind AI_CHAT_TOOLS=1 for the next time
   // there is a better local model to point it at.
-  const toolsEnabled = process.env.AI_CHAT_TOOLS === '1';
+  // On by default now, off with AI_CHAT_TOOLS=0.
+  //
+  // It was defaulted off when the brief ran to 31 KB and the model
+  // fetched the right price then answered about something else. The
+  // prompt is now assembled by relevance and is a fraction of that, which
+  // is the condition the tool path always worked under in isolation. The
+  // kill switch stays an env var so it can be turned off without a
+  // deploy if it misbehaves in front of members.
+  const toolsEnabled = process.env.AI_CHAT_TOOLS !== '0';
   const attempt = toolsEnabled
     ? await runWithTools(modelMessages, temp)
     : {

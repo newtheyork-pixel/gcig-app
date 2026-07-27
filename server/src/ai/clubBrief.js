@@ -1021,8 +1021,8 @@ async function buildLiveContext() {
 //
 // A prompt that advertises a capability the process does not have is a
 // prompt that instructs the model to pretend.
-const TOOLS_BLOCK =
-  process.env.AI_CHAT_TOOLS === '1'
+function toolsBlock() {
+  return process.env.AI_CHAT_TOOLS !== '0'
     ? `## Tools
 You can fetch things rather than guessing at them:
 - **get_quote** — what a ticker is trading at now. Call it any time you
@@ -1050,6 +1050,7 @@ something.
 For any ticker NOT in the Portfolio section you have no price at all.
 Say so. Do not estimate one, and do not offer a figure from memory —
 your training data is older than the market.`;
+}
 
 const SCOPE_DIRECTIVE = `You are the Griffin Fund Assistant — an in-house AI tool for Grace Church School's student-led Investment Group ("The Griffin Fund" / GCS Investment Group).
 
@@ -1084,7 +1085,7 @@ Concretely:
 - General market knowledge is fine and useful — but label it as such,
   and keep it clearly apart from anything of ours.
 
-${TOOLS_BLOCK}
+__TOOLS_BLOCK__
 
 ## What you do NOT have
 So you can say so plainly rather than guessing:
@@ -1213,7 +1214,11 @@ async function buildBrief() {
     '',
   ].join('\n');
 
-  return { head: SCOPE_DIRECTIVE + '\n', policy, sections };
+  // Substituted when the brief is built rather than baked in at module
+  // load, so the prompt tracks the flag rather than whatever it was when
+  // the process started.
+  const head = SCOPE_DIRECTIVE.replace('__TOOLS_BLOCK__', toolsBlock()) + '\n';
+  return { head, policy, sections };
 }
 
 // Assemble the live-data sections this question actually needs.
