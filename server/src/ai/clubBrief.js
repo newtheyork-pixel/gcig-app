@@ -1163,9 +1163,12 @@ async function buildBrief() {
     sections = null;
   }
 
-  const head = [
-    SCOPE_DIRECTIVE,
-    '',
+  // The two reference documents are ~10 KB and were going in on every
+  // message. They matter for a question about quorum or allocation
+  // limits and are dead weight in front of "what is Apple trading at" —
+  // which is the question the assistant kept failing, by answering from
+  // whatever else was in the prompt.
+  const policy = [
     '---',
     '',
     '# Reference: Investment Policy Statement',
@@ -1182,7 +1185,7 @@ async function buildBrief() {
     '',
   ].join('\n');
 
-  return { head, sections };
+  return { head: SCOPE_DIRECTIVE + '\n', policy, sections };
 }
 
 // Assemble the live-data sections this question actually needs.
@@ -1194,6 +1197,15 @@ async function buildBrief() {
 // omitted sections are listed by name with an instruction to say they
 // can be pulled up rather than to answer from memory.
 const LIVE_BUDGET = 14_000;
+
+// Questions that genuinely need the IPS or the Internal Policies in
+// full. Everything else gets a pointer to them instead of ten kilobytes.
+const POLICY_WORDS = [
+  'policy', 'policies', 'ips', 'rule', 'rules', 'quorum', 'vote', 'voting',
+  'allocation', 'limit', 'mandate', 'charter', 'procedure', 'bylaw',
+  'role', 'president', 'cio', 'officer', 'eligib', 'attendance', 'constitution',
+  'allowed', 'permitted', 'supposed to', 'how do we', 'how does the club',
+];
 
 export function selectSections(sections, topic, now = new Date()) {
   const t = String(topic || '').toLowerCase();
@@ -1286,7 +1298,19 @@ export async function getClubSystemPrompt({ forceFresh = false, user = null, top
   const live = built.sections
     ? selectSections(built.sections, topic)
     : '## Live Club Data\n_Live data unavailable right now._';
-  const base = built.head + live;
+
+  // Policy text only when the question is about how the club runs. The
+  // absence is stated rather than silent, so the model offers to look it
+  // up instead of improvising a rule.
+  const wantsPolicy = POLICY_WORDS.some((w) => String(topic || '').toLowerCase().includes(w));
+  const policy = wantsPolicy
+    ? built.policy
+    : '---\n\n_The IPS and Internal Policies are not loaded for this question._\n' +
+      '_They exist. If asked anything about how the club runs — voting,_\n' +
+      '_quorum, allocation limits, roles, procedure — say you can pull them_\n' +
+      '_up, and do NOT state a rule from memory._\n\n---\n';
+
+  const base = built.head + policy + live;
   // Deliberately outside the cache and after the user block: the field
   // research is role-gated, and a cached brief is shared by everyone who
   // asks. Caching this would hand the claim ledger to whoever happened

@@ -53,3 +53,24 @@ test('naming a ticker pulls in the section about it', () => {
   assert.ok(selectSections(withTickers, 'tell me about JNJ').includes('JNJ coverage note'));
   assert.ok(!selectSections(withTickers, 'tell me about Apple').includes('JNJ coverage note'));
 });
+
+// Policy gating. The IPS and Internal Policies are ~10 KB and were
+// going in on every message — dead weight in front of "what is Apple
+// trading at", which is the question the assistant kept failing by
+// answering from whatever else was in the prompt.
+import { getClubSystemPrompt } from './clubBrief.js';
+
+test('a price question does not carry the policy documents', async () => {
+  const p = await getClubSystemPrompt({ topic: 'what is the price of Apple' });
+  assert.ok(!/Investment Policy Statement\n\n[A-Za-z]/.test(p), 'IPS body must be absent');
+  // And absence is stated, not silent — otherwise the model invents a
+  // rule when someone follows up about voting.
+  assert.match(p, /not loaded for this question/i);
+  assert.match(p, /do NOT state a rule from memory/i);
+});
+
+test('a policy question carries them in full', async () => {
+  const p = await getClubSystemPrompt({ topic: 'what is the quorum for a vote?' });
+  assert.match(p, /# Reference: Investment Policy Statement/);
+  assert.match(p, /# Reference: Internal Club Policies/);
+});
