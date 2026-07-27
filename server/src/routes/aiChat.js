@@ -2,7 +2,8 @@ import { Router } from 'express';
 import rateLimit from 'express-rate-limit';
 import prisma from '../db.js';
 import { verifyJwt } from '../middleware/auth.js';
-import { llmChat, RESEARCH_LOCAL_MODEL } from '../services/llm.js';
+import { llmChat, llmChatTools, RESEARCH_LOCAL_MODEL } from '../services/llm.js';
+import { TOOL_SPECS, runChatTool } from '../ai/chatTools.js';
 import { getClubSystemPrompt } from '../ai/clubBrief.js';
 
 // The Griffin Fund AI Assistant — conversational endpoint backed by the
@@ -18,6 +19,61 @@ import { getClubSystemPrompt } from '../ai/clubBrief.js';
 
 const router = Router();
 router.use(verifyJwt);
+
+// How many times the model may call a tool before we make it answer.
+//
+// Bounded because an unbounded loop is a way to burn the GPU and the
+// member's patience on a question that is never going to resolve —
+// three is enough for "price this, price that, now compare", and a
+// model still asking on the fourth is looping rather than working.
+const MAX_TOOL_ROUNDS = 3;
+
+// One reply, with the model allowed to fetch what it needs first.
+//
+// Falls back to a plain completion if the tool path returns nothing, so
+// a model that cannot do tool calling still answers from its context
+// rather than failing outright.
+async function runWithTools(messages, temperature) {
+  const convo = [...messages];
+
+  for (let round = 0; round < MAX_TOOL_ROUNDS; round += 1) {
+    const out = await llmChatTools({
+      messages: convo,
+      tools: TOOL_SPECS,
+      temperature,
+      timeoutMs: 120_000,
+      localModel: RESEARCH_LOCAL_MODEL,
+    });
+    if (!out) break;
+
+    const calls = out.toolCalls || [];
+    if (calls.length === 0) {
+      if (out.content) return out.content;
+      break;
+    }
+
+    // The assistant turn that requested the tools has to go back in
+    // verbatim, tool_calls and all, or the tool results below have
+    // nothing to attach to and the model sees answers to questions it
+    // never asked.
+    convo.push({ role: 'assistant', content: out.content || '', tool_calls: calls });
+
+    for (const call of calls) {
+      const name = call?.function?.name;
+      const result = await runChatTool(name, call?.function?.arguments);
+      convo.push({
+        role: 'tool',
+        tool_call_id: call.id,
+        name,
+        content: JSON.stringify(result),
+      });
+    }
+  }
+
+  // Either it ran out of rounds or the tool path was unavailable. Ask
+  // once more without tools so there is always an answer.
+  return llmChat({ messages: convo, temperature, localModel: RESEARCH_LOCAL_MODEL });
+}
 
 // 60 requests / 10 minutes per user. Generous for normal Q&A, tight
 // enough to catch a runaway client or bulk-prompt abuse.
@@ -185,11 +241,12 @@ router.post('/', chatLimiter, async (req, res) => {
   // A model that fabricates a citation is worse than one that declines,
   // because the fabrication carries the authority of the section it
   // claims to be quoting.
-  const reply = await llmChat({
-    messages: modelMessages,
-    temperature: temp,
-    localModel: RESEARCH_LOCAL_MODEL,
-  });
+  //
+  // Tools go in for the same reason. The prompt carries a portfolio
+  // snapshot from the last sync, so asked what a name is trading at the
+  // model either quoted a stale figure as current or made one up. Now it
+  // can go and look.
+  const reply = await runWithTools(modelMessages, temp);
   const latencyMs = Date.now() - startedAt;
 
   if (!reply) {

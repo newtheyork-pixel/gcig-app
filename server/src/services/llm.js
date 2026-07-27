@@ -58,6 +58,7 @@ async function callEndpoint({
   temperature,
   jsonMode,
   timeoutMs,
+  tools,
 }) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -66,6 +67,7 @@ async function callEndpoint({
       model,
       messages,
       ...(jsonMode ? { response_format: { type: 'json_object' } } : {}),
+      ...(Array.isArray(tools) && tools.length ? { tools } : {}),
     };
     if (!isReasoningModel(model) && temperature != null) {
       body.temperature = temperature;
@@ -91,8 +93,16 @@ async function callEndpoint({
       return { ok: false, status: res.status, detail };
     }
     const json = await res.json();
-    const content = json?.choices?.[0]?.message?.content;
-    return { ok: true, content: typeof content === 'string' ? content : null };
+    const msg = json?.choices?.[0]?.message;
+    const content = msg?.content;
+    return {
+      ok: true,
+      content: typeof content === 'string' ? content : null,
+      // Carried through for the tool loop. A model answering with a tool
+      // call and no prose returns content:'' — which the string-only
+      // path read as an empty reply and discarded.
+      toolCalls: Array.isArray(msg?.tool_calls) ? msg.tool_calls : null,
+    };
   } catch (err) {
     return { ok: false, error: err };
   } finally {
@@ -201,7 +211,7 @@ function logFailure(provider, result) {
 // Individual provider callers, keyed by name. Each returns the shared
 // { ok, content, ... } result shape and is a no-op (returns null) when its
 // env isn't configured, so the runner can just skip it.
-function runProvider(name, { messages, temperature, jsonMode, timeoutMs, localModel }) {
+function runProvider(name, { messages, temperature, jsonMode, timeoutMs, localModel, tools }) {
   if (name === 'local') {
     if (!process.env.LOCAL_LLM_URL) return null;
     return callEndpoint({
@@ -221,6 +231,7 @@ function runProvider(name, { messages, temperature, jsonMode, timeoutMs, localMo
       temperature,
       jsonMode,
       timeoutMs,
+      tools,
     });
   }
   if (name === 'anthropic') {
@@ -291,6 +302,37 @@ export async function llmChat({
   }
 
   return null;
+}
+
+// Same call, but returns { content, toolCalls } instead of a string.
+//
+// A model answering with a tool call and no prose returns content:'',
+// which llmChat treats as a failure and drops on the floor — correct for
+// every caller that just wants text, and fatal for a tool loop. Local
+// only: tool calling here runs against the OpenAI-compatible endpoint,
+// and Anthropic's tool shape is different enough that silently falling
+// through to it would produce a reply with the tools quietly ignored.
+export async function llmChatTools({
+  messages,
+  tools,
+  temperature,
+  timeoutMs,
+  localModel,
+} = {}) {
+  if (!Array.isArray(messages) || messages.length === 0) return null;
+  const result = await runProvider('local', {
+    messages,
+    temperature,
+    timeoutMs: Number(timeoutMs) || DEFAULT_TIMEOUT_MS,
+    localModel,
+    tools,
+  });
+  if (!result) return null;
+  if (!result.ok) {
+    logFailure('local', result);
+    return null;
+  }
+  return { content: result.content, toolCalls: result.toolCalls };
 }
 
 // ── Health check ────────────────────────────────────────────────────
