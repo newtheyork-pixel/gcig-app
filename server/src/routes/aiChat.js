@@ -370,7 +370,37 @@ router.post('/', chatLimiter, async (req, res) => {
   // snapshot from the last sync, so asked what a name is trading at the
   // model either quoted a stale figure as current or made one up. Now it
   // can go and look.
-  const attempt = await runWithTools(modelMessages, temp);
+  // Tools are OFF unless explicitly enabled.
+  //
+  // The tool path works in isolation — both local models call get_quote
+  // correctly, three trials each, and answer cleanly from the result.
+  // Against the real brief they do not: across dozens of production
+  // attempts at "what is the price of Apple" the quote was fetched
+  // correctly almost every time and the reply was a greeting, a
+  // deflection, an answer about a different holding, or in three cases
+  // Thai and Chinese text and a fabricated $142.65.
+  //
+  // Eight fixes narrowed it — gating research, trimming news, gating the
+  // policy documents, deduping calls, restating the question after the
+  // tool output — and none made it reliable. An assistant that fetches
+  // the right number and then fails to say it is worse than one that
+  // never claimed it could: the chips make it look as though it checked.
+  //
+  // So the default is the behaviour that actually works, and the tool
+  // path stays in the tree behind AI_CHAT_TOOLS=1 for the next time
+  // there is a better local model to point it at.
+  const toolsEnabled = process.env.AI_CHAT_TOOLS === '1';
+  const attempt = toolsEnabled
+    ? await runWithTools(modelMessages, temp)
+    : {
+        text: await llmChat({
+          messages: modelMessages,
+          temperature: temp,
+          localModel: RESEARCH_LOCAL_MODEL,
+        }),
+        fromTools: [],
+        used: [],
+      };
   let reply = attempt?.text ?? null;
 
   const invented = unbackedPrice(reply, attempt?.fromTools || []);
