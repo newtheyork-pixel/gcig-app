@@ -33,27 +33,16 @@ import { retrieve } from './retrieve.js';
 
 const MIN_RANK = ROLE_RANK.Analyst;
 
-// A hard ceiling on this section, in characters.
+// What the retrieved evidence may occupy.
 //
-// It is appended to the end of an already long prompt, and a model with
-// a bounded window drops the tail first. Silent truncation is the worst
-// outcome available here: the model does not know evidence was cut, so
-// it answers as though we never gathered it — which is exactly how the
-// first version produced "industry norms suggest 1 to 2 times per week"
-// under a heading claiming it was our research.
-//
-// So the budget is explicit, and when it bites the block SAYS what was
-// dropped. A model told "12 further findings were omitted for length"
-// can say it does not have them to hand. A model handed a quietly
-// shortened list cannot tell that anything is missing.
-// Raised from 9,000 when the valuation inputs moved in: a comps model
-// carries its finding in its assumptions, so those lines are evidence
-// rather than padding, and the alternative was findings being pushed out
-// by the models that are supposed to answer to them.
-// What the retrieved evidence may occupy. Far smaller than the old
-// 12,000-character dump, because the point is no longer to fit
-// everything — it is to send the part that answers the question, in a
-// prompt short enough that the model actually reads it.
+// Far smaller than the 12,000-character dump it replaced, because the
+// point is no longer to fit everything. That approach failed twice over:
+// it truncated blindly at a character count, so the answer was dropped
+// whenever it happened to sort last — and even when it survived, it
+// arrived buried in twelve kilobytes the model read straight past,
+// answering "we did not establish any valuation methods" with the DCF
+// sitting in front of it. Sending the right 4,500 characters beats
+// sending all 12,000.
 const RETRIEVE_BUDGET = 4_500;
 
 // Interviews whose claims may be repeated to anyone. Quarantined is the
