@@ -85,6 +85,19 @@ const HANDLERS = {
     if (tickers.length === 0) return { error: 'No ticker given.' };
 
     const quotes = await resolveQuotes(tickers);
+    // Best-effort naming; a null name is better than a guessed one, and
+    // the model is told below not to invent one.
+    const names = {};
+    await Promise.all(
+      tickers.map(async (t) => {
+        try {
+          const snap = await getPeerSnapshot(t);
+          if (snap?.name) names[t] = snap.name;
+        } catch {
+          /* a missing name must not cost the price */
+        }
+      })
+    );
     const found = [];
     const missing = [];
     for (const t of tickers) {
@@ -95,6 +108,12 @@ const HANDLERS = {
       }
       found.push({
         ticker: t,
+        // The company's actual name, because without it the model
+        // supplies one from whatever else is in its context: asked for
+        // AIT while holding a Lindt research brief, it returned the
+        // correct price of 347.06 labelled "Lindt & Sprüngli AG". A real
+        // figure under the wrong company is worse than a missing one.
+        name: names[t] || null,
         price: q.price,
         previousClose: q.prevClose ?? null,
         dayChange: q.dayChange ?? null,
@@ -109,7 +128,8 @@ const HANDLERS = {
       quotes: found,
       ...(missing.length ? { couldNotPrice: missing } : {}),
       asOf: new Date().toISOString(),
-      note: 'Delayed or last-sale prices, not a live trading feed.',
+      note:
+        'Delayed or last-sale prices, not a live trading feed. Where `name` is null we could not confirm the company — report the TICKER only and do not name the company from memory.',
     };
   },
 

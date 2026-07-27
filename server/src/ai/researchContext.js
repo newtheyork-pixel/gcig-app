@@ -109,6 +109,13 @@ export async function buildResearchContext(user) {
       '**nothing corroborates it** — say so when you use it. Two colleagues',
       'at the same employer are one line of evidence, not two.',
       '',
+      '**This section covers ONLY the projects named below.** It says',
+      'nothing about any other company, and it is not the subject of',
+      'every question. Asked about a ticker that does not appear here,',
+      'answer the question actually asked and do not drag this research',
+      'into it. Reporting one company\'s price under another company\'s',
+      'name is a serious error, and it has already happened once.',
+      '',
     ];
 
     for (const p of projects) {
