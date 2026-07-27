@@ -124,6 +124,16 @@ const HANDLERS = {
     }
     // Named, not silently dropped: a model handed four quotes when it
     // asked for five will happily answer about the fifth.
+    // An empty result is a FAILURE, not a success with no rows. Without
+    // this the UI chip renders gold — "Live price · AAPL", looking
+    // fetched — over a reply that says we have nothing. The member sees
+    // a successful lookup and a refusal side by side and cannot tell
+    // which to believe.
+    if (found.length === 0) {
+      return {
+        error: `Could not price ${tickers.join(', ')}. Say you could not retrieve the price — do not estimate one.`,
+      };
+    }
     return {
       quotes: found,
       ...(missing.length ? { couldNotPrice: missing } : {}),

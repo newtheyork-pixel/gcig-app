@@ -42,6 +42,10 @@ async function runWithTools(messages, temperature) {
   // a live quote and one that came from the model's context read
   // identically otherwise, and only one of them is current.
   const used = [];
+  // Tool call -> result, so a repeated identical request is answered
+  // from cache rather than refetched.
+  const seen = new Map();
+  let gotData = false;
 
   for (let round = 0; round < MAX_TOOL_ROUNDS; round += 1) {
     const out = await llmChatTools({
@@ -67,9 +71,19 @@ async function runWithTools(messages, temperature) {
 
     for (const call of calls) {
       const name = call?.function?.name;
-      const result = await runChatTool(name, call?.function?.arguments);
+      // The model re-asked for the identical thing rather than answering
+      // — live, "what is the price of Apple" produced two identical
+      // get_quote · AAPL calls and then a refusal. Serve the cached
+      // answer instead of fetching twice, and stop it counting as
+      // progress.
+      const key = `${name}:${call?.function?.arguments || ''}`;
+      const result = seen.has(key)
+        ? seen.get(key)
+        : await runChatTool(name, call?.function?.arguments);
+      const repeat = seen.has(key);
+      seen.set(key, result);
       const json = JSON.stringify(result);
-      used.push({
+      if (!repeat) used.push({
         name,
         // The argument that makes the call legible — a ticker, mostly.
         subject: (() => {
@@ -82,6 +96,7 @@ async function runWithTools(messages, temperature) {
         // successful one is the same lie in a smaller font.
         ok: !result?.error,
       });
+      if (!result?.error) gotData = true;
       for (const m of json.matchAll(/-?\d+(?:\.\d+)?/g)) fromTools.push(m[0]);
       convo.push({ role: 'tool', tool_call_id: call.id, name, content: json });
     }
@@ -89,6 +104,22 @@ async function runWithTools(messages, temperature) {
 
   // Either it ran out of rounds or the tool path was unavailable. Ask
   // once more without tools so there is always an answer.
+  // Out of rounds. If tools DID return data, the model has an answer in
+  // front of it and simply kept asking — live it went on to say "we did
+  // not establish that based on our research" while a good AAPL quote
+  // sat in the conversation. Make the last call an instruction to use
+  // what it already has.
+  if (gotData) {
+    convo.push({
+      role: 'system',
+      content:
+        'The tool results above contain what was asked for. Answer the ' +
+        "member's question directly from them now. Do not call another " +
+        'tool, and do not say the information was not established — that ' +
+        'phrasing is only for questions about our own field research, not ' +
+        'for market data you have just been handed.',
+    });
+  }
   const text = await llmChat({ messages: convo, temperature, localModel: RESEARCH_LOCAL_MODEL });
   return { text, fromTools, used };
 }
