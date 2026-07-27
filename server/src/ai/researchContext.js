@@ -1,6 +1,7 @@
 import prisma from '../db.js';
 import { ROLE_RANK } from '../middleware/auth.js';
 import { formatStamp } from '../services/transcription.js';
+import { retrieve } from './retrieve.js';
 
 // What our own fieldwork found, for the assistant.
 //
@@ -49,7 +50,11 @@ const MIN_RANK = ROLE_RANK.Analyst;
 // carries its finding in its assumptions, so those lines are evidence
 // rather than padding, and the alternative was findings being pushed out
 // by the models that are supposed to answer to them.
-const MAX_CHARS = 12_000;
+// What the retrieved evidence may occupy. Far smaller than the old
+// 12,000-character dump, because the point is no longer to fit
+// everything — it is to send the part that answers the question, in a
+// prompt short enough that the model actually reads it.
+const RETRIEVE_BUDGET = 4_500;
 
 // Interviews whose claims may be repeated to anyone. Quarantined is the
 // obvious exclusion. The subtler one is an interview the screen flagged
@@ -114,6 +119,11 @@ export async function buildResearchContext(user, topic = '') {
       },
     });
     if (projects.length === 0) return '';
+
+    // Everything we could say, as addressable pieces. What actually
+    // goes in the prompt is chosen from these by relevance — see
+    // retrieve.js for why stuffing the lot stopped working.
+    const chunks = [];
 
     const out = [
       '',
@@ -187,15 +197,19 @@ export async function buildResearchContext(user, topic = '') {
         orderBy: { id: 'asc' },
       });
 
-      out.push(`### ${p.ticker ? `${p.ticker} — ` : ''}${p.name}  _(${p.status})_`);
-      if (p.brief) out.push(`Brief: ${p.brief.slice(0, 400)}`);
-      out.push(
-        `${p._count.interviews} interview(s), ${claims.length} citable claim(s).`
-      );
+      chunks.push({
+        id: `hdr${p.id}`,
+        kind: 'header',
+        always: true,
+        text: [
+          `### ${p.ticker ? `${p.ticker} — ` : ''}${p.name}  _(${p.status})_`,
+          p.brief ? `Brief: ${p.brief.slice(0, 240)}` : null,
+          `${p._count.interviews} interview(s), ${claims.length} citable claim(s).`,
+        ].filter(Boolean).join('\n'),
+      });
 
       const valuations = p.valuations || [];
-      if (valuations.length) {
-        out.push('', '**Our valuation work — these are OUR numbers, cite them as ours**');
+      {
         for (const v of valuations) {
           // Currency off the row. A DCF in francs rendered with a dollar
           // sign is a different number, and the model will repeat
@@ -204,8 +218,9 @@ export async function buildResearchContext(user, topic = '') {
           const money = (n) =>
             n == null ? null : ccy === 'USD' ? `$${Number(n).toLocaleString()}` : `${Number(n).toLocaleString()} ${ccy}`;
 
+          const vlines = [];
           const cases = [money(v.bear), money(v.base), money(v.bull)].filter(Boolean);
-          out.push(
+          vlines.push(
             `- **${v.name}** (${v.kind}, as of ${new Date(v.asOf).toISOString().slice(0, 10)})` +
               (cases.length === 3
                 ? `: bear ${money(v.bear)} / base ${money(v.base)} / bull ${money(v.bull)}`
@@ -219,7 +234,7 @@ export async function buildResearchContext(user, topic = '') {
           // inputs ARE the output for a comps model.
           for (const a of (v.assumptions || []).slice(0, 10)) {
             if (!a?.label) continue;
-            out.push(
+            vlines.push(
               `    - ${a.label}: ${a.value}${a.unit ? ` ${a.unit}` : ''}` +
                 (a.note ? ` (${a.note})` : '')
             );
@@ -227,7 +242,7 @@ export async function buildResearchContext(user, topic = '') {
           // The note carries the judgement — that the base case sits
           // below the current price, that the multiple compressed 42%.
           // Dropping it left only figures with nothing said about them.
-          if (v.note) out.push(`    - Read: ${v.note.slice(0, 320)}`);
+          if (v.note) vlines.push(`    - Read: ${v.note.slice(0, 320)}`);
           // What we are waiting for. "Are we watching anything?" and
           // "how far is Lindt from where we would buy?" are among the
           // most natural things to ask an assistant that holds the
@@ -235,7 +250,7 @@ export async function buildResearchContext(user, topic = '') {
           if (v.buyBelow != null) {
             const gap =
               v.priceAtWrite ? ` — about ${Math.round(((v.buyBelow / v.priceAtWrite) - 1) * 100)}% below the ${money(v.priceAtWrite)} mark it was struck against` : '';
-            out.push(
+            vlines.push(
               `    - WE ARE WATCHING TO BUY below ${money(v.buyBelow)}${gap}.` +
                 (v.alertedAt
                   ? ` Reached ${new Date(v.alertedAt).toISOString().slice(0, 10)} and still at or under it.`
@@ -243,11 +258,16 @@ export async function buildResearchContext(user, topic = '') {
             );
           }
           if (v.reviewBy && new Date(v.reviewBy) < new Date()) {
-            out.push(
+            vlines.push(
               `    - STALE: past its review date of ${new Date(v.reviewBy).toISOString().slice(0, 10)}. ` +
                 'Say so if anyone asks about this valuation or the level under it.'
             );
           }
+          chunks.push({
+            id: `val${v.id}`,
+            kind: 'valuation',
+            text: ['**Our valuation work — these are OUR numbers, cite them as ours**', ...vlines].join('\n'),
+          });
         }
       }
 
@@ -301,21 +321,10 @@ export async function buildResearchContext(user, topic = '') {
           );
         }
         if (rows.length > 3) lines.push(`    - (+${rows.length - 3} more on this question)`);
-        answered.push(lines.join('\n'));
+        answered.push({ id: `q${q.id}`, kind: 'finding', text: lines.join('\n') });
       }
 
-      if (answered.length) {
-        out.push(
-          '',
-          '**What we found.** Answer from these lines and nothing else. If the',
-          'question being asked is not covered below, say we did not establish',
-          'it — do NOT substitute industry norms, typical practice or a',
-          'plausible range, and never place such a substitute under a heading',
-          'that says this is our research. That is inventing a finding.',
-          '',
-          ...answered
-        );
-      }
+      chunks.push(...answered);
       // Rendered AFTER the findings, deliberately.
       //
       // This section has a hard character budget and the tail is what
@@ -324,40 +333,59 @@ export async function buildResearchContext(user, topic = '') {
       // quote — were cut. Observations are real evidence but they are
       // the weaker kind: there is no recording to walk back to. If
       // something has to go, it should be this.
-      if (visits.length) {
-        out.push('', `**Stores and sites we visited (${visits.length})**`);
-        for (const vis of visits.slice(0, 8)) {
-          const obs = (vis.siteObservations || []).map((o) => o.text).filter(Boolean);
-          out.push(
+      for (const vis of visits.slice(0, 8)) {
+        const obs = (vis.siteObservations || []).map((o) => o.text).filter(Boolean);
+        chunks.push({
+          id: `v${vis.id}`,
+          kind: 'visit',
+          text:
             `- ${vis.location || 'unnamed site'}` +
-              (vis.visitedAt ? ` (${new Date(vis.visitedAt).toISOString().slice(0, 10)})` : '') +
-              (obs.length ? `: ${obs.join('; ').slice(0, 220)}` : '')
-          );
-        }
+            (vis.visitedAt ? ` (${new Date(vis.visitedAt).toISOString().slice(0, 10)})` : '') +
+            (obs.length ? `: ${obs.join('; ').slice(0, 220)}` : ''),
+        });
       }
 
       if (open.length) {
-        out.push(
-          '',
-          `**Asked but never answered (${open.length}).** We have no evidence either ` +
-            'way. Saying so is the correct answer:',
-          ...open.slice(0, 8).map((t) => `- ${t}`)
-        );
+        chunks.push({
+          id: 'open',
+          kind: 'open',
+          text: [
+            `**Asked but never answered (${open.length}).** We have no evidence either ` +
+              'way. Saying so is the correct answer:',
+            ...open.slice(0, 8).map((t) => `- ${t}`),
+          ].join('\n'),
+        });
       }
-      out.push('');
     }
 
-    const text = out.join('\n');
-    if (text.length <= MAX_CHARS) return text;
+    // Relevance, not truncation.
+    //
+    // The old path assembled everything and cut the tail at a character
+    // count, which meant the answer to the question being asked was
+    // dropped whenever it happened to sort last — and even when it
+    // survived, it arrived buried in twelve kilobytes the model read
+    // past. Now the question chooses what goes in.
+    const { text, omitted } = retrieve(chunks, topic, { budget: RETRIEVE_BUDGET });
+    out.push(text);
 
-    // Trim on a line boundary so a citation is never cut in half — half
-    // a quote with a timestamp still attached is worse than no quote.
-    const kept = text.slice(0, MAX_CHARS);
-    const trimmed = kept.slice(0, kept.lastIndexOf('\n'));
-    const droppedLines = text.slice(trimmed.length).split('\n').filter((l) => l.trim()).length;
-    return `${trimmed}\n\n_(${droppedLines} further line(s) of research were omitted here for length. ` +
-      `If asked about something not listed above, say we may have it on file but it is not in front of you — ` +
-      `do not answer from general knowledge as though it were ours.)_`;
+    if (omitted.length) {
+      // Named by kind and counted. A model handed a short list with no
+      // note reads it as everything we have, which is exactly how an
+      // earlier version presented industry norms as our findings.
+      const byKind = {};
+      for (const c of omitted) byKind[c.kind] = (byKind[c.kind] || 0) + 1;
+      const parts = Object.entries(byKind)
+        .map(([k, n]) => `${n} ${k === 'finding' ? 'further finding(s)' : k === 'visit' ? 'store visit note(s)' : `${k} item(s)`}`)
+        .join(', ');
+      out.push(
+        '',
+        `_Not shown for this question: ${parts}. They exist and are on file.` +
+          ' If asked about something not above, say you can look it up — do NOT' +
+          ' answer from general knowledge as though it were ours._'
+      );
+    }
+
+    return out.join('\n');
   } catch (err) {
     console.warn('researchContext failed:', err.message);
     return '';
