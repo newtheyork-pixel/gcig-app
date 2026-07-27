@@ -107,6 +107,10 @@ model User {
   researchValuations       ResearchValuation[] @relation("ResearchValuationAuthor")
   researchArtifacts        ResearchArtifact[] @relation("ResearchArtifactUploader")
   researchTargets          ResearchTarget[]   @relation("ResearchTargetCreator")
+  outreachDraftsWritten    OutreachDraft[]    @relation("OutreachDraftAuthor")
+  outreachDraftsRejected   OutreachDraft[]    @relation("OutreachDraftRejecter")
+  outreachDraftsSent       OutreachDraft[]    @relation("OutreachDraftSender")
+  outreachApprovals        OutreachApproval[] @relation("OutreachApprover")
   siteVisits               SiteVisit[]        @relation("SiteVisitVisitor")
 }
 
@@ -1130,10 +1134,86 @@ model ResearchTarget {
   lastContactAt DateTime?
   createdById  Int?
   createdBy    User?    @relation("ResearchTargetCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  drafts       OutreachDraft[]
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
   @@index([projectId, status])
+}
+
+// An outreach email, and the second pair of eyes it needs before it
+// goes out.
+//
+// Everything else in this app is reversible. A vote can be re-run, a
+// claim can be struck, a valuation can be revised. An email cannot be
+// unsent — it lands in a stranger's inbox carrying the club's name and
+// the school's, written by a student on behalf of a fund that manages
+// real endowment money. That asymmetry is the whole reason this table
+// exists.
+//
+// Three rules the server enforces, none of which are advisory:
+//
+//   TWO DISTINCT PEOPLE must approve. Not "an approver" — two, counted
+//   as separate human beings, which is why approvals are rows in their
+//   own table with a uniqueness constraint rather than a pair of
+//   columns. One person cannot satisfy this alone no matter how many
+//   times they click, because the database will not let them.
+//
+//   Editing a draft VOIDS every approval on it. Otherwise the gate is
+//   trivially defeated by getting a bland draft signed off and then
+//   rewriting it, which is the failure mode worth designing against —
+//   not malice, just someone tidying a sentence afterwards and not
+//   thinking about what that means. Approvals attach to WORDS, not to
+//   a row id.
+//
+//   Sent requires both approvals. Marking a draft sent is how the
+//   funnel moves, so that is where the gate sits.
+//
+// Drafts are kept after sending rather than collapsed into the target's
+// notes: what we actually said to someone is evidence, and the record
+// of who signed off on it is the point of the exercise.
+model OutreachDraft {
+  id           Int      @id @default(autoincrement())
+  targetId     Int
+  target       ResearchTarget @relation(fields: [targetId], references: [id], onDelete: Cascade)
+  subject      String
+  body         String
+  authorId     Int?
+  author       User?    @relation("OutreachDraftAuthor", fields: [authorId], references: [id], onDelete: SetNull)
+
+  approvals    OutreachApproval[]
+
+  // A rejection is as much a record as an approval — "we decided not to
+  // send this, and why" is worth keeping. One rejection parks the draft
+  // until it is edited, which clears it along with the approvals.
+  rejectedById Int?
+  rejectedBy   User?    @relation("OutreachDraftRejecter", fields: [rejectedById], references: [id], onDelete: SetNull)
+  rejectedAt   DateTime?
+  reviewNote   String?
+
+  sentAt       DateTime?
+  sentById     Int?
+  sentBy       User?    @relation("OutreachDraftSender", fields: [sentById], references: [id], onDelete: SetNull)
+
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([targetId, createdAt])
+}
+
+// One person signing off on one draft. The unique constraint is the
+// control: without it "two approvals" is a counter anybody can run up
+// on their own, and the whole gate reduces to clicking twice.
+model OutreachApproval {
+  id        Int      @id @default(autoincrement())
+  draftId   Int
+  draft     OutreachDraft @relation(fields: [draftId], references: [id], onDelete: Cascade)
+  userId    Int
+  user      User     @relation("OutreachApprover", fields: [userId], references: [id], onDelete: Cascade)
+  note      String?
+  createdAt DateTime @default(now())
+
+  @@unique([draftId, userId])
 }
 
 // A store visit or channel check — going and looking, rather than

@@ -343,7 +343,14 @@ function ProjectPane({ id, onBack }) {
           // guide; the number worth surfacing is how many still have
           // nothing against them.
           ['coverage', `Questions (${p.questions?.length ?? 0})`, p.coverage?.summary?.unaddressed || 0],
-          ['targets', `Outreach (${p.funnel?.total ?? 0})`],
+          // A draft waiting on YOUR signature is the one thing here that
+          // blocks someone else, so it outranks the funnel count. Falls
+          // back to "ready to send" when nothing needs this reader.
+          [
+            'targets',
+            `Outreach (${p.funnel?.total ?? 0})`,
+            p.outreachQueue?.awaitingMe || p.outreachQueue?.readyToSend || 0,
+          ],
           ['interviews', `Interviews (${p.interviews.length})`],
           ['visits', `Visits (${p.visits?.length ?? 0})`],
           ['valuation', `Valuation (${p.valuations?.length ?? 0})`],
@@ -1950,6 +1957,7 @@ function Targets({ project, onChanged }) {
   // counts them; without this there is no way to look at just them.
   const [only, setOnly] = useState('all');
   const fn = project.funnel || {};
+  const q = project.outreachQueue || {};
   const open = (project.targets || []).find((t) => t.id === openId);
 
   // One person, everything we have on them. The list is for scanning;
@@ -1996,6 +2004,34 @@ function Targets({ project, onChanged }) {
         {(fn.Declined || 0) + (fn.Unreachable || 0)} dead
         {fn.conversionPct != null ? ` · ${fn.conversionPct}% conversion` : ''}
       </div>
+
+      {/* Where the outreach queue actually stands. Without this line the
+          approval state is invisible until you open a person, which is
+          how a fully-approved email sits unsent for a week. */}
+      {q.awaitingReview || q.readyToSend || q.rejected ? (
+        <div style={{ fontSize: 11 }}>
+          {q.awaitingMe ? (
+            <span style={{ color: 'var(--term-white)', marginRight: 12 }}>
+              {q.awaitingMe} waiting on your approval
+            </span>
+          ) : null}
+          {q.awaitingReview ? (
+            <span style={{ color: 'var(--term-fg-dim)', marginRight: 12 }}>
+              {q.awaitingReview} awaiting sign-off
+            </span>
+          ) : null}
+          {q.readyToSend ? (
+            <span style={{ color: 'var(--term-positive)', marginRight: 12 }}>
+              {q.readyToSend} approved, ready to send
+            </span>
+          ) : null}
+          {q.rejected ? (
+            <span style={{ color: 'var(--term-negative)', marginRight: 12 }}>
+              {q.rejected} rejected
+            </span>
+          ) : null}
+        </div>
+      ) : null}
 
       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
         <input
@@ -2347,6 +2383,8 @@ function TargetDetail({ target: t, onBack, onChanged }) {
         </span>
       </div>
 
+      <Drafts target={t} onChanged={onChanged} />
+
       {sections.length === 0 ? (
         <div className="term-loading">Nothing recorded beyond the name.</div>
       ) : (
@@ -2386,6 +2424,250 @@ function TargetDetail({ target: t, onBack, onChanged }) {
           </div>
         ))
       )}
+    </div>
+  );
+}
+
+// The outreach email and its two sign-offs.
+//
+// The app does not send the mail — it goes from a real person's school
+// address, which is the only way a cold email from a student club is
+// going to be read. So what this panel owes the user is the text,
+// verbatim and copyable, plus an honest account of who has signed off
+// and who has not. "Copy" is the send button here, and it is only
+// enabled once both approvals are in.
+function Drafts({ target, onChanged }) {
+  const drafts = target.drafts || [];
+  const [composing, setComposing] = useState(false);
+  const [f, setF] = useState({ subject: '', body: '' });
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState('');
+  const [copied, setCopied] = useState(null);
+
+  async function run(fn) {
+    setBusy(true);
+    setErr('');
+    try {
+      await fn();
+      onChanged();
+    } catch (e) {
+      setErr(e.response?.data?.error || 'That did not work.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function copy(d) {
+    // Subject and body together, because pasting them separately is two
+    // chances to paste the wrong one.
+    const text = `Subject: ${d.subject}\n\n${d.body}`;
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(d.id);
+      setTimeout(() => setCopied(null), 2000);
+    } catch {
+      setErr('Could not reach the clipboard — select the text below and copy it by hand.');
+    }
+  }
+
+  return (
+    <div style={{ display: 'grid', gap: 8, borderTop: '1px solid var(--term-border)', paddingTop: 8 }}>
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+        <span style={{ fontSize: 10, letterSpacing: 0.6, color: 'var(--term-white)' }}>OUTREACH EMAIL</span>
+        {!composing ? (
+          <TermButton onClick={() => { setComposing(true); setF({ subject: '', body: '' }); }}>
+            {drafts.length ? 'New draft' : 'Write one'}
+          </TermButton>
+        ) : null}
+      </div>
+
+      {err ? <div style={{ color: 'var(--term-negative)', fontSize: 11 }}>{err}</div> : null}
+
+      {composing ? (
+        <div style={{ display: 'grid', gap: 6 }}>
+          <input
+            style={termInput}
+            placeholder="Subject"
+            value={f.subject}
+            onChange={(e) => setF({ ...f, subject: e.target.value })}
+          />
+          <textarea
+            style={{ ...termInput, resize: 'vertical', minHeight: 200, lineHeight: 1.5 }}
+            placeholder="The email itself."
+            value={f.body}
+            onChange={(e) => setF({ ...f, body: e.target.value })}
+          />
+          <div style={{ display: 'flex', gap: 6 }}>
+            <TermButton
+              disabled={busy || !f.subject || !f.body}
+              onClick={() => run(async () => {
+                await api.post(`/research/targets/${target.id}/drafts`, f);
+                setComposing(false);
+              })}
+            >
+              Save draft
+            </TermButton>
+            <TermButton onClick={() => { setComposing(false); setErr(''); }}>Cancel</TermButton>
+          </div>
+        </div>
+      ) : null}
+
+      {drafts.length === 0 && !composing ? (
+        <div className="term-loading" style={{ fontSize: 11 }}>
+          Nothing drafted. Anything written here needs two sign-offs before it can go out.
+        </div>
+      ) : null}
+
+      {drafts.map((d) => (
+        <DraftCard
+          key={d.id}
+          d={d}
+          target={target}
+          busy={busy}
+          copied={copied === d.id}
+          onCopy={() => copy(d)}
+          onRun={run}
+        />
+      ))}
+    </div>
+  );
+}
+
+function DraftCard({ d, target, busy, copied, onCopy, onRun }) {
+  const [editing, setEditing] = useState(false);
+  const [f, setF] = useState({ subject: d.subject, body: d.body });
+  const [note, setNote] = useState('');
+  const [rejecting, setRejecting] = useState(false);
+
+  // The state line has to be readable in one glance and must never
+  // overstate where a draft has got to — "ready" on something with one
+  // approval is how an unreviewed email goes out.
+  const state = d.sentAt
+    ? { text: `SENT ${fmtDate(d.sentAt)}${d.sentBy ? ` by ${d.sentBy.name}` : ''}`, tone: 'var(--term-fg-muted)' }
+    : d.rejectedAt
+    ? { text: `REJECTED by ${d.rejectedBy?.name || 'someone'} — ${d.reviewNote || 'no reason given'}`, tone: 'var(--term-negative)' }
+    : d.fullyApproved
+    ? { text: `APPROVED by ${d.approvedByNames.join(' and ')} — ready to send`, tone: 'var(--term-positive)' }
+    : {
+        text: `${d.approvalCount} of ${d.approvalsNeeded} approvals${d.approvalCount ? ` — ${d.approvedByNames.join(', ')}` : ''}`,
+        tone: 'var(--term-fg-dim)',
+      };
+
+  return (
+    <div style={{ border: '1px solid var(--term-border)', padding: 8, display: 'grid', gap: 6 }}>
+      <div style={{ fontSize: 10, letterSpacing: 0.5, color: state.tone }}>{state.text}</div>
+
+      {editing ? (
+        <>
+          <input
+            style={termInput}
+            value={f.subject}
+            onChange={(e) => setF({ ...f, subject: e.target.value })}
+          />
+          <textarea
+            style={{ ...termInput, resize: 'vertical', minHeight: 220, lineHeight: 1.5 }}
+            value={f.body}
+            onChange={(e) => setF({ ...f, body: e.target.value })}
+          />
+          {/* Said before they commit, not after. Someone fixing a typo
+              on a fully-approved draft needs to know it costs both
+              sign-offs. */}
+          {d.approvalCount > 0 ? (
+            <div style={{ color: 'var(--term-negative)', fontSize: 10 }}>
+              Saving a change clears {d.approvalCount === 1 ? 'the approval' : `both approvals`} — the draft goes back for review.
+            </div>
+          ) : null}
+          <div style={{ display: 'flex', gap: 6 }}>
+            <TermButton
+              disabled={busy}
+              onClick={() => onRun(async () => {
+                await api.patch(`/research/drafts/${d.id}`, f);
+                setEditing(false);
+              })}
+            >
+              Save
+            </TermButton>
+            <TermButton onClick={() => { setF({ subject: d.subject, body: d.body }); setEditing(false); }}>
+              Cancel
+            </TermButton>
+          </div>
+        </>
+      ) : (
+        <>
+          <div style={{ fontSize: 11, color: 'var(--term-white)' }}>{d.subject}</div>
+          <pre
+            style={{
+              whiteSpace: 'pre-wrap',
+              wordBreak: 'break-word',
+              fontFamily: 'inherit',
+              fontSize: 11,
+              lineHeight: 1.5,
+              color: 'var(--term-fg-dim)',
+              margin: 0,
+              maxHeight: 300,
+              overflowY: 'auto',
+            }}
+          >
+            {d.body}
+          </pre>
+        </>
+      )}
+
+      {!editing && !d.sentAt ? (
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+          {d.canIApprove ? (
+            <TermButton disabled={busy} onClick={() => onRun(() => api.post(`/research/drafts/${d.id}/approve`))}>
+              Approve
+            </TermButton>
+          ) : null}
+          {d.iApproved && !d.sentAt ? (
+            <TermButton disabled={busy} onClick={() => onRun(() => api.delete(`/research/drafts/${d.id}/approve`))}>
+              Withdraw my approval
+            </TermButton>
+          ) : null}
+          {d.canIApprove ? (
+            <TermButton disabled={busy} onClick={() => setRejecting(!rejecting)}>Reject</TermButton>
+          ) : null}
+          <TermButton disabled={busy} onClick={() => setEditing(true)}>Edit</TermButton>
+
+          {/* Copy is the send button, so it stays shut until both
+              sign-offs are in. A greyed control with a reason attached
+              teaches the rule; a hidden one just looks broken. */}
+          <TermButton
+            disabled={busy || !d.fullyApproved}
+            title={d.fullyApproved ? `Copy, then send from your school address to ${target.email || 'them'}` : 'Needs two approvals first'}
+            onClick={onCopy}
+          >
+            {copied ? 'Copied' : 'Copy to send'}
+          </TermButton>
+          {d.fullyApproved ? (
+            <TermButton disabled={busy} onClick={() => onRun(() => api.post(`/research/drafts/${d.id}/sent`))}>
+              Mark sent
+            </TermButton>
+          ) : null}
+        </div>
+      ) : null}
+
+      {rejecting ? (
+        <div style={{ display: 'flex', gap: 6 }}>
+          <input
+            style={{ ...termInput, flex: 1 }}
+            placeholder="What is wrong with it?"
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+          />
+          <TermButton
+            disabled={busy || !note}
+            onClick={() => onRun(async () => {
+              await api.post(`/research/drafts/${d.id}/reject`, { note });
+              setRejecting(false);
+              setNote('');
+            })}
+          >
+            Confirm reject
+          </TermButton>
+        </div>
+      ) : null}
     </div>
   );
 }

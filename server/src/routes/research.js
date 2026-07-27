@@ -150,6 +150,7 @@ router.get('/projects/:id', async (req, res) => {
         // decided to ring first.
         targets: {
           orderBy: [{ priority: { sort: 'asc', nulls: 'last' } }, { updatedAt: 'desc' }],
+          include: { drafts: { orderBy: { createdAt: 'desc' }, include: DRAFT_VIEW } },
         },
         valuations: {
           orderBy: { asOf: 'desc' },
@@ -185,8 +186,16 @@ router.get('/projects/:id', async (req, res) => {
       v.siteObservations.map((o) => ({ ...o, visit: { location: v.location } }))
     );
 
+    // Whether THIS reader may approve a given draft is a per-user fact,
+    // so it is computed here rather than cached with the project.
+    const targets = project.targets.map((t) => ({
+      ...t,
+      drafts: (t.drafts || []).map((d) => decorate(d, req.user)),
+    }));
+
     res.json({
       ...project,
+      targets,
       claims: claims.map((c) => ({
         ...c,
         stamp: formatStamp(c.startMs),
@@ -195,6 +204,19 @@ router.get('/projects/:id', async (req, res) => {
       topics: assessTopics(claims),
       coverage: assessCoverage(project.questions, claims, observations),
       funnel: funnel(project.targets),
+      // What is sitting on someone's desk right now. The panel needs
+      // this at the top level or "is anything waiting on me" costs a
+      // walk through every target.
+      outreachQueue: (() => {
+        const all = targets.flatMap((t) => (t.drafts || []).map((d) => ({ ...d, target: t.name })));
+        return {
+          awaitingReview: all.filter((d) => !d.sentAt && !d.rejectedAt && !d.fullyApproved).length,
+          awaitingMe: all.filter((d) => d.canIApprove).length,
+          readyToSend: all.filter((d) => d.fullyApproved && !d.sentAt).length,
+          rejected: all.filter((d) => d.rejectedAt && !d.sentAt).length,
+          sent: all.filter((d) => d.sentAt).length,
+        };
+      })(),
       transcriptionReady: transcriptionConfigured(),
     });
   } catch (err) {
@@ -609,6 +631,285 @@ router.delete('/targets/:id', canResearch, async (req, res) => {
     res.json({ ok: true });
   } catch (err) {
     res.status(500).json({ error: 'Could not remove target' });
+  }
+});
+
+// ── Outreach drafts: two sign-offs before anything is sent ───────────
+//
+// The only irreversible thing this app does. A vote can be re-run and a
+// claim can be struck, but an email lands in a stranger's inbox
+// carrying the club's name and the school's, and there is no taking it
+// back. So it takes two people.
+
+const REQUIRED_APPROVALS = 2;
+
+// Who may sign off. Deliberately narrower than who may write: any
+// analyst can draft, but the sign-off is the club's word going out
+// under the school's name and belongs with the people accountable for
+// it.
+function canApproveOutreach(user) {
+  if (!user) return false;
+  const roles = [user.role, ...(user.extraRoles || [])];
+  return user.isSuperAdmin || roles.some((r) => r === 'President' || r === 'CIO' || r === 'FacultyAdvisor');
+}
+
+const DRAFT_VIEW = {
+  approvals: {
+    orderBy: { createdAt: 'asc' },
+    include: { user: { select: { id: true, name: true } } },
+  },
+  author: { select: { id: true, name: true } },
+  rejectedBy: { select: { id: true, name: true } },
+  sentBy: { select: { id: true, name: true } },
+};
+
+// Everything the UI needs to decide what to show THIS user, computed
+// server-side. A client that works out for itself whether it may send
+// is a client that can be talked into being wrong about it; the server
+// re-checks every gate anyway, and this just keeps the two agreeing.
+function decorate(d, user) {
+  const approvals = d.approvals || [];
+  const mine = approvals.some((a) => a.userId === user?.id);
+  return {
+    ...d,
+    approvalCount: approvals.length,
+    approvalsNeeded: REQUIRED_APPROVALS,
+    fullyApproved: approvals.length >= REQUIRED_APPROVALS && !d.rejectedAt,
+    iApproved: mine,
+    canIApprove: canApproveOutreach(user) && !mine && !d.sentAt && !d.rejectedAt,
+    // Who we are still waiting on, by name, because "1 of 2" does not
+    // tell anyone whose inbox to go and nudge.
+    approvedByNames: approvals.map((a) => a.user?.name).filter(Boolean),
+  };
+}
+
+router.post('/targets/:id/drafts', canResearch, async (req, res) => {
+  const targetId = Number(req.params.id);
+  const { subject, body } = req.body || {};
+  if (!Number.isInteger(targetId)) return res.status(400).json({ error: 'Bad id' });
+  if (!subject || !body) return res.status(400).json({ error: 'subject and body are required' });
+  try {
+    const target = await prisma.researchTarget.findUnique({ where: { id: targetId } });
+    if (!target) return res.status(404).json({ error: 'No such target' });
+    const d = await prisma.outreachDraft.create({
+      data: {
+        targetId,
+        subject: String(subject).slice(0, 300),
+        body: String(body).slice(0, 20_000),
+        authorId: req.user?.id ?? null,
+      },
+      include: DRAFT_VIEW,
+    });
+    res.status(201).json(decorate(d, req.user));
+  } catch (err) {
+    console.error('research/draft create failed:', err.message);
+    res.status(500).json({ error: 'Could not save draft' });
+  }
+});
+
+// Editing voids every approval on the draft.
+//
+// This is the rule that makes the gate real. Without it the whole
+// control is defeated by getting a bland draft signed off and then
+// rewriting it — and the case to design against is not malice, it is
+// someone fixing a typo after approval and never thinking about what
+// that means. Approvals attach to WORDS, not to a row id.
+//
+// Only a genuine change voids them: saving identical text is not an
+// edit, and nuking two sign-offs because someone opened the box and
+// clicked save would train people to route around the feature.
+router.patch('/drafts/:id', canResearch, async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) return res.status(400).json({ error: 'Bad id' });
+  try {
+    const existing = await prisma.outreachDraft.findUnique({
+      where: { id },
+      include: { approvals: true },
+    });
+    if (!existing) return res.status(404).json({ error: 'No such draft' });
+    if (existing.sentAt) {
+      return res.status(409).json({ error: 'That draft has already been sent — it is now a record of what we said, not a document. Write a new one.' });
+    }
+
+    const subject = req.body?.subject !== undefined ? String(req.body.subject).slice(0, 300) : existing.subject;
+    const body = req.body?.body !== undefined ? String(req.body.body).slice(0, 20_000) : existing.body;
+    const changed = subject !== existing.subject || body !== existing.body;
+
+    const d = await prisma.$transaction(async (tx) => {
+      if (changed && existing.approvals.length) {
+        await tx.outreachApproval.deleteMany({ where: { draftId: id } });
+      }
+      return tx.outreachDraft.update({
+        where: { id },
+        data: {
+          subject,
+          body,
+          // An edit is also the answer to a rejection, so it clears the
+          // block — otherwise a rejected draft can never be revived.
+          ...(changed ? { rejectedById: null, rejectedAt: null } : {}),
+        },
+        include: DRAFT_VIEW,
+      });
+    });
+    res.json({
+      ...decorate(d, req.user),
+      approvalsCleared: changed ? existing.approvals.length : 0,
+    });
+  } catch (err) {
+    console.error('research/draft update failed:', err.message);
+    res.status(500).json({ error: 'Could not update draft' });
+  }
+});
+
+router.post('/drafts/:id/approve', canResearch, async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) return res.status(400).json({ error: 'Bad id' });
+  if (!canApproveOutreach(req.user)) {
+    return res.status(403).json({ error: 'Outreach is signed off by a President, the CIO or the faculty advisor.' });
+  }
+  try {
+    const d = await prisma.outreachDraft.findUnique({ where: { id } });
+    if (!d) return res.status(404).json({ error: 'No such draft' });
+    if (d.sentAt) return res.status(409).json({ error: 'That draft has already been sent.' });
+    if (d.rejectedAt) {
+      return res.status(409).json({ error: 'That draft was rejected. Edit it to clear the rejection, which also clears any approvals.' });
+    }
+    // The unique constraint is the real guard; this just turns a
+    // database error into a sentence.
+    await prisma.outreachApproval.create({
+      data: {
+        draftId: id,
+        userId: req.user.id,
+        note: req.body?.note ? String(req.body.note).slice(0, 1000) : null,
+      },
+    }).catch((err) => {
+      if (err.code === 'P2002') throw new Error('ALREADY_APPROVED');
+      throw err;
+    });
+    const full = await prisma.outreachDraft.findUnique({ where: { id }, include: DRAFT_VIEW });
+    res.json(decorate(full, req.user));
+  } catch (err) {
+    if (err.message === 'ALREADY_APPROVED') {
+      return res.status(409).json({ error: 'You have already approved this draft. It needs a second person.' });
+    }
+    console.error('research/draft approve failed:', err.message);
+    res.status(500).json({ error: 'Could not record the approval' });
+  }
+});
+
+// Withdrawing is a first-class action, not an edge case. Someone who
+// signs off and then thinks better of it must be able to say so
+// without editing the text out from under the other approver.
+router.delete('/drafts/:id/approve', canResearch, async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) return res.status(400).json({ error: 'Bad id' });
+  try {
+    const d = await prisma.outreachDraft.findUnique({ where: { id } });
+    if (!d) return res.status(404).json({ error: 'No such draft' });
+    if (d.sentAt) return res.status(409).json({ error: 'That draft has already been sent.' });
+    await prisma.outreachApproval.deleteMany({ where: { draftId: id, userId: req.user.id } });
+    const full = await prisma.outreachDraft.findUnique({ where: { id }, include: DRAFT_VIEW });
+    res.json(decorate(full, req.user));
+  } catch (err) {
+    console.error('research/draft unapprove failed:', err.message);
+    res.status(500).json({ error: 'Could not withdraw the approval' });
+  }
+});
+
+router.post('/drafts/:id/reject', canResearch, async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) return res.status(400).json({ error: 'Bad id' });
+  if (!canApproveOutreach(req.user)) {
+    return res.status(403).json({ error: 'Outreach is signed off by a President, the CIO or the faculty advisor.' });
+  }
+  if (!req.body?.note) {
+    // A rejection without a reason cannot be acted on, and the author
+    // is left guessing at what to change.
+    return res.status(400).json({ error: 'Say what is wrong with it — a rejection with no note cannot be acted on.' });
+  }
+  try {
+    const d = await prisma.outreachDraft.findUnique({ where: { id } });
+    if (!d) return res.status(404).json({ error: 'No such draft' });
+    if (d.sentAt) return res.status(409).json({ error: 'That draft has already been sent.' });
+    const updated = await prisma.$transaction(async (tx) => {
+      await tx.outreachApproval.deleteMany({ where: { draftId: id } });
+      return tx.outreachDraft.update({
+        where: { id },
+        data: {
+          rejectedById: req.user.id,
+          rejectedAt: new Date(),
+          reviewNote: String(req.body.note).slice(0, 1000),
+        },
+        include: DRAFT_VIEW,
+      });
+    });
+    res.json(decorate(updated, req.user));
+  } catch (err) {
+    console.error('research/draft reject failed:', err.message);
+    res.status(500).json({ error: 'Could not record the rejection' });
+  }
+});
+
+// The gate. Marking a draft sent is what moves the funnel, so this is
+// where two-approvals is enforced — and it is enforced by counting rows
+// at the moment of the call, never by trusting a flag the client sent.
+router.post('/drafts/:id/sent', canResearch, async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) return res.status(400).json({ error: 'Bad id' });
+  try {
+    const d = await prisma.outreachDraft.findUnique({
+      where: { id },
+      include: { approvals: true, target: true },
+    });
+    if (!d) return res.status(404).json({ error: 'No such draft' });
+    if (d.sentAt) return res.status(409).json({ error: 'Already marked sent.' });
+    if (d.rejectedAt) return res.status(409).json({ error: 'That draft was rejected — edit it and get it approved again.' });
+
+    const have = new Set(d.approvals.map((a) => a.userId)).size;
+    if (have < REQUIRED_APPROVALS) {
+      return res.status(409).json({
+        error: `This needs ${REQUIRED_APPROVALS} approvals and has ${have}. Two different people have to sign off before it goes out.`,
+      });
+    }
+
+    const updated = await prisma.$transaction(async (tx) => {
+      const draft = await tx.outreachDraft.update({
+        where: { id },
+        data: { sentAt: new Date(), sentById: req.user?.id ?? null },
+        include: DRAFT_VIEW,
+      });
+      // The whole point of marking it sent is that the funnel moves.
+      // Leaving the target on "Identified" after an email went out is
+      // how someone gets written to twice.
+      if (draft.targetId) {
+        await tx.researchTarget.update({
+          where: { id: draft.targetId },
+          data: { status: 'Contacted', lastContactAt: new Date() },
+        });
+      }
+      return draft;
+    });
+    res.json(decorate(updated, req.user));
+  } catch (err) {
+    console.error('research/draft sent failed:', err.message);
+    res.status(500).json({ error: 'Could not mark it sent' });
+  }
+});
+
+router.delete('/drafts/:id', canResearch, async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) return res.status(400).json({ error: 'Bad id' });
+  try {
+    const d = await prisma.outreachDraft.findUnique({ where: { id } });
+    if (!d) return res.status(404).json({ error: 'No such draft' });
+    if (d.sentAt) {
+      return res.status(409).json({ error: 'A sent draft is the record of what we said to someone. It stays.' });
+    }
+    await prisma.outreachDraft.delete({ where: { id } });
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('research/draft delete failed:', err.message);
+    res.status(500).json({ error: 'Could not delete draft' });
   }
 });
 
