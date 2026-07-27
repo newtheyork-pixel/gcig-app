@@ -389,15 +389,22 @@ router.post('/', chatLimiter, async (req, res) => {
   // So the default is the behaviour that actually works, and the tool
   // path stays in the tree behind AI_CHAT_TOOLS=1 for the next time
   // there is a better local model to point it at.
-  // On by default now, off with AI_CHAT_TOOLS=0.
+  // Off by default. Turn on with AI_CHAT_TOOLS=1.
   //
-  // It was defaulted off when the brief ran to 31 KB and the model
-  // fetched the right price then answered about something else. The
-  // prompt is now assembled by relevance and is a fraction of that, which
-  // is the condition the tool path always worked under in isolation. The
-  // kill switch stays an env var so it can be turned off without a
-  // deploy if it misbehaves in front of members.
-  const toolsEnabled = process.env.AI_CHAT_TOOLS !== '0';
+  // Tried again after the prompt was cut from 31 KB to a relevance-
+  // assembled fraction, on the theory that size was the problem. It was
+  // not: six consecutive runs of "what is the price of Apple" fetched
+  // AAPL correctly — the chip fired every time — and answered with a
+  // greeting, a portfolio summary, or an unprompted note about AIT. Zero
+  // for six.
+  //
+  // The distinction the retest made clear: single-turn questions over
+  // the same brief now work well, including the valuation and research
+  // questions that used to fail. What does not work is the round trip —
+  // handing the model a tool result and getting it to answer the
+  // original question from it. That is a different failure from prompt
+  // size, and it did not move when the prompt shrank.
+  const toolsEnabled = process.env.AI_CHAT_TOOLS === '1';
   const attempt = toolsEnabled
     ? await runWithTools(modelMessages, temp)
     : {

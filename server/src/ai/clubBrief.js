@@ -1022,7 +1022,7 @@ async function buildLiveContext() {
 // A prompt that advertises a capability the process does not have is a
 // prompt that instructs the model to pretend.
 function toolsBlock() {
-  return process.env.AI_CHAT_TOOLS !== '0'
+  return process.env.AI_CHAT_TOOLS === '1'
     ? `## Tools
 You can fetch things rather than guessing at them:
 - **get_quote** — what a ticker is trading at now. Call it any time you

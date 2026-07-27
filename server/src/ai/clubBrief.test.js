@@ -89,7 +89,7 @@ test('the prompt only claims a capability the process actually has', async () =>
     assert.match(off, /as of our last sync/);
     assert.ok(!/You can fetch things rather than guessing/.test(off));
 
-    delete process.env.AI_CHAT_TOOLS;
+    process.env.AI_CHAT_TOOLS = '1';
     const on = await getClubSystemPrompt({ topic: 'what is AIT trading at', forceFresh: true });
     assert.match(on, /get_quote/);
     assert.ok(!/You cannot look anything up/.test(on));
