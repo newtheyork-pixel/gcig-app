@@ -220,6 +220,14 @@ router.patch('/projects/:id', canResearch, async (req, res) => {
   if (!Number.isInteger(id)) return res.status(400).json({ error: 'Bad id' });
   const data = {};
   if (req.body?.name) data.name = String(req.body.name).slice(0, 300);
+  // Ticker was missing from this handler entirely, so a project created
+  // without one could never be given one — it showed a dash in the list
+  // forever and no amount of editing fixed it. Blank clears it, since a
+  // project can legitimately cover something with no listed symbol.
+  if (req.body?.ticker !== undefined) {
+    const t = String(req.body.ticker || '').toUpperCase().trim().slice(0, 12);
+    data.ticker = t || null;
+  }
   if (req.body?.brief !== undefined) {
     data.brief = req.body.brief ? String(req.body.brief).slice(0, 5000) : null;
   }

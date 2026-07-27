@@ -1906,6 +1906,10 @@ function Targets({ project, onChanged }) {
   const [f, setF] = useState({ name: '', relationship: 'FormerEmployee', employer: '', channel: '' });
   const [saving, setSaving] = useState(false);
   const [openId, setOpenId] = useState(null);
+  // Ninety-seven names in one table, and the only one that matters on a
+  // given afternoon is "who have we not tried yet". The funnel line
+  // counts them; without this there is no way to look at just them.
+  const [only, setOnly] = useState('all');
   const fn = project.funnel || {};
   const open = (project.targets || []).find((t) => t.id === openId);
 
@@ -1928,6 +1932,14 @@ function Targets({ project, onChanged }) {
       setSaving(false);
     }
   }
+
+  const shown = (project.targets || []).filter((t) =>
+    only === 'all'
+      ? true
+      : only === 'dead'
+      ? t.status === 'Declined' || t.status === 'Unreachable'
+      : t.status === only
+  );
 
   async function move(id, status) {
     await api.patch(`/research/targets/${id}`, { status }).catch(() => {});
@@ -1974,6 +1986,37 @@ function Targets({ project, onChanged }) {
         <TermButton onClick={add} disabled={saving || !f.name}>Add</TermButton>
       </div>
 
+      {(project.targets || []).length > 8 ? (
+        <div style={{ fontSize: 10, letterSpacing: 0.5 }}>
+          {[
+            ['all', `ALL ${(project.targets || []).length}`],
+            ['Identified', `NOT TRIED ${fn.Identified || 0}`],
+            ['Contacted', `WAITING ${fn.Contacted || 0}`],
+            ['Scheduled', `SCHEDULED ${fn.Scheduled || 0}`],
+            ['Completed', `DONE ${fn.Completed || 0}`],
+            ['dead', `DEAD ${(fn.Declined || 0) + (fn.Unreachable || 0)}`],
+          ].map(([k, label]) => (
+            <a
+              key={k}
+              href="#"
+              onClick={(e) => { e.preventDefault(); setOnly(k); }}
+              style={{
+                marginRight: 12,
+                color: only === k ? 'var(--term-white)' : 'var(--term-fg-muted)',
+                textDecoration: only === k ? 'underline' : 'none',
+              }}
+            >
+              {label}
+            </a>
+          ))}
+          {/* An empty bucket is good news here, and a blank table does
+              not say so. */}
+          {only !== 'all' && shown.length === 0 ? (
+            <span style={{ color: 'var(--term-positive)' }}>— none in this bucket</span>
+          ) : null}
+        </div>
+      ) : null}
+
       {!project.targets || project.targets.length === 0 ? (
         <div className="term-loading">
           No targets yet. Map the value chain — former staff, distributors,
@@ -1985,7 +2028,7 @@ function Targets({ project, onChanged }) {
             <tr><th>Name</th><th>Role</th><th>Employer</th><th>Status</th><th>Last try</th></tr>
           </thead>
           <tbody>
-            {project.targets.map((t) => (
+            {shown.map((t) => (
               <tr key={t.id}>
                 <td className="sym">
                   <a

@@ -53,10 +53,24 @@ export async function resolveQuotes(tickers = [], opts = {}) {
     console.warn('resolveQuotes: Google price feed unavailable:', err.message);
   }
 
+  // A price alone is not a resolved quote.
+  //
+  // Google returns a last price for most names and, for many of them, no
+  // previous close and no change — so `shape` yields dayChange: null.
+  // The old condition treated "has a price" as done and never asked
+  // Finnhub, which does carry a previous close. MOVR therefore ranked
+  // one holding of twelve and reported the other eleven as unpriceable,
+  // with a working quote endpoint sitting next to it.
+  //
+  // So a Google row only settles a ticker when it can actually produce a
+  // day move. Otherwise the ticker goes to Finnhub and takes BOTH
+  // figures from there — mixing one source's price with another's
+  // previous close would produce a day change that never happened.
   const missing = [];
   for (const t of list) {
     const g = bySymbol[t];
-    if (g && g.price != null) {
+    const usable = g && g.price != null && (g.prevClose != null || g.changePct != null);
+    if (usable) {
       out[t] = shape(g.price, g.prevClose, g.changePct, 'google');
     } else {
       missing.push(t);
@@ -67,7 +81,15 @@ export async function resolveQuotes(tickers = [], opts = {}) {
     const fh = await getLiveQuotes(missing);
     for (const t of missing) {
       const q = fh[t];
-      out[t] = q && q.last != null ? shape(q.last, q.prevClose, q.changePct, 'finnhub') : null;
+      if (q && q.last != null) {
+        out[t] = shape(q.last, q.prevClose, q.changePct, 'finnhub');
+        continue;
+      }
+      // Finnhub had nothing either. Keep Google's price if there was
+      // one — a position worth $5,529 with no day move still belongs in
+      // the book — but leave dayChange null so nothing invents a move.
+      const g = bySymbol[t];
+      out[t] = g && g.price != null ? shape(g.price, null, null, 'google') : null;
     }
   }
 
