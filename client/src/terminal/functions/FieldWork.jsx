@@ -1966,20 +1966,42 @@ function StageChip({ draft }) {
   if (!draft) return <span style={{ color: 'var(--term-fg-muted)', fontSize: 10 }}>no draft</span>;
   const [tone, label] = STAGE_TONE[draft.stage] || ['var(--term-fg-dim)', draft.stage];
   const who = draft.approvedByNames?.length ? ` (${draft.approvedByNames.join(', ')})` : '';
+
+  // A flag that does not say what it caught is worse than no flag: it
+  // reads as a vague accusation, and the only way to act on it is to go
+  // looking. So anything other than a clean screen says why, on the
+  // row, without a hover.
+  const explain =
+    draft.screenState === 'elevated' || draft.screenState === 'prohibited'
+      ? draft.screenReason
+      : draft.screenState === 'clear-keyword-only'
+      ? 'Model was unreachable. Only the keyword pass ran, so this is not a clean read.'
+      : draft.screenState === 'unscreened'
+      ? 'Nothing has read this yet.'
+      : null;
+
   return (
-    <span style={{ whiteSpace: 'nowrap' }}>
-      <span
-        title={
-          draft.stage === 'blocked'
-            ? `Compliance screen blocked this: ${draft.screenReason || ''}`
-            : `${label}${who}`
-        }
-        style={{ color: tone, fontSize: 10, letterSpacing: 0.5 }}
-      >
-        {label}
+    <div style={{ minWidth: 150 }}>
+      <span style={{ whiteSpace: 'nowrap' }}>
+        <span title={`${label}${who}`} style={{ color: tone, fontSize: 10, letterSpacing: 0.5 }}>
+          {label}
+        </span>
+        <ScreenChip draft={draft} />
       </span>
-      <ScreenChip draft={draft} />
-    </span>
+      {explain ? (
+        <div
+          style={{
+            fontSize: 9,
+            lineHeight: 1.35,
+            color: 'var(--term-fg-muted)',
+            marginTop: 2,
+            whiteSpace: 'normal',
+          }}
+        >
+          {explain}
+        </div>
+      ) : null}
+    </div>
   );
 }
 
