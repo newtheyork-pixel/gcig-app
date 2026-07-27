@@ -14,6 +14,7 @@ import {
   Trash2,
   MessageSquare,
   ChevronDown,
+  Wrench,
 } from 'lucide-react';
 import api from '../api/client.js';
 import { useAuth } from '../context/AuthContext.jsx';
@@ -157,11 +158,16 @@ export default function AiChat() {
         sessionId: sessionId ?? undefined,
         message: text,
       });
-      const { sessionId: newId, title, reply } = res.data;
+      const { sessionId: newId, title, reply, toolsUsed } = res.data;
       setSessionId(newId);
       setMessages((prev) => [
         ...prev,
-        { role: 'assistant', content: reply, createdAt: new Date().toISOString() },
+        {
+          role: 'assistant',
+          content: reply,
+          toolsUsed: toolsUsed || [],
+          createdAt: new Date().toISOString(),
+        },
       ]);
       // Refresh the sidebar ordering / titling. Cheap — a single GET.
       loadSessions();
@@ -542,6 +548,14 @@ const MD_COMPONENTS = {
   td: ({ children }) => <td className="px-2 py-1">{children}</td>,
 };
 
+// Plain English for the chip. The function name is an implementation
+// detail; "Live price" is what the member needs to know it did.
+const TOOL_LABEL = {
+  get_quote: 'Live price',
+  get_company_snapshot: 'Valuation snapshot',
+  get_recent_filings: 'SEC filings',
+};
+
 function MessageBubble({ message }) {
   const isUser = message.role === 'user';
   return (
@@ -554,6 +568,34 @@ function MessageBubble({ message }) {
         {isUser ? <User className="h-4 w-4" /> : <Bot className="h-4 w-4" />}
       </div>
       <div className={`max-w-[85%] ${isUser ? 'text-right' : ''}`}>
+        {/* What it went and looked up before answering. An answer off a
+            live quote and one off the model's context read identically
+            otherwise, and only one of them is current — this is the
+            difference, shown rather than assumed. */}
+        {!isUser && (message.toolsUsed || []).length > 0 && (
+          <div className="mb-1 flex flex-wrap gap-1.5">
+            {message.toolsUsed.map((t, i) => (
+              <span
+                key={i}
+                title={
+                  t.ok
+                    ? 'Fetched live before answering'
+                    : 'This lookup failed — the answer does not rest on it'
+                }
+                className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] font-medium ${
+                  t.ok
+                    ? 'border-gold-200 bg-gold-100/60 text-navy'
+                    : 'border-red-200 bg-red-50 text-red-800'
+                }`}
+              >
+                <Wrench className="h-2.5 w-2.5" />
+                {TOOL_LABEL[t.name] || t.name}
+                {t.subject ? ` · ${t.subject}` : ''}
+                {t.ok ? '' : ' · failed'}
+              </span>
+            ))}
+          </div>
+        )}
         <div
           className={`inline-block rounded-2xl px-4 py-2.5 text-sm leading-relaxed ${
             isUser ? 'bg-navy text-white' : 'bg-navy-50 text-navy'

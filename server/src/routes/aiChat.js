@@ -38,6 +38,10 @@ async function runWithTools(messages, temperature) {
   // Every number any tool actually returned this turn. The reply is
   // checked against it below.
   const fromTools = [];
+  // What was looked up, for the member to see. An answer that came from
+  // a live quote and one that came from the model's context read
+  // identically otherwise, and only one of them is current.
+  const used = [];
 
   for (let round = 0; round < MAX_TOOL_ROUNDS; round += 1) {
     const out = await llmChatTools({
@@ -51,7 +55,7 @@ async function runWithTools(messages, temperature) {
 
     const calls = out.toolCalls || [];
     if (calls.length === 0) {
-      if (out.content) return { text: out.content, fromTools };
+      if (out.content) return { text: out.content, fromTools, used };
       break;
     }
 
@@ -65,6 +69,19 @@ async function runWithTools(messages, temperature) {
       const name = call?.function?.name;
       const result = await runChatTool(name, call?.function?.arguments);
       const json = JSON.stringify(result);
+      used.push({
+        name,
+        // The argument that makes the call legible — a ticker, mostly.
+        subject: (() => {
+          try {
+            const a = JSON.parse(call?.function?.arguments || '{}');
+            return a.ticker || (Array.isArray(a.tickers) ? a.tickers.join(', ') : null);
+          } catch { return null; }
+        })(),
+        // Whether it actually got anything. A failed lookup shown as a
+        // successful one is the same lie in a smaller font.
+        ok: !result?.error,
+      });
       for (const m of json.matchAll(/-?\d+(?:\.\d+)?/g)) fromTools.push(m[0]);
       convo.push({ role: 'tool', tool_call_id: call.id, name, content: json });
     }
@@ -73,7 +90,7 @@ async function runWithTools(messages, temperature) {
   // Either it ran out of rounds or the tool path was unavailable. Ask
   // once more without tools so there is always an answer.
   const text = await llmChat({ messages: convo, temperature, localModel: RESEARCH_LOCAL_MODEL });
-  return { text, fromTools };
+  return { text, fromTools, used };
 }
 
 // A price in a reply that came from nowhere.
@@ -385,6 +402,9 @@ router.post('/', chatLimiter, async (req, res) => {
     sessionId: session.id,
     title,
     reply,
+    // Shown in the UI. Empty means nothing was looked up and the answer
+    // came from context — which is worth knowing, not hiding.
+    toolsUsed: attempt?.used || [],
   });
 });
 
