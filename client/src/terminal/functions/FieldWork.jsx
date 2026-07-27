@@ -1899,12 +1899,51 @@ function Coverage({ project, onChanged }) {
   );
 }
 
+// What this person can tell us, which is not the same fact as how they
+// touch the business. Two former employees are both FormerEmployee even
+// when one was present for the thing we are investigating and the other
+// left years before it — working them as one bucket is how a list of
+// fourteen names reads as fourteen witnesses.
+//
+// Colour carries the distinction that matters most: white for the
+// people who were actually there, dim amber for everyone else. The
+// label is free text, so an unrecognised tier still renders rather than
+// vanishing.
+const TIER_TONE = {
+  witness: 'var(--term-white)',
+  baseline: 'var(--term-cyan)',
+  competitor: 'var(--term-fg-dim)',
+  buyer: 'var(--term-fg-dim)',
+};
+
+function TierChip({ tier }) {
+  if (!tier) return <span style={{ color: 'var(--term-fg-muted)' }}>—</span>;
+  const tone = TIER_TONE[String(tier).toLowerCase()] || 'var(--term-fg-dim)';
+  return (
+    <span
+      style={{
+        color: tone,
+        border: `1px solid ${tone}`,
+        borderRadius: 2,
+        padding: '0 4px',
+        fontSize: 10,
+        letterSpacing: 0.5,
+        textTransform: 'uppercase',
+        whiteSpace: 'nowrap',
+      }}
+    >
+      {tier}
+    </span>
+  );
+}
+
 // Outreach — the front of the funnel. Without it there are no
 // interviews, and "who haven't we tried yet" is what actually paces a
 // project.
 function Targets({ project, onChanged }) {
-  const [f, setF] = useState({ name: '', relationship: 'FormerEmployee', employer: '', channel: '' });
+  const [f, setF] = useState({ name: '', relationship: 'FormerEmployee', employer: '', email: '', tier: '', channel: '' });
   const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState('');
   const [openId, setOpenId] = useState(null);
   // Ninety-seven names in one table, and the only one that matters on a
   // given afternoon is "who have we not tried yet". The funnel line
@@ -1922,12 +1961,15 @@ function Targets({ project, onChanged }) {
 
   async function add() {
     setSaving(true);
+    setErr('');
     try {
       await api.post(`/research/projects/${project.id}/targets`, f);
-      setF({ name: '', relationship: 'FormerEmployee', employer: '', channel: '' });
+      setF({ name: '', relationship: 'FormerEmployee', employer: '', email: '', tier: '', channel: '' });
       onChanged();
-    } catch {
-      /* keep the form */
+    } catch (e) {
+      // A rejected address has to say so. Clearing the form on a failed
+      // save loses the typing and tells the user nothing.
+      setErr(e.response?.data?.error || 'Could not add that target.');
     } finally {
       setSaving(false);
     }
@@ -1978,13 +2020,27 @@ function Targets({ project, onChanged }) {
           onChange={(e) => setF({ ...f, employer: e.target.value })}
         />
         <input
+          style={{ ...termInput, flex: '1 1 160px' }}
+          placeholder="Email"
+          value={f.email}
+          onChange={(e) => setF({ ...f, email: e.target.value })}
+        />
+        <input
+          style={{ ...termInput, flex: '0 1 110px' }}
+          placeholder="Category"
+          title="What they can tell us — e.g. Witness, Baseline, Competitor, Buyer"
+          value={f.tier}
+          onChange={(e) => setF({ ...f, tier: e.target.value })}
+        />
+        <input
           style={{ ...termInput, flex: '1 1 140px' }}
-          placeholder="How to reach them"
+          placeholder="Other channel"
           value={f.channel}
           onChange={(e) => setF({ ...f, channel: e.target.value })}
         />
         <TermButton onClick={add} disabled={saving || !f.name}>Add</TermButton>
       </div>
+      {err ? <div style={{ color: 'var(--term-negative)', fontSize: 11 }}>{err}</div> : null}
 
       {(project.targets || []).length > 8 ? (
         <div style={{ fontSize: 10, letterSpacing: 0.5 }}>
@@ -2025,11 +2081,20 @@ function Targets({ project, onChanged }) {
       ) : (
         <table className="term-table">
           <thead>
-            <tr><th>Name</th><th>Role</th><th>Employer</th><th>Status</th><th>Last try</th></tr>
+            <tr>
+              <th style={{ width: 24 }}>#</th>
+              <th>Name</th>
+              <th>Category</th>
+              <th>Employer</th>
+              <th>Email</th>
+              <th>Status</th>
+              <th>Last try</th>
+            </tr>
           </thead>
           <tbody>
             {shown.map((t) => (
               <tr key={t.id}>
+                <td style={{ color: 'var(--term-fg-muted)' }}>{t.priority ?? '—'}</td>
                 <td className="sym">
                   <a
                     href="#"
@@ -2039,8 +2104,26 @@ function Targets({ project, onChanged }) {
                     {t.name}
                   </a>
                 </td>
-                <td>{t.relationship}</td>
+                <td>
+                  <TierChip tier={t.tier} />
+                  {/* The relationship stays visible under the badge.
+                      The badge says what they can tell us, which is a
+                      different fact from how they touch the business,
+                      and dropping either one loses something. */}
+                  <div style={{ fontSize: 10, color: 'var(--term-fg-muted)' }}>{t.relationship}</div>
+                </td>
                 <td>{t.employer || '—'}</td>
+                <td>
+                  {/* Clickable, because a list you have to retype is a
+                      list nobody works through. */}
+                  {t.email ? (
+                    <a href={`mailto:${t.email}`} title={`Email ${t.name}`}>{t.email}</a>
+                  ) : (
+                    <span style={{ color: 'var(--term-fg-muted)' }}>
+                      {t.channel ? t.channel.slice(0, 40) : 'no address'}
+                    </span>
+                  )}
+                </td>
                 <td>
                   <select
                     style={{ ...termInput, padding: '1px 4px', fontSize: 11 }}
@@ -2238,15 +2321,30 @@ function TargetDetail({ target: t, onBack, onChanged }) {
 
       <div className="term-panel-header">
         <span className="name">{t.name}</span>
+        {t.priority != null ? (
+          <span style={{ color: 'var(--term-fg-muted)', fontSize: 10, letterSpacing: 0.5 }}>
+            #{t.priority} TO CALL
+          </span>
+        ) : null}
       </div>
 
       <div style={{ color: 'var(--term-fg-dim)', fontSize: 12 }}>
         {[t.role, t.employer].filter(Boolean).join(' · ') || 'No title or employer recorded'}
       </div>
-      <div style={{ color: 'var(--term-fg-muted)', fontSize: 11 }}>
-        {t.relationship}
-        {t.channel ? ` · ${t.channel}` : ''}
-        {t.lastContactAt ? ` · last contact ${fmtDate(t.lastContactAt)}` : ' · never contacted'}
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', fontSize: 11 }}>
+        <TierChip tier={t.tier} />
+        <span style={{ color: 'var(--term-fg-muted)' }}>{t.relationship}</span>
+        {/* The address gets its own line and its own link. This is the
+            page someone is on when they decide to actually write. */}
+        {t.email ? (
+          <a href={`mailto:${t.email}`} style={{ color: 'var(--term-white)' }}>{t.email}</a>
+        ) : (
+          <span style={{ color: 'var(--term-fg-muted)' }}>no address on file</span>
+        )}
+        {t.channel ? <span style={{ color: 'var(--term-fg-muted)' }}>{t.channel}</span> : null}
+        <span style={{ color: 'var(--term-fg-muted)' }}>
+          {t.lastContactAt ? `last contact ${fmtDate(t.lastContactAt)}` : 'never contacted'}
+        </span>
       </div>
 
       {sections.length === 0 ? (

@@ -1104,6 +1104,22 @@ model ResearchTarget {
   // How we might reach them, kept deliberately vague-friendly — often
   // "via LinkedIn" or "Sarah's old colleague" rather than an address.
   channel      String?
+  // The address, on its own, when we actually have one. Kept out of
+  // `channel` because a mailto link cannot be built from "LinkedIn, or
+  // ask Sarah" and a list you cannot click is a list nobody works.
+  email        String?
+  // Call order. An outreach list is not a set, it is a queue — the
+  // whole question on a given afternoon is who to ring first, and a
+  // table sorted by insertion time answers a question nobody asked.
+  // Null sorts last, so an unranked name is still visible.
+  priority     Int?
+  // A short badge for whatever cut actually matters on this project.
+  // Deliberately free text: `relationship` says how someone touches the
+  // business, which is not the same as what they can tell us. On CHRW
+  // two former employees are both FormerEmployee, but one left during
+  // the headcount reduction and one left six years before it — they
+  // answer different questions and must not be worked as one bucket.
+  tier         String?
   // Identified | Contacted | Scheduled | Completed | Declined | Unreachable
   status       String   @default("Identified")
   // Set once outreach converts, so a completed target points at the

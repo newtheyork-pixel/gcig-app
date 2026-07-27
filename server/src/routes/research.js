@@ -143,7 +143,14 @@ router.get('/projects/:id', async (req, res) => {
           },
         },
         questions: { orderBy: [{ rank: 'asc' }, { id: 'asc' }] },
-        targets: { orderBy: { updatedAt: 'desc' } },
+        // Call order first, most-recently-touched after. An unranked
+        // name sorts last rather than disappearing — nulls: 'last' is
+        // the whole point, since Postgres would otherwise put them at
+        // the front of an ascending sort and bury the person we
+        // decided to ring first.
+        targets: {
+          orderBy: [{ priority: { sort: 'asc', nulls: 'last' } }, { updatedAt: 'desc' }],
+        },
         valuations: {
           orderBy: { asOf: 'desc' },
           include: { createdBy: { select: { id: true, name: true } } },
@@ -485,13 +492,28 @@ const TARGET_STATUSES = new Set([
   'Identified', 'Contacted', 'Scheduled', 'Completed', 'Declined', 'Unreachable',
 ]);
 
+// An email we cannot send to is worse than a blank — it looks like a
+// working address until the bounce comes back, by which point the name
+// has been sitting in "Contacted" for a week.
+function cleanEmail(v) {
+  if (v === undefined || v === null || v === '') return null;
+  const e = String(v).trim().slice(0, 200);
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e) ? e : null;
+}
+
 router.post('/projects/:id/targets', canResearch, async (req, res) => {
   const projectId = Number(req.params.id);
-  const { name, relationship, employer, role, channel, notes } = req.body || {};
+  const { name, relationship, employer, role, channel, notes, email, priority, tier } = req.body || {};
   if (!Number.isInteger(projectId)) return res.status(400).json({ error: 'Bad id' });
   if (!name || !relationship) {
     return res.status(400).json({ error: 'name and relationship are required' });
   }
+  // Reject a malformed address rather than storing it. Silently nulling
+  // it would leave the caller believing the list is reachable.
+  if (email && !cleanEmail(email)) {
+    return res.status(400).json({ error: `Not a valid email address: ${String(email).slice(0, 80)}` });
+  }
+  const pri = Number(priority);
   try {
     const t = await prisma.researchTarget.create({
       data: {
@@ -501,6 +523,9 @@ router.post('/projects/:id/targets', canResearch, async (req, res) => {
         employer: employer ? String(employer).slice(0, 200) : null,
         role: role ? String(role).slice(0, 200) : null,
         channel: channel ? String(channel).slice(0, 300) : null,
+        email: cleanEmail(email),
+        priority: Number.isInteger(pri) ? pri : null,
+        tier: tier ? String(tier).slice(0, 40) : null,
         // Generous: a target's notes hold the whole correspondence —
         // why we picked them, the email sent, their reply, the outcome.
         // Truncating that to a couple of lines loses the only record of
@@ -554,6 +579,19 @@ router.patch('/targets/:id', canResearch, async (req, res) => {
   }
   if (req.body?.channel !== undefined) {
     data.channel = req.body.channel ? String(req.body.channel).slice(0, 300) : null;
+  }
+  if (req.body?.email !== undefined) {
+    if (req.body.email && !cleanEmail(req.body.email)) {
+      return res.status(400).json({ error: `Not a valid email address: ${String(req.body.email).slice(0, 80)}` });
+    }
+    data.email = cleanEmail(req.body.email);
+  }
+  if (req.body?.priority !== undefined) {
+    const p = Number(req.body.priority);
+    data.priority = Number.isInteger(p) ? p : null;
+  }
+  if (req.body?.tier !== undefined) {
+    data.tier = req.body.tier ? String(req.body.tier).slice(0, 40) : null;
   }
   try {
     res.json(await prisma.researchTarget.update({ where: { id }, data }));
