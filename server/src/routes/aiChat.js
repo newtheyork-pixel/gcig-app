@@ -240,7 +240,13 @@ router.post('/', chatLimiter, async (req, res) => {
   });
 
   // Build the model input: server system prompt + thread from DB.
-  const systemPrompt = await getClubSystemPrompt({ user: req.user });
+  // The last few turns, not just this message: a member who asks about
+  // Lindt and then says "and what is it trading at" should still have
+  // the project loaded.
+  const topic = [...priorMessages.slice(-4).map((m) => m.content), message]
+    .join(' ')
+    .slice(0, 2000);
+  const systemPrompt = await getClubSystemPrompt({ user: req.user, topic });
   const modelMessages = [
     { role: 'system', content: systemPrompt },
     ...priorMessages.map((m) => ({ role: m.role, content: m.content })),

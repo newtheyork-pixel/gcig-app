@@ -1167,7 +1167,7 @@ function buildUserContext(user) {
   return lines.join('\n');
 }
 
-export async function getClubSystemPrompt({ forceFresh = false, user = null } = {}) {
+export async function getClubSystemPrompt({ forceFresh = false, user = null, topic = '' } = {}) {
   let base;
   if (!forceFresh && cache.text && Date.now() - cache.at < CACHE_TTL_MS) {
     base = cache.text;
@@ -1179,6 +1179,9 @@ export async function getClubSystemPrompt({ forceFresh = false, user = null } = 
   // research is role-gated, and a cached brief is shared by everyone who
   // asks. Caching this would hand the claim ledger to whoever happened
   // to warm it.
-  const research = await buildResearchContext(user);
+  // `topic` is what the member just asked. It decides which research
+  // gets expanded — see researchContext for why loading all of it on
+  // every message made the model answer the wrong question.
+  const research = await buildResearchContext(user, topic);
   return base + buildUserContext(user) + research;
 }

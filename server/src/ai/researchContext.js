@@ -74,7 +74,32 @@ function canSeeResearch(user) {
  * assistant answering without this section is a degraded answer; the
  * assistant failing to load is a broken product.
  */
-export async function buildResearchContext(user) {
+// Does this conversation actually concern this project?
+//
+// The whole ledger was included on every message. Twelve kilobytes of
+// Lindt fieldwork in front of a question about AIT is not context, it is
+// noise, and a local model reads it as the subject: asked what AIT was
+// trading at, prod answered about chocolate restocking eight times
+// running and never called the quote tool at all.
+//
+// So detail is pulled in when the conversation is about the name, and
+// otherwise the project appears as a single line saying it exists. The
+// model can still say we have research on Lindt; it just is not made to
+// read all of it to answer a question about something else.
+function mentions(topic, project) {
+  if (!topic) return false;
+  const t = String(topic).toLowerCase();
+  if (project.ticker && new RegExp(`\\b${project.ticker.toLowerCase()}\\b`).test(t)) return true;
+  // Project names are like "Lindt & Sprüngli — 2026 field study"; match
+  // on their distinctive words rather than the whole string.
+  return String(project.name || '')
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter((w) => w.length > 3)
+    .some((w) => t.includes(w));
+}
+
+export async function buildResearchContext(user, topic = '') {
   if (!canSeeResearch(user)) return '';
 
   try {
@@ -118,7 +143,30 @@ export async function buildResearchContext(user) {
       '',
     ];
 
-    for (const p of projects) {
+    // If nothing in the conversation names a project, every project is
+    // listed but none is expanded. Asking about one pulls it in.
+    const relevant = projects.filter((p) => mentions(topic, p));
+    const expand = new Set((relevant.length ? relevant : []).map((p) => p.id));
+
+    if (expand.size === 0) {
+      out.push(
+        '**Nothing in this conversation names one of these projects, so the',
+        'detail is not loaded.** They exist and you can say so. If the member',
+        'asks about one by name or ticker, say you can pull it up — do not',
+        'answer about it from memory, and do not treat these names as the',
+        'subject of an unrelated question.',
+        ''
+      );
+      for (const p of projects) {
+        out.push(
+          `- ${p.ticker ? `${p.ticker} — ` : ''}${p.name} (${p.status}), ` +
+            `${p._count.interviews} interview(s)`
+        );
+      }
+      return out.join('\n');
+    }
+
+    for (const p of projects.filter((x) => expand.has(x.id))) {
       const claims = await prisma.researchClaim.findMany({
         where: { interview: { projectId: p.id, ...CITABLE_INTERVIEW } },
         include: {
