@@ -35,6 +35,9 @@ const MAX_TOOL_ROUNDS = 3;
 // rather than failing outright.
 async function runWithTools(messages, temperature) {
   const convo = [...messages];
+  // What the member actually asked, kept aside so it can be put back in
+  // front of the model after the tool output.
+  const question = [...messages].reverse().find((m) => m.role === 'user')?.content || '';
   // Every number any tool actually returned this turn. The reply is
   // checked against it below.
   const fromTools = [];
@@ -99,6 +102,21 @@ async function runWithTools(messages, temperature) {
       if (!result?.error) gotData = true;
       for (const m of json.matchAll(/-?\d+(?:\.\d+)?/g)) fromTools.push(m[0]);
       convo.push({ role: 'tool', tool_call_id: call.id, name, content: json });
+    }
+
+    // Restate the question after the tool output.
+    //
+    // Left alone, the conversation ends on a block of JSON and the model
+    // loses what was asked — it fetched a good AAPL quote and then
+    // replied "Sure, what would you like to know?", over and over. By
+    // that point the question is thousands of characters back, behind a
+    // system prompt and a tool payload. Putting it last is what makes it
+    // the thing being answered.
+    if (question) {
+      convo.push({
+        role: 'user',
+        content: `Using the tool results above, answer my question: ${question}`,
+      });
     }
   }
 
