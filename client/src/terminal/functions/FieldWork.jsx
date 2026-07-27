@@ -1944,6 +1944,75 @@ function TierChip({ tier }) {
   );
 }
 
+// Where a draft has got to, at a glance.
+//
+// The whole point of the approval gate is that somebody can see, from
+// the list, what is waiting on them. That fact living only inside the
+// person's detail view is how a fully-approved email sits unsent for a
+// week — so the stage travels with the row.
+//
+// "No draft" is a real state and gets said, rather than rendered as an
+// empty cell that reads like a rendering bug.
+const STAGE_TONE = {
+  awaiting: ['var(--term-fg-dim)', '0 of 2'],
+  'one-approval': ['var(--term-amber, var(--term-white))', '1 of 2'],
+  ready: ['var(--term-positive)', 'READY'],
+  sent: ['var(--term-fg-muted)', 'SENT'],
+  rejected: ['var(--term-negative)', 'REJECTED'],
+  blocked: ['var(--term-negative)', 'BLOCKED'],
+};
+
+function StageChip({ draft }) {
+  if (!draft) return <span style={{ color: 'var(--term-fg-muted)', fontSize: 10 }}>no draft</span>;
+  const [tone, label] = STAGE_TONE[draft.stage] || ['var(--term-fg-dim)', draft.stage];
+  const who = draft.approvedByNames?.length ? ` (${draft.approvedByNames.join(', ')})` : '';
+  return (
+    <span style={{ whiteSpace: 'nowrap' }}>
+      <span
+        title={
+          draft.stage === 'blocked'
+            ? `Compliance screen blocked this: ${draft.screenReason || ''}`
+            : `${label}${who}`
+        }
+        style={{ color: tone, fontSize: 10, letterSpacing: 0.5 }}
+      >
+        {label}
+      </span>
+      <ScreenChip draft={draft} />
+    </span>
+  );
+}
+
+// The compliance verdict, and the two states that must never be
+// mistaken for a pass.
+//
+// `unscreened` means nothing has read this yet. `clear-keyword-only`
+// means the model was unreachable and only the crude pass ran, which is
+// a weaker statement than a clean read and is shown as its own thing
+// rather than as a tick. Presenting either as "clear" is the failure
+// this whole screen exists to avoid.
+const SCREEN_TONE = {
+  prohibited: ['var(--term-negative)', 'BLOCKED', 'The compliance screen will not pass this as written'],
+  elevated: ['var(--term-amber, var(--term-white))', 'FLAGGED', 'The compliance screen wants a person to read this'],
+  clear: ['var(--term-positive)', 'screened', 'Read by the keyword pass and the model'],
+  'clear-keyword-only': ['var(--term-amber, var(--term-white))', 'part-screened', 'The model was unreachable. Only the keyword pass ran, so this is not a clean bill of health'],
+  unscreened: ['var(--term-fg-muted)', 'unscreened', 'Nothing has read this yet'],
+};
+
+function ScreenChip({ draft }) {
+  const s = SCREEN_TONE[draft?.screenState];
+  if (!s) return null;
+  const [tone, label, title] = s;
+  return (
+    <span
+      title={draft.screenReason ? `${title}: ${draft.screenReason}` : title}
+      style={{ color: tone, fontSize: 9, letterSpacing: 0.4, marginLeft: 6, opacity: 0.9 }}
+    >
+      {label}
+    </span>
+  );
+}
+
 // Outreach — the front of the funnel. Without it there are no
 // interviews, and "who haven't we tried yet" is what actually paces a
 // project.
@@ -2008,7 +2077,7 @@ function Targets({ project, onChanged }) {
       {/* Where the outreach queue actually stands. Without this line the
           approval state is invisible until you open a person, which is
           how a fully-approved email sits unsent for a week. */}
-      {q.awaitingReview || q.readyToSend || q.rejected ? (
+      {q.awaitingReview || q.readyToSend || q.rejected || q.screenBlocked || q.unscreened || q.keywordOnly ? (
         <div style={{ fontSize: 11 }}>
           {q.awaitingMe ? (
             <span style={{ color: 'var(--term-white)', marginRight: 12 }}>
@@ -2028,6 +2097,25 @@ function Targets({ project, onChanged }) {
           {q.rejected ? (
             <span style={{ color: 'var(--term-negative)', marginRight: 12 }}>
               {q.rejected} rejected
+            </span>
+          ) : null}
+          {/* Compliance state belongs on the same line as the approval
+              state, because "approved" and "screened" are different
+              claims and a reader who sees only the first will assume
+              the second. */}
+          {q.screenBlocked ? (
+            <span style={{ color: 'var(--term-negative)', marginRight: 12 }}>
+              {q.screenBlocked} blocked by the screen
+            </span>
+          ) : null}
+          {q.screenElevated ? (
+            <span style={{ color: 'var(--term-amber, var(--term-white))', marginRight: 12 }}>
+              {q.screenElevated} flagged for a read
+            </span>
+          ) : null}
+          {q.unscreened || q.keywordOnly ? (
+            <span style={{ color: 'var(--term-amber, var(--term-white))', marginRight: 12 }}>
+              {(q.unscreened || 0) + (q.keywordOnly || 0)} not fully screened
             </span>
           ) : null}
         </div>
@@ -2123,6 +2211,7 @@ function Targets({ project, onChanged }) {
               <th>Category</th>
               <th>Employer</th>
               <th>Email</th>
+              <th>Draft</th>
               <th>Status</th>
               <th>Last try</th>
             </tr>
@@ -2160,6 +2249,7 @@ function Targets({ project, onChanged }) {
                     </span>
                   )}
                 </td>
+                <td><StageChip draft={(t.drafts || [])[0]} /></td>
                 <td>
                   <select
                     style={{ ...termInput, padding: '1px 4px', fontSize: 11 }}
@@ -2546,6 +2636,8 @@ function DraftCard({ d, target, busy, copied, onCopy, onRun }) {
     ? { text: `SENT ${fmtDate(d.sentAt)}${d.sentBy ? ` by ${d.sentBy.name}` : ''}`, tone: 'var(--term-fg-muted)' }
     : d.rejectedAt
     ? { text: `REJECTED by ${d.rejectedBy?.name || 'someone'} — ${d.reviewNote || 'no reason given'}`, tone: 'var(--term-negative)' }
+    : d.screenBlocked
+    ? { text: 'BLOCKED by the compliance screen — cannot be approved or sent as written', tone: 'var(--term-negative)' }
     : d.fullyApproved
     ? { text: `APPROVED by ${d.approvedByNames.join(' and ')} — ready to send`, tone: 'var(--term-positive)' }
     : {
@@ -2553,9 +2645,45 @@ function DraftCard({ d, target, busy, copied, onCopy, onRun }) {
         tone: 'var(--term-fg-dim)',
       };
 
+  const findings = d.screenFindings?.hits || [];
+  const concerns = d.screenFindings?.concerns || [];
+
   return (
     <div style={{ border: '1px solid var(--term-border)', padding: 8, display: 'grid', gap: 6 }}>
       <div style={{ fontSize: 10, letterSpacing: 0.5, color: state.tone }}>{state.text}</div>
+
+      {/* The compliance read, with what it actually found. A verdict
+          nobody can act on gets clicked past, so the findings are here
+          rather than behind a tooltip. */}
+      <div style={{ fontSize: 10 }}>
+        <ScreenChip draft={d} />
+        {d.screenReason ? (
+          <span style={{ color: 'var(--term-fg-muted)', marginLeft: 6 }}>{d.screenReason}</span>
+        ) : null}
+        {d.screenState === 'clear-keyword-only' || d.screenState === 'unscreened' ? (
+          <a
+            href="#"
+            onClick={(e) => { e.preventDefault(); onRun(() => api.post(`/research/drafts/${d.id}/screen`)); }}
+            style={{ marginLeft: 8 }}
+          >
+            run the full screen
+          </a>
+        ) : null}
+      </div>
+
+      {findings.length || concerns.length ? (
+        <ul style={{ margin: 0, paddingLeft: 16, fontSize: 10, color: 'var(--term-fg-dim)' }}>
+          {findings.map((h, i) => (
+            <li key={`h${i}`}>
+              {h.why}
+              {h.excerpt ? (
+                <span style={{ color: 'var(--term-fg-muted)' }}> — “{h.excerpt.slice(0, 90)}”</span>
+              ) : null}
+            </li>
+          ))}
+          {concerns.map((c, i) => <li key={`c${i}`}>{c}</li>)}
+        </ul>
+      ) : null}
 
       {editing ? (
         <>

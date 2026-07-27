@@ -10,6 +10,7 @@ import { assessTopics, formatCitation } from '../services/corroboration.js';
 import { assessCoverage, funnel } from '../services/questionCoverage.js';
 import { synthesize } from '../services/synthesis.js';
 import { screenTranscript, RISK } from '../services/mnpiScreen.js';
+import { screenOutreach } from '../services/outreachScreen.js';
 import { uploadFile } from '../services/oneDriveStorage.js';
 
 // Field research — sources, interviews, and the claim ledger.
@@ -215,6 +216,12 @@ router.get('/projects/:id', async (req, res) => {
           readyToSend: all.filter((d) => d.fullyApproved && !d.sentAt).length,
           rejected: all.filter((d) => d.rejectedAt && !d.sentAt).length,
           sent: all.filter((d) => d.sentAt).length,
+          // Compliance state has to be countable at the top level too,
+          // or "is anything flagged" means opening fourteen people.
+          screenBlocked: all.filter((d) => d.screenBlocked && !d.sentAt).length,
+          screenElevated: all.filter((d) => d.screenState === 'elevated' && !d.sentAt).length,
+          unscreened: all.filter((d) => d.screenState === 'unscreened' && !d.sentAt).length,
+          keywordOnly: all.filter((d) => d.screenState === 'clear-keyword-only' && !d.sentAt).length,
         };
       })(),
       transcriptionReady: transcriptionConfigured(),
@@ -670,17 +677,75 @@ const DRAFT_VIEW = {
 function decorate(d, user) {
   const approvals = d.approvals || [];
   const mine = approvals.some((a) => a.userId === user?.id);
+  const blocked = d.screenRisk === 'prohibited';
   return {
     ...d,
     approvalCount: approvals.length,
     approvalsNeeded: REQUIRED_APPROVALS,
-    fullyApproved: approvals.length >= REQUIRED_APPROVALS && !d.rejectedAt,
+    fullyApproved: approvals.length >= REQUIRED_APPROVALS && !d.rejectedAt && !blocked,
     iApproved: mine,
-    canIApprove: canApproveOutreach(user) && !mine && !d.sentAt && !d.rejectedAt,
+    canIApprove: canApproveOutreach(user) && !mine && !d.sentAt && !d.rejectedAt && !blocked,
+    screenBlocked: blocked,
+    // A draft nobody has screened is NOT a clean draft, and a "low" the
+    // model never saw is a weaker claim than a "low" it did. Both states
+    // are named here so the UI cannot accidentally render either as an
+    // all-clear.
+    screenState: !d.screenedAt
+      ? 'unscreened'
+      : d.screenRisk === 'prohibited'
+      ? 'prohibited'
+      : d.screenRisk === 'elevated'
+      ? 'elevated'
+      : d.screenModelOk
+      ? 'clear'
+      : 'clear-keyword-only',
+    // Where a draft has got to, in one word, computed once here so the
+    // table and the detail view cannot disagree about it.
+    stage: d.sentAt
+      ? 'sent'
+      : d.rejectedAt
+      ? 'rejected'
+      : blocked
+      ? 'blocked'
+      : approvals.length >= REQUIRED_APPROVALS
+      ? 'ready'
+      : approvals.length > 0
+      ? 'one-approval'
+      : 'awaiting',
     // Who we are still waiting on, by name, because "1 of 2" does not
     // tell anyone whose inbox to go and nudge.
     approvedByNames: approvals.map((a) => a.user?.name).filter(Boolean),
   };
+}
+
+// Screen a draft and persist the verdict. Never throws: a screen that
+// takes the save down with it means the draft is lost, which is worse
+// than a draft that is saved unscreened and says so.
+async function screenAndStore(draftId) {
+  try {
+    const d = await prisma.outreachDraft.findUnique({
+      where: { id: draftId },
+      include: { target: true },
+    });
+    if (!d) return null;
+    const r = await screenOutreach(
+      { subject: d.subject, body: d.body },
+      d.target || {}
+    );
+    return await prisma.outreachDraft.update({
+      where: { id: draftId },
+      data: {
+        screenRisk: r.risk,
+        screenReason: r.reason,
+        screenFindings: { hits: r.hits, concerns: r.concerns, modelRisk: r.modelRisk },
+        screenModelOk: r.modelAvailable,
+        screenedAt: new Date(),
+      },
+    });
+  } catch (err) {
+    console.error('outreach screen failed:', err.message);
+    return null;
+  }
 }
 
 router.post('/targets/:id/drafts', canResearch, async (req, res) => {
@@ -691,15 +756,19 @@ router.post('/targets/:id/drafts', canResearch, async (req, res) => {
   try {
     const target = await prisma.researchTarget.findUnique({ where: { id: targetId } });
     if (!target) return res.status(404).json({ error: 'No such target' });
-    const d = await prisma.outreachDraft.create({
+    const created = await prisma.outreachDraft.create({
       data: {
         targetId,
         subject: String(subject).slice(0, 300),
         body: String(body).slice(0, 20_000),
         authorId: req.user?.id ?? null,
       },
-      include: DRAFT_VIEW,
     });
+    // Screened before anyone can approve it, so the first person to
+    // open it is reading the compliance verdict rather than being the
+    // one who has to think of it.
+    await screenAndStore(created.id);
+    const d = await prisma.outreachDraft.findUnique({ where: { id: created.id }, include: DRAFT_VIEW });
     res.status(201).json(decorate(d, req.user));
   } catch (err) {
     console.error('research/draft create failed:', err.message);
@@ -735,7 +804,7 @@ router.patch('/drafts/:id', canResearch, async (req, res) => {
     const body = req.body?.body !== undefined ? String(req.body.body).slice(0, 20_000) : existing.body;
     const changed = subject !== existing.subject || body !== existing.body;
 
-    const d = await prisma.$transaction(async (tx) => {
+    await prisma.$transaction(async (tx) => {
       if (changed && existing.approvals.length) {
         await tx.outreachApproval.deleteMany({ where: { draftId: id } });
       }
@@ -747,10 +816,20 @@ router.patch('/drafts/:id', canResearch, async (req, res) => {
           // An edit is also the answer to a rejection, so it clears the
           // block — otherwise a rejected draft can never be revived.
           ...(changed ? { rejectedById: null, rejectedAt: null } : {}),
+          // The old verdict described text that no longer exists.
+          // Blanking it first means a crash between here and the
+          // re-screen leaves the draft visibly unscreened rather than
+          // carrying a stale all-clear.
+          ...(changed
+            ? { screenRisk: null, screenReason: null, screenFindings: null, screenModelOk: false, screenedAt: null }
+            : {}),
         },
-        include: DRAFT_VIEW,
       });
     });
+    // Re-screened on every real edit, for the same reason approvals are
+    // voided: the verdict belongs to the words, not to the row.
+    if (changed) await screenAndStore(id);
+    const d = await prisma.outreachDraft.findUnique({ where: { id }, include: DRAFT_VIEW });
     res.json({
       ...decorate(d, req.user),
       approvalsCleared: changed ? existing.approvals.length : 0,
@@ -864,6 +943,14 @@ router.post('/drafts/:id/sent', canResearch, async (req, res) => {
     if (!d) return res.status(404).json({ error: 'No such draft' });
     if (d.sentAt) return res.status(409).json({ error: 'Already marked sent.' });
     if (d.rejectedAt) return res.status(409).json({ error: 'That draft was rejected — edit it and get it approved again.' });
+    // The compliance screen is a gate, not a note. Re-checked here at
+    // the moment of sending rather than trusted from whatever the
+    // client last saw.
+    if (d.screenRisk === 'prohibited') {
+      return res.status(409).json({
+        error: `The compliance screen will not pass this: ${d.screenReason || 'no reason recorded'}. Edit it, which re-screens.`,
+      });
+    }
 
     const have = new Set(d.approvals.map((a) => a.userId)).size;
     if (have < REQUIRED_APPROVALS) {
@@ -893,6 +980,26 @@ router.post('/drafts/:id/sent', canResearch, async (req, res) => {
   } catch (err) {
     console.error('research/draft sent failed:', err.message);
     res.status(500).json({ error: 'Could not mark it sent' });
+  }
+});
+
+// Re-run the screen without touching the text.
+//
+// Needed because the local model is sometimes down, and a draft
+// screened by the keyword floor alone carries a weaker verdict than one
+// the model actually read. Without this the only way to get a proper
+// screen is to edit the draft, which would cost the approvals.
+router.post('/drafts/:id/screen', canResearch, async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) return res.status(400).json({ error: 'Bad id' });
+  try {
+    const updated = await screenAndStore(id);
+    if (!updated) return res.status(502).json({ error: 'The screen could not run. The draft is unchanged and still shows its previous state.' });
+    const d = await prisma.outreachDraft.findUnique({ where: { id }, include: DRAFT_VIEW });
+    res.json(decorate(d, req.user));
+  } catch (err) {
+    console.error('research/draft screen failed:', err.message);
+    res.status(500).json({ error: 'Could not screen that draft' });
   }
 });
 

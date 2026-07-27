@@ -1183,6 +1183,19 @@ model OutreachDraft {
 
   approvals    OutreachApproval[]
 
+  // The compliance read, re-run on every edit because it is the WORDS
+  // that were screened, exactly as with approvals.
+  //
+  // screenedAt null is a real state and must not render as clean: it
+  // means nothing has read this yet. screenModelOk false means only the
+  // keyword floor ran, which is a weaker statement than a low risk and
+  // has to be shown as one.
+  screenRisk     String?
+  screenReason   String?
+  screenFindings Json?
+  screenModelOk  Boolean  @default(false)
+  screenedAt     DateTime?
+
   // A rejection is as much a record as an approval — "we decided not to
   // send this, and why" is worth keeping. One rejection parks the draft
   // until it is edited, which clears it along with the approvals.
