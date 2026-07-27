@@ -680,22 +680,32 @@ async function buildLiveContext() {
       const key = (a.ticker || '').toUpperCase();
       if (!key) continue;
       if (!byTicker.has(key)) byTicker.set(key, []);
-      if (byTicker.get(key).length < 3) byTicker.get(key).push(a);
+      // Two per name, not three. Thirteen tickers at three summaries of
+      // 280 characters was eleven kilobytes of news in a prompt the
+      // local model was already struggling to hold — asked the price of
+      // Apple it fetched the quote correctly and then answered about
+      // Johnson & Johnson litigation, because the news block was the
+      // largest thing in front of it.
+      if (byTicker.get(key).length < 2) byTicker.get(key).push(a);
     }
     const sections = [];
     // Preserve the order from the DB result (score desc) — most-material
-    // tickers first in the rendered block.
+    // tickers first in the rendered block. Capped: the tail of a
+    // materiality-ranked list is by definition the stuff that matters
+    // least, and it was crowding out the answer to the question asked.
+    const MAX_NEWS_TICKERS = 6;
     const seenKeys = new Set();
     for (const a of newsRes.value) {
       const key = (a.ticker || '').toUpperCase();
       if (!key || seenKeys.has(key)) continue;
       seenKeys.add(key);
+      if (seenKeys.size > MAX_NEWS_TICKERS) break;
       const articles = byTicker.get(key) || [];
       const lines = [`**${key}**`];
       for (const art of articles) {
         const score = art.score != null ? `score ${art.score.toFixed(1)}` : 'unscored';
         const when = art.createdAt ? fmtDate(art.createdAt) : '—';
-        const body = truncate(art.summary || art.reason || '_no summary available_', 280);
+        const body = truncate(art.summary || art.reason || '_no summary available_', 140);
         lines.push(`  - (${score} · indexed ${when}) ${body}`);
       }
       sections.push(lines.join('\n'));
