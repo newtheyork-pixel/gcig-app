@@ -74,3 +74,12 @@ test('a policy question carries them in full', async () => {
   assert.match(p, /# Reference: Investment Policy Statement/);
   assert.match(p, /# Reference: Internal Club Policies/);
 });
+
+// The prompt must not advertise a capability the process does not have.
+test('with tools off, the prompt says it cannot look anything up', async () => {
+  const p = await getClubSystemPrompt({ topic: 'what is AIT trading at' });
+  assert.match(p, /You cannot look anything up/);
+  assert.match(p, /as of our last sync/);
+  // And must not claim a fetch it cannot perform.
+  assert.ok(!/You can fetch things rather than guessing/.test(p));
+});

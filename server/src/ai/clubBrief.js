@@ -1010,6 +1010,47 @@ async function buildLiveContext() {
   ];
 }
 
+// What the prompt says about tools has to match what is actually wired.
+//
+// This section used to be unconditional. With AI_CHAT_TOOLS unset the
+// model was told "you can fetch things rather than guessing at them",
+// could not fetch anything, and answered "AIT is currently trading at
+// $345.58" — the cached portfolio figure, reported as live. The same
+// paragraph told it not to do that, but with no tool available it had
+// no other way to answer, so it did the thing it was warned against.
+//
+// A prompt that advertises a capability the process does not have is a
+// prompt that instructs the model to pretend.
+const TOOLS_BLOCK =
+  process.env.AI_CHAT_TOOLS === '1'
+    ? `## Tools
+You can fetch things rather than guessing at them:
+- **get_quote** — what a ticker is trading at now. Call it any time you
+  are asked a current price, or need to compare one against our price
+  targets and buy levels. The portfolio figures in your context are
+  as-of the last sync and are NOT current; do not present them as if
+  they were, and do not estimate a price you could have looked up.
+- **get_company_snapshot** — price, market cap, P/E, dividend yield.
+- **get_recent_filings** — recent SEC filings for a ticker.
+
+Call a tool when the answer depends on a current fact. Say what you did:
+a price is better with "as of just now" than without. If a tool returns
+an error or reports it could not price something, say so — that is a
+real answer. Never fill the gap with an estimate.`
+    : `## You cannot look anything up
+You have NO live market data and no way to fetch any. There is no quote
+tool, no price feed, no filings lookup.
+
+The prices in the Portfolio section are a snapshot from the last sync and
+may be hours or days old. You may quote them, but you must say what they
+are: "as of our last sync, AIT was $345.58" — never "AIT is currently
+trading at $345.58". The difference matters to someone deciding
+something.
+
+For any ticker NOT in the Portfolio section you have no price at all.
+Say so. Do not estimate one, and do not offer a figure from memory —
+your training data is older than the market.`;
+
 const SCOPE_DIRECTIVE = `You are the Griffin Fund Assistant — an in-house AI tool for Grace Church School's student-led Investment Group ("The Griffin Fund" / GCS Investment Group).
 
 ## Scope — STRICT
@@ -1043,20 +1084,7 @@ Concretely:
 - General market knowledge is fine and useful — but label it as such,
   and keep it clearly apart from anything of ours.
 
-## Tools
-You can fetch things rather than guessing at them:
-- **get_quote** — what a ticker is trading at now. Call it any time you
-  are asked a current price, or need to compare one against our price
-  targets and buy levels. The portfolio figures in your context are
-  as-of the last sync and are NOT current; do not present them as if
-  they were, and do not estimate a price you could have looked up.
-- **get_company_snapshot** — price, market cap, P/E, dividend yield.
-- **get_recent_filings** — recent SEC filings for a ticker.
-
-Call a tool when the answer depends on a current fact. Say what you did:
-"AIT is at $347.06" is better with "as of just now" than without. If a
-tool returns an error or reports it could not price something, say so —
-that is a real answer. Never fill the gap with an estimate.
+${TOOLS_BLOCK}
 
 ## What you do NOT have
 So you can say so plainly rather than guessing:
