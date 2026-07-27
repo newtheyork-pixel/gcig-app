@@ -35,6 +35,9 @@ const MAX_TOOL_ROUNDS = 3;
 // rather than failing outright.
 async function runWithTools(messages, temperature) {
   const convo = [...messages];
+  // Every number any tool actually returned this turn. The reply is
+  // checked against it below.
+  const fromTools = [];
 
   for (let round = 0; round < MAX_TOOL_ROUNDS; round += 1) {
     const out = await llmChatTools({
@@ -48,7 +51,7 @@ async function runWithTools(messages, temperature) {
 
     const calls = out.toolCalls || [];
     if (calls.length === 0) {
-      if (out.content) return out.content;
+      if (out.content) return { text: out.content, fromTools };
       break;
     }
 
@@ -61,18 +64,51 @@ async function runWithTools(messages, temperature) {
     for (const call of calls) {
       const name = call?.function?.name;
       const result = await runChatTool(name, call?.function?.arguments);
-      convo.push({
-        role: 'tool',
-        tool_call_id: call.id,
-        name,
-        content: JSON.stringify(result),
-      });
+      const json = JSON.stringify(result);
+      for (const m of json.matchAll(/-?\d+(?:\.\d+)?/g)) fromTools.push(m[0]);
+      convo.push({ role: 'tool', tool_call_id: call.id, name, content: json });
     }
   }
 
   // Either it ran out of rounds or the tool path was unavailable. Ask
   // once more without tools so there is always an answer.
-  return llmChat({ messages: convo, temperature, localModel: RESEARCH_LOCAL_MODEL });
+  const text = await llmChat({ messages: convo, temperature, localModel: RESEARCH_LOCAL_MODEL });
+  return { text, fromTools };
+}
+
+// A price in a reply that came from nowhere.
+//
+// Live, the assistant answered "AIT is trading at $123.45 per share" and
+// called it "Advanced Infrastructure Technologies Inc". Both invented;
+// the real answer is Applied Industrial Technologies at $347.06, which
+// it produced correctly on the next attempt. Prompting cannot make that
+// reliable, and a fabricated price handed to a member is the single
+// worst thing this assistant can do — someone acts on it.
+//
+// So a money figure has to be traceable to something a tool actually
+// returned this turn. Anything else is treated as invented.
+//
+// Deliberately narrow: only currency-marked figures are checked, so
+// ordinary prose about percentages, dates and counts is untouched. And
+// it only applies when tools ran — a general conversation about
+// valuation methods that never quotes a live price is not the target.
+const MONEY = /(?:\$|USD\s?|CHF\s?)(\d[\d,]*(?:\.\d+)?)/gi;
+
+function unbackedPrice(text, fromTools) {
+  if (typeof text !== 'string' || fromTools.length === 0) return null;
+  const seen = new Set(fromTools.map((n) => String(Number(n))));
+  for (const m of text.matchAll(MONEY)) {
+    const raw = m[1].replace(/,/g, '');
+    const n = Number(raw);
+    if (!Number.isFinite(n)) continue;
+    // Tolerate rounding: 347.06 reported as 347 is the same number.
+    const ok = [...seen].some((v) => {
+      const d = Math.abs(Number(v) - n);
+      return d < 0.01 || (n !== 0 && d / Math.abs(n) < 0.005);
+    });
+    if (!ok) return m[0];
+  }
+  return null;
 }
 
 // The local model sometimes emits a tool call as PROSE rather than as a
@@ -268,7 +304,28 @@ router.post('/', chatLimiter, async (req, res) => {
   // snapshot from the last sync, so asked what a name is trading at the
   // model either quoted a stale figure as current or made one up. Now it
   // can go and look.
-  let reply = await runWithTools(modelMessages, temp);
+  const attempt = await runWithTools(modelMessages, temp);
+  let reply = attempt?.text ?? null;
+
+  const invented = unbackedPrice(reply, attempt?.fromTools || []);
+  if (invented) {
+    console.warn(`aiChat: reply carried an unbacked figure ${invented}; retrying`);
+    const second = await runWithTools(
+      [
+        ...modelMessages,
+        {
+          role: 'system',
+          content:
+            'Your previous draft stated a monetary figure that no tool returned. ' +
+            'Use ONLY figures present in the tool results. If you do not have a price, say so.',
+        },
+      ],
+      0
+    );
+    const retryText = second?.text ?? null;
+    reply = unbackedPrice(retryText, second?.fromTools || []) ? null : retryText;
+  }
+
   if (looksLikeLeakedToolCall(reply)) {
     console.warn('aiChat: model leaked tool-call syntax into the reply; retrying without tools');
     // Without tools it cannot leak a tool call, and an answer from
