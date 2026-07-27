@@ -75,6 +75,22 @@ async function runWithTools(messages, temperature) {
   return llmChat({ messages: convo, temperature, localModel: RESEARCH_LOCAL_MODEL });
 }
 
+// The local model sometimes emits a tool call as PROSE rather than as a
+// structured tool_calls field — literal `{"name": "get_quote", ...}` and
+// stray `</tool_call>` tags land in the reply and go straight to a
+// member. It is a model limitation rather than something the prompt can
+// be talked out of, so the transport refuses to pass it on.
+//
+// Deliberately not "clean it up and send the rest": a reply carrying
+// half a tool call is a reply where the model never got its answer, and
+// the tidied remainder reads like a real response to a question that was
+// never actually resolved.
+const TOOL_SYNTAX = /<\/?tool_call>|\{\s*"name"\s*:\s*"(get_quote|get_company_snapshot|get_recent_filings)"/i;
+
+function looksLikeLeakedToolCall(text) {
+  return typeof text === 'string' && TOOL_SYNTAX.test(text);
+}
+
 // 60 requests / 10 minutes per user. Generous for normal Q&A, tight
 // enough to catch a runaway client or bulk-prompt abuse.
 const chatLimiter = rateLimit({
@@ -246,7 +262,18 @@ router.post('/', chatLimiter, async (req, res) => {
   // snapshot from the last sync, so asked what a name is trading at the
   // model either quoted a stale figure as current or made one up. Now it
   // can go and look.
-  const reply = await runWithTools(modelMessages, temp);
+  let reply = await runWithTools(modelMessages, temp);
+  if (looksLikeLeakedToolCall(reply)) {
+    console.warn('aiChat: model leaked tool-call syntax into the reply; retrying without tools');
+    // Without tools it cannot leak a tool call, and an answer from
+    // context is better than machine syntax in a member's chat window.
+    reply = await llmChat({
+      messages: modelMessages,
+      temperature: temp,
+      localModel: RESEARCH_LOCAL_MODEL,
+    });
+    if (looksLikeLeakedToolCall(reply)) reply = null;
+  }
   const latencyMs = Date.now() - startedAt;
 
   if (!reply) {
