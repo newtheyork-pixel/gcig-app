@@ -166,6 +166,26 @@ export async function buildResearchContext(user) {
           // below the current price, that the multiple compressed 42%.
           // Dropping it left only figures with nothing said about them.
           if (v.note) out.push(`    - Read: ${v.note.slice(0, 320)}`);
+          // What we are waiting for. "Are we watching anything?" and
+          // "how far is Lindt from where we would buy?" are among the
+          // most natural things to ask an assistant that holds the
+          // valuations, and it could not answer either.
+          if (v.buyBelow != null) {
+            const gap =
+              v.priceAtWrite ? ` — about ${Math.round(((v.buyBelow / v.priceAtWrite) - 1) * 100)}% below the ${money(v.priceAtWrite)} mark it was struck against` : '';
+            out.push(
+              `    - WE ARE WATCHING TO BUY below ${money(v.buyBelow)}${gap}.` +
+                (v.alertedAt
+                  ? ` Reached ${new Date(v.alertedAt).toISOString().slice(0, 10)} and still at or under it.`
+                  : ' Not reached yet.')
+            );
+          }
+          if (v.reviewBy && new Date(v.reviewBy) < new Date()) {
+            out.push(
+              `    - STALE: past its review date of ${new Date(v.reviewBy).toISOString().slice(0, 10)}. ` +
+                'Say so if anyone asks about this valuation or the level under it.'
+            );
+          }
         }
       }
 
@@ -176,6 +196,27 @@ export async function buildResearchContext(user) {
         const k = c.questionId ?? 'unasked';
         if (!byQ.has(k)) byQ.set(k, []);
         byQ.get(k).push(c);
+      }
+
+      // Site visits are fieldwork too, and were missing entirely — a
+      // question about what we saw in stores had nothing behind it even
+      // though eight visits were logged.
+      const visits = await prisma.siteVisit.findMany({
+        where: { projectId: p.id },
+        orderBy: { visitedAt: 'desc' },
+        take: 12,
+        include: { siteObservations: { take: 3 } },
+      });
+      if (visits.length) {
+        out.push('', `**Stores and sites we visited (${visits.length})**`);
+        for (const vis of visits.slice(0, 8)) {
+          const obs = (vis.siteObservations || []).map((o) => o.text).filter(Boolean);
+          out.push(
+            `- ${vis.location || 'unnamed site'}` +
+              (vis.visitedAt ? ` (${new Date(vis.visitedAt).toISOString().slice(0, 10)})` : '') +
+              (obs.length ? `: ${obs.join('; ').slice(0, 220)}` : '')
+          );
+        }
       }
 
       const answered = [];
