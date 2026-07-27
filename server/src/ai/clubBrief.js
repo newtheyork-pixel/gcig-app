@@ -1263,7 +1263,13 @@ function buildUserContext(user) {
   ];
   if (honorificName) {
     lines.push(
-      `Address them formally as **${honorificName}** for greetings / salutations / document openings (e.g. "Good afternoon, ${honorificName}"). Use their first name **${firstName}** in casual prose where an honorific would feel stiff.`
+      // No sample greeting here. It used to read `(e.g. "Good afternoon,
+      // ${honorificName}")` and the model started emitting that exact
+      // string as its whole reply — it fetched a good AAPL quote and
+      // then answered "Good afternoon, Mr. Seirer. How can I assist you
+      // today?", twice running. A literal example this close to the end
+      // of the prompt is a template to copy, not a style note.
+      `When a greeting or salutation is called for, address them as **${honorificName}**. Use their first name **${firstName}** in ordinary prose, where an honorific would read as stiff. Do not open a reply with a greeting unless they greeted you first — answer the question.`
     );
   } else {
     lines.push(
