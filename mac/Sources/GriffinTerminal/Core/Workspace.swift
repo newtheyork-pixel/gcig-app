@@ -20,7 +20,10 @@ struct PaneSeed: Codable, Hashable {
 // because those two things argue with each other.
 @MainActor
 final class Workspace: ObservableObject {
-    @Published var panes: [Pane] = []
+    // Every committed change autosaves the arrangement. Gestures only
+    // write the model on release, so this is once per drag, not per
+    // frame.
+    @Published var panes: [Pane] = [] { didSet { autosaveCurrent() } }
     @Published var focusedID: UUID?
     /// The ticker the command bar last resolved. `AIT DES` then a bare
     /// `GP` should stay on AIT, the same as the web.
@@ -152,6 +155,29 @@ final class Workspace: ObservableObject {
         if let id = focusedID { close(id) }
     }
 
+    /// ⌘1…⌘9 — Launchpad-style: panes numbered by the order they were
+    /// opened, not by stacking, so the number a pane answers to does not
+    /// change every time something else is clicked.
+    func focusPane(index: Int) {
+        guard panes.indices.contains(index) else { return }
+        focus(panes[index].id)
+    }
+
+    /// The two-stroke Escape from the web shell: first press selects the
+    /// top pane, second press closes it. Clicking elsewhere re-arms
+    /// naturally because focus moves.
+    var escapeArmedID: UUID?
+    func escapePressed() {
+        guard let top = panes.max(by: { $0.z < $1.z }) else { return }
+        if escapeArmedID == focusedID, let id = focusedID {
+            close(id)
+            escapeArmedID = nil
+        } else {
+            focus(top.id)
+            escapeArmedID = top.id
+        }
+    }
+
     func closeAll() {
         panes.removeAll()
         focusedID = nil
@@ -212,6 +238,112 @@ final class Workspace: ObservableObject {
         guard let pane = panes.first(where: { $0.id == id }) else { return nil }
         close(id)
         return PaneSeed(function: pane.function.id, ticker: pane.ticker, args: pane.args)
+    }
+
+    // MARK: Layout persistence
+    //
+    // The web deliberately forgets a session's arrangement when the tab
+    // closes. A native app should not: Bloomberg's Launchpad treats the
+    // arranged screen as a work product you come back to, and that is
+    // the right model here too. The current workspace autosaves on
+    // every committed change, restores on launch, and can be pinned
+    // under a name — "earnings day", "CHRW work" — from the Layouts
+    // menu.
+
+    struct PaneSnapshot: Codable {
+        var function: String
+        var ticker: String?
+        var args: String?
+        var x: Double, y: Double, w: Double, h: Double
+        var minimized: Bool
+    }
+
+    @Published private(set) var layoutNames: [String] = []
+
+    private static let currentKey = "workspace.current.v1"
+    private static let layoutsKey = "workspace.layouts.v1"
+    private var restoring = false
+
+    func snapshot() -> [PaneSnapshot] {
+        panes.sorted { $0.z < $1.z }.map {
+            PaneSnapshot(function: $0.function.id, ticker: $0.ticker, args: $0.args,
+                         x: $0.frame.origin.x, y: $0.frame.origin.y,
+                         w: $0.frame.width, h: $0.frame.height,
+                         minimized: $0.minimized)
+        }
+    }
+
+    func autosaveCurrent() {
+        guard !restoring else { return }
+        if let data = try? JSONEncoder().encode(snapshot()) {
+            UserDefaults.standard.set(data, forKey: Self.currentKey)
+        }
+    }
+
+    /// Restore an arrangement. Functions that no longer exist or are
+    /// still web-only are skipped and SAID — a layout that silently
+    /// comes back smaller reads as data loss.
+    func restore(_ snaps: [PaneSnapshot]) {
+        restoring = true
+        defer { restoring = false; autosaveCurrent() }
+        panes.removeAll()
+        var skipped: [String] = []
+        for s in snaps {
+            guard let fn = Registry.function(s.function), fn.native else {
+                skipped.append(s.function)
+                continue
+            }
+            topZ += 1
+            panes.append(Pane(function: fn, ticker: s.ticker, args: s.args,
+                              frame: CGRect(x: s.x, y: s.y, width: s.w, height: s.h),
+                              z: topZ, minimized: s.minimized))
+        }
+        focusedID = panes.max(by: { $0.z < $1.z })?.id
+        if let t = panes.compactMap(\.ticker).last { focusTicker = t }
+        if !skipped.isEmpty {
+            flash = Flash(text: "Restored \(panes.count) panes. Skipped (web-only): \(skipped.joined(separator: ", ")).", bad: false)
+        }
+    }
+
+    func restoreCurrentIfEmpty() {
+        guard panes.isEmpty,
+              let data = UserDefaults.standard.data(forKey: Self.currentKey),
+              let snaps = try? JSONDecoder().decode([PaneSnapshot].self, from: data),
+              !snaps.isEmpty else { return }
+        restore(snaps)
+    }
+
+    private func loadLayouts() -> [String: [PaneSnapshot]] {
+        guard let data = UserDefaults.standard.data(forKey: Self.layoutsKey),
+              let m = try? JSONDecoder().decode([String: [PaneSnapshot]].self, from: data) else { return [:] }
+        return m
+    }
+
+    private func storeLayouts(_ m: [String: [PaneSnapshot]]) {
+        if let data = try? JSONEncoder().encode(m) {
+            UserDefaults.standard.set(data, forKey: Self.layoutsKey)
+        }
+        layoutNames = m.keys.sorted()
+    }
+
+    func refreshLayoutNames() { layoutNames = loadLayouts().keys.sorted() }
+
+    func saveLayout(named name: String) {
+        var m = loadLayouts()
+        m[name] = snapshot()
+        storeLayouts(m)
+        flash = Flash(text: "Layout \"\(name)\" saved (\(panes.count) panes).", bad: false)
+    }
+
+    func loadLayout(named name: String) {
+        guard let snaps = loadLayouts()[name] else { return }
+        restore(snaps)
+    }
+
+    func deleteLayout(named name: String) {
+        var m = loadLayouts()
+        m.removeValue(forKey: name)
+        storeLayouts(m)
     }
 
     // MARK: Favorites and recents

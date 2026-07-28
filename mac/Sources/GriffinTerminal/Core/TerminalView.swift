@@ -9,6 +9,7 @@ struct TerminalView: View {
     @EnvironmentObject var ws: Workspace
     @EnvironmentObject var session: Session
     @Environment(\.openWindow) private var openWindow
+    @State private var namingLayout = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -22,9 +23,21 @@ struct TerminalView: View {
             StatusBar()
         }
         .background(Term.bg)
-        .onAppear { ws.loadPrefs() }
+        .onAppear {
+            ws.loadPrefs()
+            ws.refreshLayoutNames()
+            // The arrangement you left is the arrangement you get back.
+            ws.restoreCurrentIfEmpty()
+        }
+        .sheet(isPresented: $namingLayout) { LayoutNameSheet() }
+        .onReceive(NotificationCenter.default.publisher(for: .saveLayoutPrompt)) { _ in
+            namingLayout = true
+        }
         .onReceive(NotificationCenter.default.publisher(for: .runCommand)) { note in
             if let cmd = note.object as? String { ws.run(cmd) }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .escapeGesture)) { _ in
+            ws.escapePressed()
         }
     }
 
@@ -70,6 +83,8 @@ private struct TopBar: View {
             + Text(" v1").font(Term.mono(10)).foregroundStyle(Term.fgMuted)
 
             Spacer()
+
+            FocusQuote()
 
             HStack(spacing: 8) {
                 HStack(spacing: 4) {
@@ -335,16 +350,23 @@ private struct CommandBarView: View {
         }
     }
 
-    /// "/" from anywhere refocuses the command line, unless the user is
-    /// typing in some other field — the web binds the same key.
+    /// "/" refocuses the command line; Escape is the web shell's
+    /// two-stroke close (select the top pane, then shut it). Both stand
+    /// down whenever the user is typing in a real text field.
     private func installSlashShortcut() {
         NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
-            guard event.charactersIgnoringModifiers == "/",
-                  event.modifierFlags.intersection([.command, .option, .control]).isEmpty,
+            guard event.modifierFlags.intersection([.command, .option, .control]).isEmpty,
                   !(NSApp.keyWindow?.firstResponder is NSTextView)
             else { return event }
-            NotificationCenter.default.post(name: .focusCommand, object: nil)
-            return nil
+            if event.charactersIgnoringModifiers == "/" {
+                NotificationCenter.default.post(name: .focusCommand, object: nil)
+                return nil
+            }
+            if event.keyCode == 53 { // Escape
+                NotificationCenter.default.post(name: .escapeGesture, object: nil)
+                return nil
+            }
+            return event
         }
     }
 }
@@ -569,6 +591,86 @@ private struct EmptyWorkspaceHint: View {
         }
         .buttonStyle(.plain)
         .onHover { $0 ? NSCursor.pointingHand.push() : NSCursor.pop() }
+    }
+}
+
+// MARK: - Save layout sheet
+
+private struct LayoutNameSheet: View {
+    @EnvironmentObject var ws: Workspace
+    @Environment(\.dismiss) private var dismiss
+    @State private var name = ""
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            SectionLabel(text: "Save layout")
+            Text("Pins the current arrangement — \(ws.panes.count) pane\(ws.panes.count == 1 ? "" : "s") — under a name in the Layouts menu.")
+                .font(Term.mono(10)).foregroundStyle(Term.fgDim)
+                .fixedSize(horizontal: false, vertical: true)
+            TextField("", text: $name, prompt: Text("earnings day").foregroundStyle(Term.fgMuted))
+                .textFieldStyle(.plain).font(Term.mono(12))
+                .padding(6).background(Term.bgPanel).termBorder()
+                .onSubmit { save() }
+            HStack {
+                Spacer()
+                Button("Cancel") { dismiss() }.buttonStyle(TermButtonStyle())
+                Button("Save") { save() }.buttonStyle(TermButtonStyle())
+                    .disabled(name.trimmingCharacters(in: .whitespaces).isEmpty)
+            }
+        }
+        .padding(16)
+        .frame(width: 360)
+        .background(Term.bg)
+    }
+
+    private func save() {
+        let n = name.trimmingCharacters(in: .whitespaces)
+        guard !n.isEmpty else { return }
+        ws.saveLayout(named: n)
+        dismiss()
+    }
+}
+
+// MARK: - Focus quote
+
+// The focused ticker's live price, always in the chrome — Bloomberg
+// never makes you open a panel to know where your security is trading.
+// Polls the same /terminal/quotes the panels use, only while a ticker
+// is focused.
+private struct FocusQuote: View {
+    @EnvironmentObject var ws: Workspace
+    @State private var price: Double?
+    @State private var pct: Double?
+
+    var body: some View {
+        Group {
+            if let t = ws.focusTicker {
+                HStack(spacing: 6) {
+                    Text(t).font(Term.mono(10, weight: .bold)).foregroundStyle(Term.white)
+                    Text(Fmt.money(price)).font(Term.mono(10, weight: .medium)).foregroundStyle(Term.white)
+                    Text(Fmt.pct(pct)).font(Term.mono(10, weight: .medium))
+                        .foregroundStyle(Term.delta(pct))
+                }
+                .task(id: t) {
+                    price = nil; pct = nil
+                    while !Task.isCancelled {
+                        await poll(t)
+                        try? await Task.sleep(for: .seconds(20))
+                    }
+                }
+            }
+        }
+    }
+
+    private func poll(_ t: String) async {
+        // A failed poll keeps the last good numbers; a stale quote in
+        // the chrome beats a flickering dash.
+        struct Q: Decodable { let price: Double?; let changePct: Double? }
+        guard let data = try? await API.shared.get("/terminal/quotes", query: ["tickers": t]),
+              let m = try? await API.shared.decode([String: Q].self, from: data),
+              let q = m[t] else { return }
+        if let p = q.price { price = p }
+        if let c = q.changePct { pct = c * 100 }
     }
 }
 

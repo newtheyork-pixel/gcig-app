@@ -149,6 +149,7 @@ enum Fmt {
         let a = abs(v)
         let sign = v < 0 ? "-" : ""
         switch a {
+        case 1_000_000_000_000...: return "\(sign)\(String(format: "%.2f", a / 1_000_000_000_000))T"
         case 1_000_000_000...: return "\(sign)\(String(format: "%.2f", a / 1_000_000_000))B"
         case 1_000_000...:     return "\(sign)\(String(format: "%.1f", a / 1_000_000))M"
         case 1_000...:         return "\(sign)\(String(format: "%.1f", a / 1_000))K"

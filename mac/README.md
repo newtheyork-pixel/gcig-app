@@ -89,7 +89,9 @@ Mission Control, and the OS's own window tiling. A popped-out window
 carries its own command line, and a command typed there replaces that
 window's content — `PANEL <GO>`, effectively.
 
-## What is native so far
+## Every function is native
+
+All 27 mnemonics run here — full parity with the web terminal:
 
 | Code | Panel |
 |---|---|
@@ -97,22 +99,39 @@ window's content — `PANEL <GO>`, effectively.
 | `GP` | daily price chart with ranges and SMA/EMA studies |
 | `GIP` | intraday line vs prior close, 30s refresh |
 | `CN` | company news with the AI brief |
+| `BI` | the research chat |
 | `FA` | income / balance / cash flow, annual or quarterly (SEC XBRL) |
 | `GF` | fundamentals over time, small-multiple charts |
 | `PEER` | sector peer comparison |
+| `CMP` | 2–4 tickers side by side, live |
 | `EARN` | next report + EPS beat/miss history |
 | `CON` | analyst consensus breakdown |
-| `WEI` | world index snapshot |
+| `INSDR` | Form 4 buys/sells over the price chart |
+| `ICLUSTER` | multi-insider buy clusters across the book |
+| `MGMT` | CEO, board, comp from the DEF 14A |
+| `SPLC` | supply chain from the 10-K |
 | `FIL` | recent SEC filings |
+| `WEI` | world index snapshot |
 | `PM` | the whole book, positions and weights, cash separated |
 | `MOVR` | the day's moves, with the unpriced count stated |
-| `TOP` | market wire, opens stories in the browser |
-| `RSCH` / `FLD` | research projects, outreach funnel, the two-signature approval gate |
-| `HELP` | every mnemonic, and which of them run here |
+| `TOP` | market wire · `NOTE` per-ticker research notes |
+| `MACRO` | portfolio betas to 10Y, oil, USD, VIX, SPY |
+| `WX` / `RDR` | storm impact · live NEXRAD radar + NWS alerts |
+| `ARCH` | the club's own reports, readable inline |
+| `RSCH` / `FLD` | the research workspace: questions/coverage, ledger, valuation, interviews, visits, files, compliance, outreach with the two-signature gate |
+| `HELP` | every mnemonic and every keystroke |
 
-Every other web mnemonic still **parses**. Typing `SPLC` says it is not
-native yet rather than "unknown command" — those are different facts and
-only one of them is the user's mistake.
+(`ECO` says honestly that it is not built anywhere yet.)
+
+## Launchpad
+
+The workspace autosaves on every committed change and restores on
+launch. `⌘⇧S` pins the current arrangement under a name in the Layouts
+menu — "earnings day", "CHRW work" — and restoring one says what it
+skipped if a function has since changed. `⌘1…⌘9` focus panes by the
+order you opened them. The topbar carries the focused ticker's live
+price, because you should never have to open a panel to know where
+your security is trading.
 
 ## Driving it
 

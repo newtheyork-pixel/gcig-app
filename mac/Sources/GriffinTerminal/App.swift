@@ -32,6 +32,31 @@ struct GriffinTerminalApp: App {
                 Button("Tile Panes") { NotificationCenter.default.post(name: .tilePanes, object: nil) }
                     .keyboardShortcut("t", modifiers: [.command, .shift])
             }
+            // Launchpad. The arranged screen is a work product; these
+            // make it durable and addressable.
+            CommandMenu("Layouts") {
+                Button("Save Layout As…") {
+                    NotificationCenter.default.post(name: .saveLayoutPrompt, object: nil)
+                }
+                .keyboardShortcut("s", modifiers: [.command, .shift])
+                if !ws.layoutNames.isEmpty {
+                    Divider()
+                    ForEach(ws.layoutNames, id: \.self) { name in
+                        Button(name) { ws.loadLayout(named: name) }
+                    }
+                    Divider()
+                    Menu("Delete") {
+                        ForEach(ws.layoutNames, id: \.self) { name in
+                            Button(name, role: .destructive) { ws.deleteLayout(named: name) }
+                        }
+                    }
+                }
+                Divider()
+                ForEach(1..<10) { n in
+                    Button("Focus Pane \(n)") { ws.focusPane(index: n - 1) }
+                        .keyboardShortcut(KeyEquivalent(Character("\(n)")), modifiers: .command)
+                }
+            }
             CommandGroup(replacing: .help) {
                 Button("Terminal Functions") {
                     NotificationCenter.default.post(name: .runCommand, object: "HELP")
@@ -125,6 +150,8 @@ extension Notification.Name {
     static let runCommand = Notification.Name("runCommand")
     static let tilePanes = Notification.Name("tilePanes")
     static let handoffCode = Notification.Name("handoffCode")
+    static let saveLayoutPrompt = Notification.Name("saveLayoutPrompt")
+    static let escapeGesture = Notification.Name("escapeGesture")
 }
 
 // MARK: Session

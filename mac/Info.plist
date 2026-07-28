@@ -12,6 +12,7 @@
   <key>LSMinimumSystemVersion</key><string>14.0</string>
   <key>NSHighResolutionCapable</key><true/>
   <key>NSRequiresAquaSystemAppearance</key><false/>
+  <key>CFBundleIconFile</key><string>AppIcon</string>
   <key>CFBundleURLTypes</key>
   <array>
     <dict>

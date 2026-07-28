@@ -20,6 +20,7 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/GriffinTerminal"
 cp Info.plist "$APP/Contents/Info.plist"
+cp assets/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns" 2>/dev/null || true
 
 # Ad-hoc signature. Enough for this machine and any Mac the .app is
 # copied to by hand; a Developer ID identity would be needed to

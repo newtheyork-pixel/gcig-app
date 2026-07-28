@@ -14,7 +14,23 @@ struct HelpPanel: View {
             VStack(alignment: .leading, spacing: 12) {
                 VStack(alignment: .leading, spacing: 4) {
                     SectionLabel(text: "How to drive it")
-                    Text("TICKER FUNCTION   e.g.  AIT DES\nFUNCTION          e.g.  PM\nTICKER            opens DES\n\nThe focused ticker carries forward, so AIT DES then PM then a bare\nGP stays on AIT. ⌘K focuses the command line, ⌘W closes the top\npane, ⌘⇧T tiles everything.")
+                    Text("""
+                    TICKER FUNCTION   e.g.  AIT DES
+                    FUNCTION          e.g.  PM
+                    TICKER            opens DES
+                    plain English     falls through to the AI parser
+
+                    The focused ticker carries forward: AIT DES, then PM, then a bare
+                    GP stays on AIT. Tickers in tables are doors — click one.
+
+                    ⌘K or /   command line          ⌘1…⌘9    focus pane by number
+                    ⌘W        close pane            Esc Esc  select top pane, close it
+                    ⌘⇧W       close all             ⌘⇧T      tile everything
+                    ⌘⇧S       save layout           ⧉        pop pane into a real window
+
+                    The workspace autosaves and comes back on launch. Named layouts
+                    live in the Layouts menu.
+                    """)
                         .font(Term.mono(10)).foregroundStyle(Term.fgDim)
                 }
 
@@ -23,11 +39,13 @@ struct HelpPanel: View {
                     ForEach(native) { f in row(f, tone: Term.amber) }
                 }
 
-                VStack(alignment: .leading, spacing: 3) {
-                    SectionLabel(text: "On the web terminal only (\(web.count))")
-                    Text("These parse and are recognised. They just have no native panel yet.")
-                        .font(Term.mono(9)).foregroundStyle(Term.fgMuted)
-                    ForEach(web) { f in row(f, tone: Term.fgMuted) }
+                if !web.isEmpty {
+                    VStack(alignment: .leading, spacing: 3) {
+                        SectionLabel(text: "On the web terminal only (\(web.count))")
+                        Text("These parse and are recognised. They just have no native panel yet.")
+                            .font(Term.mono(9)).foregroundStyle(Term.fgMuted)
+                        ForEach(web) { f in row(f, tone: Term.fgMuted) }
+                    }
                 }
             }
             .padding(12)

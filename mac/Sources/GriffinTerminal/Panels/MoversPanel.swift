@@ -71,10 +71,18 @@ struct MoversPanel: View {
 
     private func row(_ r: Row) -> some View {
         HStack(spacing: 8) {
-            Text(r.ticker)
-                .font(Term.mono(11, weight: .bold))
-                .foregroundStyle(Term.amber)
-                .frame(width: 62, alignment: .leading)
+            // Drill-down: the ticker is a door, same as the web.
+            Button {
+                NotificationCenter.default.post(name: .runCommand, object: "\(r.ticker) DES")
+            } label: {
+                Text(r.ticker)
+                    .font(Term.mono(11, weight: .bold))
+                    .foregroundStyle(Term.amber)
+                    .frame(width: 62, alignment: .leading)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .onHover { $0 ? NSCursor.pointingHand.push() : NSCursor.pop() }
             Text(r.name ?? "")
                 .font(Term.mono(10))
                 .foregroundStyle(Term.fgMuted)

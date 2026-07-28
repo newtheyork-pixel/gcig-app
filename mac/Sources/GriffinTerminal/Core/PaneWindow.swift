@@ -272,6 +272,21 @@ struct PanelRouter: View {
         case "CON":  ConsensusPanel(ticker: ticker ?? "")
         case "WEI":  WorldIndicesPanel()
         case "FIL":  FilingsPanel(ticker: ticker ?? "")
+        case "BI":   IntelligencePanel(ticker: ticker)
+        case "CMP":  ComparePanel(initial: [ticker, args].compactMap { $0 }.joined(separator: " "))
+        case "INSDR": InsiderPanel(ticker: ticker ?? "")
+        case "MGMT": GovernancePanel(ticker: ticker ?? "")
+        case "SPLC": SupplyChainPanel(ticker: ticker ?? "")
+        case "ARCH": ArchivePanel(ticker: ticker)
+        case "NOTE": NotesPanel(ticker: ticker ?? "")
+        case "MACRO": MacroPanel()
+        case "WX":   WeatherImpactPanel()
+        case "ICLUSTER": InsiderClustersPanel()
+        case "RDR":  RadarPanel()
+        case "ECO":
+            // Coming Soon on the web too — saying "works on the web"
+            // here would be a lie in the other direction.
+            PanelMessage(text: "Economic calendar is not built yet — on the web either.")
         default:
             PanelMessage(text: "\(functionID) has no native panel yet.", bad: true)
         }

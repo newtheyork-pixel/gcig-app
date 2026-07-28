@@ -88,9 +88,19 @@ struct PortfolioPanel: View {
     private func row(_ h: Holding, total: Double) -> some View {
         let weight = (total > 0 && h.marketValue != nil) ? h.marketValue! / total * 100 : nil
         return HStack(spacing: 8) {
-            Text(h.ticker ?? "—")
-                .font(Term.mono(11, weight: .bold)).foregroundStyle(Term.amber)
-                .frame(width: 62, alignment: .leading)
+            // Drill-down: the ticker is a door, same as the web.
+            Button {
+                if let t = h.ticker {
+                    NotificationCenter.default.post(name: .runCommand, object: "\(t) DES")
+                }
+            } label: {
+                Text(h.ticker ?? "—")
+                    .font(Term.mono(11, weight: .bold)).foregroundStyle(Term.amber)
+                    .frame(width: 62, alignment: .leading)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .onHover { $0 ? NSCursor.pointingHand.push() : NSCursor.pop() }
             Text(h.name ?? "")
                 .font(Term.mono(10)).foregroundStyle(Term.fgMuted)
                 .lineLimit(1).frame(maxWidth: .infinity, alignment: .leading)
