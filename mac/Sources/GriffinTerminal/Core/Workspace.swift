@@ -183,15 +183,25 @@ final class Workspace: ObservableObject {
         focusedID = nil
     }
 
+    /// Clamp so at least the header stays grabbable. Losing a window
+    /// behind the edge of the screen with no way to retrieve it is the
+    /// failure that makes people stop moving windows at all.
+    ///
+    /// Static and pure because PaneWindow runs this on every frame of a
+    /// live drag: the preview must clamp with EXACTLY the rule the
+    /// commit will use, and one shared function is the only version of
+    /// "exactly" that survives maintenance.
+    nonisolated static func clampOrigin(_ origin: CGPoint,
+                                        paneWidth w: CGFloat,
+                                        in bounds: CGSize) -> CGPoint {
+        CGPoint(x: min(max(origin.x, -(w - 120)), bounds.width - 120),
+                y: min(max(origin.y, 0), bounds.height - 32))
+    }
+
     func move(_ id: UUID, to origin: CGPoint, in bounds: CGSize) {
         guard let i = panes.firstIndex(where: { $0.id == id }) else { return }
-        // Clamp so at least the header stays grabbable. Losing a window
-        // behind the edge of the screen with no way to retrieve it is the
-        // failure that makes people stop moving windows at all.
         let w = panes[i].frame.width
-        let x = min(max(origin.x, -(w - 120)), bounds.width - 120)
-        let y = min(max(origin.y, 0), bounds.height - 32)
-        panes[i].frame.origin = CGPoint(x: x, y: y)
+        panes[i].frame.origin = Self.clampOrigin(origin, paneWidth: w, in: bounds)
     }
 
     func resize(_ id: UUID, to size: CGSize) {

@@ -751,6 +751,8 @@ private struct FocusQuote: View {
     @EnvironmentObject var ws: Workspace
     @State private var price: Double?
     @State private var pct: Double?
+    @State private var session: String?
+    @State private var extendedPct: Double?
 
     var body: some View {
         Group {
@@ -761,6 +763,19 @@ private struct FocusQuote: View {
                         .tickFlash(price)
                     Text(Fmt.pct(pct)).font(Term.mono(10, weight: .medium))
                         .foregroundStyle(Term.delta(pct))
+                    // The session tag, because a moving price at 5pm is
+                    // a different fact from a moving price at 2pm and
+                    // Bloomberg is right to say which one you are
+                    // looking at. The extended move rides next to it,
+                    // separate from the day change on purpose.
+                    if let sess = session, sess == "pre" || sess == "post" {
+                        (Text(sess.uppercased())
+                            .foregroundStyle(Term.orange)
+                         + Text(extendedPct.map { " \(Fmt.pct($0))" } ?? "")
+                            .foregroundStyle(Term.delta(extendedPct)))
+                            .font(Term.mono(9, weight: .bold))
+                            .tickFlash(extendedPct)
+                    }
                 }
                 .task(id: t) {
                     price = nil; pct = nil
@@ -782,12 +797,19 @@ private struct FocusQuote: View {
         // and the chrome just shows a dash forever. And changePct
         // arrives ALREADY as a percent (Finnhub's dp); scaling it again
         // turns -2.9 into -293.
-        struct Q: Decodable { let last: Double?; let changePct: Double? }
+        struct Q: Decodable {
+            let last: Double?
+            let changePct: Double?
+            let session: String?
+            let extendedPct: Double?
+        }
         guard let data = try? await API.shared.get("/terminal/quotes", query: ["tickers": t]),
               let m = try? await API.shared.decode([String: Q?].self, from: data),
               let q = m[t] ?? nil else { return }
         if let p = q.last { price = p }
         if let c = q.changePct { pct = c }
+        session = q.session
+        extendedPct = q.extendedPct
     }
 }
 

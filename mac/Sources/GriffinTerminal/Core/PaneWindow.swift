@@ -13,31 +13,50 @@ import SwiftUI
 // the shared Workspace model, which invalidated every pane on every
 // frame — the "weird, can't really move the windows" feel was thirty
 // panes re-rendering at 120Hz. Now the in-flight offset lives in local
-// @State (only this pane re-renders while it moves) and the model is
-// written exactly once, on release. Snapping happens at commit for the
-// same reason: guidance during the gesture is not worth the churn.
+// @GestureState (only this pane re-renders while it moves) and the
+// model is written exactly once, on release.
+//
+// @GestureState rather than @State because gestures CANCEL — Escape, a
+// window deactivating, the system stealing the event stream — and a
+// cancelled gesture never runs onEnded. A manually-reset @State offset
+// would strand the pane wherever the cursor last was, painted at a
+// position the model has never heard of. @GestureState resets itself on
+// any end, clean or not, so the pane falls back to committed truth.
+//
+// The preview is also the contract: everything the release will do to
+// the frame — clamp to the canvas, snap to edges — is applied to the
+// live frame too, per frame. The first cut deferred both to commit,
+// which let a pane slide under the .clipped() canvas edge and then
+// JUMP back on release. Cheap enough: a handful of panes, arithmetic
+// only.
 struct PaneWindow: View {
     @EnvironmentObject var ws: Workspace
     let pane: Workspace.Pane
     let bounds: CGSize
     var onPopout: (PaneSeed) -> Void = { _ in }
 
-    @State private var dragOffset: CGSize = .zero
-    @State private var resizeDelta: CGSize = .zero
+    @GestureState private var dragOffset: CGSize = .zero
+    @GestureState private var resizeDelta: CGSize = .zero
     /// The frame to restore after un-maximizing. Nil when not maximized.
     @State private var restoreFrame: CGRect?
 
     private var focused: Bool { ws.focusedID == pane.id }
 
     /// Frame including any in-flight gesture, which is what actually
-    /// paints. The model's frame is the committed truth.
+    /// paints. The model's frame is the committed truth, and the whole
+    /// point of this computation is that release changes nothing: the
+    /// clamp and the snap the commit will apply are already applied
+    /// here, so the last previewed frame IS the committed frame.
     private var liveFrame: CGRect {
-        CGRect(
-            x: pane.frame.origin.x + dragOffset.width,
-            y: pane.frame.origin.y + dragOffset.height,
-            width: max(pane.frame.width + resizeDelta.width, 340),
-            height: max(pane.frame.height + resizeDelta.height, 200)
-        )
+        let w = max(pane.frame.width + resizeDelta.width, 340)
+        let h = max(pane.frame.height + resizeDelta.height, 200)
+        // Only run snap/clamp mid-drag. At rest the committed origin is
+        // already legal, and re-deriving it could disagree with the
+        // model by a snap threshold — the pane would twitch on commit.
+        let origin = dragOffset == .zero
+            ? pane.frame.origin
+            : dragOrigin(for: dragOffset)
+        return CGRect(x: origin.x, y: origin.y, width: w, height: h)
     }
 
     var body: some View {
@@ -130,6 +149,12 @@ struct PaneWindow: View {
         }
         .contentShape(Rectangle())
         .gesture(dragGesture)
+        // simultaneousGesture is deliberate: composing the double-click
+        // exclusively-before the drag would make every drag wait out
+        // the double-click interval before its first frame — the exact
+        // sluggishness this pane cannot afford. Run together, the tap
+        // costs the drag nothing (a drag past 2pt is no longer a tap),
+        // and a genuine double-click involves no drag to collide with.
         .simultaneousGesture(
             TapGesture(count: 2).onEnded { toggleMaximize() }
         )
@@ -149,24 +174,45 @@ struct PaneWindow: View {
 
     // MARK: Gestures
 
+    /// Where a drag translation puts the pane, snap and clamp included.
+    /// The single source for BOTH the live preview and the commit — two
+    /// copies of this arithmetic is exactly how a pane learns to jump
+    /// on release.
+    private func dragOrigin(for translation: CGSize) -> CGPoint {
+        let raw = CGPoint(x: pane.frame.origin.x + translation.width,
+                          y: pane.frame.origin.y + translation.height)
+        return Workspace.clampOrigin(snapped(raw),
+                                     paneWidth: pane.frame.width,
+                                     in: bounds)
+    }
+
     private var dragGesture: some Gesture {
-        // The coordinate space is the whole fix. A DragGesture defaults
+        // The coordinate space is half the fix. A DragGesture defaults
         // to LOCAL space — the pane's own — and this pane MOVES by the
         // gesture's translation, so each frame re-measures against a
         // view that just shifted underneath the cursor: a feedback loop
         // that reads as jitter. Measuring in the workspace's space makes
         // the translation absolute and the drag glassy.
         DragGesture(minimumDistance: 2, coordinateSpace: .named("workspace"))
-            .onChanged { g in
-                if dragOffset == .zero { ws.focus(pane.id) }
-                dragOffset = g.translation
+            .updating($dragOffset) { g, state, _ in
+                state = g.translation
+            }
+            // Focus rides onChanged, not a state sentinel — the old
+            // "first change has offset zero" test broke the moment the
+            // offset became @GestureState (updating runs first, so the
+            // sentinel never fired). The guard keeps it one model write
+            // per drag: focus() bumps z through @Published panes, and
+            // doing that per frame is the re-render storm this whole
+            // file exists to avoid.
+            .onChanged { _ in
+                if ws.focusedID != pane.id { ws.focus(pane.id) }
             }
             .onEnded { g in
-                dragOffset = .zero
-                var origin = CGPoint(x: pane.frame.origin.x + g.translation.width,
-                                     y: pane.frame.origin.y + g.translation.height)
-                origin = snapped(origin)
-                ws.move(pane.id, to: origin, in: bounds)
+                // Model first. @GestureState resets itself when the
+                // gesture ends; committing the move in the same pass
+                // means SwiftUI coalesces reset + new frame into one
+                // render and no frame ever paints at the pre-drag spot.
+                ws.move(pane.id, to: dragOrigin(for: g.translation), in: bounds)
                 restoreFrame = nil
             }
     }
@@ -186,22 +232,30 @@ struct PaneWindow: View {
             // Workspace space for the same reason as the drag: the grip
             // sits on the corner being moved, so local space feeds back.
             DragGesture(minimumDistance: 1, coordinateSpace: .named("workspace"))
-                .onChanged { g in
-                    if resizeDelta == .zero { ws.focus(pane.id) }
-                    resizeDelta = g.translation
+                .updating($resizeDelta) { g, state, _ in
+                    state = g.translation
+                }
+                .onChanged { _ in
+                    if ws.focusedID != pane.id { ws.focus(pane.id) }
                 }
                 .onEnded { g in
-                    resizeDelta = .zero
-                    ws.resize(pane.id, to: CGSize(width: pane.frame.width + g.translation.width,
-                                                  height: pane.frame.height + g.translation.height))
+                    // Floor at the SAME 340×200 the live preview uses.
+                    // Workspace.resize's own floor is lower (320×180),
+                    // so leaning on it let a small pane shrink 20pt on
+                    // release, under what the drag had been showing.
+                    ws.resize(pane.id, to: CGSize(
+                        width: max(pane.frame.width + g.translation.width, 340),
+                        height: max(pane.frame.height + g.translation.height, 200)))
                     restoreFrame = nil
                 }
         )
     }
 
-    /// Magnetic edges, applied once at release. Workspace borders first,
-    /// then other panes' edges — the thing that makes a hand-arranged
-    /// grid actually line up instead of being two pixels off everywhere.
+    /// Magnetic edges, applied to every live frame AND the commit —
+    /// same function, so the pane you watched settle against an edge
+    /// is the pane you get. Workspace borders first, then other panes'
+    /// edges — the thing that makes a hand-arranged grid actually line
+    /// up instead of being two pixels off everywhere.
     private func snapped(_ origin: CGPoint) -> CGPoint {
         let snap: CGFloat = 10
         var p = origin

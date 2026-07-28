@@ -6,6 +6,18 @@ import SwiftUI
 // no ticker worth showing, so they are separated rather than sorted in
 // among the positions: cash at a 100% "weight of itself" in a column of
 // equity weights is noise.
+//
+// Two feeds, the web Portfolio.jsx split. The SHEET is the system of
+// record for the book itself — which names, shares, cost — and is
+// fetched once, plus manual Retry. Re-polling it was this panel's dead
+// end: the sheet read is server-cached far longer than any sane poll,
+// so a 45s re-fetch returned identical numbers and the tick flash had
+// nothing to fire on. Price marks instead go live off
+// GET /terminal/quotes on a 20s loop while the panel is open — 20s is
+// also the server's per-ticker quote TTL (liveQuotes.QUOTE_TTL_MS), so
+// most polls can actually carry a new print — and every number that
+// moves with price re-marks off it: last, market value, weight, day
+// P&L, and the header total.
 struct PortfolioPanel: View {
     struct Holding: Decodable, Identifiable {
         let ticker: String?
@@ -26,17 +38,35 @@ struct PortfolioPanel: View {
         let source: String?
     }
 
+    /// One /terminal/quotes value. changePct (Finnhub `dp`, ALREADY a
+    /// percent) is deliberately not decoded: every number PM shows is
+    /// dollars, and last − prevClose covers the day move without ever
+    /// touching the percent-vs-fraction trap MOVR converts across. A
+    /// ticker Finnhub missed comes back as JSON null and never lands
+    /// in `quotes`, so a miss keeps what the cell was already showing.
+    struct Quote: Decodable {
+        let last: Double?
+        let prevClose: Double?
+    }
+
     @State private var state: Loadable<Payload> = .loading
+    @State private var quotes: [String: Quote] = [:]
 
     var body: some View {
         PanelState(state: state,
                    emptyWhen: { ($0.holdings ?? []).isEmpty },
                    emptyText: "The positions sheet came back empty.",
                    retry: { Task { await load() } }) { p in
-            let all = p.holdings ?? []
+            let all = (p.holdings ?? []).map(merged)
             let positions = all.filter { !($0.isCash ?? false) }
             let cash = all.filter { $0.isCash ?? false }
-            let total = p.totalValue ?? all.compactMap(\.marketValue).reduce(0, +)
+            // The web's NAV: re-summed from the marked rows so the
+            // header total moves with the live prices. Until the first
+            // quote lands the marks are the sheet's own, and the
+            // sheet's stated total wins when it carries one.
+            let total = quotes.isEmpty
+                ? (p.totalValue ?? all.compactMap(\.marketValue).reduce(0, +))
+                : all.compactMap(\.marketValue).reduce(0, +)
 
             VStack(alignment: .leading, spacing: 0) {
                 header(p, total: total, n: positions.count)
@@ -56,16 +86,72 @@ struct PortfolioPanel: View {
         }
         .task {
             await load()
+            // Only the quote overlay loops. The sheet is never
+            // re-fetched here, so loading / failed / empty stay owned
+            // by load() and the Retry button alone — the loop just
+            // reads whatever the loaded book says to poll.
             while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(45))
-                // Keep the last good book on a failed poll; the sheet
-                // being briefly unreadable must not blank the P&L.
-                if let data = try? await API.shared.get("/terminal/portfolio"),
-                   let p = try? await API.shared.decode(Payload.self, from: data) {
-                    state = .loaded(p)
-                }
+                await pollQuotes()
+                try? await Task.sleep(for: .seconds(20))
             }
         }
+    }
+
+    /// Overlay a live quote onto a sheet holding — the web's buildRow,
+    /// kept in dollars end to end. Price is the live last when we have
+    /// one; market value re-marks as shares × last when shares are
+    /// known; day P&L is shares × (last − prevClose) when both prints
+    /// are known. Fallbacks are the sheet's own numbers, so a Finnhub
+    /// miss never blanks a cell.
+    ///
+    /// One unit note on the day fallback: the sheet's dayChange column
+    /// is PER-SHARE dollars (see sheetPortfolio.js and the web's
+    /// buildRow), so it is multiplied by shares to land in the same
+    /// position-level dollars as the live math. Rendering it raw — as
+    /// this panel once did — understated every day move by a factor of
+    /// the share count.
+    private func merged(_ h: Holding) -> Holding {
+        if h.isCash ?? false { return h }
+        let q = h.ticker.flatMap { quotes[$0.uppercased()] }
+        let last = q?.last ?? h.price
+        let mv: Double?
+        if let s = h.shares, let l = last {
+            mv = s * l
+        } else {
+            mv = h.marketValue
+        }
+        let day: Double?
+        if let s = h.shares, let l = q?.last, let pc = q?.prevClose {
+            day = s * (l - pc)
+        } else if let s = h.shares, let d = h.dayChange {
+            day = s * d
+        } else if let mv, let p = h.price, let d = h.dayChange, p - d > 0 {
+            // Sharesless fallback, the web's: recover the day fraction
+            // from the per-share pair and apply it to position value.
+            day = mv - mv / (1 + d / (p - d))
+        } else {
+            day = nil
+        }
+        return Holding(ticker: h.ticker, name: h.name, shares: h.shares,
+                       costBasis: h.costBasis, price: last,
+                       marketValue: mv, dayChange: day, isCash: h.isCash)
+    }
+
+    // The live tap. A failed poll returns silently and the last good
+    // overlay stands — same swallow as the web's useLiveRefresh — and
+    // per-ticker nulls are skipped, so a value is never wiped to nil.
+    private func pollQuotes() async {
+        guard case .loaded(let p) = state else { return }
+        let tickers = Set((p.holdings ?? [])
+            .filter { !($0.isCash ?? false) }
+            .compactMap { $0.ticker?.uppercased() })
+        guard !tickers.isEmpty else { return }
+        let key = tickers.sorted().joined(separator: ",")
+        guard let data = try? await API.shared.get("/terminal/quotes",
+                                                   query: ["tickers": key]),
+              let q = try? await API.shared.decode([String: Quote?].self,
+                                                   from: data) else { return }
+        for (t, v) in q { if let v { quotes[t] = v } }
     }
 
     private func header(_ p: Payload, total: Double, n: Int) -> some View {
@@ -77,6 +163,7 @@ struct PortfolioPanel: View {
             Text(Fmt.money(total))
                 .font(Term.mono(13, weight: .bold))
                 .foregroundStyle(Term.white)
+                .tickFlash(total)
         }
         .padding(.horizontal, 10).padding(.vertical, 6)
     }
@@ -120,6 +207,7 @@ struct PortfolioPanel: View {
             Text(Fmt.money(h.price)).frame(width: 72, alignment: .trailing)
                 .tickFlash(h.price)
             Text(Fmt.money(h.marketValue, decimals: 0)).frame(width: 92, alignment: .trailing)
+                .tickFlash(h.marketValue)
             Text(weight.map { Fmt.pct($0, decimals: 1, signed: false) } ?? "—")
                 .frame(width: 54, alignment: .trailing)
             Text(h.dayChange.map { Fmt.money($0, decimals: 0) } ?? "—")

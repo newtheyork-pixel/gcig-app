@@ -8,6 +8,18 @@ import SwiftUI
 // panel showing 3 of 13 holdings does not read as a 3-holding book. That
 // bug already happened once on the web (MOVR ranked 1 of 12), so the
 // count is rendered, not dropped.
+//
+// Two feeds, the web Movers.jsx split. The SHEET decides the list —
+// which tickers, the order, cash-exclusion, the header counts — and is
+// fetched once, plus manual Retry. Re-polling it was this panel's dead
+// end: the sheet read is server-cached far longer than any sane poll,
+// so a 30s re-fetch returned identical numbers and the tick flash had
+// nothing to fire on. LAST and DAY % instead go live off
+// GET /terminal/quotes on a 20s loop while the panel is open — 20s is
+// also the server's per-ticker quote TTL (liveQuotes.QUOTE_TTL_MS), so
+// most polls can actually carry a new print. The overlay changes only
+// the two price columns; order and counts stay the sheet's, exactly as
+// the web leaves them.
 struct MoversPanel: View {
     struct Row: Decodable, Identifiable {
         let ticker: String
@@ -27,7 +39,17 @@ struct MoversPanel: View {
         let rows: [Row]
     }
 
+    /// One /terminal/quotes value. A ticker Finnhub missed comes back
+    /// as JSON null; it never lands in `quotes`, so a miss keeps
+    /// whatever the cell was already showing.
+    struct Quote: Decodable {
+        let last: Double?
+        let changePct: Double?
+        let prevClose: Double?
+    }
+
     @State private var state: Loadable<Payload> = .loading
+    @State private var quotes: [String: Quote] = [:]
 
     var body: some View {
         PanelState(state: state,
@@ -39,28 +61,53 @@ struct MoversPanel: View {
                 Divider().overlay(Term.border)
                 ScrollView {
                     LazyVStack(spacing: 0) {
-                        ForEach(p.rows) { r in row(r) }
+                        ForEach(p.rows) { r in row(merged(r)) }
                     }
                 }
             }
         }
         .task {
             await load()
-            // The web MOVR polls while visible; matching it is what
-            // gives the ticks something to flash on. A failed refresh
-            // keeps the last good board — only the first load may show
-            // the failure state.
+            // Only the quote overlay loops. The sheet is never
+            // re-fetched here, so loading / failed / empty stay owned
+            // by load() and the Retry button alone — the loop just
+            // reads whatever the loaded sheet says to poll.
             while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(30))
-                await refresh()
+                await pollQuotes()
+                try? await Task.sleep(for: .seconds(20))
             }
         }
     }
 
-    private func refresh() async {
-        guard let data = try? await API.shared.get("/terminal/movers"),
-              let p = try? await API.shared.decode(Payload.self, from: data) else { return }
-        state = .loaded(p)
+    /// Overlay a live quote onto a sheet row, in place.
+    ///
+    /// UNITS BOUNDARY: /terminal/quotes' changePct is Finnhub's `dp`,
+    /// ALREADY a percent (1.23 == +1.23%); the sheet rows — and the
+    /// Fmt.pct call in row(), which does the ×100 — speak the fraction
+    /// convention (0.0123 == +1.23%). The ÷100 here is the only place
+    /// the two conventions meet; everything downstream is a fraction.
+    private func merged(_ r: Row) -> Row {
+        guard let q = quotes[r.ticker.uppercased()] else { return r }
+        return Row(ticker: r.ticker,
+                   name: r.name,
+                   last: q.last ?? r.last,
+                   dayUsd: r.dayUsd,
+                   changePct: q.changePct.map { $0 / 100 } ?? r.changePct,
+                   source: r.source)
+    }
+
+    // The live tap. A failed poll returns silently and the last good
+    // overlay stands — same swallow as the web's useLiveRefresh — and
+    // per-ticker nulls are skipped, so a value is never wiped to nil.
+    private func pollQuotes() async {
+        guard case .loaded(let p) = state, !p.rows.isEmpty else { return }
+        let key = Set(p.rows.map { $0.ticker.uppercased() })
+            .sorted().joined(separator: ",")
+        guard let data = try? await API.shared.get("/terminal/quotes",
+                                                   query: ["tickers": key]),
+              let q = try? await API.shared.decode([String: Quote?].self,
+                                                   from: data) else { return }
+        for (t, v) in q { if let v { quotes[t] = v } }
     }
 
     private func header(_ p: Payload) -> some View {
@@ -113,6 +160,7 @@ struct MoversPanel: View {
                 .font(Term.mono(11, weight: .medium))
                 .foregroundStyle(Term.delta(r.changePct))
                 .frame(width: 68, alignment: .trailing)
+                .tickFlash(r.changePct)
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 3)

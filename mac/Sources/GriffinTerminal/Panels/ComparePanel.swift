@@ -308,7 +308,11 @@ struct ComparePanel: View {
             // Live pair first, then the snapshot rows — the web's ROWS
             // order. changePct is already a percent; dividendYield is
             // a fraction. Missing is an em dash via Fmt, never 0.
-            metricRow("Price") { c in
+            // Price is the grid's one flashing cell — same heartbeat
+            // as MOVR and PM. Day % re-tints via Term.delta on the
+            // same tick already; flashing it too would double-strobe
+            // the pair on every print.
+            metricRow("Price", flash: { $0.quote?.last }) { c in
                 (Fmt.money(c.quote?.last), Term.white)
             }
             metricRow("Day %") { c in
@@ -333,7 +337,12 @@ struct ComparePanel: View {
         }
     }
 
+    /// `flash` marks a row as live: hand it the raw number behind the
+    /// cell and the cell pulses when a poll changes it. Snapshot rows
+    /// pass nothing — .tickFlash(nil) can never fire, so the modifier
+    /// is applied unconditionally and every cell keeps one layout.
     private func metricRow(_ label: String,
+                           flash: ((Column) -> Double?)? = nil,
                            _ value: @escaping (Column) -> (String, Color)) -> some View {
         HStack(spacing: 8) {
             Text(label)
@@ -346,6 +355,7 @@ struct ComparePanel: View {
                     .font(Term.mono(11))
                     .foregroundStyle(tone)
                     .frame(maxWidth: .infinity, alignment: .trailing)
+                    .tickFlash(flash?(c))
             }
         }
         .padding(.horizontal, 10)
