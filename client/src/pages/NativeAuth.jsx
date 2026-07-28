@@ -24,6 +24,7 @@ export default function NativeAuth() {
   const [state, setState] = useState('working'); // working | handed | failed
   const [error, setError] = useState('');
   const [url, setUrl] = useState('');
+  const [code, setCode] = useState('');
 
   useEffect(() => {
     let cancelled = false;
@@ -33,10 +34,13 @@ export default function NativeAuth() {
         if (cancelled) return;
         if (!data?.code) throw new Error('The server did not return a code.');
         const target = `${SCHEME}?code=${encodeURIComponent(data.code)}`;
+        setCode(data.code);
         setUrl(target);
         setState('handed');
-        // Navigating to a custom scheme is what actually wakes the app.
-        window.location.href = target;
+        // No automatic navigation. Browsers refuse a custom scheme
+        // without user activation, and an attempt that silently fails
+        // is worse than none: it makes the page look finished while the
+        // app waits forever. The button below carries the gesture.
       } catch (e) {
         if (cancelled) return;
         setError(e.response?.data?.error || e.message || 'Could not create a sign-in code.');
@@ -63,22 +67,45 @@ export default function NativeAuth() {
         )}
 
         {state === 'handed' && (
-          <div className="space-y-3">
+          <div className="space-y-4">
             <p className="text-[#d8d8de] text-sm">
-              Sent to Griffin Terminal. You can close this tab.
+              Signed in as {user?.name || 'you'}. One more click.
             </p>
-            {/* The browser only auto-opens a custom scheme once, and some
-                block it silently. A visible link means a blocked redirect
-                is a click rather than a dead end. */}
+
+            {/* A CLICK, not a redirect.
+                The first version navigated to the custom scheme
+                automatically from an effect, which Chrome and Safari
+                both refuse: scheme handoffs need user activation. It
+                failed silently, the page looked like it had worked, and
+                the app sat on "waiting for the browser" forever. The
+                button carries the user gesture that makes the handoff
+                legal. */}
             <a
               href={url}
-              className="inline-block text-[#C9A84C] text-sm underline underline-offset-4"
+              className="block w-full bg-[#C9A84C] hover:bg-[#d9b85c] text-[#0d0d0f] text-sm font-medium rounded px-4 py-3 transition-colors"
             >
-              Nothing happened? Open Griffin Terminal
+              Open Griffin Terminal
             </a>
+
             <p className="text-[#6f6f77] text-[11px]">
-              The code expires in 90 seconds and can only be used once.
+              Your browser may ask permission to open the app. Allow it.
             </p>
+
+            <div className="pt-2 space-y-1 border-t border-[#22222a]">
+              <p className="text-[#6f6f77] text-[11px] pt-3">
+                If that does nothing, paste this code into the app:
+              </p>
+              <button
+                onClick={() => navigator.clipboard?.writeText(code)}
+                className="w-full font-mono text-[11px] text-[#d8d8de] bg-[#17171b] border border-[#2a2a30] rounded px-2 py-2 break-all hover:border-[#C9A84C] transition-colors"
+                title="Click to copy"
+              >
+                {code}
+              </button>
+              <p className="text-[#6f6f77] text-[11px]">
+                Expires in 90 seconds and works once.
+              </p>
+            </div>
           </div>
         )}
 

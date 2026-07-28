@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import os
 
 @main
 struct GriffinTerminalApp: App {
@@ -40,11 +41,15 @@ struct GriffinTerminalApp: App {
     }
 }
 
+let appLog = Logger(subsystem: "org.thegriffinfund.terminal", category: "auth")
+
 final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
-        // Register before the browser can possibly redirect back.
+        // Belt and braces. Under the SwiftUI lifecycle the URL normally
+        // arrives via application(_:open:) below, but registering here
+        // too costs nothing and covers the AppKit path.
         NSAppleEventManager.shared().setEventHandler(
             self,
             andSelector: #selector(handleURLEvent(_:reply:)),
@@ -53,20 +58,47 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
     }
 
-    /// griffin-terminal://auth?code=...
+    /// The one that actually fires under SwiftUI.
     ///
-    /// The code is posted straight through to the session rather than
-    /// parsed into anything durable: it is worth nothing after one use
-    /// and ninety seconds, and the fewer places it is written down the
-    /// better.
+    /// The first version of this registered only an NSAppleEventManager
+    /// handler in applicationDidFinishLaunching, which is the AppKit
+    /// recipe and is silently pre-empted here: SwiftUI installs its own
+    /// kAEGetURL handler and routes to this method instead. The symptom
+    /// was the worst kind — the browser said it had handed off, the app
+    /// sat on "waiting", and nothing anywhere said why.
+    func application(_ application: NSApplication, open urls: [URL]) {
+        appLog.info("application(open:) got \(urls.count) url(s)")
+        FileHandle.standardError.write("[auth] application(open:) \(urls.map(\.absoluteString))\n".data(using: .utf8)!)
+        for url in urls { consume(url) }
+    }
+
     @objc func handleURLEvent(_ event: NSAppleEventDescriptor, reply: NSAppleEventDescriptor) {
         guard let s = event.paramDescriptor(forKeyword: keyDirectObject)?.stringValue,
-              let url = URL(string: s),
-              url.scheme == "griffin-terminal",
-              url.host == "auth" || url.path.contains("auth"),
-              let code = URLComponents(url: url, resolvingAgainstBaseURL: false)?
-                  .queryItems?.first(where: { $0.name == "code" })?.value
-        else { return }
+              let url = URL(string: s) else { return }
+        appLog.info("AppleEvent got url")
+        FileHandle.standardError.write("[auth] appleEvent \(url.absoluteString)\n".data(using: .utf8)!)
+        consume(url)
+    }
+
+    /// griffin-terminal://auth?code=...
+    ///
+    /// Accepts the code wherever it appears, because the shape of a
+    /// custom-scheme URL is not worth being strict about: host is "auth"
+    /// for `://auth?code=`, but a browser that normalises the URL can
+    /// move it. A code we can see is a code we should use.
+    private func consume(_ url: URL) {
+        guard url.scheme == "griffin-terminal" else {
+            appLog.error("ignoring url with scheme \(url.scheme ?? "nil")")
+            return
+        }
+        guard let code = URLComponents(url: url, resolvingAgainstBaseURL: false)?
+                .queryItems?.first(where: { $0.name == "code" })?.value,
+              !code.isEmpty else {
+            appLog.error("no code in \(url.absoluteString)")
+            return
+        }
+        appLog.info("handoff code received, posting to session")
+        FileHandle.standardError.write("[auth] code received, posting\n".data(using: .utf8)!)
         NSApp.activate(ignoringOtherApps: true)
         NotificationCenter.default.post(name: .handoffCode, object: code)
     }
@@ -125,10 +157,12 @@ final class Session: ObservableObject {
     }
 
     func completeHandoff(code: String) async {
+        FileHandle.standardError.write("[auth] completeHandoff entered\n".data(using: .utf8)!)
         signInError = nil
         do {
             user = try await API.shared.exchangeHandoff(code: code)
         } catch {
+            FileHandle.standardError.write("[auth] exchange failed: \(error.localizedDescription)\n".data(using: .utf8)!)
             signInError = error.localizedDescription
             user = nil
         }
@@ -172,6 +206,7 @@ struct LoginView: View {
     @State private var password = ""
     @State private var busy = false
     @State private var showPassword = false
+    @State private var manualCode = ""
 
     var body: some View {
         VStack(spacing: 14) {
@@ -197,11 +232,34 @@ struct LoginView: View {
                 .foregroundStyle(Term.fgMuted)
                 .multilineTextAlignment(.center)
 
+            // The escape hatch, and it is not optional.
+            //
+            // A custom URL scheme is the happy path and it fails in ways
+            // nobody can diagnose from the app: a browser silently
+            // refusing the first navigation, a corporate profile
+            // blocking it, the wrong copy of the app registered. Sitting
+            // on "waiting for the browser" with no way forward is a dead
+            // end, and it is exactly what happened the first time this
+            // shipped. The page prints the code; this takes it.
             if session.awaitingBrowser {
-                Button("Cancel") { session.awaitingBrowser = false }
-                    .buttonStyle(.plain)
-                    .font(Term.mono(9))
-                    .foregroundStyle(Term.fgMuted)
+                VStack(spacing: 6) {
+                    Text("Didn't come back automatically?")
+                        .font(Term.mono(9)).foregroundStyle(Term.fgMuted)
+                    HStack(spacing: 6) {
+                        TextField("paste the code from the page", text: $manualCode)
+                            .textFieldStyle(.plain).font(Term.mono(11))
+                            .padding(5).background(Term.bgPanel).termBorder()
+                            .frame(width: 240)
+                            .onSubmit { useManualCode() }
+                        Button("Use code", action: useManualCode)
+                            .buttonStyle(TermButtonStyle())
+                            .disabled(manualCode.trimmingCharacters(in: .whitespaces).isEmpty)
+                    }
+                    Button("Cancel") { session.awaitingBrowser = false }
+                        .buttonStyle(.plain)
+                        .font(Term.mono(9))
+                        .foregroundStyle(Term.fgMuted)
+                }
             }
 
             if let e = session.signInError {
@@ -248,5 +306,12 @@ struct LoginView: View {
             await session.signIn(email: email, password: password)
             busy = false
         }
+    }
+
+    private func useManualCode() {
+        let code = manualCode.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !code.isEmpty else { return }
+        manualCode = ""
+        Task { await session.completeHandoff(code: code) }
     }
 }
