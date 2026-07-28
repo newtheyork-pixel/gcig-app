@@ -65,6 +65,11 @@ async function getTickerMap() {
         cik,
         cikInt: Number(row.cik_str),
         name: row.title || row.ticker,
+        // The file arrives ordered by market cap, largest first, and
+        // the key IS that ordinal. Kept as a popularity rank so ties in
+        // the symbol search break toward the company a member means:
+        // "AMZ" is Amazon, not a micro-cap that sorts earlier.
+        rank: Number(k) || 0,
       });
     }
     tickersCache = { at: Date.now(), map };
@@ -102,10 +107,10 @@ export async function searchSymbols(query, limit = 8) {
     else if (name.startsWith(q)) s = 60;
     else if (name.split(/[^A-Z0-9]+/).some((w) => w && w.startsWith(q))) s = 45;
     else if (q.length >= 3 && name.includes(q)) s = 25;
-    if (s >= 0) scored.push({ ticker, name: info.name, s });
+    if (s >= 0) scored.push({ ticker, name: info.name, s, rank: info.rank ?? 1e9 });
   }
   scored.sort(
-    (a, b) => b.s - a.s || a.ticker.length - b.ticker.length || a.ticker.localeCompare(b.ticker)
+    (a, b) => b.s - a.s || a.rank - b.rank || a.ticker.localeCompare(b.ticker)
   );
   return scored.slice(0, limit).map(({ ticker, name }) => ({ ticker, name }));
 }
