@@ -775,12 +775,18 @@ private struct FocusQuote: View {
     private func poll(_ t: String) async {
         // A failed poll keeps the last good numbers; a stale quote in
         // the chrome beats a flickering dash.
-        struct Q: Decodable { let price: Double?; let changePct: Double? }
+        // Field names verified against the live handler, because this
+        // exact function shipped decoding `price` where the server sends
+        // `last` — an all-optional struct decodes the mismatch silently
+        // and the chrome just shows a dash forever. And changePct
+        // arrives ALREADY as a percent (Finnhub's dp); scaling it again
+        // turns -2.9 into -293.
+        struct Q: Decodable { let last: Double?; let changePct: Double? }
         guard let data = try? await API.shared.get("/terminal/quotes", query: ["tickers": t]),
-              let m = try? await API.shared.decode([String: Q].self, from: data),
-              let q = m[t] else { return }
-        if let p = q.price { price = p }
-        if let c = q.changePct { pct = c * 100 }
+              let m = try? await API.shared.decode([String: Q?].self, from: data),
+              let q = m[t] ?? nil else { return }
+        if let p = q.last { price = p }
+        if let c = q.changePct { pct = c }
     }
 }
 

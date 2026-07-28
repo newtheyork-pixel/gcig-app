@@ -76,7 +76,14 @@ final class LiveSmokeTests: XCTestCase {
 
     func testQuotes() async throws {
         try requireToken()
-        _ = try await dec([String: ComparePanel.Quote?].self, "/terminal/quotes", ["tickers": "\(T),AAPL"])
+        let m = try await dec([String: ComparePanel.Quote?].self, "/terminal/quotes", ["tickers": "\(T),AAPL"])
+        // All-optional structs decode a renamed field SILENTLY — the
+        // topbar quote shipped reading `price` where the server sends
+        // `last` and showed a dash forever. Asserting the value is
+        // actually populated is what makes that class of bug a test
+        // failure instead of a shrug in the chrome.
+        XCTAssertNotNil(m["AAPL"] ?? nil, "AAPL should be quotable")
+        XCTAssertNotNil((m["AAPL"] ?? nil)?.last, "quote decoded but `last` is nil — field names drifted")
     }
 
     func testCompare() async throws {
