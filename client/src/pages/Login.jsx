@@ -11,6 +11,18 @@ export default function Login() {
   const { user, login, signup, verify, resendCode, verifyTwoFactor, googleSignIn } = useAuth();
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
+  // Where to land after a successful sign-in. ProtectedRoute sets this
+  // when it bounces someone off a page they asked for, so the Mac app's
+  // /native-auth handoff survives a trip through the login form instead
+  // of dumping the user on the dashboard with no idea why.
+  // Same-origin paths only: an open redirect on a login page is a
+  // phishing primitive, and "?next=https://evil.example" is exactly how
+  // it gets used.
+  const nextParam = searchParams.get('next');
+  const afterLogin =
+    nextParam && nextParam.startsWith('/') && !nextParam.startsWith('//')
+      ? nextParam
+      : '/dashboard';
   const [mode, setMode] = useState('login'); // 'login' | 'signup' | 'verify' | '2fa'
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
@@ -61,7 +73,7 @@ export default function Login() {
       }
       localStorage.setItem('gcig_token', token);
       localStorage.setItem('gcig_user', JSON.stringify(userData));
-      window.location.replace('/dashboard');
+      window.location.replace(afterLogin);
     } catch (err) {
       setError(err.response?.data?.error || err.message || 'Google sign-in failed');
       setSubmitting(false);
@@ -89,7 +101,7 @@ export default function Login() {
         setEmailSent(false);
       } else {
         // See handleGoogleCredential for the rationale on full reload.
-        window.location.replace('/dashboard');
+        window.location.replace(afterLogin);
         return;
       }
     } catch (err) {
@@ -106,7 +118,7 @@ export default function Login() {
     try {
       await verifyTwoFactor(challengeToken, twoFactorCode.trim());
       // Full reload — see handleGoogleCredential for rationale.
-      window.location.replace('/dashboard');
+      window.location.replace(afterLogin);
       return;
     } catch (err) {
       setError(err.response?.data?.error || 'Verification failed');

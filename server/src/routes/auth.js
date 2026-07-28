@@ -461,6 +461,91 @@ router.post('/google', authLimiter, async (req, res) => {
   res.json({ token, user: serializeUser(user) });
 });
 
+// ── Native app handoff ───────────────────────────────────────────────
+//
+// How the Mac terminal signs in: it opens the website in the user's real
+// browser, they sign in exactly as they always do, and the site hands
+// back a short-lived code the app trades for a token.
+//
+// The reason to do it this way rather than build a login form into the
+// app is that there is more than one way into this account. Google,
+// password, and 2FA are three flows, two of them multi-step, and an app
+// that reimplements them owns three chances to get auth wrong. The
+// browser already has all three, correct, and it is where the user's
+// Google session already lives.
+//
+// WHAT TRAVELS IN THE URL IS THE POINT. Redirecting to
+// griffin-terminal://auth?token=<JWT> would work on the first try and
+// put a 24-hour bearer token into browser history, the address bar, and
+// any extension watching navigation. So the URL carries a code that is
+// single-use, expires in ninety seconds, and is worth nothing to anyone
+// who cannot immediately POST it back from the machine it was minted
+// for.
+const NATIVE_CODE_TTL_MS = 90 * 1000;
+
+// Deliberately in memory. These live ninety seconds and are consumed
+// once; a table would mean a migration and a row to garbage-collect for
+// something whose entire lifetime is shorter than a deploy. The cost is
+// that a server restart mid-sign-in loses pending codes, and the user
+// clicks the button again — which is why the app says what to do rather
+// than hanging.
+const nativeCodes = new Map();
+
+function sweepNativeCodes() {
+  const now = Date.now();
+  for (const [code, rec] of nativeCodes) {
+    if (rec.expiresAt < now) nativeCodes.delete(code);
+  }
+}
+
+// Issued to an ALREADY-authenticated browser session. This endpoint
+// grants nothing on its own — it converts a session the user already has
+// into a form that can cross to the app.
+router.post('/native/handoff', verifyJwt, async (req, res) => {
+  sweepNativeCodes();
+  const code = crypto.randomBytes(32).toString('base64url');
+  nativeCodes.set(code, {
+    userId: req.user.id,
+    expiresAt: Date.now() + NATIVE_CODE_TTL_MS,
+  });
+  await auditReq(req, 'native.handoff_issued', 'user', req.user.id);
+  res.json({ code, expiresInSeconds: NATIVE_CODE_TTL_MS / 1000 });
+});
+
+// Traded by the app for a real token. No JWT required — the code IS the
+// credential, which is exactly why it is single-use and short-lived.
+router.post('/native/exchange', authLimiter, async (req, res) => {
+  sweepNativeCodes();
+  const { code } = req.body || {};
+  if (!code) return res.status(400).json({ error: 'Code required' });
+
+  const rec = nativeCodes.get(String(code));
+  // Deleted before anything else can go wrong, so a code cannot be
+  // replayed by a second request racing the first.
+  nativeCodes.delete(String(code));
+
+  if (!rec || rec.expiresAt < Date.now()) {
+    return res.status(400).json({
+      error: 'That sign-in link has expired or was already used. Click "Sign in with browser" again.',
+    });
+  }
+
+  const user = await prisma.user.findUnique({ where: { id: rec.userId } });
+  if (!user) return res.status(401).json({ error: 'That account no longer exists.' });
+
+  const token = issueJwt(user);
+  await auditReq(
+    { ...req, user: { id: user.id, name: user.name, role: user.role } },
+    'native.signed_in',
+    'user',
+    user.id
+  );
+  trackLogin(user, req).catch((err) =>
+    console.error('trackLogin failed:', err.message)
+  );
+  res.json({ token, user: serializeUser(user) });
+});
+
 // Link a Google account to the currently-signed-in user. Requires the Google
 // email to match the account email so you can't accidentally (or maliciously)
 // link someone else's Google account.

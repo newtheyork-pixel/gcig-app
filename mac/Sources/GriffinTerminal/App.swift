@@ -44,7 +44,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
+        // Register before the browser can possibly redirect back.
+        NSAppleEventManager.shared().setEventHandler(
+            self,
+            andSelector: #selector(handleURLEvent(_:reply:)),
+            forEventClass: AEEventClass(kInternetEventClass),
+            andEventID: AEEventID(kAEGetURL)
+        )
     }
+
+    /// griffin-terminal://auth?code=...
+    ///
+    /// The code is posted straight through to the session rather than
+    /// parsed into anything durable: it is worth nothing after one use
+    /// and ninety seconds, and the fewer places it is written down the
+    /// better.
+    @objc func handleURLEvent(_ event: NSAppleEventDescriptor, reply: NSAppleEventDescriptor) {
+        guard let s = event.paramDescriptor(forKeyword: keyDirectObject)?.stringValue,
+              let url = URL(string: s),
+              url.scheme == "griffin-terminal",
+              url.host == "auth" || url.path.contains("auth"),
+              let code = URLComponents(url: url, resolvingAgainstBaseURL: false)?
+                  .queryItems?.first(where: { $0.name == "code" })?.value
+        else { return }
+        NSApp.activate(ignoringOtherApps: true)
+        NotificationCenter.default.post(name: .handoffCode, object: code)
+    }
+
     func applicationShouldTerminateAfterLastWindowClosed(_ s: NSApplication) -> Bool { true }
 }
 
@@ -52,6 +78,7 @@ extension Notification.Name {
     static let focusCommand = Notification.Name("focusCommand")
     static let runCommand = Notification.Name("runCommand")
     static let tilePanes = Notification.Name("tilePanes")
+    static let handoffCode = Notification.Name("handoffCode")
 }
 
 // MARK: Session
@@ -61,6 +88,10 @@ final class Session: ObservableObject {
     @Published var user: API.Me?
     @Published var checking = true
     @Published var signInError: String?
+    /// True from the moment the browser is opened until a code comes
+    /// back. Without it the app looks idle while the whole flow is
+    /// happening in another application.
+    @Published var awaitingBrowser = false
 
     func restore() async {
         checking = true
@@ -79,9 +110,35 @@ final class Session: ObservableObject {
         }
     }
 
+    /// Open the website and let it sign the user in however they
+    /// normally do. The app deliberately does not reimplement Google or
+    /// 2FA: the browser already has both, correctly, and it is where the
+    /// user's Google session already lives.
+    func signInWithBrowser() {
+        signInError = nil
+        awaitingBrowser = true
+        let origin = ProcessInfo.processInfo.environment["GRIFFIN_WEB"]
+            ?? "https://thegriffinfund.org"
+        if let url = URL(string: "\(origin)/native-auth") {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
+    func completeHandoff(code: String) async {
+        signInError = nil
+        do {
+            user = try await API.shared.exchangeHandoff(code: code)
+        } catch {
+            signInError = error.localizedDescription
+            user = nil
+        }
+        awaitingBrowser = false
+    }
+
     func signOut() async {
         await API.shared.signOut()
         user = nil
+        awaitingBrowser = false
     }
 }
 
@@ -102,6 +159,10 @@ struct RootView: View {
             }
         }
         .task { await session.restore() }
+        .onReceive(NotificationCenter.default.publisher(for: .handoffCode)) { note in
+            guard let code = note.object as? String else { return }
+            Task { await session.completeHandoff(code: code) }
+        }
     }
 }
 
@@ -110,6 +171,7 @@ struct LoginView: View {
     @State private var email = ""
     @State private var password = ""
     @State private var busy = false
+    @State private var showPassword = false
 
     var body: some View {
         VStack(spacing: 14) {
@@ -121,38 +183,61 @@ struct LoginView: View {
             }
             .padding(.bottom, 6)
 
-            VStack(spacing: 8) {
-                TextField("email", text: $email)
-                    .textFieldStyle(.plain)
-                    .font(Term.mono(12))
-                    .padding(6)
-                    .background(Term.bgPanel)
-                    .termBorder()
-                SecureField("password", text: $password)
-                    .textFieldStyle(.plain)
-                    .font(Term.mono(12))
-                    .padding(6)
-                    .background(Term.bgPanel)
-                    .termBorder()
-                    .onSubmit { go() }
+            // Browser first, and by a distance. It is the only path that
+            // covers Google, password and 2FA, because it IS the website
+            // that already implements all three.
+            Button(session.awaitingBrowser ? "Waiting for the browser…" : "Sign in with browser") {
+                session.signInWithBrowser()
             }
-            .frame(width: 300)
+            .buttonStyle(TermButtonStyle())
+            .disabled(session.awaitingBrowser)
 
-            Button(busy ? "Signing in…" : "Sign in", action: go)
-                .buttonStyle(TermButtonStyle())
-                .disabled(busy || email.isEmpty || password.isEmpty)
+            Text("Opens thegriffinfund.org. Sign in there however you normally do,\nincluding Google, and it hands this app back a one-time code.")
+                .font(Term.mono(9))
+                .foregroundStyle(Term.fgMuted)
+                .multilineTextAlignment(.center)
+
+            if session.awaitingBrowser {
+                Button("Cancel") { session.awaitingBrowser = false }
+                    .buttonStyle(.plain)
+                    .font(Term.mono(9))
+                    .foregroundStyle(Term.fgMuted)
+            }
 
             if let e = session.signInError {
                 Text(e)
                     .font(Term.mono(10)).foregroundStyle(Term.negative)
-                    .frame(width: 320).multilineTextAlignment(.center)
+                    .frame(width: 340).multilineTextAlignment(.center)
             }
 
-            // Google sign-in and 2FA both live on the website. Saying so
-            // beats a login box that silently cannot serve half the club.
-            Text("Google sign-in and two-factor accounts: sign in on thegriffinfund.org.")
-                .font(Term.mono(9)).foregroundStyle(Term.fgMuted)
-                .frame(width: 340).multilineTextAlignment(.center)
+            // Kept, but folded away. It works for password accounts and
+            // is the fallback when the browser handoff is the thing that
+            // is broken.
+            Divider().frame(width: 300).overlay(Term.border)
+            Button(showPassword ? "Hide password sign-in" : "Sign in with a password instead") {
+                withAnimation { showPassword.toggle() }
+            }
+            .buttonStyle(.plain)
+            .font(Term.mono(9))
+            .foregroundStyle(Term.fgMuted)
+
+            if showPassword {
+                VStack(spacing: 8) {
+                    TextField("email", text: $email)
+                        .textFieldStyle(.plain).font(Term.mono(12))
+                        .padding(6).background(Term.bgPanel).termBorder()
+                    SecureField("password", text: $password)
+                        .textFieldStyle(.plain).font(Term.mono(12))
+                        .padding(6).background(Term.bgPanel).termBorder()
+                        .onSubmit { go() }
+                    Button(busy ? "Signing in…" : "Sign in", action: go)
+                        .buttonStyle(TermButtonStyle())
+                        .disabled(busy || email.isEmpty || password.isEmpty)
+                    Text("2FA accounts cannot finish here. Use the browser button.")
+                        .font(Term.mono(9)).foregroundStyle(Term.fgMuted)
+                }
+                .frame(width: 300)
+            }
         }
         .foregroundStyle(Term.fg)
     }

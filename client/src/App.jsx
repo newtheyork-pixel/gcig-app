@@ -6,6 +6,7 @@ import Login from './pages/Login.jsx';
 import AcceptInvite from './pages/AcceptInvite.jsx';
 import ForgotPassword from './pages/ForgotPassword.jsx';
 import ResetPassword from './pages/ResetPassword.jsx';
+import NativeAuth from './pages/NativeAuth.jsx';
 import AuditLog from './pages/AuditLog.jsx';
 import Chat from './pages/Chat.jsx';
 import InactivityTimer from './components/InactivityTimer.jsx';
@@ -53,6 +54,17 @@ export default function App() {
       <Route path="/accept-invite" element={<AcceptInvite />} />
       <Route path="/forgot-password" element={<ForgotPassword />} />
       <Route path="/reset-password" element={<ResetPassword />} />
+      {/* Handoff to the Mac terminal. Protected so it can only mint a
+          code for a real session, but outside Layout because it is a
+          full-screen bridge, not a page of the app. */}
+      <Route
+        path="/native-auth"
+        element={
+          <ProtectedRoute>
+            <NativeAuth />
+          </ProtectedRoute>
+        }
+      />
       {/* Authed app */}
       <Route
         element={

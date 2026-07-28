@@ -1,8 +1,9 @@
-import { Navigate } from 'react-router-dom';
+import { Navigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext.jsx';
 
 export default function ProtectedRoute({ children }) {
   const { user, loading } = useAuth();
+  const location = useLocation();
   // While AuthProvider is still verifying a stored token (initial /auth/me
   // call), don't make a routing decision — neither flash the dashboard
   // (we don't know if they're authenticated) nor bounce to login (we'd
@@ -18,7 +19,9 @@ export default function ProtectedRoute({ children }) {
     const hasToken = !!localStorage.getItem('gcig_token');
     const hasUser = !!localStorage.getItem('gcig_user');
     if (hasToken && hasUser) return children;
-    return <Navigate to="/login" replace />;
+    // Carry where they were going, so login can return them to it.
+    const next = encodeURIComponent(location.pathname + location.search);
+    return <Navigate to={`/login?next=${next}`} replace />;
   }
   return children;
 }

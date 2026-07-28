@@ -166,6 +166,30 @@ actor API {
         )
     }
 
+    /// Trade a browser handoff code for a real token.
+    ///
+    /// The code is single-use and lives ninety seconds, so the two
+    /// failure modes worth telling apart are "expired or already spent"
+    /// (the user waited, or clicked twice) and everything else. The
+    /// server sends the first as a sentence; pass it through rather than
+    /// replacing it with something generic.
+    func exchangeHandoff(code: String) async throws -> Me {
+        let body = try JSONSerialization.data(withJSONObject: ["code": code])
+        let data = try await send("POST", "/auth/native/exchange", query: [:], body: body)
+        guard let obj = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let t = obj["token"] as? String else {
+            throw Failure.decoding("exchange response carried no token")
+        }
+        Keychain.write("jwt", t)
+        let u = obj["user"] as? [String: Any] ?? [:]
+        return Me(
+            id: u["id"] as? Int ?? 0,
+            name: u["name"] as? String ?? "",
+            email: u["email"] as? String ?? "",
+            role: u["role"] as? String ?? ""
+        )
+    }
+
     func signOut() { Keychain.delete("jwt") }
 }
 
