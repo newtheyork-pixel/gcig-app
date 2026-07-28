@@ -20,6 +20,7 @@ import {
   Activity,
   Ship,
   ClipboardList,
+  Network,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext.jsx';
 import RoleBadge from './RoleBadge.jsx';
@@ -49,6 +50,7 @@ const NAV_SECTIONS = [
       { to: '/outcomes', label: 'Coverage Outcomes', icon: Trophy },
       { to: '/votes', label: 'Voting', icon: Vote },
       { to: '/industries', label: 'Industries', icon: Building2 },
+      { to: '/organization', label: 'Organization', icon: Network, pmOrAbove: true },
       { to: '/cpi', label: 'CPI Forecast', icon: Activity },
       { to: '/tankers', label: 'Tanker Tracker', icon: Ship },
     ],
