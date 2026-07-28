@@ -758,6 +758,7 @@ private struct FocusQuote: View {
                 HStack(spacing: 6) {
                     Text(t).font(Term.mono(10, weight: .bold)).foregroundStyle(Term.white)
                     Text(Fmt.money(price)).font(Term.mono(10, weight: .medium)).foregroundStyle(Term.white)
+                        .tickFlash(price)
                     Text(Fmt.pct(pct)).font(Term.mono(10, weight: .medium))
                         .foregroundStyle(Term.delta(pct))
                 }

@@ -121,6 +121,35 @@ struct StatRow: View {
     }
 }
 
+// MARK: Tick flash
+//
+// Bloomberg's heartbeat: when a price ticks, the cell's background
+// pulses — green up, red down — and decays. The pulse is the ONLY
+// animated thing in the terminal, which is what makes it read as data
+// arriving rather than decoration. Attach to the view showing the
+// number and hand it the number; identity does the rest, so a row that
+// re-renders with the same value stays quiet.
+struct TickFlash: ViewModifier {
+    let value: Double?
+    @State private var flash: Color = .clear
+
+    func body(content: Content) -> some View {
+        content
+            .padding(.horizontal, 3)
+            .background(flash)
+            .onChange(of: value) { old, new in
+                guard let o = old, let n = new, n != o else { return }
+                flash = (n > o ? Term.positive : Term.negative).opacity(0.45)
+                withAnimation(.easeOut(duration: 0.9)) { flash = .clear }
+            }
+    }
+}
+
+extension View {
+    /// Pulse the background when this number changes: green up, red down.
+    func tickFlash(_ value: Double?) -> some View { modifier(TickFlash(value: value)) }
+}
+
 // MARK: Formatting
 //
 // A terminal lives on aligned numbers, and inconsistent formatting is

@@ -54,7 +54,18 @@ struct PortfolioPanel: View {
                 }
             }
         }
-        .task { await load() }
+        .task {
+            await load()
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(45))
+                // Keep the last good book on a failed poll; the sheet
+                // being briefly unreadable must not blank the P&L.
+                if let data = try? await API.shared.get("/terminal/portfolio"),
+                   let p = try? await API.shared.decode(Payload.self, from: data) {
+                    state = .loaded(p)
+                }
+            }
+        }
     }
 
     private func header(_ p: Payload, total: Double, n: Int) -> some View {
@@ -107,12 +118,14 @@ struct PortfolioPanel: View {
             Text(h.shares.map { Fmt.money($0, decimals: 0) } ?? "—")
                 .frame(width: 70, alignment: .trailing)
             Text(Fmt.money(h.price)).frame(width: 72, alignment: .trailing)
+                .tickFlash(h.price)
             Text(Fmt.money(h.marketValue, decimals: 0)).frame(width: 92, alignment: .trailing)
             Text(weight.map { Fmt.pct($0, decimals: 1, signed: false) } ?? "—")
                 .frame(width: 54, alignment: .trailing)
             Text(h.dayChange.map { Fmt.money($0, decimals: 0) } ?? "—")
                 .foregroundStyle(Term.delta(h.dayChange))
                 .frame(width: 78, alignment: .trailing)
+                .tickFlash(h.dayChange)
         }
         .font(Term.mono(11))
         .foregroundStyle(Term.white)

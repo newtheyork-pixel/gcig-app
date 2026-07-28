@@ -44,7 +44,23 @@ struct MoversPanel: View {
                 }
             }
         }
-        .task { await load() }
+        .task {
+            await load()
+            // The web MOVR polls while visible; matching it is what
+            // gives the ticks something to flash on. A failed refresh
+            // keeps the last good board — only the first load may show
+            // the failure state.
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(30))
+                await refresh()
+            }
+        }
+    }
+
+    private func refresh() async {
+        guard let data = try? await API.shared.get("/terminal/movers"),
+              let p = try? await API.shared.decode(Payload.self, from: data) else { return }
+        state = .loaded(p)
     }
 
     private func header(_ p: Payload) -> some View {
@@ -92,6 +108,7 @@ struct MoversPanel: View {
                 .font(Term.mono(11))
                 .foregroundStyle(Term.white)
                 .frame(width: 74, alignment: .trailing)
+                .tickFlash(r.last)
             Text(Fmt.pct(r.changePct.map { $0 * 100 }))
                 .font(Term.mono(11, weight: .medium))
                 .foregroundStyle(Term.delta(r.changePct))

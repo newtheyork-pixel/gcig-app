@@ -150,7 +150,13 @@ struct PaneWindow: View {
     // MARK: Gestures
 
     private var dragGesture: some Gesture {
-        DragGesture(minimumDistance: 2)
+        // The coordinate space is the whole fix. A DragGesture defaults
+        // to LOCAL space — the pane's own — and this pane MOVES by the
+        // gesture's translation, so each frame re-measures against a
+        // view that just shifted underneath the cursor: a feedback loop
+        // that reads as jitter. Measuring in the workspace's space makes
+        // the translation absolute and the drag glassy.
+        DragGesture(minimumDistance: 2, coordinateSpace: .named("workspace"))
             .onChanged { g in
                 if dragOffset == .zero { ws.focus(pane.id) }
                 dragOffset = g.translation
@@ -177,7 +183,9 @@ struct PaneWindow: View {
         .padding(3)
         .contentShape(Rectangle())
         .gesture(
-            DragGesture(minimumDistance: 1)
+            // Workspace space for the same reason as the drag: the grip
+            // sits on the corner being moved, so local space feeds back.
+            DragGesture(minimumDistance: 1, coordinateSpace: .named("workspace"))
                 .onChanged { g in
                     if resizeDelta == .zero { ws.focus(pane.id) }
                     resizeDelta = g.translation
