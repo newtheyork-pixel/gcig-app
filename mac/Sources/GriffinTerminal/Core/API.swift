@@ -24,7 +24,7 @@ actor API {
         ?? "https://gcig-api.onrender.com/api"
 
     private var token: String? {
-        get { Keychain.read("jwt") }
+        get { TokenStore.read("jwt") }
     }
 
     enum Failure: LocalizedError {
@@ -44,7 +44,7 @@ actor API {
     }
 
     func setToken(_ t: String?) {
-        if let t { Keychain.write("jwt", t) } else { Keychain.delete("jwt") }
+        if let t { TokenStore.write("jwt", t) } else { TokenStore.delete("jwt") }
     }
 
     var isSignedIn: Bool { token != nil }
@@ -100,7 +100,7 @@ actor API {
 
         // Silent rotation. Without this an active session dies at 24h.
         if let fresh = http.value(forHTTPHeaderField: "X-New-Token"), !fresh.isEmpty {
-            Keychain.write("jwt", fresh)
+            TokenStore.write("jwt", fresh)
         }
 
         if http.statusCode == 401 || http.statusCode == 403 {
@@ -142,7 +142,7 @@ actor API {
                 ?? "That account needs a step this app does not handle yet. Sign in on the website."
             throw Failure.http(200, msg)
         }
-        Keychain.write("jwt", t)
+        TokenStore.write("jwt", t)
         let userObj = obj["user"] as? [String: Any] ?? [:]
         return Me(
             id: userObj["id"] as? Int ?? 0,
@@ -194,7 +194,7 @@ actor API {
               let t = obj["token"] as? String else {
             throw Failure.decoding("exchange response carried no token")
         }
-        Keychain.write("jwt", t)
+        TokenStore.write("jwt", t)
         let u = obj["user"] as? [String: Any] ?? [:]
         return Me(
             id: u["id"] as? Int ?? 0,
@@ -204,50 +204,46 @@ actor API {
         )
     }
 
-    func signOut() { Keychain.delete("jwt") }
+    func signOut() { TokenStore.delete("jwt") }
 }
 
-// The token lives in the Keychain, not in UserDefaults.
+// Where the session token lives, and why it is a file.
 //
-// UserDefaults is a plist in the container, readable by anything running
-// as this user. It holds a bearer token for a system of record that
-// carries the club's portfolio and its primary research, so it belongs
-// somewhere the OS protects.
-enum Keychain {
-    private static let service = "org.thegriffinfund.terminal"
-
-    static func read(_ key: String) -> String? {
-        let q: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: key,
-            kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne,
-        ]
-        var out: CFTypeRef?
-        guard SecItemCopyMatching(q as CFDictionary, &out) == errSecSuccess,
-              let data = out as? Data else { return nil }
-        return String(data: data, encoding: .utf8)
+// It was in the Keychain first, which is the textbook answer — and the
+// textbook assumes a stable code-signing identity. This app is ad-hoc
+// signed during development, so every rebuild is a NEW identity as far
+// as Keychain ACLs are concerned: "Always Allow" binds to one binary,
+// the next build prompts again, and the test runner is a third identity
+// prompting on its own. The password dialog on every rebuild is not a
+// security feature, it is a training course in clicking Allow.
+//
+// So: a 0600 file under the user's own Application Support, readable by
+// exactly this user, on a FileVault-encrypted disk. Honest trade for a
+// development-phase club tool. When the app ships Developer-ID-signed
+// with a stable identity, the Keychain becomes viable again and this
+// store is one type swap away.
+enum TokenStore {
+    private static var url: URL {
+        let base = FileManager.default.urls(for: .applicationSupportDirectory,
+                                            in: .userDomainMask)[0]
+            .appendingPathComponent("Griffin Terminal", isDirectory: true)
+        try? FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
+        return base.appendingPathComponent("session.token")
     }
 
-    static func write(_ key: String, _ value: String) {
-        delete(key)
-        let q: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: key,
-            kSecValueData as String: Data(value.utf8),
-            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlock,
-        ]
-        SecItemAdd(q as CFDictionary, nil)
+    static func read(_ key: String = "jwt") -> String? {
+        guard let s = try? String(contentsOf: url, encoding: .utf8) else { return nil }
+        let t = s.trimmingCharacters(in: .whitespacesAndNewlines)
+        return t.isEmpty ? nil : t
     }
 
-    static func delete(_ key: String) {
-        let q: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: key,
-        ]
-        SecItemDelete(q as CFDictionary)
+    static func write(_ key: String = "jwt", _ value: String) {
+        try? value.write(to: url, atomically: true, encoding: .utf8)
+        try? FileManager.default.setAttributes([.posixPermissions: 0o600],
+                                               ofItemAtPath: url.path)
+    }
+
+    static func delete(_ key: String = "jwt") {
+        try? FileManager.default.removeItem(at: url)
     }
 }

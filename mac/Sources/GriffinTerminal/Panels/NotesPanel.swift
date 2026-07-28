@@ -269,7 +269,7 @@ extension API {
         req.timeoutInterval = 30
         req.httpBody = try JSONSerialization.data(withJSONObject: json)
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        if let token = Keychain.read("jwt") {
+        if let token = TokenStore.read() {
             req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         }
 
@@ -286,7 +286,7 @@ extension API {
         // Silent rotation. A panel that writes must honor it too, or
         // a long note-taking session dies at the 24h mark.
         if let fresh = http.value(forHTTPHeaderField: "X-New-Token"), !fresh.isEmpty {
-            Keychain.write("jwt", fresh)
+            TokenStore.write("jwt", fresh)
         }
 
         if http.statusCode == 401 || http.statusCode == 403 {

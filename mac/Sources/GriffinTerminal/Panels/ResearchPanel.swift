@@ -483,7 +483,7 @@ private enum ResearchHTTP {
             req.httpBody = try JSONSerialization.data(withJSONObject: json)
             req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         }
-        if let t = Keychain.read("jwt") {
+        if let t = TokenStore.read() {
             req.setValue("Bearer \(t)", forHTTPHeaderField: "Authorization")
         }
 
@@ -497,7 +497,7 @@ private enum ResearchHTTP {
             throw WriteError(message: "No HTTP response.")
         }
         if let fresh = http.value(forHTTPHeaderField: "X-New-Token"), !fresh.isEmpty {
-            Keychain.write("jwt", fresh)
+            TokenStore.write("jwt", fresh)
         }
         if http.statusCode == 401 || http.statusCode == 403 {
             throw WriteError(message: "Session expired. Sign in again.")

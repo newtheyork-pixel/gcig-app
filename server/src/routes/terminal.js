@@ -52,6 +52,15 @@ const router = Router();
 router.use(verifyJwt);
 router.use(requireTerminalAccess);
 
+// Two limiters, because the router serves two kinds of traffic.
+//
+// The AI routes (annotate, chat, parse-command) each burn an LLM call
+// and deserve a tight cap. Everything else is cache-backed data, and
+// the native terminal POLLS it: the focus quote every 20s, intraday
+// every 30s, news every 60s. Mounting the AI cap router-wide — which
+// is what this used to do — meant a member with three live panels
+// open hit "AI rate limit reached" from requests that never touched
+// a model, and the terminal went dark for ten minutes.
 const aiLimiter = rateLimit({
   windowMs: 10 * 60 * 1000,
   max: 120,
@@ -61,7 +70,16 @@ const aiLimiter = rateLimit({
   legacyHeaders: false,
 });
 
-router.use(aiLimiter);
+const dataLimiter = rateLimit({
+  windowMs: 10 * 60 * 1000,
+  max: 900,
+  keyGenerator: (req) => `terminal-data:${req.user?.id || req.ip}`,
+  message: { error: 'Terminal rate limit reached. Slow the polling down and try again shortly.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+router.use(dataLimiter);
 
 const KNOWN_FUNCTIONS = [
   { id: 'DES', label: 'Description', summary: 'Company snapshot: quote, fundamentals, business summary, AI brief.' },
@@ -1020,7 +1038,7 @@ const DEFAULT_PROMPT =
 
 // AI brief for a single panel. Body: { ticker, function, context }
 // Returns: { brief: string }
-router.post('/annotate', async (req, res) => {
+router.post('/annotate', aiLimiter, async (req, res) => {
   const { ticker, function: fn, context } = req.body || {};
   if (!fn) return res.status(400).json({ error: 'function is required' });
   const safeTicker = typeof ticker === 'string' ? ticker.toUpperCase().slice(0, 12) : '';
@@ -1059,7 +1077,7 @@ router.post('/annotate', async (req, res) => {
 // Natural language -> mnemonic command parser. Body: { input }
 // Returns: { ticker, function, args, explanation }
 // Falls back to a heuristic parse if the LLM is unreachable.
-router.post('/parse-command', async (req, res) => {
+router.post('/parse-command', aiLimiter, async (req, res) => {
   const input = String(req.body?.input || '').trim();
   if (!input) return res.status(400).json({ error: 'input is required' });
 
@@ -1130,7 +1148,7 @@ router.post('/parse-command', async (req, res) => {
 // Free-form chat for the BI panel. Body: { messages: [{role, content}], context }
 // `context` is the live workspace summary the client builds (current ticker, panes, etc.)
 // Returns: { reply }
-router.post('/chat', async (req, res) => {
+router.post('/chat', aiLimiter, async (req, res) => {
   const userMessages = Array.isArray(req.body?.messages) ? req.body.messages : [];
   const context = typeof req.body?.context === 'string' ? req.body.context.slice(0, 6000) : '';
   if (userMessages.length === 0) return res.status(400).json({ error: 'messages required' });

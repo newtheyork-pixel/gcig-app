@@ -43,11 +43,11 @@ struct InsiderPanel: View {
         var isOpenMarket: Bool { (isBuy ?? false) || (isSell ?? false) }
     }
 
-    private struct ChartPayload: Decodable {
+    struct ChartPayload: Decodable {
         let points: [Point]?
     }
 
-    private struct InsiderPayload: Decodable {
+    struct InsiderPayload: Decodable {
         let transactions: [Tx]?
         let source: String?
         enum CodingKeys: String, CodingKey {
