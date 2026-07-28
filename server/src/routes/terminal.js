@@ -106,6 +106,7 @@ const KNOWN_FUNCTIONS = [
   { id: 'ECO', label: 'Economic Calendar', summary: 'Upcoming releases and central bank events.' },
   { id: 'WX', label: 'Weather Impact', summary: 'Named-storm landfalls vs. Gulf O&G + P&C insurer baskets; historical playbook + active-storm feed.' },
   { id: 'RDR', label: 'Weather Radar', summary: 'Live US NEXRAD radar + active NWS warning polygons (tornado / severe TS / flood / winter / tropical).' },
+  { id: 'ORG', label: 'Organization', summary: 'The club org chart: leadership tiers and industry groups (PM and above).' },
   { id: 'MACRO', label: 'Macro Sensitivity', summary: 'Portfolio β to 10Y / WTI / USD / VIX / SPY (252-day OLS), top contributors, scenario preview.' },
   { id: 'RSCH', label: 'Research', summary: 'The whole research effort on one company — the brief and questions it set out to answer, who we reached out to, interviews and transcripts, site visits, valuation models, filings and data, and the claim ledger with each claim pinned to a source and timestamp. Also answers to FLD, which is what it was called when it only held fieldwork.' },
   { id: 'FLD', label: 'Research', summary: 'Alias for RSCH.' },

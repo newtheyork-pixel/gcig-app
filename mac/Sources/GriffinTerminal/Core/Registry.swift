@@ -66,6 +66,7 @@ enum Registry {
         .init(id: "ECO", label: "Economic Calendar", help: "Upcoming releases and central bank events.", native: true),
         .init(id: "WX", label: "Weather Impact", help: "Named-storm impact on Gulf O&G + insurer exposure.", width: 640, height: 640, native: true),
         .init(id: "RDR", label: "Weather Radar", help: "Live US NEXRAD radar + active NWS warnings.", width: 780, height: 640, native: true),
+        .init(id: "ORG", label: "Organization", help: "The club org chart: leadership tiers, industry groups, profiles one click away. PM and above.", width: 720, height: 660, native: true),
         .init(id: "MACRO", label: "Macro Sensitivity", help: "Portfolio sensitivity to 10Y, oil, USD, VIX, SPY.", width: 660, height: 720, native: true),
     ]
 

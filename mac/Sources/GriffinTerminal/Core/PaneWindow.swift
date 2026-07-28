@@ -283,6 +283,7 @@ struct PanelRouter: View {
         case "WX":   WeatherImpactPanel()
         case "ICLUSTER": InsiderClustersPanel()
         case "RDR":  RadarPanel()
+        case "ORG":  OrganizationPanel()
         case "ECO":
             // Coming Soon on the web too — saying "works on the web"
             // here would be a lie in the other direction.

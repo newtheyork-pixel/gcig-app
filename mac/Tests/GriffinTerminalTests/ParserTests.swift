@@ -71,7 +71,7 @@ final class ParserTests: XCTestCase {
         // bar says "not a function" for something that plainly is one.
         let web = ["ARCH","BI","CMP","CN","CON","DES","EARN","ECO","FA","FIL","FLD",
                    "GF","GIP","GP","HELP","ICLUSTER","INSDR","MACRO","MGMT","MOVR",
-                   "NOTE","PEER","PM","RDR","RSCH","SPLC","TOP","WEI","WX"]
+                   "NOTE","ORG","PEER","PM","RDR","RSCH","SPLC","TOP","WEI","WX"]
         let missing = web.filter { !Registry.ids.contains($0) }
         XCTAssertTrue(missing.isEmpty, "registry is missing web mnemonics: \(missing)")
     }
