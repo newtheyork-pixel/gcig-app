@@ -1,5 +1,15 @@
 import SwiftUI
 
+/// What crosses from the in-shell workspace to a real macOS window when
+/// a pane is popped out. Codable because WindowGroup(for:) requires it;
+/// the UUID keeps two pop-outs of the same function distinct.
+struct PaneSeed: Codable, Hashable {
+    var id = UUID()
+    var function: String
+    var ticker: String?
+    var args: String?
+}
+
 // The workspace: what is open, where, and which pane has focus.
 //
 // Modelled on the web client's FloatingWindow, because the layout IS the
@@ -37,12 +47,24 @@ final class Workspace: ObservableObject {
             return "\(code)\(function.id) · \(function.label.uppercased())"
         }
 
-        static func == (a: Pane, b: Pane) -> Bool { a.id == b.id && a.frame == b.frame && a.z == b.z && a.minimized == b.minimized }
+        static func == (a: Pane, b: Pane) -> Bool {
+            a.id == b.id && a.frame == b.frame && a.z == b.z && a.minimized == b.minimized
+                && a.function == b.function && a.ticker == b.ticker
+        }
     }
 
     private var topZ = 0
 
+    /// The floating canvas's current size, kept fresh by the shell so
+    /// commands arriving from the command bar, the rail, or a menu item
+    /// can spawn sensibly without threading geometry through every
+    /// caller.
+    var canvasSize = CGSize(width: 1280, height: 800)
+
     // MARK: Opening
+
+    func run(_ input: String) { run(input, in: canvasSize) }
+    func open(_ cmd: Command) { open(cmd, in: canvasSize) }
 
     func run(_ input: String, in bounds: CGSize) {
         guard let cmd = Parser.parse(input) else {
@@ -76,6 +98,10 @@ final class Workspace: ObservableObject {
         }
 
         if let t = cmd.ticker { focusTicker = t }
+        // Any ticker-bearing open feeds the Recents rail — recorded here
+        // so every path (command bar, rail, panel drill-down) records
+        // once, same as the web shell.
+        if let t = ticker { recordTicker(t) }
 
         topZ += 1
         let pane = Pane(
@@ -151,6 +177,96 @@ final class Workspace: ObservableObject {
     func toggleMinimize(_ id: UUID) {
         guard let i = panes.firstIndex(where: { $0.id == id }) else { return }
         panes[i].minimized.toggle()
+    }
+
+    /// Maximize/restore support — one write, no clamping, caller knows
+    /// what it is doing.
+    func setFrame(_ id: UUID, _ frame: CGRect) {
+        guard let i = panes.firstIndex(where: { $0.id == id }) else { return }
+        panes[i].frame = frame
+    }
+
+    /// Same pane, same ticker, different function — the titlebar
+    /// switcher. Keeps position and size, which is the point: you built
+    /// the layout, the content rotates within it.
+    func switchFunction(_ id: UUID, to fnID: String) {
+        guard let i = panes.firstIndex(where: { $0.id == id }),
+              let fn = Registry.function(fnID) else { return }
+        if fn.requires == "ticker", panes[i].ticker == nil, focusTicker == nil {
+            flash = Flash(text: "\(fn.id) needs a ticker.", bad: true)
+            return
+        }
+        panes[i].function = fn
+        if fn.requires == "ticker", panes[i].ticker == nil {
+            panes[i].ticker = focusTicker
+        }
+    }
+
+    /// Detach a pane into a real macOS window. The pane leaves the
+    /// in-shell workspace and the caller hands the seed to openWindow —
+    /// from there the OS owns drag, resize, Mission Control, and (on
+    /// current macOS) native tiling. This is the answer to "the fake
+    /// windows feel weird": past a certain point you stop imitating
+    /// windows and use the real ones.
+    func popOut(_ id: UUID) -> PaneSeed? {
+        guard let pane = panes.first(where: { $0.id == id }) else { return nil }
+        close(id)
+        return PaneSeed(function: pane.function.id, ticker: pane.ticker, args: pane.args)
+    }
+
+    // MARK: Favorites and recents
+    //
+    // Mirrors the web rail: favorites are (function, ticker) pairs you
+    // pinned; recents are the tickers you actually opened, newest first.
+    // Persisted in UserDefaults — this is preference data, not a
+    // credential, so the Keychain would be ceremony.
+
+    struct Favorite: Codable, Equatable, Identifiable {
+        var fn: String
+        var ticker: String?
+        var id: String { "\(fn)|\(ticker ?? "")" }
+    }
+
+    @Published var favorites: [Favorite] = [] { didSet { savePrefs() } }
+    @Published var recents: [String] = [] { didSet { savePrefs() } }
+
+    private static let prefsKey = "terminalPrefs.v1"
+
+    func loadPrefs() {
+        guard let data = UserDefaults.standard.data(forKey: Self.prefsKey),
+              let obj = try? JSONDecoder().decode(Prefs.self, from: data) else { return }
+        favorites = obj.favorites
+        recents = obj.recents
+    }
+
+    private struct Prefs: Codable {
+        var favorites: [Favorite]
+        var recents: [String]
+    }
+
+    private func savePrefs() {
+        let obj = Prefs(favorites: favorites, recents: recents)
+        if let data = try? JSONEncoder().encode(obj) {
+            UserDefaults.standard.set(data, forKey: Self.prefsKey)
+        }
+    }
+
+    func recordTicker(_ t: String) {
+        var r = recents.filter { $0 != t }
+        r.insert(t, at: 0)
+        recents = Array(r.prefix(8))
+    }
+
+    func isFavorite(_ fn: String, _ ticker: String?) -> Bool {
+        favorites.contains { $0.fn == fn && $0.ticker == ticker }
+    }
+
+    func toggleFavorite(_ fn: String, _ ticker: String?) {
+        if let i = favorites.firstIndex(where: { $0.fn == fn && $0.ticker == ticker }) {
+            favorites.remove(at: i)
+        } else {
+            favorites.append(Favorite(fn: fn, ticker: ticker))
+        }
     }
 
     /// Tile everything visible. Not the default arrangement, but the

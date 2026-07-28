@@ -18,8 +18,9 @@ swift test             # parser conformance against the web parser
 ./build.sh release     # produces build/Griffin Terminal.app
 ```
 
-Requires Xcode (for the macOS SDK) and Swift 6. No third-party packages,
-so there is nothing to resolve and no lockfile to drift.
+Requires Xcode (for the macOS SDK) and Swift 6; runs on macOS 15+
+(WindowDragGesture on popped-out windows is the floor). No third-party
+packages, so there is nothing to resolve and no lockfile to drift.
 
 ## Signing
 
@@ -63,11 +64,42 @@ active session dying every 24 hours.
 Google sign-in and 2FA accounts are not handled here and the login
 screen says so rather than failing quietly.
 
+## The shell
+
+Mirrors the web terminal's anatomy exactly — topbar with the ET market
+clock, the amber command line directly under it with the Bloomberg
+autocomplete (arrow keys walk the ranked matches, Tab fills, Enter
+runs; plain English falls through to the server's LLM parser), the
+breaking-news strip, the favorites/recents rail, the floating
+workspace, and the status bar.
+
+Panes drag by their title bar and resize from the corner; edges snap to
+siblings and to the workspace border on release. Double-click a header
+to maximize. The in-flight gesture lives in pane-local state and the
+model is written once on release — the first version wrote every mouse
+move into the shared model, which re-rendered every pane per frame and
+made the windows feel broken.
+
+The `⧉` button pops a pane into a REAL macOS window: native drag,
+Mission Control, and the OS's own window tiling. A popped-out window
+carries its own command line, and a command typed there replaces that
+window's content — `PANEL <GO>`, effectively.
+
 ## What is native so far
 
 | Code | Panel |
 |---|---|
 | `DES` | company snapshot: quote, valuation, business summary |
+| `GP` | daily price chart with ranges and SMA/EMA studies |
+| `GIP` | intraday line vs prior close, 30s refresh |
+| `CN` | company news with the AI brief |
+| `FA` | income / balance / cash flow, annual or quarterly (SEC XBRL) |
+| `GF` | fundamentals over time, small-multiple charts |
+| `PEER` | sector peer comparison |
+| `EARN` | next report + EPS beat/miss history |
+| `CON` | analyst consensus breakdown |
+| `WEI` | world index snapshot |
+| `FIL` | recent SEC filings |
 | `PM` | the whole book, positions and weights, cash separated |
 | `MOVR` | the day's moves, with the unpriced count stated |
 | `TOP` | market wire, opens stories in the browser |
@@ -89,8 +121,8 @@ AIT         bare ticker opens DES
 The focused ticker carries forward, so `AIT DES` then `PM` then a bare
 `GP` stays on AIT.
 
-`⌘K` command line · `⌘W` close pane · `⌘⇧W` close all · `⌘⇧T` tile ·
-`↑`/`↓` history.
+`⌘K` or `/` command line · `⌘W` close pane · `⌘⇧W` close all ·
+`⌘⇧T` tile · double-click a header to maximize · `⧉` pop out.
 
 ## Adding a panel
 

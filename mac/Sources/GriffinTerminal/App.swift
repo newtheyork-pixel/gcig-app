@@ -38,6 +38,20 @@ struct GriffinTerminalApp: App {
                 }
             }
         }
+
+        // Panes promoted to real windows. Same Workspace and Session
+        // objects as the shell, so focus ticker and auth stay one truth
+        // across every window.
+        WindowGroup(id: "pane", for: PaneSeed.self) { $seed in
+            if let seed {
+                PopoutWindow(seed: seed)
+                    .environmentObject(session)
+                    .environmentObject(ws)
+                    .frame(minWidth: 420, minHeight: 280)
+            }
+        }
+        .windowStyle(.hiddenTitleBar)
+        .defaultSize(width: 720, height: 540)
     }
 }
 

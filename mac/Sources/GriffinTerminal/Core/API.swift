@@ -166,6 +166,20 @@ actor API {
         )
     }
 
+    /// The server's LLM command parser — the fallback for plain-English
+    /// input that matches no mnemonic, same as the web command bar.
+    struct ParsedCommand: Decodable {
+        let ticker: String?
+        let function: String?
+        let args: String?
+        let explanation: String?
+    }
+
+    func parseCommand(_ input: String) async throws -> ParsedCommand {
+        let data = try await post("/terminal/parse-command", json: ["input": input])
+        return try decode(ParsedCommand.self, from: data)
+    }
+
     /// Trade a browser handoff code for a real token.
     ///
     /// The code is single-use and lives ninety seconds, so the two
