@@ -36,7 +36,13 @@ struct PopoutWindow: View {
                 if session.user == nil {
                     PanelMessage(text: "Signed out. Sign in from the main terminal window.")
                 } else if let f = function {
-                    PanelRouter(functionID: f.id, ticker: ticker, args: args)
+                    VStack(spacing: 0) {
+                        FunctionBar(code: f.id, label: f.label)
+                        if f.requires == "ticker", let t = ticker, f.id != "SMENU" {
+                            QuoteBanner(ticker: t)
+                        }
+                        PanelRouter(functionID: f.id, ticker: ticker, args: args)
+                    }
                 } else {
                     PanelMessage(text: "\(seed.function) is not a function this app knows.", bad: true)
                 }

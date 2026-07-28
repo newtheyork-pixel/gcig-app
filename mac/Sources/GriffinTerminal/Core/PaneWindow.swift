@@ -92,7 +92,19 @@ struct PaneWindow: View {
         // one.
         HStack(spacing: 5) {
             if let t = pane.ticker {
-                Text(t).foregroundStyle(focused ? Term.amber : Term.fgDim)
+                // The loaded security is a dropdown of recents: pick a
+                // ticker and THIS pane retargets in place, keeping the
+                // function — the Bloomberg panel model.
+                Menu {
+                    ForEach(ws.recents.filter { $0 != t }, id: \.self) { r in
+                        Button(r) { ws.retarget(pane.id, ticker: .some(r)) }
+                    }
+                } label: {
+                    Text(t).foregroundStyle(focused ? Term.amber : Term.fgDim)
+                }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .fixedSize()
                 Text("·").foregroundStyle(Term.fgMuted)
             }
             Text(pane.function.id).foregroundStyle(focused ? Term.amber : Term.fgDim)
@@ -304,7 +316,20 @@ struct PanelHost: View {
     let pane: Workspace.Pane
 
     var body: some View {
-        PanelRouter(functionID: pane.function.id, ticker: pane.ticker, args: pane.args)
+        VStack(spacing: 0) {
+            // The Bloomberg chrome contract: every function tops with
+            // the red bar; every security function carries the two-line
+            // quote banner under it. Menus skip the banner — they are
+            // navigation, not analysis.
+            FunctionBar(code: pane.function.id, label: pane.function.label)
+            if pane.function.requires == "ticker",
+               let t = pane.ticker,
+               pane.function.id != "SMENU" {
+                QuoteBanner(ticker: t)
+            }
+            PanelRouter(functionID: pane.function.id, ticker: pane.ticker,
+                        args: pane.args, paneID: pane.id)
+        }
     }
 }
 
@@ -315,6 +340,10 @@ struct PanelRouter: View {
     let functionID: String
     let ticker: String?
     let args: String?
+    /// Nil in a popped-out window, whose seed UUID matches no workspace
+    /// pane — the menus retarget panes, so out there they refuse
+    /// honestly instead of publishing numbers into the void.
+    var paneID: UUID? = nil
 
     var body: some View {
         switch functionID {
@@ -346,6 +375,24 @@ struct PanelRouter: View {
         case "ICLUSTER": InsiderClustersPanel()
         case "RDR":  RadarPanel()
         case "ORG":  OrganizationPanel()
+        case "SMENU":
+            if let id = paneID, let t = ticker {
+                SecurityMenuPanel(paneID: id, ticker: t)
+            } else {
+                PanelMessage(text: "The security menu lives in the main terminal window.")
+            }
+        case "MAIN":
+            if let id = paneID {
+                MainMenuPanel(paneID: id)
+            } else {
+                PanelMessage(text: "The main menu lives in the main terminal window.")
+            }
+        case "LAST":
+            if let id = paneID {
+                LastPanel(paneID: id)
+            } else {
+                PanelMessage(text: "LAST lives in the main terminal window.")
+            }
         case "ECO":
             // Coming Soon on the web too — saying "works on the web"
             // here would be a lie in the other direction.

@@ -70,6 +70,22 @@ final class Workspace: ObservableObject {
     func open(_ cmd: Command) { open(cmd, in: canvasSize) }
 
     func run(_ input: String, in bounds: CGSize) {
+        let raw = input.trimmingCharacters(in: .whitespaces).uppercased()
+
+        // Number <GO>: a bare number activates the focused pane's
+        // numbered menu row, Bloomberg's oldest navigation idiom.
+        if let n = Int(raw), runNumber(n) { return }
+
+        // A bare ticker no longer jumps straight to DES. On Bloomberg,
+        // loading a security WITHOUT a function opens the menu of
+        // everything you can do with it — the single best
+        // discoverability move the terminal has, and the one a student
+        // needs most. Explicit \"AIT DES\" still goes straight there.
+        if !raw.contains(" "), Parser.looksLikeTicker(raw), !Registry.ids.contains(raw) {
+            open(Command(ticker: raw, function: "SMENU", args: nil), in: bounds)
+            return
+        }
+
         guard let cmd = Parser.parse(input) else {
             // Distinguish "I do not know that word" from "that needs a
             // ticker". Only one of them is the user's mistake.
@@ -85,8 +101,23 @@ final class Workspace: ObservableObject {
             return
         }
 
-        // Carry the focused ticker forward, so `GP` after `AIT DES` works.
-        let ticker = cmd.ticker ?? focusTicker
+        // HELP twice — Bloomberg's most famous keystroke reaches a
+        // human. Ours reaches the club: HELP while HELP is already the
+        // focused pane opens mail to the desk.
+        if fn.id == "HELP",
+           let f = panes.first(where: { $0.id == focusedID }),
+           f.function.id == "HELP" {
+            NSWorkspace.shared.open(URL(string: "mailto:wseirer@gcschool.org?subject=Griffin%20Terminal%20help")!)
+            flash = Flash(text: "Paging the desk — mail draft opened.", bad: false)
+            return
+        }
+
+        // Sticky security, Bloomberg's state model: the FOCUSED pane's
+        // loaded security wins over the global focus ticker, so a bare
+        // GP typed while a CHRW pane is focused charts CHRW even if the
+        // last thing loaded anywhere was AAPL.
+        let paneTicker = panes.first(where: { $0.id == focusedID })?.ticker
+        let ticker = cmd.ticker ?? paneTicker ?? focusTicker
 
         if fn.requires == "ticker", ticker == nil {
             flash = Flash(text: "\(fn.id) needs a ticker. Try  AIT \(fn.id)", bad: true)
@@ -117,6 +148,71 @@ final class Workspace: ObservableObject {
         panes.append(pane)
         focusedID = pane.id
         flash = nil
+        recordHistory(fn.id, pane.ticker)
+    }
+
+    // MARK: LAST — the recall stack
+
+    struct HistoryEntry: Codable, Equatable {
+        var fn: String
+        var ticker: String?
+    }
+
+    /// The last eight screens, Bloomberg's LAST. Deduplicated so
+    /// bouncing between two panes does not fill all eight slots with
+    /// the same pair.
+    @Published private(set) var history: [HistoryEntry] = []
+
+    func recordHistory(_ fn: String, _ ticker: String?) {
+        guard !["HELP", "SMENU", "MAIN", "LAST"].contains(fn) else { return }
+        let e = HistoryEntry(fn: fn, ticker: ticker)
+        history.removeAll { $0 == e }
+        history.insert(e, at: 0)
+        history = Array(history.prefix(8))
+    }
+
+    // MARK: Retarget — same pane, new security or function
+
+    /// The Bloomberg panel model: content rotates inside the frame you
+    /// arranged. Used by the security menu (pick a function, the menu
+    /// pane BECOMES it), the header's recents dropdown, and Number <GO>.
+    func retarget(_ id: UUID, fn fnID: String? = nil, ticker: String?? = .none) {
+        guard let i = panes.firstIndex(where: { $0.id == id }) else { return }
+        if let fnID, let fn = Registry.function(fnID), fn.native {
+            panes[i].function = fn
+        }
+        if case .some(let t) = ticker {
+            panes[i].ticker = t
+            if let t { focusTicker = t; recordTicker(t) }
+        }
+        if panes[i].function.requires == "ticker", panes[i].ticker == nil {
+            panes[i].ticker = focusTicker
+        }
+        recordHistory(panes[i].function.id, panes[i].ticker)
+        focus(id)
+    }
+
+    // MARK: Number <GO>
+
+    /// The focused pane's numbered rows. Menu-style panels publish
+    /// theirs; the command line resolves a bare number against them.
+    /// Keyed to the pane so a stale menu from an unfocused pane can
+    /// never swallow a number meant for the one in front.
+    struct NumberedMenu {
+        var paneID: UUID
+        var actions: [Int: () -> Void]
+    }
+    var numberedMenu: NumberedMenu?
+
+    @discardableResult
+    func runNumber(_ n: Int) -> Bool {
+        guard let m = numberedMenu, m.paneID == focusedID, let act = m.actions[n] else { return false }
+        act()
+        return true
+    }
+
+    func publishNumbers(for paneID: UUID, _ actions: [Int: () -> Void]) {
+        numberedMenu = NumberedMenu(paneID: paneID, actions: actions)
     }
 
     /// Cascade from the top-left, wrapping before a pane can open with its

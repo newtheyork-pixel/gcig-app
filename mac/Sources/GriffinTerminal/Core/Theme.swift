@@ -31,6 +31,9 @@ enum Term {
     static let blue         = oklch(0.74, 0.100, 245)
     static let magenta      = oklch(0.73, 0.160, 350)
     static let white        = oklch(0.93, 0.014, 85)
+    /// Bloomberg's red function-title bar. Deep, not alarm-red: it is
+    /// chrome, and it must sit behind white text all day without shouting.
+    static let redBar       = oklch(0.36, 0.105, 25)
     static let gpLine       = oklch(0.95, 0.020, 250)
     static let gpArea       = oklch(0.60, 0.120, 250)
 

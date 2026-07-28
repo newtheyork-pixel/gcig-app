@@ -421,6 +421,15 @@ private struct CommandBarView: View {
         guard !raw.isEmpty, !parsing else { return }
         interpretation = nil
 
+        // Number <GO> — a bare number activates the focused pane's
+        // numbered row. Checked before the parser because "3" is not a
+        // ticker, not a function, and must never fall through to the
+        // LLM asking what three means.
+        if let n = Int(raw), ws.runNumber(n) {
+            value = ""
+            return
+        }
+
         // Priority order, same as the web: an exactly-parseable line
         // runs as typed; a partial match takes the highlighted
         // suggestion; anything else goes to the LLM.
@@ -817,6 +826,7 @@ private struct FocusQuote: View {
 
 private struct StatusBar: View {
     @EnvironmentObject var ws: Workspace
+    @EnvironmentObject var session: Session
 
     private var focusedDesc: String {
         guard let id = ws.focusedID,
@@ -837,7 +847,18 @@ private struct StatusBar: View {
              + Text("⌘K").foregroundStyle(Term.amber)
              + Text(" to jump to the command line").foregroundStyle(Term.fgMuted))
             Spacer()
-            Text(Date.now.formatted(date: .abbreviated, time: .omitted))
+            // The SN + timestamp ribbon — after amber-on-black, the most
+            // recognizable Bloomberg tell there is. SN is the member id;
+            // the clock ticks with the topbar's.
+            (Text("The Griffin Fund  ").foregroundStyle(Term.fgMuted)
+             + Text("SN \(session.user?.id ?? 0)").foregroundStyle(Term.fgDim))
+                .font(Term.mono(9))
+            TimelineView(.periodic(from: .now, by: 1)) { ctx in
+                Text(ctx.date.formatted(.dateTime.day().month(.abbreviated).year()
+                        .hour(.twoDigits(amPM: .omitted)).minute().second()))
+                    .font(Term.mono(9))
+                    .foregroundStyle(Term.fgDim)
+            }
         }
         .font(Term.mono(9))
         .foregroundStyle(Term.fgMuted)
