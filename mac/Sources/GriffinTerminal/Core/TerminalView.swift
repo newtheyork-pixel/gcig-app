@@ -208,8 +208,16 @@ private struct CommandBarView: View {
                     .onKeyPress(.downArrow) { move(1) }
                     .onKeyPress(.tab) { fill() }
                     .onKeyPress(.escape) {
+                        // The field owns focus almost permanently, so if
+                        // Escape only worked when focus was elsewhere it
+                        // would effectively never work — which is exactly
+                        // the bug this replaces. Bloomberg's <CANCL>
+                        // cascade: shut the menu, then clear the line,
+                        // then the two-stroke select/close on the panes.
                         if showMenu { menuOpen = false; return .handled }
-                        return .ignored
+                        if !value.isEmpty { value = ""; return .handled }
+                        NotificationCenter.default.post(name: .escapeGesture, object: nil)
+                        return .handled
                     }
                 if parsing {
                     Text("PARSING…").font(Term.mono(9)).foregroundStyle(Term.fgMuted)
@@ -355,7 +363,11 @@ private struct CommandBarView: View {
     /// down whenever the user is typing in a real text field.
     private func installSlashShortcut() {
         NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
-            guard event.modifierFlags.intersection([.command, .option, .control]).isEmpty,
+            // Only the shell window. A popped-out pane is a real macOS
+            // window with its own focus; keys pressed there must not
+            // reach across and manipulate the main workspace unseen.
+            guard NSApp.keyWindow?.title == "Griffin Terminal",
+                  event.modifierFlags.intersection([.command, .option, .control]).isEmpty,
                   !(NSApp.keyWindow?.firstResponder is NSTextView)
             else { return event }
             if event.charactersIgnoringModifiers == "/" {
