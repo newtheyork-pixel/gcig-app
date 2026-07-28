@@ -143,7 +143,40 @@ private struct CommandBarView: View {
     @State private var menuOpen = true
     @State private var parsing = false
     @State private var interpretation: String?
+    @State private var symMatches: [API.SymbolMatch] = []
     @FocusState private var focused: Bool
+
+    /// One flat list for the arrow keys: functions first, securities
+    /// after, exactly like the web menu.
+    private enum Entry: Hashable {
+        case fn(TerminalFunction)
+        case sym(API.SymbolMatch)
+        static func == (a: Entry, b: Entry) -> Bool {
+            switch (a, b) {
+            case let (.fn(x), .fn(y)): return x.id == y.id
+            case let (.sym(x), .sym(y)): return x == y
+            default: return false
+            }
+        }
+        func hash(into h: inout Hasher) {
+            switch self {
+            case .fn(let f): h.combine("f"); h.combine(f.id)
+            case .sym(let m): h.combine("s"); h.combine(m.ticker)
+            }
+        }
+    }
+
+    private var entries: [Entry] {
+        suggestions.map(Entry.fn) + symMatches.prefix(6).map(Entry.sym)
+    }
+
+    /// The first token, when it is symbol-shaped and not a mnemonic —
+    /// what goes to the SEC directory. Type AMZ, get AMZN.
+    private var symQuery: String {
+        guard let t = split.ticker, t.count >= 2,
+              !Registry.ids.contains(t) else { return "" }
+        return t
+    }
 
     private static let tickerRe = try! NSRegularExpression(pattern: "^[A-Z][A-Z0-9.\\-]{0,11}$")
 
@@ -186,7 +219,7 @@ private struct CommandBarView: View {
 
     private var showMenu: Bool {
         menuOpen && !value.trimmingCharacters(in: .whitespaces).isEmpty
-            && !suggestions.isEmpty && !parsing
+            && !entries.isEmpty && !parsing
     }
 
     var body: some View {
@@ -259,60 +292,122 @@ private struct CommandBarView: View {
             focused = true
             installSlashShortcut()
         }
+        .task(id: symQuery) {
+            guard !symQuery.isEmpty else { symMatches = []; return }
+            try? await Task.sleep(for: .milliseconds(180))
+            guard !Task.isCancelled else { return }
+            // Autocomplete going quiet on error is fine; stale rows for
+            // the wrong query are not — the id-task cancellation is
+            // what guarantees against that.
+            let found = (try? await API.shared.symbolSearch(symQuery)) ?? []
+            if !Task.isCancelled {
+                symMatches = (found.count == 1 && found[0].ticker == symQuery) ? [] : found
+            }
+        }
         .onReceive(NotificationCenter.default.publisher(for: .focusCommand)) { _ in
             focused = true
         }
     }
 
     private var suggestionsHeight: CGFloat {
-        CGFloat(min(suggestions.count, 8)) * 22 + 2
+        CGFloat(entries.count) * 22 + (symMatches.isEmpty ? 2 : 20)
     }
 
     private var menu: some View {
         VStack(spacing: 0) {
-            ForEach(Array(suggestions.enumerated()), id: \.element.id) { i, f in
-                Button { run(f) } label: {
-                    HStack(spacing: 8) {
-                        Text(f.id).font(Term.mono(11, weight: .bold))
-                            .foregroundStyle(Term.amber)
-                            .frame(width: 72, alignment: .leading)
-                        Text(f.label).font(Term.mono(10))
-                            .foregroundStyle(i == active ? Term.white : Term.fgDim)
-                        if f.requires == "ticker", let t = split.ticker ?? ws.focusTicker {
-                            Text(t).font(Term.mono(9)).foregroundStyle(Term.orange)
+            ForEach(Array(entries.enumerated()), id: \.element) { i, ent in
+                switch ent {
+                case .fn(let f):
+                    Button { run(f) } label: {
+                        HStack(spacing: 8) {
+                            Text(f.id).font(Term.mono(11, weight: .bold))
+                                .foregroundStyle(Term.amber)
+                                .frame(width: 72, alignment: .leading)
+                            Text(f.label).font(Term.mono(10))
+                                .foregroundStyle(i == active ? Term.white : Term.fgDim)
+                            if f.requires == "ticker", let t = split.ticker ?? ws.focusTicker {
+                                Text(t).font(Term.mono(9)).foregroundStyle(Term.orange)
+                            }
+                            Spacer()
                         }
-                        Spacer()
-                        if !f.native {
-                            Text("web only").font(Term.mono(8)).foregroundStyle(Term.fgMuted)
-                        }
+                        .padding(.horizontal, 10)
+                        .frame(height: 22)
+                        .background(i == active ? Term.bgPanelHover : Term.bgPanel)
+                        .contentShape(Rectangle())
                     }
-                    .padding(.horizontal, 10)
-                    .frame(height: 22)
-                    .background(i == active ? Term.bgPanelHover : Term.bgPanel)
-                    .contentShape(Rectangle())
+                    .buttonStyle(.plain)
+                    .onHover { if $0 { active = i } }
+
+                case .sym(let m):
+                    if case .sym = entries[max(i - 1, 0)], i > 0 {} else {
+                        HStack(spacing: 6) {
+                            Text("SECURITIES").font(Term.mono(8, weight: .bold)).tracking(1.2)
+                                .foregroundStyle(Term.blue)
+                            Rectangle().fill(Term.border).frame(height: 1)
+                        }
+                        .padding(.horizontal, 10)
+                        .frame(height: 18)
+                        .background(Term.bgPanel)
+                    }
+                    Button { pickSymbol(m) } label: {
+                        HStack(spacing: 8) {
+                            Text(m.ticker).font(Term.mono(11, weight: .bold))
+                                .foregroundStyle(Term.white)
+                                .frame(width: 72, alignment: .leading)
+                            Text(m.name).font(Term.mono(10))
+                                .foregroundStyle(i == active ? Term.white : Term.fgMuted)
+                                .lineLimit(1)
+                            Spacer()
+                        }
+                        .padding(.horizontal, 10)
+                        .frame(height: 22)
+                        .background(i == active ? Term.bgPanelHover : Term.bgPanel)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .onHover { if $0 { active = i } }
                 }
-                .buttonStyle(.plain)
-                .onHover { if $0 { active = i } }
             }
         }
-        .frame(width: 380)
+        .frame(width: 400)
         .termBorder()
         .shadow(color: .black.opacity(0.5), radius: 12, y: 6)
     }
 
     private func move(_ d: Int) -> KeyPress.Result {
         guard showMenu else { return .ignored }
-        active = max(0, min(suggestions.count - 1, active + d))
+        active = max(0, min(entries.count - 1, active + d))
         return .handled
     }
 
-    /// Tab completes the line the way a shell would: keeps the ticker,
-    /// fills the highlighted mnemonic, leaves the cursor ready for args.
+    /// Tab completes the line the way a shell would: a function fills
+    /// its mnemonic keeping the ticker, a security corrects the symbol
+    /// in place keeping the rest.
     private func fill() -> KeyPress.Result {
-        guard showMenu, suggestions.indices.contains(active) else { return .ignored }
-        let f = suggestions[active]
-        value = (split.ticker.map { "\($0) " } ?? "") + f.id + " "
+        guard showMenu, entries.indices.contains(active) else { return .ignored }
+        switch entries[active] {
+        case .fn(let f):
+            value = (split.ticker.map { "\($0) " } ?? "") + f.id + " "
+        case .sym(let m):
+            let rest = value.trimmingCharacters(in: .whitespaces)
+                .split(separator: " ").dropFirst().joined(separator: " ")
+            value = rest.isEmpty ? "\(m.ticker) " : "\(m.ticker) \(rest)"
+        }
         return .handled
+    }
+
+    /// A picked security either runs immediately (a function was
+    /// already typed after it) or corrects the symbol and waits.
+    private func pickSymbol(_ m: API.SymbolMatch) {
+        let rest = value.trimmingCharacters(in: .whitespaces)
+            .split(separator: " ").dropFirst().joined(separator: " ")
+        if !rest.isEmpty, let cmd = Parser.parse("\(m.ticker) \(rest)") {
+            ws.open(cmd)
+            value = ""
+            interpretation = nil
+            return
+        }
+        value = "\(m.ticker) "
     }
 
     private func run(_ f: TerminalFunction) {
@@ -334,8 +429,11 @@ private struct CommandBarView: View {
             value = ""
             return
         }
-        if showMenu, suggestions.indices.contains(active) {
-            run(suggestions[active])
+        if showMenu, entries.indices.contains(active) {
+            switch entries[active] {
+            case .fn(let f): run(f)
+            case .sym(let m): pickSymbol(m)
+            }
             return
         }
 

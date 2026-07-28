@@ -84,6 +84,13 @@ final class LiveSmokeTests: XCTestCase {
         _ = try await dec(ComparePanel.Payload.self, "/terminal/compare", ["tickers": "\(T),AAPL"])
     }
 
+    func testSymbolSearch() async throws {
+        try requireToken()
+        let matches = try await API.shared.symbolSearch("AMZ")
+        XCTAssertTrue(matches.contains { $0.ticker == "AMZN" },
+                      "AMZ should surface AMZN, got: \(matches.map(\.ticker))")
+    }
+
     func testWorldIndices() async throws {
         try requireToken()
         _ = try await dec(WorldIndicesPanel.Payload.self, "/terminal/indices")

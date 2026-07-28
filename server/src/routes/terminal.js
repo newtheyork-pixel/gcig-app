@@ -14,7 +14,7 @@ import { getNewsForTicker } from '../services/news.js';
 import { getWorldIndices, REGION_ORDER } from '../services/worldIndices.js';
 import { getInsiderTransactions } from '../services/insiderTx.js';
 import { getLiveQuotes } from '../services/liveQuotes.js';
-import { getRecentFilings } from '../services/secFilings.js';
+import { searchSymbols, getRecentFilings } from '../services/secFilings.js';
 import { getWeatherImpact } from '../services/weatherSignals.js';
 import { getActiveAlerts } from '../services/wxAlerts.js';
 import { getMacroSensitivity } from '../services/factorSensitivity.js';
@@ -730,6 +730,21 @@ router.get('/insider-clusters', (req, res) => insiderClustersHandler(req, res));
 // caches 20m internally, so hitting this often is cheap. If the sheet
 // is unreachable we surface that rather than a half-empty list — the
 // panel renders the message.
+// SECF, effectively: partial ticker or company name -> ranked matches
+// from the SEC's registrant directory. Powers the command bar's
+// security autocomplete on both terminals. Free data, 24h-cached map,
+// in-memory scan — cheap enough to hit per keystroke behind the
+// client's debounce.
+router.get('/symbol-search', async (req, res) => {
+  const q = String(req.query.q || '').trim();
+  if (!q || q.length > 40) return res.json({ query: q, matches: [] });
+  const matches = await searchSymbols(q, 8);
+  if (matches === null) {
+    return res.status(502).json({ error: 'Symbol directory unavailable right now.' });
+  }
+  res.json({ query: q, matches });
+});
+
 router.get('/movers', async (_req, res) => {
   try {
     const data = await getPortfolioMovers();

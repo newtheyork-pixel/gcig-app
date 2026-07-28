@@ -76,6 +76,40 @@ async function getTickerMap() {
   }
 }
 
+/**
+ * Rank the EDGAR directory against a partial ticker or company name.
+ *
+ * Returns null (not []) when the map is unavailable, because "the
+ * directory is down" and "nothing matches AMZ" are different facts and
+ * the caller has to be able to tell them apart.
+ *
+ * Ticker prefix beats name prefix beats name-word prefix beats
+ * substring; among ticker prefixes the shortest symbol wins, which is
+ * what puts AMZN above AMZN-warrants for "AMZ".
+ */
+export async function searchSymbols(query, limit = 8) {
+  const map = await getTickerMap();
+  if (!map) return null;
+  const q = String(query || '').trim().toUpperCase();
+  if (!q) return [];
+
+  const scored = [];
+  for (const [ticker, info] of map) {
+    const name = String(info.name || '').toUpperCase();
+    let s = -1;
+    if (ticker === q) s = 100;
+    else if (ticker.startsWith(q)) s = 80 - Math.min(ticker.length, 12);
+    else if (name.startsWith(q)) s = 60;
+    else if (name.split(/[^A-Z0-9]+/).some((w) => w && w.startsWith(q))) s = 45;
+    else if (q.length >= 3 && name.includes(q)) s = 25;
+    if (s >= 0) scored.push({ ticker, name: info.name, s });
+  }
+  scored.sort(
+    (a, b) => b.s - a.s || a.ticker.length - b.ticker.length || a.ticker.localeCompare(b.ticker)
+  );
+  return scored.slice(0, limit).map(({ ticker, name }) => ({ ticker, name }));
+}
+
 export async function getCikForTicker(ticker) {
   const map = await getTickerMap();
   if (!map) return null;

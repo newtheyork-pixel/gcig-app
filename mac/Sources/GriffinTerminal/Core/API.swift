@@ -166,6 +166,19 @@ actor API {
         )
     }
 
+    /// SECF, effectively: partial ticker or company name -> ranked
+    /// matches from the SEC registrant directory.
+    struct SymbolMatch: Decodable, Sendable, Hashable {
+        let ticker: String
+        let name: String
+    }
+
+    func symbolSearch(_ q: String) async throws -> [SymbolMatch] {
+        struct Wrap: Decodable { let matches: [SymbolMatch]? }
+        let data = try await get("/terminal/symbol-search", query: ["q": q])
+        return try decode(Wrap.self, from: data).matches ?? []
+    }
+
     /// The server's LLM command parser — the fallback for plain-English
     /// input that matches no mnemonic, same as the web command bar.
     struct ParsedCommand: Decodable {

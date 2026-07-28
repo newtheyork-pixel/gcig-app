@@ -49,6 +49,7 @@ export default function CommandBar({ onCommand, lastInterpretation }) {
   const [parsing, setParsing] = useState(false);
   const [active, setActive] = useState(0);
   const [open, setOpen] = useState(false);
+  const [symMatches, setSymMatches] = useState([]);
   const inputRef = useRef(null);
 
   // Focus on mount so typing works without clicking.
@@ -72,6 +73,39 @@ export default function CommandBar({ onCommand, lastInterpretation }) {
 
   const { ticker, q } = useMemo(() => splitInput(value), [value]);
 
+  // Security autocomplete: the first token, when it is shaped like a
+  // symbol and is not a mnemonic, goes to the SEC registrant directory
+  // — type AMZ, get AMZN · AMAZON COM INC. Debounced so the scan runs
+  // per pause, not per keystroke.
+  const symQuery = useMemo(() => {
+    if (!ticker || ticker.length < 2) return '';
+    if (FUNCTIONS.some((f) => f.id === ticker)) return '';
+    return ticker;
+  }, [ticker]);
+
+  useEffect(() => {
+    if (!symQuery) {
+      setSymMatches([]);
+      return undefined;
+    }
+    let cancelled = false;
+    const t = setTimeout(async () => {
+      try {
+        const { data } = await api.get('/terminal/symbol-search', {
+          params: { q: symQuery },
+        });
+        if (!cancelled) setSymMatches(data?.matches || []);
+      } catch {
+        // Autocomplete going quiet is fine; wrong or stale rows are not.
+        if (!cancelled) setSymMatches([]);
+      }
+    }, 180);
+    return () => {
+      cancelled = true;
+      clearTimeout(t);
+    };
+  }, [symQuery]);
+
   const suggestions = useMemo(() => {
     return FUNCTIONS.map((f) => ({ f, s: scoreFn(f, q) }))
       .filter((x) => x.s >= 0)
@@ -80,14 +114,43 @@ export default function CommandBar({ onCommand, lastInterpretation }) {
       .map((x) => x.f);
   }, [q]);
 
+  // Functions first, then securities — one flat list for the arrow keys.
+  const entries = useMemo(
+    () => [
+      ...suggestions.map((f) => ({ kind: 'fn', f })),
+      ...symMatches
+        // A symbol already typed exactly right is not a suggestion.
+        .filter((m) => !(symMatches.length === 1 && m.ticker === symQuery))
+        .slice(0, 6)
+        .map((m) => ({ kind: 'sym', m })),
+    ],
+    [suggestions, symMatches, symQuery]
+  );
+
   // Every keystroke re-ranks the menu, so snap the highlight back to the
   // top match — otherwise the selection drifts onto whatever now sits at
   // the old index.
   useEffect(() => {
     setActive(0);
-  }, [q]);
+  }, [q, symQuery]);
 
-  const showMenu = open && !!value.trim() && suggestions.length > 0 && !parsing;
+  const showMenu = open && !!value.trim() && entries.length > 0 && !parsing;
+
+  function pickSymbol(m) {
+    const rest = value.trim().split(/\s+/).slice(1).join(' ');
+    if (rest) {
+      const parsed = parseMnemonic(`${m.ticker} ${rest}`);
+      if (parsed) {
+        onCommand({ ...parsed, explanation: null });
+        setValue('');
+        setOpen(false);
+        return;
+      }
+    }
+    setValue(`${m.ticker} `);
+    setOpen(true);
+    inputRef.current?.focus();
+  }
 
   function runFn(f) {
     onCommand({
@@ -134,13 +197,13 @@ export default function CommandBar({ onCommand, lastInterpretation }) {
     if (e.key === 'ArrowDown') {
       e.preventDefault();
       setOpen(true);
-      if (suggestions.length) setActive((i) => (i + 1) % suggestions.length);
+      if (entries.length) setActive((i) => (i + 1) % entries.length);
       return;
     }
     if (e.key === 'ArrowUp') {
       e.preventDefault();
       setOpen(true);
-      if (suggestions.length) setActive((i) => (i - 1 + suggestions.length) % suggestions.length);
+      if (entries.length) setActive((i) => (i - 1 + entries.length) % entries.length);
       return;
     }
     if (e.key === 'Escape') {
@@ -152,18 +215,26 @@ export default function CommandBar({ onCommand, lastInterpretation }) {
     }
     if (e.key === 'Enter') {
       e.preventDefault();
-      // A highlighted function resolves instantly; only when the menu is
+      // A highlighted entry resolves instantly; only when the menu is
       // empty (plain-English input) do we hand off to the parser/LLM.
-      if (showMenu && suggestions[active]) runFn(suggestions[active]);
+      const ent = showMenu ? entries[active] : null;
+      if (ent?.kind === 'fn') runFn(ent.f);
+      else if (ent?.kind === 'sym') pickSymbol(ent.m);
       else submit();
       return;
     }
-    if (e.key === 'Tab' && showMenu && suggestions[active]) {
-      // Tab completes the line to the highlighted mnemonic without
-      // running it, so the ticker stays editable.
+    if (e.key === 'Tab' && showMenu && entries[active]) {
+      // Tab completes the line without running it, so the rest stays
+      // editable: a function fills its mnemonic, a security corrects
+      // the symbol in place.
       e.preventDefault();
-      const f = suggestions[active];
-      setValue(f.requires === 'ticker' && ticker ? `${ticker} ${f.id}` : f.id);
+      const ent = entries[active];
+      if (ent.kind === 'fn') {
+        setValue(ent.f.requires === 'ticker' && ticker ? `${ticker} ${ent.f.id}` : ent.f.id);
+      } else {
+        const rest = value.trim().split(/\s+/).slice(1).join(' ');
+        setValue(rest ? `${ent.m.ticker} ${rest}` : `${ent.m.ticker} `);
+      }
     }
   }
 
@@ -207,31 +278,55 @@ export default function CommandBar({ onCommand, lastInterpretation }) {
             <span>{ticker ? `${ticker} · functions` : 'functions'}</span>
             <span>↑↓ select · ↵ run · tab fill</span>
           </div>
-          {suggestions.map((f, i) => {
-            const needsTkr = f.requires === 'ticker';
-            const mnem = needsTkr && ticker ? `${ticker} ${f.id}` : f.id;
-            return (
-              <div
-                key={f.id}
-                className={`term-cmd-row${i === active ? ' active' : ''}`}
-                onMouseEnter={() => setActive(i)}
-                onMouseDown={(e) => {
-                  // Fire before the input's blur tears the menu down.
-                  e.preventDefault();
-                  runFn(f);
-                }}
-              >
-                <span className="num">{i + 1})</span>
-                <span className="mnem">
-                  {mnem}
-                  {needsTkr && !ticker ? <span className="tkr"> &lt;tkr&gt;</span> : null}
-                </span>
-                <span className="label">{f.help || f.label}</span>
-              </div>
-            );
+          {entries.map((ent, i) => {
+            if (ent.kind === 'sym') {
+              const m = ent.m;
+              return (
+                <div
+                  key={`sym-${m.ticker}`}
+                  className={`term-cmd-row${i === active ? ' active' : ''}`}
+                  onMouseEnter={() => setActive(i)}
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    pickSymbol(m);
+                  }}
+                >
+                  <span className="num">{i + 1})</span>
+                  <span className="mnem">{m.ticker}</span>
+                  <span className="label">{m.name}</span>
+                </div>
+              );
+            }
+            const f = ent.f;
+            const i0 = i; // entries index doubles as the active index
+            return renderFnRow(f, i0);
           })}
         </div>
       ) : null}
     </div>
   );
+
+  function renderFnRow(f, i) {
+    const needsTkr = f.requires === 'ticker';
+    const mnem = needsTkr && ticker ? `${ticker} ${f.id}` : f.id;
+    return (
+      <div
+        key={f.id}
+        className={`term-cmd-row${i === active ? ' active' : ''}`}
+        onMouseEnter={() => setActive(i)}
+        onMouseDown={(e) => {
+          // Fire before the input's blur tears the menu down.
+          e.preventDefault();
+          runFn(f);
+        }}
+      >
+        <span className="num">{i + 1})</span>
+        <span className="mnem">
+          {mnem}
+          {needsTkr && !ticker ? <span className="tkr"> &lt;tkr&gt;</span> : null}
+        </span>
+        <span className="label">{f.help || f.label}</span>
+      </div>
+    );
+  }
 }
