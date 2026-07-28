@@ -32,6 +32,7 @@ test('GET /quotes: 200 with the quote map for the requested tickers', async () =
     { query: { tickers: 'AAPL,MSFT' } },
     res,
     {
+      now: () => new Date('2026-07-28T13:00:00-04:00'),
       getLiveQuotes: async (list) => {
         assert.deepEqual(list, ['AAPL', 'MSFT']);
         return {
@@ -63,6 +64,7 @@ test('GET /quotes: uppercases, trims, de-dupes, drops empties, caps at 40', asyn
     { query: { tickers: param } },
     res,
     {
+      now: () => new Date('2026-07-28T13:00:00-04:00'),
       getLiveQuotes: async (list) => {
         received = list;
         return Object.fromEntries(list.map((t) => [t, null]));
@@ -99,7 +101,7 @@ test('GET /quotes: missing/empty tickers → 200 {} (lenient, never 4xx), no ser
     await quotesHandler(
       { query: q },
       res,
-      { getLiveQuotes: async () => { called = true; return { X: null }; } }
+      { now: () => new Date('2026-07-28T13:00:00-04:00'), getLiveQuotes: async () => { called = true; return { X: null }; } }
     );
     assert.equal(res.statusCode, 200, `query ${JSON.stringify(q)} must be 200`);
     assert.deepEqual(res.body, {}, `query ${JSON.stringify(q)} must yield {}`);
@@ -117,6 +119,7 @@ test('GET /quotes: never 5xx even if the service rejects', async () => {
     { query: { tickers: 'AAPL,MSFT' } },
     res,
     {
+      now: () => new Date('2026-07-28T13:00:00-04:00'),
       getLiveQuotes: async () => {
         throw new Error('unexpected: service contract violated');
       },
@@ -204,4 +207,79 @@ test('terminal gate: advisory members keep their read-only research access', asy
   };
   assert.equal(check('AdvisoryBoardMember'), true);
   assert.equal(check('FacultyAdvisory'), true);
+});
+
+
+// ── Extended hours ───────────────────────────────────────────────────
+//
+// Outside regular hours the free quote source freezes at the close, so
+// the handler merges NASDAQ's extended prints. These pin the semantics:
+// `last` moves, `close` preserves what the panel showed at 3:59, the
+// two percentages stay separate, and every failure of the intraday leg
+// degrades to the frozen quote rather than an error.
+
+const POST = () => new Date('2026-07-28T17:00:00-04:00');
+const FROZEN = { AAPL: { last: 340.08, changePct: 0.94, prevClose: 336.91 } };
+
+test('post-market: a fresher print replaces last and carries the split percentages', async () => {
+  const res = fakeRes();
+  await quotesHandler(
+    { query: { tickers: 'AAPL' } },
+    res,
+    {
+      now: POST,
+      getLiveQuotes: async () => ({ ...FROZEN }),
+      getIntraday: async () => ({ last: 342.5, prevClose: 336.91 }),
+    }
+  );
+  const q = res.body.AAPL;
+  assert.equal(q.last, 342.5);
+  assert.equal(q.close, 340.08);
+  assert.equal(q.session, 'post');
+  assert.ok(Math.abs(q.extendedPct - ((342.5 - 340.08) / 340.08) * 100) < 1e-9);
+  assert.ok(Math.abs(q.changePct - ((342.5 - 336.91) / 336.91) * 100) < 1e-9);
+});
+
+test('post-market: a print equal to the close is not dressed up as news', async () => {
+  const res = fakeRes();
+  await quotesHandler(
+    { query: { tickers: 'AAPL' } },
+    res,
+    {
+      now: POST,
+      getLiveQuotes: async () => ({ ...FROZEN }),
+      getIntraday: async () => ({ last: 340.08, prevClose: 336.91 }),
+    }
+  );
+  assert.equal(res.body.AAPL.last, 340.08);
+  assert.equal(res.body.AAPL.session, 'post');
+  assert.equal(res.body.AAPL.extendedPct, undefined);
+});
+
+test('post-market: an intraday failure keeps the frozen quote', async () => {
+  const res = fakeRes();
+  await quotesHandler(
+    { query: { tickers: 'AAPL' } },
+    res,
+    {
+      now: POST,
+      getLiveQuotes: async () => ({ ...FROZEN }),
+      getIntraday: async () => { throw new Error('nasdaq down'); },
+    }
+  );
+  assert.deepEqual(res.body.AAPL, FROZEN.AAPL);
+});
+
+test('overnight: no merge, no session decoration', async () => {
+  const res = fakeRes();
+  await quotesHandler(
+    { query: { tickers: 'AAPL' } },
+    res,
+    {
+      now: () => new Date('2026-07-28T22:00:00-04:00'),
+      getLiveQuotes: async () => ({ ...FROZEN }),
+      getIntraday: async () => ({ last: 999, prevClose: 1 }),
+    }
+  );
+  assert.deepEqual(res.body.AAPL, FROZEN.AAPL);
 });

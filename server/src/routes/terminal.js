@@ -376,8 +376,36 @@ router.get('/consensus/:ticker', (req, res) => consensusHandler(req, res));
 // the route does not lean on that — any unexpected rejection still
 // degrades to a 200 {} with a warn, so this endpoint can never 5xx and
 // a failed poll just leaves the panel on its last good values.
+// Which US equity session the wall clock is in, New York time.
+// Half-days and holidays are not modelled: on a holiday the extended
+// merge simply finds no fresher print and changes nothing, which is
+// the correct degraded behaviour for free data.
+export function usSession(now = new Date()) {
+  const et = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' }));
+  const day = et.getDay();
+  if (day === 0 || day === 6) return 'closed';
+  const mins = et.getHours() * 60 + et.getMinutes();
+  if (mins >= 4 * 60 && mins < 9 * 60 + 30) return 'pre';
+  if (mins >= 9 * 60 + 30 && mins < 16 * 60) return 'regular';
+  if (mins >= 16 * 60 && mins < 20 * 60) return 'post';
+  return 'closed';
+}
+
+// How many tickers per request get the NASDAQ extended-hours lookup.
+// The scrape is memoized 45s per ticker server-side, so a polling
+// client warms its set once and then rides the cache — but a first
+// call for forty names would still be forty scrapes, and NASDAQ's
+// patience is not a renewable resource.
+const EXTENDED_MERGE_CAP = 20;
+
 export async function quotesHandler(req, res, deps = {}) {
   const fetchQuotes = deps.getLiveQuotes || getLiveQuotes;
+  // Clock and intraday source are injectable for the same reason the
+  // quote service is: the extended-hours merge depends on the wall
+  // clock and a network scrape, and a unit test that inherits either
+  // from reality is a test that fails at 4:30pm and passes at noon.
+  const nowFn = deps.now || (() => new Date());
+  const fetchIntraday = deps.getIntraday || getIntraday;
   const list = Array.from(
     new Set(
       String(req.query?.tickers || '')
@@ -388,7 +416,47 @@ export async function quotesHandler(req, res, deps = {}) {
   ).slice(0, 40);
   if (list.length === 0) return res.json({});
   try {
-    res.json(await fetchQuotes(list));
+    const out = await fetchQuotes(list);
+
+    // Outside regular hours Finnhub's free quote freezes at the close,
+    // which starved the terminals' tick-flash for a third of the
+    // trading day people actually watch. NASDAQ's intraday feed (the
+    // one GIP already scrapes) carries pre- and post-market prints, so
+    // in those windows the freshest print wins. Semantics kept honest:
+    //   last        — the extended print
+    //   close       — today's regular close (what `last` used to freeze at)
+    //   changePct   — still vs prevClose, so the number reads
+    //                 continuously with what the panel showed at 3:59
+    //   extendedPct — the extended move vs today's close, separately,
+    //                 because Bloomberg is right to show them apart
+    const session = usSession(nowFn());
+    if (session === 'pre' || session === 'post') {
+      const targets = list.slice(0, EXTENDED_MERGE_CAP);
+      const results = await Promise.allSettled(targets.map((t) => fetchIntraday(t)));
+      results.forEach((r, i) => {
+        if (r.status !== 'fulfilled' || r.value?.last == null) return;
+        const t = targets[i];
+        const base = out[t];
+        const close = base?.last ?? null;
+        const prevClose = base?.prevClose ?? r.value.prevClose ?? null;
+        const last = r.value.last;
+        // A print identical to the close is not extended information —
+        // leave the quote untouched rather than dressing it up.
+        if (close != null && last === close) {
+          out[t] = { ...base, session };
+          return;
+        }
+        out[t] = {
+          last,
+          prevClose,
+          changePct: prevClose ? ((last - prevClose) / prevClose) * 100 : base?.changePct ?? null,
+          close,
+          extendedPct: close ? ((last - close) / close) * 100 : null,
+          session,
+        };
+      });
+    }
+    res.json(out);
   } catch (err) {
     console.warn('terminal/quotes degraded:', err.message);
     res.json({});
