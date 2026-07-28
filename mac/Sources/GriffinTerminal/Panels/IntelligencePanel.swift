@@ -34,14 +34,24 @@ struct IntelligencePanel: View {
 
     private static let bottomID = "bi-bottom"
 
-    // The web builds workspaceContext from open panes; this pane knows
-    // only its ticker, and the context says so honestly rather than
-    // dressing up as the full workspace summary.
+    // The same workspace summary the web hands its chat: what is open,
+    // for which tickers, and which pane has focus — so "what am I
+    // looking at" is a question the model can actually answer. Built
+    // from the shared Workspace object every pane already lives under.
+    @EnvironmentObject private var ws: Workspace
+
     private var workspaceContext: String {
-        guard let t = ticker, !t.isEmpty else {
-            return "Native macOS terminal. No focused ticker."
+        var lines = ["Griffin Fund Terminal workspace (native macOS app):"]
+        if ws.panes.isEmpty {
+            lines.append("- (no panes open)")
         }
-        return "Native macOS terminal. Focused ticker: \(t)."
+        for p in ws.panes {
+            let focused = p.id == ws.focusedID ? " [focused]" : ""
+            let t = p.ticker.map { " for \($0)" } ?? ""
+            lines.append("- \(p.function.id) (\(p.function.label))\(t)\(focused)")
+        }
+        if let t = ws.focusTicker { lines.append("Focused ticker: \(t)") }
+        return lines.joined(separator: "\n")
     }
 
     var body: some View {
