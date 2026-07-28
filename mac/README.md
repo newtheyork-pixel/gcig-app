@@ -55,14 +55,18 @@ Read once at launch from the environment; defaults to production.
 
 ## Auth
 
-Email and password only. The JWT goes in the **Keychain**, not
-UserDefaults — it is a bearer token for a system of record holding the
-club's portfolio and its primary research, so it belongs somewhere the
-OS protects. `X-New-Token` rotation is honoured, which is what stops an
-active session dying every 24 hours.
+"Sign in with browser" is the primary path: the app opens
+thegriffinfund.org/native-auth, you sign in there however you normally
+do — Google, password, 2FA — and the page hands back a single-use
+90-second code the app trades for a token. The code crosses in the
+URL; the JWT never does. Password sign-in stays folded away in the app
+as the fallback for when the handoff itself is broken.
 
-Google sign-in and 2FA accounts are not handled here and the login
-screen says so rather than failing quietly.
+The JWT goes in the **Keychain**, not UserDefaults — it is a bearer
+token for a system of record holding the club's portfolio and its
+primary research, so it belongs somewhere the OS protects.
+`X-New-Token` rotation is honoured, which is what stops an active
+session dying every 24 hours.
 
 ## The shell
 
