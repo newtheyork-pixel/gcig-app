@@ -859,8 +859,11 @@ async function ytdPriceReturn(ticker, currentPrice) {
     const pct = ((currentPrice - base) / base) * 100;
     ytdCache.set(ticker, { at: Date.now(), pct });
     return pct;
-  } catch {
-    // A missing history must not cost the whole book its numbers.
+  } catch (err) {
+    // A missing history must not cost the whole book its numbers, but
+    // silence here is what made a systemic failure look like sparse
+    // data. Say it once per ticker per hour.
+    console.warn(`ytd ${ticker}: ${err.message}`);
     return null;
   }
 }
@@ -872,15 +875,25 @@ router.get('/portfolio', async (_req, res) => {
     // Only the positions actually missing it, so a sheet that starts
     // carrying the column wins and this stays a fallback.
     const need = rows.filter((h) => !h.isCash && h.ticker && h.ytdReturn == null && h.price != null);
-    const found = await Promise.allSettled(
-      need.map((h) => ytdPriceReturn(h.ticker, h.price))
-    );
-    need.forEach((h, i) => {
-      if (found[i].status === 'fulfilled' && found[i].value != null) {
-        h.ytdReturn = found[i].value;
+    // Sequential, not a twelve-way fan-out. getHistory can reach the
+    // upstream when a range is cold, and twelve of those at once is the
+    // shape that gets rate-limited into returning nothing at all — which
+    // is exactly what the first cut did: every position null, no error
+    // anywhere, a column of dashes that looked like missing data rather
+    // than a throttled fetch. Warm calls are DB reads and cost nothing.
+    let filled = 0;
+    for (const h of need) {
+      const pct = await ytdPriceReturn(h.ticker, h.price);
+      if (pct != null) {
+        h.ytdReturn = pct;
         h.ytdSource = 'price';
+        filled += 1;
       }
-    });
+    }
+    if (need.length && filled === 0) {
+      // Distinguishable in the log from "the sheet had them all".
+      console.warn(`terminal/portfolio: YTD unavailable for all ${need.length} positions`);
+    }
     res.json(data);
   } catch (err) {
     console.error('terminal/portfolio failed:', err.message);
