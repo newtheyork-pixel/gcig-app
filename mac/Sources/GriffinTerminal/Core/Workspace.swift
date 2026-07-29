@@ -101,14 +101,16 @@ final class Workspace: ObservableObject {
             return
         }
 
-        // HELP twice — Bloomberg's most famous keystroke reaches a
-        // human. Ours reaches the club: HELP while HELP is already the
-        // focused pane opens mail to the desk.
+        // HELP twice — Bloomberg's most famous keystroke reaches their
+        // help desk. Ours reaches the AI desk first: the chat panel,
+        // which already knows the workspace. Humans are the escalation,
+        // not the front line — the chat's own intro says where to mail
+        // when it cannot help.
         if fn.id == "HELP",
            let f = panes.first(where: { $0.id == focusedID }),
            f.function.id == "HELP" {
-            NSWorkspace.shared.open(URL(string: "mailto:wseirer@gcschool.org?subject=Griffin%20Terminal%20help")!)
-            flash = Flash(text: "Paging the desk — mail draft opened.", bad: false)
+            retarget(f.id, fn: "BI")
+            flash = Flash(text: "The AI desk. Still stuck after asking? Mail wseirer@gcschool.org.", bad: false)
             return
         }
 
