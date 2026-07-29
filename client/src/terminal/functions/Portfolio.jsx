@@ -209,6 +209,10 @@ export default function Portfolio({ onOpen }) {
         dayPct,
         uplDollar,
         uplPct,
+        // Price return since the year opened. Server-derived from the bar
+        // cache when the sheet has no column for it; fraction here, like
+        // every other percent on this row.
+        ytdPct: h.ytdReturn != null ? h.ytdReturn / 100 : null,
         count: positions.length,
         benchDay,
         activeDay: dayPct != null && benchDay != null ? dayPct - benchDay : null,
@@ -339,6 +343,7 @@ function Holdings({ view, collapsed, toggleSector, openDes, rowKey }) {
           <th className="num">Day P&L</th>
           <th className="num">Unreal P&L</th>
           <th className="num">%</th>
+          <th className="num" title="Price return since the start of the year, before dividends">YTD</th>
         </tr>
       </thead>
       <tbody>
@@ -385,6 +390,7 @@ function Holdings({ view, collapsed, toggleSector, openDes, rowKey }) {
                         <td className={`num ${sign(r.dayPL)}`}>{fmt.signed(r.dayPL)}</td>
                         <td className={`num ${sign(r.uplDollar)}`}>{fmt.signed(r.uplDollar)}</td>
                         <td className={`num ${sign(r.uplPct)}`}>{fmt.pct(r.uplPct)}</td>
+                        <td className={`num ${sign(r.ytdPct)}`}>{fmt.pct(r.ytdPct)}</td>
                       </tr>
                     );
                   })

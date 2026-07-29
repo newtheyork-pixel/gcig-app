@@ -830,9 +830,57 @@ router.get('/movers', async (_req, res) => {
 // rather than the trimmed move. The panel overlays /quotes for live
 // price and recomputes value, weight, and P&L on top — the way PORT
 // keeps marks current between sheet reads.
+// Year-to-date price return per position, derived rather than read.
+//
+// The positions sheet has a ytdReturn column in its header map and
+// nobody fills it, so every holding came back with ytdReturn: null and
+// both terminals had a column of dashes. The number is recoverable from
+// price history we already cache: last close of the previous year
+// against the current price.
+//
+// It is a PRICE return, not a total return. Dividends are not in the
+// bar cache, so a name that pays them is understated, and the panels
+// label the column so nobody reads it as performance including income.
+// A stated approximation beats a silent one.
+const ytdCache = new Map(); // ticker -> { at, pct }
+const YTD_TTL_MS = 60 * 60 * 1000;
+
+async function ytdPriceReturn(ticker, currentPrice) {
+  if (!ticker || currentPrice == null) return null;
+  const hit = ytdCache.get(ticker);
+  if (hit && Date.now() - hit.at < YTD_TTL_MS) return hit.pct;
+  try {
+    const hist = await getHistory(ticker, 'ytd');
+    const points = (hist?.points || []).filter((p) => p?.close != null);
+    if (points.length < 2) return null;
+    // The first bar of the YTD window is the year's opening reference.
+    const base = points[0].close;
+    if (!(base > 0)) return null;
+    const pct = ((currentPrice - base) / base) * 100;
+    ytdCache.set(ticker, { at: Date.now(), pct });
+    return pct;
+  } catch {
+    // A missing history must not cost the whole book its numbers.
+    return null;
+  }
+}
+
 router.get('/portfolio', async (_req, res) => {
   try {
     const data = await getSheetPortfolio();
+    const rows = data?.holdings || [];
+    // Only the positions actually missing it, so a sheet that starts
+    // carrying the column wins and this stays a fallback.
+    const need = rows.filter((h) => !h.isCash && h.ticker && h.ytdReturn == null && h.price != null);
+    const found = await Promise.allSettled(
+      need.map((h) => ytdPriceReturn(h.ticker, h.price))
+    );
+    need.forEach((h, i) => {
+      if (found[i].status === 'fulfilled' && found[i].value != null) {
+        h.ytdReturn = found[i].value;
+        h.ytdSource = 'price';
+      }
+    });
     res.json(data);
   } catch (err) {
     console.error('terminal/portfolio failed:', err.message);

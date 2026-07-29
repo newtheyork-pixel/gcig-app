@@ -22,18 +22,43 @@ struct PortfolioPanel: View {
     struct Holding: Decodable, Identifiable {
         let ticker: String?
         let name: String?
+        let sector: String?
         let shares: Double?
+        /// Average price paid per share, not the position's total cost.
         let costBasis: Double?
         let price: Double?
         let marketValue: Double?
         let dayChange: Double?
+        let portfolioPct: Double?
+        /// Unrealized, since purchase. The server computes both so the
+        /// panel does not have to guess at partial fills.
+        let dollarReturn: Double?
+        let percentReturn: Double?
+        /// Year to date, PRICE only. Dividends are not in the bar cache,
+        /// so a payer is understated and the header says so.
+        let ytdReturn: Double?
         let isCash: Bool?
         var id: String { (ticker ?? name ?? UUID().uuidString) }
+
+        /// What the position cost in total, which is what a reader means
+        /// by "cost basis" even though the sheet stores the per-share.
+        var totalCost: Double? {
+            guard let s = shares, let c = costBasis else { return nil }
+            return s * c
+        }
+    }
+
+    struct Totals: Decodable {
+        let totalValue: Double?
+        let totalCost: Double?
+        let totalGainLoss: Double?
+        let totalGainLossPct: Double?
+        let cashValue: Double?
     }
 
     struct Payload: Decodable {
         let holdings: [Holding]?
-        let totalValue: Double?
+        let totals: Totals?
         let fetchedAt: String?
         let source: String?
     }
@@ -65,7 +90,7 @@ struct PortfolioPanel: View {
             // quote lands the marks are the sheet's own, and the
             // sheet's stated total wins when it carries one.
             let total = quotes.isEmpty
-                ? (p.totalValue ?? all.compactMap(\.marketValue).reduce(0, +))
+                ? (p.totals?.totalValue ?? all.compactMap(\.marketValue).reduce(0, +))
                 : all.compactMap(\.marketValue).reduce(0, +)
 
             VStack(alignment: .leading, spacing: 0) {
@@ -132,9 +157,26 @@ struct PortfolioPanel: View {
         } else {
             day = nil
         }
-        return Holding(ticker: h.ticker, name: h.name, shares: h.shares,
+        // Unrealized recomputes off the LIVE price, which is the whole
+        // point of the overlay: a P&L that stops at the sheet's mark is
+        // yesterday's P&L wearing today's price beside it. YTD stays as
+        // the server sent it, since its base year-open is not something
+        // a quote can supply. Weight is dropped so the row derives it
+        // from the live total rather than the sheet's stale one.
+        var upl: Double? = nil
+        var uplPct: Double? = nil
+        if let c = h.costBasis, let sh = h.shares, let l = last {
+            upl = (l - c) * sh
+            if c > 0 { uplPct = ((l - c) / c) * 100 }
+        } else {
+            upl = h.dollarReturn
+            uplPct = h.percentReturn
+        }
+        return Holding(ticker: h.ticker, name: h.name, sector: h.sector, shares: h.shares,
                        costBasis: h.costBasis, price: last,
-                       marketValue: mv, dayChange: day, isCash: h.isCash)
+                       marketValue: mv, dayChange: day, portfolioPct: nil,
+                       dollarReturn: upl, percentReturn: uplPct,
+                       ytdReturn: h.ytdReturn, isCash: h.isCash)
     }
 
     // The live tap. A failed poll returns silently and the last good
@@ -170,13 +212,17 @@ struct PortfolioPanel: View {
 
     private var columnHeads: some View {
         HStack(spacing: 8) {
-            Text("TICKER").frame(width: 62, alignment: .leading)
-            Text("NAME").frame(maxWidth: .infinity, alignment: .leading)
-            Text("SHARES").frame(width: 70, alignment: .trailing)
+            Text("TICKER").frame(width: 58, alignment: .leading)
+            Text("SHARES").frame(width: 60, alignment: .trailing)
+            Text("AVG COST").frame(width: 72, alignment: .trailing)
             Text("LAST").frame(width: 72, alignment: .trailing)
-            Text("VALUE").frame(width: 92, alignment: .trailing)
-            Text("WT").frame(width: 54, alignment: .trailing)
-            Text("DAY").frame(width: 78, alignment: .trailing)
+            Text("COST").frame(width: 82, alignment: .trailing)
+            Text("VALUE").frame(width: 88, alignment: .trailing)
+            Text("WT").frame(width: 50, alignment: .trailing)
+            Text("DAY").frame(width: 70, alignment: .trailing)
+            Text("SINCE BUY").frame(width: 88, alignment: .trailing)
+            Text("%").frame(width: 62, alignment: .trailing)
+            Text("YTD").frame(width: 62, alignment: .trailing)
         }
         .font(Term.mono(9, weight: .bold))
         .foregroundStyle(Term.blue)
@@ -184,7 +230,9 @@ struct PortfolioPanel: View {
     }
 
     private func row(_ h: Holding, total: Double) -> some View {
-        let weight = (total > 0 && h.marketValue != nil) ? h.marketValue! / total * 100 : nil
+        // Prefer the server's own weight; fall back to deriving it so a
+        // sheet that stops sending the column does not blank a row.
+        let weight = h.portfolioPct ?? ((total > 0 && h.marketValue != nil) ? h.marketValue! / total * 100 : nil)
         return HStack(spacing: 8) {
             // Drill-down: the ticker is a door, same as the web.
             Button {
@@ -194,7 +242,7 @@ struct PortfolioPanel: View {
             } label: {
                 Text(h.ticker ?? "—")
                     .font(Term.mono(11, weight: .bold)).foregroundStyle(Term.amber)
-                    .frame(width: 62, alignment: .leading)
+                    .frame(width: 58, alignment: .leading)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -225,15 +273,14 @@ struct PortfolioPanel: View {
         return HStack(spacing: 8) {
             Text("CASH")
                 .font(Term.mono(11, weight: .bold)).foregroundStyle(Term.cyan)
-                .frame(width: 62, alignment: .leading)
-            Text(c.name ?? "").font(Term.mono(10)).foregroundStyle(Term.fgMuted)
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .frame(width: 58, alignment: .leading)
+            Spacer().frame(width: 60 + 72 + 72 + 82 + 8 * 4)
             Text(Fmt.money(c.marketValue, decimals: 0))
                 .font(Term.mono(11)).foregroundStyle(Term.white)
-                .frame(width: 92, alignment: .trailing)
+                .frame(width: 88, alignment: .trailing)
             Text(weight.map { Fmt.pct($0, decimals: 1, signed: false) } ?? "—")
                 .font(Term.mono(11)).foregroundStyle(Term.fgDim)
-                .frame(width: 54, alignment: .trailing)
+                .frame(width: 50, alignment: .trailing)
         }
         .padding(.horizontal, 10).padding(.vertical, 3)
     }
