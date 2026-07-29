@@ -882,9 +882,19 @@ private struct ProjectDetail: View {
                         } else {
                             Divider().overlay(Term.border)
                             ScrollView {
-                                SearchResultsView(project: p, query: query) { t in
+                                SearchResultsView(project: p, query: query) { t, id in
                                     tab = t
                                     query = ""
+                                    // Open the record itself, not just
+                                    // the tab it happens to live on.
+                                    if let id {
+                                        switch t {
+                                        case .outreach:   openTargetID = id
+                                        case .files:      readerArtifactID = id
+                                        case .interviews: readerInterviewID = id
+                                        default:          break
+                                        }
+                                    }
                                 }
                                 .padding(10)
                                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -2861,6 +2871,9 @@ private struct SearchRow: Identifiable {
     let title: String
     let body: String
     let meta: String
+    /// What the hit opens. Without it a result reaches the tab and then
+    /// abandons the reader in the list they searched to avoid.
+    let recordID: Int?
 
     var tone: Color {
         switch kind {
@@ -2877,31 +2890,34 @@ private struct SearchRow: Identifiable {
 
 private func buildSearchIndex(_ p: ProjectFull) -> [SearchRow] {
     var rows: [SearchRow] = []
-    func add(_ tab: RTab, _ kind: String, _ title: String?, _ body: String?, _ meta: String?) {
+    func add(_ tab: RTab, _ kind: String, _ title: String?, _ body: String?,
+             _ meta: String?, _ id: Int? = nil) {
         rows.append(SearchRow(tab: tab, kind: kind, title: title ?? "",
-                              body: body ?? "", meta: meta ?? ""))
+                              body: body ?? "", meta: meta ?? "", recordID: id))
     }
 
-    for q in p.questions ?? [] { add(.questions, "question", q.text, q.rationale, q.status) }
+    for q in p.questions ?? [] { add(.questions, "question", q.text, q.rationale, q.status, q.id) }
     for t in p.targets ?? [] {
         add(.outreach, "contact", t.name,
-            [t.employer, t.email, t.notes].compactMap { $0 }.joined(separator: " · "), t.status)
+            [t.employer, t.email, t.notes].compactMap { $0 }.joined(separator: " · "), t.status, t.id)
         for d in t.drafts ?? [] {
-            add(.outreach, "draft", "\(t.name): \(d.subject)", d.body, d.stage)
+            // A draft opens its CONTACT, which is where it is read.
+            add(.outreach, "draft", "\(t.name): \(d.subject)", d.body, d.stage, t.id)
         }
     }
-    for i in p.interviews ?? [] { add(.interviews, "interview", i.title, i.transcript, i.source?.alias) }
+    for i in p.interviews ?? [] { add(.interviews, "interview", i.title, i.transcript, i.source?.alias, i.id) }
     for v in p.visits ?? [] {
-        add(.visits, "visit", v.location, v.notes, v.banner)
-        for o in v.siteObservations ?? [] { add(.visits, "observation", v.location, o.text, nil) }
+        add(.visits, "visit", v.location, v.notes, v.banner, v.id)
+        for o in v.siteObservations ?? [] { add(.visits, "observation", v.location, o.text, nil, v.id) }
     }
-    for v in p.valuations ?? [] { add(.valuation, "valuation", v.name, v.note, v.kind) }
+    for v in p.valuations ?? [] { add(.valuation, "valuation", v.name, v.note, v.kind, v.id) }
     for c in p.claims ?? [] {
         add(.ledger, "claim", c.text, c.quote,
-            [c.topic, c.stamp].compactMap { $0 }.joined(separator: " · "))
+            [c.topic, c.stamp].compactMap { $0 }.joined(separator: " · "), c.questionId)
     }
     for a in p.artifacts ?? [] {
-        add(.files, "file", a.title, a.body, [a.kind, a.note].compactMap { $0 }.joined(separator: " · "))
+        add(.files, "file", a.title, a.body,
+            [a.kind, a.note].compactMap { $0 }.joined(separator: " · "), a.id)
     }
     return rows
 }
@@ -2909,7 +2925,7 @@ private func buildSearchIndex(_ p: ProjectFull) -> [SearchRow] {
 private struct SearchResultsView: View {
     let project: ProjectFull
     let query: String
-    let onGo: (RTab) -> Void
+    let onGo: (RTab, Int?) -> Void
 
     /// Every term must appear. Multi-word search that ORs is search that
     /// always matches, which is the same as no search at all.
@@ -2961,12 +2977,12 @@ private struct SearchResultsView: View {
                         VStack(alignment: .leading, spacing: 3) {
                             HStack(spacing: 8) {
                                 SectionLabel(text: "\(t.rawValue) (\(group.count))")
-                                Button("open tab") { onGo(t) }
+                                Button("open tab") { onGo(t, nil) }
                                     .buttonStyle(.plain)
                                     .font(Term.mono(9)).foregroundStyle(Term.fgMuted)
                             }
                             ForEach(group.prefix(8)) { r in
-                                Button { onGo(t) } label: {
+                                Button { onGo(t, r.recordID) } label: {
                                     EdgeRow(tone: r.tone) {
                                         VStack(alignment: .leading, spacing: 1) {
                                             HStack(spacing: 8) {

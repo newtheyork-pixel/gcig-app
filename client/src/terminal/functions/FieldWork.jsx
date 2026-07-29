@@ -265,28 +265,33 @@ function NewProject({ ticker, onDone }) {
 // Every row knows its tab, so a hit is a door rather than a readout.
 function buildIndex(p) {
   const rows = [];
-  const add = (tab, kind, title, body, meta) =>
-    rows.push({ tab, kind, title: title || '', body: body || '', meta: meta || '' });
+  // `id` is what turns a result into a door. Without it a hit can only
+  // open the TAB, which leaves the reader scanning the very list they
+  // just searched to avoid scanning.
+  const add = (tab, kind, title, body, meta, id) =>
+    rows.push({ tab, kind, title: title || '', body: body || '', meta: meta || '', id: id ?? null });
 
   for (const qq of p.questions || [])
-    add('coverage', 'question', qq.text, qq.rationale, qq.status);
+    add('coverage', 'question', qq.text, qq.rationale, qq.status, qq.id);
   for (const t of p.targets || []) {
-    add('targets', 'contact', t.name, [t.employer, t.role, t.email, t.notes].filter(Boolean).join(' · '), t.status);
+    add('targets', 'contact', t.name, [t.employer, t.role, t.email, t.notes].filter(Boolean).join(' · '), t.status, t.id);
     for (const d of t.drafts || [])
-      add('targets', 'draft', `${t.name}: ${d.subject}`, d.body, d.stage);
+      // A draft opens its CONTACT, because that is where the draft is
+      // read and acted on.
+      add('targets', 'draft', `${t.name}: ${d.subject}`, d.body, d.stage, t.id);
   }
   for (const i of p.interviews || [])
-    add('interviews', 'interview', i.title, i.transcript, i.source?.alias || '');
+    add('interviews', 'interview', i.title, i.transcript, i.source?.alias || '', i.id);
   for (const v of p.visits || []) {
-    add('visits', 'visit', v.location, v.notes, v.banner || '');
-    for (const o of v.siteObservations || []) add('visits', 'observation', v.location, o.text, '');
+    add('visits', 'visit', v.location, v.notes, v.banner || '', v.id);
+    for (const o of v.siteObservations || []) add('visits', 'observation', v.location, o.text, '', v.id);
   }
   for (const v of p.valuations || [])
-    add('valuation', 'valuation', v.name, [v.note, ...(v.rows || []).map((r) => `${r.label} ${r.value}`)].join(' · '), v.kind || '');
+    add('valuation', 'valuation', v.name, [v.note, ...(v.rows || []).map((r) => `${r.label} ${r.value}`)].join(' · '), v.kind || '', v.id);
   for (const c of p.claims || [])
-    add('ledger', 'claim', c.text, c.quote, [c.topic, c.stamp].filter(Boolean).join(' · '));
+    add('ledger', 'claim', c.text, c.quote, [c.topic, c.stamp].filter(Boolean).join(' · '), c.questionId ?? c.id);
   for (const a of p.artifacts || [])
-    add('files', 'file', a.title, a.body, [a.kind, a.note].filter(Boolean).join(' · '));
+    add('files', 'file', a.title, a.body, [a.kind, a.note].filter(Boolean).join(' · '), a.id);
   return rows;
 }
 
@@ -355,7 +360,7 @@ function SearchResults({ project, q, onGo }) {
               <span style={{ fontSize: 10, letterSpacing: 0.6, color: 'var(--term-blue)' }}>
                 {label.toUpperCase()} ({hits.length})
               </span>
-              <a href="#" onClick={(e) => { e.preventDefault(); onGo(key); }}
+              <a href="#" onClick={(e) => { e.preventDefault(); onGo(key, null); }}
                  style={{ fontSize: 10, color: 'var(--term-fg-muted)' }}>
                 open tab
               </a>
@@ -363,7 +368,7 @@ function SearchResults({ project, q, onGo }) {
             {hits.slice(0, 8).map((r, i) => (
               <div
                 key={i}
-                onClick={() => onGo(key)}
+                onClick={() => onGo(key, r.id)}
                 style={{
                   borderLeft: `2px solid ${KIND_TONE[r.kind] || 'var(--term-border)'}`,
                   paddingLeft: 8, marginBottom: 4, cursor: 'pointer',
@@ -409,6 +414,10 @@ function ProjectPane({ id, onBack }) {
   const [flash, setFlash] = useState(null);
   const [doc, setDoc] = useState(null);
   const [q, setQ] = useState('');
+  // What the reader clicked in search: the tab plus the specific record
+  // to open there. Cleared by the tab once it has consumed it, so
+  // returning to that tab later does not re-open the same row.
+  const [focus, setFocus] = useState(null);
 
   const load = useCallback(() => {
     setLoading(true);
@@ -506,7 +515,7 @@ function ProjectPane({ id, onBack }) {
         <SearchResults
           project={p}
           q={q}
-          onGo={(tab) => { setTab(tab); setQ(''); }}
+          onGo={(tab, id) => { setTab(tab); setFocus(id ? { tab, id } : null); setQ(''); }}
         />
       ) : null}
 
@@ -551,17 +560,18 @@ function ProjectPane({ id, onBack }) {
       </div>
 
       {q.trim() ? null : (<>
-      {tab === 'coverage' ? <Coverage project={p} onChanged={load} /> : null}
+      {tab === 'coverage' ? <Coverage project={p} onChanged={load} focus={focus?.tab === 'coverage' ? focus.id : null} onFocused={() => setFocus(null)} /> : null}
       {tab === 'valuation' ? <Valuation project={p} onChanged={load} setFlash={setFlash} /> : null}
-      {tab === 'targets' ? <Targets project={p} onChanged={load} /> : null}
+      {tab === 'targets' ? <Targets project={p} onChanged={load} focus={focus?.tab === 'targets' ? focus.id : null} onFocused={() => setFocus(null)} /> : null}
       {tab === 'visits' ? <Visits project={p} onChanged={load} setFlash={setFlash} /> : null}
-      {tab === 'ledger' ? <Ledger project={p} onChanged={load} /> : null}
+      {tab === 'ledger' ? <Ledger project={p} onChanged={load} focus={focus?.tab === 'ledger' ? focus.id : null} onFocused={() => setFocus(null)} /> : null}
       {tab === 'interviews' ? (
         <Interviews project={p} onChanged={load} setFlash={setFlash} />
       ) : null}
       {tab === 'mnpi' ? <Compliance project={p} onChanged={load} /> : null}
       {tab === 'files' ? (
-        <Files project={p} onChanged={load} setFlash={setFlash} onOpenDoc={setDoc} />
+        <Files project={p} onChanged={load} setFlash={setFlash} onOpenDoc={setDoc}
+               focus={focus?.tab === 'files' ? focus.id : null} onFocused={() => setFocus(null)} />
       ) : null}
       </>)}
 
@@ -574,7 +584,7 @@ function ProjectPane({ id, onBack }) {
   );
 }
 
-function Ledger({ project, onChanged }) {
+function Ledger({ project, onChanged, focus, onFocused }) {
   // Linking a claim to a question is a per-claim dropdown, which is fine
   // for six claims and useless for seventy: the two dozen that answer
   // nothing yet are scattered through the topics and there was no way to
@@ -1514,9 +1524,23 @@ function ValuationForm({ project, onDone, setFlash }) {
   );
 }
 
-function Files({ project, onChanged, setFlash, onOpenDoc }) {
+function Files({ project, onChanged, setFlash, onOpenDoc, focus, onFocused }) {
   const fileRef = useRef(null);
+  const rowRefs = useRef({});
   const [kind, setKind] = useState('document');
+
+  useEffect(() => {
+    if (!focus) return;
+    const el = rowRefs.current[focus];
+    if (el) {
+      // <details> is uncontrolled, so open it directly rather than
+      // mirroring its state into React just for this.
+      const d = el.querySelector('details');
+      if (d) d.open = true;
+      el.scrollIntoView({ block: 'center' });
+    }
+    onFocused?.();
+  }, [focus, onFocused]);
   const [title, setTitle] = useState('');
   const [body, setBody] = useState('');
   const [busy, setBusy] = useState(false);
@@ -1591,7 +1615,7 @@ function Files({ project, onChanged, setFlash, onOpenDoc }) {
           </thead>
           <tbody>
             {project.artifacts.map((a) => (
-              <tr key={a.id}>
+              <tr key={a.id} ref={(el) => { rowRefs.current[a.id] = el; }}>
                 <td className="sym">{a.kind}</td>
                 <td>
                   {a.fileRef ? (
@@ -1732,10 +1756,14 @@ function ProjectStatus({ project }) {
   );
 }
 
-function Coverage({ project, onChanged }) {
+function Coverage({ project, onChanged, focus, onFocused }) {
   // What the project is trying to find out, in three lines. The brief
   // is prose and gets read once; twenty questions are the work but not
   // the point. Somebody opening this tab should see the point first.
+  useEffect(() => {
+    if (focus) { setOpenQ(focus); onFocused?.(); }
+  }, [focus, onFocused]);
+
   const [editAims, setEditAims] = useState(false);
   const [aimsText, setAimsText] = useState('');
   const aimLines = (project.aims || '').split('\n').map((l) => l.trim()).filter(Boolean);
@@ -2324,7 +2352,7 @@ function ScreenChip({ draft }) {
 // Outreach — the front of the funnel. Without it there are no
 // interviews, and "who haven't we tried yet" is what actually paces a
 // project.
-function Targets({ project, onChanged }) {
+function Targets({ project, onChanged, focus, onFocused }) {
   const [f, setF] = useState({ name: '', relationship: 'FormerEmployee', employer: '', email: '', tier: '', channel: '' });
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState('');
@@ -2335,6 +2363,11 @@ function Targets({ project, onChanged }) {
   const [only, setOnly] = useState('all');
   const fn = project.funnel || {};
   const q = project.outreachQueue || {};
+  // A search hit opens the person, not the list they are in.
+  useEffect(() => {
+    if (focus) { setOpenId(focus); onFocused?.(); }
+  }, [focus, onFocused]);
+
   const open = (project.targets || []).find((t) => t.id === openId);
 
   // One person, everything we have on them. The list is for scanning;
