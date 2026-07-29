@@ -857,6 +857,10 @@ private struct ProjectDetail: View {
     @State private var err: String?
     @State private var openTargetID: Int?
     @State private var readerArtifactID: Int?
+    /// A stored file being read in place. Identifiable so the viewer can
+    /// be driven from one piece of state rather than two half-set ones.
+    struct OpenFile: Identifiable { let itemId: String; let title: String; var id: String { itemId } }
+    @State private var openFile: OpenFile?
     @State private var readerInterviewID: Int?
     @State private var query = ""
 
@@ -886,7 +890,9 @@ private struct ProjectDetail: View {
             }
 
             PanelState(state: state, retry: { Task { await load(initial: true) } }) { p in
-                if let a = (p.artifacts ?? []).first(where: { $0.id == readerArtifactID }) {
+                if let f = openFile {
+                    DocumentViewer(itemId: f.itemId, title: f.title, onBack: { openFile = nil })
+                } else if let a = (p.artifacts ?? []).first(where: { $0.id == readerArtifactID }) {
                     ArtifactReader(artifact: a, onBack: { readerArtifactID = nil })
                 } else if let iv = (p.interviews ?? []).first(where: { $0.id == readerInterviewID }) {
                     TranscriptReader(interview: iv, onBack: { readerInterviewID = nil })
@@ -1003,7 +1009,9 @@ private struct ProjectDetail: View {
         case .ledger:
             LedgerTab(p: p, busy: $busy, run: run)
         case .files:
-            FilesTab(p: p, busy: $busy, run: run, onOpenArtifact: { readerArtifactID = $0 })
+            FilesTab(p: p, busy: $busy, run: run,
+                     onOpenArtifact: { readerArtifactID = $0 },
+                     onOpenFile: { id, title in openFile = OpenFile(itemId: id, title: title) })
         case .compliance:
             ComplianceTab(p: p)
         }
@@ -2760,6 +2768,7 @@ private struct FilesTab: View {
     @Binding var busy: Bool
     let run: RunAction
     let onOpenArtifact: (Int) -> Void
+    let onOpenFile: (String, String) -> Void
 
     private static let kinds: [(String, String)] = [
         ("guide", "Interview guide"), ("script", "Script"), ("model", "Valuation model / DCF"),
@@ -2883,13 +2892,24 @@ private struct FilesTab: View {
                 .buttonStyle(.plain)
                 .onHover { $0 ? NSCursor.pointingHand.push() : NSCursor.pop() }
                 .help("Read in place")
+            } else if let item = DocumentViewer.itemId(from: a.fileRef) {
+                Button { onOpenFile(item, a.title) } label: {
+                    Text(a.title)
+                        .font(Term.mono(11, weight: isKey ? .bold : .regular))
+                        .foregroundStyle(isKey ? Term.amber : Term.white)
+                        .lineLimit(1)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .onHover { $0 ? NSCursor.pointingHand.push() : NSCursor.pop() }
+                .help("Read it here, or open the original")
             } else {
                 Text(a.title)
                     .font(Term.mono(11, weight: isKey ? .bold : .regular))
                     .foregroundStyle(isKey ? Term.amber : Term.white).lineLimit(1)
-                // A file with no text body has nothing to open here —
-                // say so instead of a link that silently does nothing.
-                Text("(file — open on the web terminal)")
+                // Neither inline text nor a stored file. Nothing to open,
+                // and saying so beats a link that does nothing.
+                Text("(no file attached)")
                     .font(Term.mono(9)).foregroundStyle(Term.fgMuted)
             }
             Spacer(minLength: 6)
