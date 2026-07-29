@@ -29,6 +29,7 @@ struct TerminalView: View {
             // The arrangement you left is the arrangement you get back.
             ws.restoreCurrentIfEmpty()
         }
+        .background(BlockCaretInstaller().frame(width: 0, height: 0))
         .sheet(isPresented: $namingLayout) { LayoutNameSheet() }
         .onReceive(NotificationCenter.default.publisher(for: .saveLayoutPrompt)) { _ in
             namingLayout = true

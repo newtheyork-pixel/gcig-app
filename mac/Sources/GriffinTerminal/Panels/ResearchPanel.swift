@@ -2780,22 +2780,36 @@ private struct FilesTab: View {
     @State private var kind = "memo"
     @State private var title = ""
     @State private var bodyText = ""
+    @State private var uploading: String?
+    @State private var uploadError: String?
 
     var body: some View {
         let artifacts = p.artifacts ?? []
         VStack(alignment: .leading, spacing: 10) {
             // A guide typed straight in and a PDF dragged over land in
-            // the same list on the web; here the typed shape works and
-            // file uploads stay web-only.
+            // the same list, which is the whole point: forcing the file
+            // shape on a script somebody wrote in the app just means
+            // they keep it somewhere else.
             if composing {
                 composer
             } else {
                 HStack(spacing: 8) {
-                    Button("+ Save a text file") { composing = true }
+                    Button("+ Upload files") { pickAndUpload() }
                         .buttonStyle(TermButtonStyle())
-                        .disabled(busy)
-                    Text("File uploads and PDF previews live on the web terminal.")
-                        .font(Term.mono(9)).foregroundStyle(Term.fgMuted)
+                        .disabled(busy || uploading != nil)
+                    Button("+ Write one here") { composing = true }
+                        .buttonStyle(TermButtonStyle())
+                        .disabled(busy || uploading != nil)
+                    if let u = uploading {
+                        // Named, because uploading eleven annual reports
+                        // over a home connection is a minute of nothing
+                        // happening and a silent spinner reads as a hang.
+                        Text("Uploading \(u)…")
+                            .font(Term.mono(9)).foregroundStyle(Term.amber)
+                    } else if let e = uploadError {
+                        Text(e).font(Term.mono(9)).foregroundStyle(Term.negative)
+                    }
+                    Spacer()
                 }
             }
 
@@ -2823,6 +2837,57 @@ private struct FilesTab: View {
                 }
                 ForEach(rest) { a in artifactRow(a) }
             }
+        }
+    }
+
+    /// Anything the project needs: a PDF, a Word report, a spreadsheet
+    /// model, a CSV of prices. No type filter, deliberately — the server
+    /// stores whatever it is handed, and a picker that refused a .csv
+    /// because this panel had not thought of it would be a worse bug
+    /// than an odd file in the list.
+    ///
+    /// Uploads run one at a time rather than concurrently. Each one
+    /// forwards through our API to Graph, and firing eleven at once is
+    /// how a home connection turns a slow upload into a failed one.
+    private func pickAndUpload() {
+        let panel = NSOpenPanel()
+        panel.allowsMultipleSelection = true
+        panel.canChooseDirectories = false
+        panel.canChooseFiles = true
+        panel.message = "Attach files to this project"
+        panel.prompt = "Upload"
+        guard panel.runModal() == .OK, !panel.urls.isEmpty else { return }
+        let urls = panel.urls
+        let k = kind
+
+        Task {
+            uploadError = nil
+            var failed: [String] = []
+            for url in urls {
+                uploading = url.lastPathComponent
+                do {
+                    // Security-scoped access is what makes a file picked
+                    // from outside the sandbox actually readable.
+                    let scoped = url.startAccessingSecurityScopedResource()
+                    defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+                    _ = try await API.shared.upload(
+                        "/research/projects/\(p.id)/artifacts",
+                        fileURL: url,
+                        fields: ["kind": k, "title": url.lastPathComponent])
+                } catch {
+                    // One bad file must not abandon the other ten, and
+                    // the ones that failed have to be named or a partial
+                    // upload looks exactly like a complete one.
+                    failed.append(url.lastPathComponent)
+                }
+            }
+            uploading = nil
+            if !failed.isEmpty {
+                uploadError = failed.count == urls.count
+                    ? "Upload failed: \(failed.joined(separator: ", "))"
+                    : "\(urls.count - failed.count) uploaded, failed: \(failed.joined(separator: ", "))"
+            }
+            await run { }
         }
     }
 

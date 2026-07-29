@@ -1,4 +1,5 @@
 import Foundation
+import UniformTypeIdentifiers
 import Security
 
 // The client for gcig-api.
@@ -60,6 +61,58 @@ actor API {
         return try await send("POST", path, query: [:], body: body)
     }
 
+    /// multipart/form-data, for the one route that takes a file.
+    ///
+    /// Hand-rolled because URLSession has no multipart builder and the
+    /// alternative is a dependency for eighteen lines of string joining.
+    /// The boundary is generated per call from a UUID: a fixed one would
+    /// corrupt any upload whose bytes happened to contain it, which is
+    /// exactly the kind of failure that only shows up on the file
+    /// somebody actually cared about.
+    ///
+    /// Timeout is raised well above the default because this carries
+    /// real bytes over a home connection to a server that then forwards
+    /// them to Graph, and a 30-second ceiling would fail every
+    /// spreadsheet worth uploading.
+    func upload(_ path: String,
+                fileURL: URL,
+                fields: [String: String]) async throws -> Data {
+        let boundary = "griffin-\(UUID().uuidString)"
+        var body = Data()
+        func append(_ s: String) { body.append(Data(s.utf8)) }
+
+        for (k, v) in fields where !v.isEmpty {
+            append("--\(boundary)\r\n")
+            append("Content-Disposition: form-data; name=\"\(k)\"\r\n\r\n")
+            append("\(v)\r\n")
+        }
+
+        // Read on the calling side so a permission failure surfaces as a
+        // file error rather than a mystery HTTP one.
+        let bytes = try Data(contentsOf: fileURL)
+        let name = fileURL.lastPathComponent
+        append("--\(boundary)\r\n")
+        append("Content-Disposition: form-data; name=\"file\"; filename=\"\(name)\"\r\n")
+        append("Content-Type: \(Self.mimeType(for: fileURL))\r\n\r\n")
+        body.append(bytes)
+        append("\r\n--\(boundary)--\r\n")
+
+        return try await send("POST", path, query: [:], body: body,
+                              contentType: "multipart/form-data; boundary=\(boundary)",
+                              timeout: 300)
+    }
+
+    /// The system's own table, so a .xlsx is announced as a spreadsheet
+    /// rather than octet-stream. OneDrive stores what we tell it, and a
+    /// mistyped file is one that downloads and will not open.
+    private static func mimeType(for url: URL) -> String {
+        if let t = UTType(filenameExtension: url.pathExtension.lowercased()),
+           let mime = t.preferredMIMEType {
+            return mime
+        }
+        return "application/octet-stream"
+    }
+
     func decode<T: Decodable>(_ type: T.Type, from data: Data) throws -> T {
         do {
             let d = JSONDecoder()
@@ -71,7 +124,9 @@ actor API {
     }
 
     private func send(_ method: String, _ path: String,
-                      query: [String: String], body: Data?) async throws -> Data {
+                      query: [String: String], body: Data?,
+                      contentType: String = "application/json",
+                      timeout: TimeInterval = 30) async throws -> Data {
         guard var comps = URLComponents(string: base + path) else {
             throw Failure.transport("Bad URL for \(path)")
         }
@@ -82,9 +137,9 @@ actor API {
 
         var req = URLRequest(url: url)
         req.httpMethod = method
-        req.timeoutInterval = 30
+        req.timeoutInterval = timeout
         req.httpBody = body
-        if body != nil { req.setValue("application/json", forHTTPHeaderField: "Content-Type") }
+        if body != nil { req.setValue(contentType, forHTTPHeaderField: "Content-Type") }
         if let token { req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
 
         let data: Data, response: URLResponse
