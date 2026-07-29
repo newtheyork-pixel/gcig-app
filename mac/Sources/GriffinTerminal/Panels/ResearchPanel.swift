@@ -411,6 +411,32 @@ struct Target: Decodable, Identifiable {
     let notes: String?
     let lastContactAt: String?
     let drafts: [Draft]?
+    let replies: [Reply]?
+}
+
+/// What came back. Kinds rather than free text because the four that
+/// matter imply different next moves: an out-of-office is not a no, a
+/// bounce is a dead address, a decline is an answer, and only interest
+/// leads anywhere.
+struct Reply: Decodable, Identifiable {
+    let id: Int
+    let draftId: Int?
+    let kind: String
+    let receivedAt: String
+    let body: String?
+    let action: String?
+    let recordedBy: ProjectFull.Person?
+
+    /// Label, colour and the sentence explaining what the kind means.
+    var display: (String, Color, String) {
+        switch kind {
+        case "Interested": return ("INTERESTED", Term.positive, "They are willing to talk")
+        case "Declined":   return ("DECLINED", Term.negative, "They said no. The target closes")
+        case "Bounce":     return ("BOUNCED", Term.negative, "Dead address. The target is unreachable")
+        case "AutoReply":  return ("AUTO-REPLY", Term.amber, "Out of office. Nobody has read it yet, so this is still waiting")
+        default:           return ("OTHER", Term.fgMuted, "Did not clearly fit the other kinds")
+        }
+    }
 }
 
 struct Draft: Decodable, Identifiable {
@@ -1770,7 +1796,9 @@ private struct DraftsSection: View {
             }
 
             ForEach(drafts) { d in
-                DraftCard(draft: d, target: target, busy: $busy, run: run)
+                DraftCard(draft: d, target: target,
+                          replies: (target.replies ?? []).filter { $0.draftId == d.id },
+                          busy: $busy, run: run)
             }
         }
         .padding(.top, 8)
@@ -1781,9 +1809,19 @@ private struct DraftsSection: View {
 private struct DraftCard: View {
     let draft: Draft
     let target: Target
+    /// Only this draft's replies. A target can carry several drafts and
+    /// a reply belongs under the email it answers, not under all of them.
+    /// Declared here because the memberwise init follows declaration
+    /// order and the call site passes it third.
+    var replies: [Reply] = []
     @Binding var busy: Bool
     let run: RunAction
 
+    @State private var logging = false
+    @State private var replyKind = "AutoReply"
+    @State private var replyWhen = ""
+    @State private var replyBody = ""
+    @State private var replyAction = ""
     @State private var editing = false
     @State private var subject = ""
     @State private var bodyText = ""
@@ -1936,6 +1974,8 @@ private struct DraftCard: View {
                 }
             }
 
+            if d.sentAt != nil { replyLog(d) }
+
             if rejecting {
                 HStack(spacing: 6) {
                     TextField("What is wrong with it?", text: $rejectNote)
@@ -1958,6 +1998,142 @@ private struct DraftCard: View {
         .padding(8)
         .background(Term.bg)
         .termBorder()
+    }
+
+    /// What came back, sitting under the email it answers.
+    ///
+    /// Three states that must never look alike: nothing back at all, an
+    /// automatic reply that means nobody has read it yet, and a real
+    /// answer. A card that showed none of them made a sent email and a
+    /// silent one identical, which is how a batch of thirteen reads as
+    /// progress on a week when every address bounced.
+    @ViewBuilder
+    private func replyLog(_ d: Draft) -> some View {
+        let real = replies.filter { $0.kind != "AutoReply" }
+        VStack(alignment: .leading, spacing: 6) {
+            Divider().overlay(Term.border)
+            HStack(spacing: 8) {
+                Text("REPLIES")
+                    .font(Term.mono(9, weight: .bold)).tracking(0.6)
+                    .foregroundStyle(Term.white)
+                Button(logging ? "Cancel" : "Log a reply") {
+                    if !logging { replyWhen = Self.nowLocal(); replyBody = ""; replyAction = ""; replyKind = "AutoReply" }
+                    logging.toggle()
+                }
+                .buttonStyle(TermButtonStyle()).disabled(busy)
+                Spacer()
+            }
+
+            if replies.isEmpty {
+                Text("No reply yet. Sent \(Fmt.date(d.sentAt ?? "")).")
+                    .font(Term.mono(10)).foregroundStyle(Term.fgMuted)
+            } else if real.isEmpty {
+                Text("Only an automatic reply so far. Nobody has read this yet, so it is still waiting.")
+                    .font(Term.mono(10)).foregroundStyle(Term.amber)
+            }
+
+            ForEach(replies) { r in
+                let (label, tone, help) = r.display
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 8) {
+                        Text(label).font(Term.mono(9, weight: .bold)).tracking(0.5)
+                            .foregroundStyle(tone).help(help)
+                        Text(Fmt.date(r.receivedAt) + (r.recordedBy?.name.map { " · logged by \($0)" } ?? ""))
+                            .font(Term.mono(9)).foregroundStyle(Term.fgMuted)
+                        Spacer()
+                        Button("remove") {
+                            Task { await run { try await ResearchHTTP.delete("/research/replies/\(r.id)") } }
+                        }
+                        .buttonStyle(TermButtonStyle()).disabled(busy)
+                    }
+                    if let b = r.body, !b.isEmpty {
+                        Text(b).font(Term.mono(10)).foregroundStyle(Term.fgDim)
+                            .lineSpacing(3).textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    if let a = r.action, !a.isEmpty {
+                        Text("→ \(a)").font(Term.mono(10)).foregroundStyle(Term.white)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+                .padding(6).background(Term.bg).termBorder()
+            }
+
+            if logging {
+                HStack(spacing: 6) {
+                    Picker("", selection: $replyKind) {
+                        ForEach(Self.replyKinds, id: \.0) { Text($0.1).tag($0.0) }
+                    }
+                    .labelsHidden().frame(width: 150)
+                    // When THEY replied, not when this is being typed in.
+                    // Logging a day late is normal and a defaulted stamp
+                    // would put a false number under every interval.
+                    TextField("YYYY-MM-DD HH:MM", text: $replyWhen)
+                        .textFieldStyle(.plain)
+                        .font(Term.mono(10)).foregroundStyle(Term.white)
+                        .padding(5).background(Term.bg).termBorder()
+                        .frame(width: 170)
+                        .help("When they replied, not when you are logging it")
+                    Spacer()
+                }
+                // Said where the choice is made: two of these five move
+                // the target the moment they are saved.
+                Text((Self.replyKinds.first { $0.0 == replyKind }?.2 ?? "")
+                     + (replyKind == "Bounce" ? " — saving this marks the target Unreachable." : "")
+                     + (replyKind == "Declined" ? " — saving this marks the target Declined." : ""))
+                    .font(Term.mono(9)).foregroundStyle(Term.fgMuted)
+                TextEditor(text: $replyBody)
+                    .font(Term.mono(10)).foregroundStyle(Term.white)
+                    .scrollContentBackground(.hidden)
+                    .frame(minHeight: 60)
+                    .padding(4).background(Term.bg).termBorder()
+                TextField("What we do about it (optional)", text: $replyAction)
+                    .textFieldStyle(.plain)
+                    .font(Term.mono(10)).foregroundStyle(Term.white)
+                    .padding(5).background(Term.bg).termBorder()
+                HStack(spacing: 6) {
+                    Button("Save reply") {
+                        let kind = replyKind
+                        let when = Self.iso(from: replyWhen) ?? replyWhen
+                        let bodyIn = replyBody, actionIn = replyAction, draftID = d.id
+                        Task { await run {
+                            _ = try await API.shared.post(
+                                "/research/targets/\(target.id)/replies",
+                                json: ["kind": kind, "receivedAt": when, "draftId": draftID,
+                                       "body": bodyIn, "action": actionIn])
+                            logging = false
+                        } }
+                    }
+                    .buttonStyle(TermButtonStyle()).disabled(busy || replyWhen.isEmpty)
+                    Spacer()
+                }
+            }
+        }
+    }
+
+    private static let replyKinds: [(String, String, String)] = [
+        ("Interested", "INTERESTED", "They are willing to talk"),
+        ("Declined", "DECLINED", "They said no. The target closes"),
+        ("Bounce", "BOUNCED", "Dead address. The target becomes unreachable"),
+        ("AutoReply", "AUTO-REPLY", "Out of office. Nobody has read it yet, so this is still waiting"),
+        ("Other", "OTHER", "Anything that does not clearly fit"),
+    ]
+
+    /// Local wall-clock, which is what someone reading their inbox is
+    /// looking at. Converted to an instant on the way out.
+    private static func nowLocal() -> String {
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd HH:mm"
+        return f.string(from: Date())
+    }
+
+    private static func iso(from local: String) -> String? {
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd HH:mm"
+        guard let d = f.date(from: local.trimmingCharacters(in: .whitespaces)) else { return nil }
+        let out = ISO8601DateFormatter()
+        out.formatOptions = [.withInternetDateTime]
+        return out.string(from: d)
     }
 
     @ViewBuilder
