@@ -110,6 +110,7 @@ model User {
   outreachDraftsWritten    OutreachDraft[]    @relation("OutreachDraftAuthor")
   outreachDraftsRejected   OutreachDraft[]    @relation("OutreachDraftRejecter")
   outreachDraftsSent       OutreachDraft[]    @relation("OutreachDraftSender")
+  outreachDraftsMinorEdited OutreachDraft[]   @relation("OutreachDraftMinorEditor")
   outreachApprovals        OutreachApproval[] @relation("OutreachApprover")
   siteVisits               SiteVisit[]        @relation("SiteVisitVisitor")
 }
@@ -1044,6 +1045,11 @@ model ResearchProject {
 // shape on the first just makes people keep scripts in Notes instead.
 model ResearchArtifact {
   id          Int      @id @default(autoincrement())
+  // Owner-only when set: the artifact is filtered out of every read
+  // path except the super admin's. Used for material the club holds but
+  // should not circulate — a transcription of somebody else's
+  // copyrighted research being the case that prompted it.
+  ownerOnly   Boolean  @default(false)
   projectId   Int
   project     ResearchProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
   // guide | script | document | data | photo | memo | other. A string,
@@ -1212,6 +1218,21 @@ model OutreachDraft {
   rejectedBy   User?    @relation("OutreachDraftRejecter", fields: [rejectedById], references: [id], onDelete: SetNull)
   rejectedAt   DateTime?
   reviewNote   String?
+
+  // A change made AFTER approval without voting it down again.
+  //
+  // The gate exists because editing an approved draft is how a signed
+  // sentence quietly becomes an unsigned one. But a President fixing a
+  // salutation across fourteen letters should not have to drag a second
+  // person back through fourteen approvals, and pretending otherwise
+  // just teaches people to edit outside the system. So the exception is
+  // allowed and RECORDED: the approvals stand, and the draft carries a
+  // permanent line saying what changed, who changed it, and when — the
+  // approver can see what happened to the thing they signed.
+  minorEditAt   DateTime?
+  minorEditById Int?
+  minorEditBy   User?    @relation("OutreachDraftMinorEditor", fields: [minorEditById], references: [id], onDelete: SetNull)
+  minorEditNote String?
 
   sentAt       DateTime?
   sentById     Int?

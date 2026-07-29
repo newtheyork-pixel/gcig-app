@@ -2,7 +2,7 @@ import { Router } from 'express';
 import multer from 'multer';
 import rateLimit from 'express-rate-limit';
 import prisma from '../db.js';
-import { verifyJwt, requireRole } from '../middleware/auth.js';
+import { isSuperAdminEmail, verifyJwt, requireRole } from '../middleware/auth.js';
 import { transcribe, isConfigured as transcriptionConfigured, formatStamp, parseTranscriptText } from '../services/transcription.js';
 import { extractClaims } from '../services/claimExtraction.js';
 import { scanForAnswer } from '../services/answerScan.js';
@@ -120,6 +120,11 @@ router.get('/projects/:id', async (req, res) => {
       include: {
         createdBy: { select: { id: true, name: true } },
         artifacts: {
+          // Owner-only material never enters a non-owner's payload at
+          // all. Filtering in the query rather than the response is the
+          // difference between not sending it and hoping the client
+          // does not render it.
+          where: isSuperAdminEmail(req.user?.email) ? {} : { ownerOnly: false },
           orderBy: { createdAt: 'desc' },
           include: { uploadedBy: { select: { id: true, name: true } } },
         },
@@ -357,6 +362,12 @@ router.patch('/artifacts/:id', canResearch, async (req, res) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id)) return res.status(400).json({ error: 'Bad id' });
   const data = {};
+  if (req.body?.ownerOnly !== undefined) {
+    if (!isSuperAdminEmail(req.user?.email)) {
+      return res.status(403).json({ error: 'Only the owner can hide or unhide an artifact.' });
+    }
+    data.ownerOnly = !!req.body.ownerOnly;
+  }
   if (req.body?.title) data.title = String(req.body.title).slice(0, 300);
   if (req.body?.note !== undefined) {
     data.note = req.body.note ? String(req.body.note).slice(0, 1000) : null;
@@ -841,7 +852,7 @@ router.patch('/drafts/:id', canResearch, async (req, res) => {
     const changed = subject !== existing.subject || body !== existing.body;
 
     await prisma.$transaction(async (tx) => {
-      if (changed && existing.approvals.length) {
+      if (changed && existing.approvals.length && !minor) {
         await tx.outreachApproval.deleteMany({ where: { draftId: id } });
       }
       return tx.outreachDraft.update({
@@ -851,7 +862,14 @@ router.patch('/drafts/:id', canResearch, async (req, res) => {
           body,
           // An edit is also the answer to a rejection, so it clears the
           // block — otherwise a rejected draft can never be revived.
-          ...(changed ? { rejectedById: null, rejectedAt: null } : {}),
+          ...(changed && !minor ? { rejectedById: null, rejectedAt: null } : {}),
+          ...(changed && minor
+            ? {
+                minorEditAt: new Date(),
+                minorEditById: req.user?.id ?? null,
+                minorEditNote: String(req.body.minorEditNote).slice(0, 300),
+              }
+            : {}),
           // The old verdict described text that no longer exists.
           // Blanking it first means a crash between here and the
           // re-screen leaves the draft visibly unscreened rather than
@@ -862,13 +880,15 @@ router.patch('/drafts/:id', canResearch, async (req, res) => {
         },
       });
     });
-    // Re-screened on every real edit, for the same reason approvals are
-    // voided: the verdict belongs to the words, not to the row.
+    // Re-screened on every real edit INCLUDING a minor one. Approvals
+    // are a judgement a person can decide to stand by; a compliance
+    // verdict is about the text, and the text changed.
     if (changed) await screenAndStore(id);
     const d = await prisma.outreachDraft.findUnique({ where: { id }, include: DRAFT_VIEW });
     res.json({
       ...decorate(d, req.user),
-      approvalsCleared: changed ? existing.approvals.length : 0,
+      approvalsCleared: changed && !minor ? existing.approvals.length : 0,
+      approvalsKept: changed && minor ? existing.approvals.length : 0,
     });
   } catch (err) {
     console.error('research/draft update failed:', err.message);
