@@ -1562,6 +1562,16 @@ function Coverage({ project, onChanged }) {
   const [drafting, setDrafting] = useState(false);
   const [draftNote, setDraftNote] = useState(null);
   const [openQ, setOpenQ] = useState(null);
+  const [editQ, setEditQ] = useState(null);
+  const [editText, setEditText] = useState('');
+
+  async function saveQuestionText(q) {
+    const t = editText.trim();
+    setEditQ(null);
+    if (!t || t === q.text) return;
+    await api.patch(`/research/questions/${q.questionId}`, { text: t }).catch(() => {});
+    onChanged();
+  }
   const [qFilter, setQFilter] = useState('all');
   const [scanning, setScanning] = useState(false);
   const [scanNote, setScanNote] = useState(null);
@@ -1781,17 +1791,48 @@ function Coverage({ project, onChanged }) {
               {/* A coverage label is a summary of evidence, and a summary
                   nobody can open is just an assertion. One click gets to
                   the words somebody actually said. */}
-              <span
-                onClick={() => setOpenQ(openQ === q.questionId ? null : q.questionId)}
-                style={{
-                  color: 'var(--term-white)', fontSize: 12, flex: 1, minWidth: 200,
-                  cursor: q.claimCount ? 'pointer' : 'default',
-                }}
-                title={q.claimCount ? 'Show the evidence' : undefined}
-              >
-                {q.claimCount ? (openQ === q.questionId ? '▾ ' : '▸ ') : ''}
-                {q.text}
-              </span>
+              {/* A question is a hypothesis, and hypotheses get sharper
+                  as the evidence lands. A spine you can only append to
+                  silently rewards leaving a badly worded question up
+                  rather than fixing it — so the text edits in place,
+                  amber while editable per the chrome contract. */}
+              {editQ === q.questionId ? (
+                <input
+                  autoFocus
+                  className="term-input"
+                  value={editText}
+                  onChange={(e) => setEditText(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') saveQuestionText(q);
+                    if (e.key === 'Escape') setEditQ(null);
+                  }}
+                  onBlur={() => saveQuestionText(q)}
+                  style={{ flex: 1, minWidth: 200, fontSize: 12, color: 'var(--term-amber)' }}
+                />
+              ) : (
+                <span
+                  onClick={() => setOpenQ(openQ === q.questionId ? null : q.questionId)}
+                  onDoubleClick={() => { setEditText(q.text); setEditQ(q.questionId); }}
+                  style={{
+                    color: 'var(--term-white)', fontSize: 12, flex: 1, minWidth: 200,
+                    cursor: q.claimCount ? 'pointer' : 'default',
+                  }}
+                  title={q.claimCount ? 'Show the evidence · double-click to reword' : 'Double-click to reword'}
+                >
+                  {q.claimCount ? (openQ === q.questionId ? '▾ ' : '▸ ') : ''}
+                  {q.text}
+                </span>
+              )}
+              {editQ !== q.questionId ? (
+                <a
+                  href="#"
+                  onClick={(e) => { e.preventDefault(); setEditText(q.text); setEditQ(q.questionId); }}
+                  title="Reword this question"
+                  style={{ fontSize: 10, color: 'var(--term-fg-muted)', whiteSpace: 'nowrap' }}
+                >
+                  edit
+                </a>
+              ) : null}
               {/* Independence, site spread and forecast counts are what
                   you want when weighing ONE question, not while scanning
                   thirty. They move to the tooltip and to the expanded

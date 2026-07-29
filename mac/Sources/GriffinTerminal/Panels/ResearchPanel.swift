@@ -1112,6 +1112,12 @@ private struct CoverageTab: View {
     @State private var filter: QFilter = .all
     @State private var openQ: Int?
     @State private var newQ = ""
+    /// The question being reworded, and the working text. A question is
+    /// a hypothesis, and hypotheses get sharper as the evidence lands —
+    /// a spine you can only append to silently rewards leaving a badly
+    /// worded question up rather than fixing it.
+    @State private var editingQ: Int?
+    @State private var editText = ""
 
     var body: some View {
         let rows = p.coverage?.questions ?? []
@@ -1162,6 +1168,15 @@ private struct CoverageTab: View {
         }
     }
 
+    private func commitEdit(_ q: ProjectFull.CoverageReport.Row) {
+        let t = editText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !t.isEmpty, t != (q.text ?? "") else { editingQ = nil; return }
+        editingQ = nil
+        Task { await run {
+            try await ResearchHTTP.patch("/research/questions/\(q.questionId)", json: ["text": t])
+        } }
+    }
+
     private func matches(_ q: ProjectFull.CoverageReport.Row) -> Bool {
         switch filter {
         case .all:  return true
@@ -1185,16 +1200,43 @@ private struct CoverageTab: View {
                         .frame(width: 80, alignment: .leading)
                     // A coverage label is a summary of evidence, and a
                     // summary nobody can open is just an assertion.
-                    Button {
-                        if expandable { openQ = expanded ? nil : q.questionId }
-                    } label: {
-                        Text((expandable ? (expanded ? "▾ " : "▸ ") : "") + (q.text ?? ""))
-                            .font(Term.mono(11)).foregroundStyle(Term.white)
-                            .multilineTextAlignment(.leading)
-                            .contentShape(Rectangle())
+                    if editingQ == q.questionId {
+                        // Amber while editable, per the chrome contract.
+                        TextField("", text: $editText, axis: .vertical)
+                            .textFieldStyle(.plain)
+                            .font(Term.mono(11)).foregroundStyle(Term.amber)
+                            .padding(.horizontal, 5).padding(.vertical, 3)
+                            .background(Term.bg)
+                            .overlay(Rectangle().strokeBorder(Term.borderFocus, lineWidth: 1))
+                            .onSubmit { commitEdit(q) }
+                        Button("Save") { commitEdit(q) }
+                            .buttonStyle(TermButtonStyle())
+                            .disabled(busy || editText.trimmingCharacters(in: .whitespaces).isEmpty)
+                        Button("Cancel") { editingQ = nil }
+                            .buttonStyle(.plain)
+                            .font(Term.mono(9)).foregroundStyle(Term.fgMuted)
+                    } else {
+                        Button {
+                            if expandable { openQ = expanded ? nil : q.questionId }
+                        } label: {
+                            Text((expandable ? (expanded ? "▾ " : "▸ ") : "") + (q.text ?? ""))
+                                .font(Term.mono(11)).foregroundStyle(Term.white)
+                                .multilineTextAlignment(.leading)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        Spacer(minLength: 6)
+                        Button {
+                            editText = q.text ?? ""
+                            editingQ = q.questionId
+                        } label: {
+                            Text("edit").font(Term.mono(9)).foregroundStyle(Term.fgMuted)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(busy)
+                        .help("Reword this question")
                     }
-                    .buttonStyle(.plain)
-                    Spacer(minLength: 6)
                     // The row keeps the one number that says whether
                     // there is anything here at all; the breakdown moves
                     // to the tooltip.
