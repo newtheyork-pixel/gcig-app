@@ -361,6 +361,14 @@ router.patch('/artifacts/:id', canResearch, async (req, res) => {
   if (req.body?.note !== undefined) {
     data.note = req.body.note ? String(req.body.note).slice(0, 1000) : null;
   }
+  // Bodies are editable because most artifacts ARE typed here — guides,
+  // memos, briefs. A transcription of somebody else's document is the
+  // exception, and the discipline there is a human one: correct our own
+  // headings freely, leave the source's words and the provenance line
+  // alone. Nothing in a column can enforce that distinction.
+  if (req.body?.body !== undefined) {
+    data.body = req.body.body ? String(req.body.body).slice(0, 100_000) : null;
+  }
   if (Object.keys(data).length === 0) return res.status(400).json({ error: 'Nothing to change' });
   try {
     res.json(await prisma.researchArtifact.update({ where: { id }, data }));
