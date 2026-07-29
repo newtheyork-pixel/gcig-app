@@ -60,7 +60,21 @@ const REQUIRED = [
   },
   {
     key: 'no-fee',
-    test: (t) => /no\s+fee|nothing\s+commercial|not\s+(?:a\s+)?paid|unpaid/i.test(t),
+    // Widened after the check fired on every email in a batch that had
+    // just been REWRITTEN to say it better: "we cannot pay for your
+    // time" is plainer than "there's no fee", and the pattern only knew
+    // the second. The model read the same text and called it clearly
+    // unpaid. Second time this class of false positive has bitten (see
+    // the scope check below), and the lesson is the same: an absence
+    // test must know the ways people actually write the thing.
+    test: (t) =>
+      /\bno\s+fee\b/i.test(t) ||
+      /\bnothing\s+commercial\b/i.test(t) ||
+      /\bnot\s+(?:a\s+)?paid\b/i.test(t) ||
+      /\bunpaid\b/i.test(t) ||
+      /\b(?:can ?not|can't|cannot|unable to)\s+pay\b/i.test(t) ||
+      /\bwe\s+do\s*n(?:o|')t\s+pay\b/i.test(t) ||
+      /\bwithout\s+payment\b/i.test(t),
     why: 'Does not say the call is unpaid. Expert networks pay for exactly this kind of conversation, so silence lets the recipient assume we do too',
   },
   {
