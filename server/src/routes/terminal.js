@@ -882,18 +882,26 @@ router.get('/portfolio', async (_req, res) => {
     // anywhere, a column of dashes that looked like missing data rather
     // than a throttled fetch. Warm calls are DB reads and cost nothing.
     let filled = 0;
+    let lastError = null;
     for (const h of need) {
-      const pct = await ytdPriceReturn(h.ticker, h.price);
-      if (pct != null) {
-        h.ytdReturn = pct;
-        h.ytdSource = 'price';
-        filled += 1;
+      try {
+        const pct = await ytdPriceReturn(h.ticker, h.price);
+        if (pct != null) {
+          h.ytdReturn = pct;
+          h.ytdSource = 'price';
+          filled += 1;
+        } else if (!lastError) {
+          lastError = `${h.ticker}: no usable history`;
+        }
+      } catch (err) {
+        if (!lastError) lastError = `${h.ticker}: ${err.message}`;
       }
     }
-    if (need.length && filled === 0) {
-      // Distinguishable in the log from "the sheet had them all".
-      console.warn(`terminal/portfolio: YTD unavailable for all ${need.length} positions`);
-    }
+    // Reported, not swallowed. A column of dashes is indistinguishable
+    // from data the source never had, which is how this spent an hour
+    // being debugged from the outside with no signal to work from. The
+    // panel can now say which of the two it is looking at.
+    data.ytdStatus = { needed: need.length, filled, lastError };
     res.json(data);
   } catch (err) {
     console.error('terminal/portfolio failed:', err.message);
