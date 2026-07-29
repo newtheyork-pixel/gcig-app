@@ -70,6 +70,16 @@ struct PaneWindow: View {
         }
         .frame(width: liveFrame.width,
                height: pane.minimized ? 25 : liveFrame.height)
+        // A pane is a wall, and until now it was a suggestion. Content
+        // whose natural size exceeds the pane does not compress — a
+        // twelve-column table in a 449pt pane simply drew straight
+        // through the border and over its neighbours, so the chrome sat
+        // at one size and the numbers at another. .clipped() INSIDE the
+        // panel could never fix that: it clips to the content's own
+        // overflowing bounds. It has to be here, against the fixed
+        // frame, which is the only view in the stack that knows how big
+        // the pane actually is.
+        .clipped()
         .termPanelBackground()
         .termBorder(focused: focused)
         .shadow(color: .black.opacity(focused ? 0.55 : 0.3),

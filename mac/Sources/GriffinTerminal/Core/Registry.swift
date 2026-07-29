@@ -33,8 +33,10 @@ enum Registry {
               help: "Company snapshot: quote, fundamentals, business summary.",
               requires: "ticker", width: 620, height: 520, native: true),
         .init(id: "PM", label: "Portfolio Manager",
-              help: "The whole book: positions, weights, live value & P&L.",
-              width: 900, height: 600, native: true),
+              help: "The whole book: cost, weights, live value, P&L, YTD.",
+              // Sized to the table's own minimum, so a freshly opened PM
+              // shows all twelve columns without scrolling sideways.
+              width: 1040, height: 600, native: true),
         .init(id: "MOVR", label: "Movers",
               help: "Day's biggest gainers and losers.",
               width: 560, height: 520, native: true),

@@ -300,6 +300,25 @@ final class Workspace: ObservableObject {
                 y: min(max(origin.y, 0), bounds.height - 32))
     }
 
+    /// Re-seat every pane inside a canvas that just changed size.
+    ///
+    /// Panes carry absolute frames, so resizing or zooming the window
+    /// left them exactly where they were — and the canvas clips, so a
+    /// pane that ended up past the new right edge was not merely
+    /// awkward, it was gone, with no titlebar left to drag it back by.
+    /// Sizes are deliberately untouched: shrinking panes to fit would
+    /// make every window resize destructive, and a pane wider than the
+    /// canvas is readable by scrolling. Only the origin moves, and only
+    /// when it has to.
+    func clampAll(to bounds: CGSize) {
+        guard bounds.width > 0, bounds.height > 0 else { return }
+        for i in panes.indices {
+            panes[i].frame.origin = Self.clampOrigin(panes[i].frame.origin,
+                                                     paneWidth: panes[i].frame.width,
+                                                     in: bounds)
+        }
+    }
+
     func move(_ id: UUID, to origin: CGPoint, in bounds: CGSize) {
         guard let i = panes.firstIndex(where: { $0.id == id }) else { return }
         let w = panes[i].frame.width

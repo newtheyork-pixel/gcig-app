@@ -96,16 +96,35 @@ struct PortfolioPanel: View {
             VStack(alignment: .leading, spacing: 0) {
                 header(p, total: total, n: positions.count)
                 Divider().overlay(Term.border)
-                columnHeads
-                Divider().overlay(Term.border)
-                ScrollView {
-                    LazyVStack(spacing: 0) {
-                        ForEach(positions) { h in row(h, total: total) }
-                        if !cash.isEmpty {
-                            Divider().overlay(Term.border).padding(.vertical, 4)
-                            ForEach(cash) { c in cashRow(c, total: total) }
+                // Twelve columns do not fit a narrow pane and do not
+                // compress, so the table scrolls in both directions
+                // rather than being truncated at the pane wall. The
+                // column heads and the totals are pinned: they are the
+                // two lines you need on screen no matter how far down or
+                // across the book you have scrolled.
+                ScrollView([.horizontal, .vertical]) {
+                    LazyVStack(alignment: .leading, spacing: 0,
+                               pinnedViews: [.sectionHeaders, .sectionFooters]) {
+                        Section {
+                            ForEach(positions) { h in row(h, total: total) }
+                            if !cash.isEmpty {
+                                Divider().overlay(Term.border).padding(.vertical, 4)
+                                ForEach(cash) { c in cashRow(c, total: total) }
+                            }
+                        } header: {
+                            VStack(alignment: .leading, spacing: 0) {
+                                columnHeads
+                                Divider().overlay(Term.border)
+                            }
+                            .background(Term.bgPanel)
+                        } footer: {
+                            VStack(alignment: .leading, spacing: 0) {
+                                Divider().overlay(Term.border)
+                                totalsRow(positions, cash: cash, total: total)
+                            }
                         }
                     }
+                    .frame(minWidth: Self.tableMinWidth, alignment: .leading)
                 }
             }
         }
@@ -202,6 +221,13 @@ struct PortfolioPanel: View {
             Text("\(n) positions")
                 .font(Term.mono(10)).foregroundStyle(Term.fgMuted)
             Spacer()
+            // Said once, here, rather than in the YTD cells: the bar
+            // cache carries no distributions, so a dividend payer's YTD
+            // is its price return and is understated. Better a caveat a
+            // reader can see than a column that quietly means something
+            // narrower than its heading.
+            Text("YTD IS PRICE ONLY")
+                .font(Term.mono(9)).foregroundStyle(Term.fgDim)
             Text(Fmt.money(total))
                 .font(Term.mono(13, weight: .bold))
                 .foregroundStyle(Term.white)
@@ -210,19 +236,86 @@ struct PortfolioPanel: View {
         .padding(.horizontal, 10).padding(.vertical, 6)
     }
 
+    // The table is ONE list of fields and every line renders by walking
+    // it. This began as two hand-typed lists, a header and a row, and
+    // they drifted: the header grew to eleven columns while the row
+    // still drew six, so every number sat under the wrong heading and
+    // AVG COST, COST, SINCE BUY, % and YTD were advertised and never
+    // rendered. Titles, widths and cells now come from the same enum,
+    // and because each cell builder is an exhaustive switch, a column
+    // added here will not compile until the position row, the cash line
+    // and the totals have all said what they put in it.
+    private enum Field: CaseIterable {
+        case ticker, name, shares, avgCost, last, cost, value, wt, day, sinceBuy, pct, ytd
+
+        var title: String {
+            switch self {
+            case .ticker:   return "TICKER"
+            case .name:     return "NAME"
+            case .shares:   return "SHARES"
+            case .avgCost:  return "AVG COST"
+            case .last:     return "LAST"
+            case .cost:     return "COST"
+            case .value:    return "VALUE"
+            case .wt:       return "WT"
+            case .day:      return "DAY"
+            case .sinceBuy: return "SINCE BUY"
+            case .pct:      return "%"
+            case .ytd:      return "YTD"
+            }
+        }
+
+        /// nil takes the slack, and exactly one column does.
+        var width: CGFloat? {
+            switch self {
+            case .ticker:   return 58
+            case .name:     return nil
+            case .shares:   return 60
+            case .avgCost:  return 72
+            case .last:     return 72
+            case .cost:     return 82
+            case .value:    return 88
+            case .wt:       return 50
+            case .day:      return 70
+            case .sinceBuy: return 88
+            case .pct:      return 62
+            case .ytd:      return 62
+            }
+        }
+
+        var align: Alignment {
+            switch self {
+            case .ticker, .name: return .leading
+            default: return .trailing   // every other column is a number
+            }
+        }
+    }
+
+    private static let gap: CGFloat = 8
+
+    /// Every fixed column, a floor for the flexible one, the gaps and
+    /// the row padding. Below this the table scrolls sideways instead of
+    /// overflowing, and above it the NAME column takes the slack.
+    private static var tableMinWidth: CGFloat {
+        let fixed = Field.allCases.reduce(CGFloat.zero) { $0 + ($1.width ?? 140) }
+        return fixed + CGFloat(Field.allCases.count - 1) * gap + 20
+    }
+
+    private func sized<V: View>(_ f: Field, @ViewBuilder _ content: () -> V) -> some View {
+        Group {
+            if let w = f.width {
+                content().frame(width: w, alignment: f.align)
+            } else {
+                content().frame(minWidth: 0, maxWidth: .infinity, alignment: f.align)
+            }
+        }
+    }
+
     private var columnHeads: some View {
-        HStack(spacing: 8) {
-            Text("TICKER").frame(width: 58, alignment: .leading)
-            Text("SHARES").frame(width: 60, alignment: .trailing)
-            Text("AVG COST").frame(width: 72, alignment: .trailing)
-            Text("LAST").frame(width: 72, alignment: .trailing)
-            Text("COST").frame(width: 82, alignment: .trailing)
-            Text("VALUE").frame(width: 88, alignment: .trailing)
-            Text("WT").frame(width: 50, alignment: .trailing)
-            Text("DAY").frame(width: 70, alignment: .trailing)
-            Text("SINCE BUY").frame(width: 88, alignment: .trailing)
-            Text("%").frame(width: 62, alignment: .trailing)
-            Text("YTD").frame(width: 62, alignment: .trailing)
+        HStack(spacing: Self.gap) {
+            ForEach(Field.allCases, id: \.self) { f in
+                sized(f) { Text(f.title) }
+            }
         }
         .font(Term.mono(9, weight: .bold))
         .foregroundStyle(Term.blue)
@@ -233,7 +326,20 @@ struct PortfolioPanel: View {
         // Prefer the server's own weight; fall back to deriving it so a
         // sheet that stops sending the column does not blank a row.
         let weight = h.portfolioPct ?? ((total > 0 && h.marketValue != nil) ? h.marketValue! / total * 100 : nil)
-        return HStack(spacing: 8) {
+        return HStack(spacing: Self.gap) {
+            ForEach(Field.allCases, id: \.self) { f in
+                sized(f) { cell(f, h, weight: weight) }
+            }
+        }
+        .font(Term.mono(11))
+        .foregroundStyle(Term.white)
+        .padding(.horizontal, 10).padding(.vertical, 3)
+    }
+
+    @ViewBuilder
+    private func cell(_ f: Field, _ h: Holding, weight: Double?) -> some View {
+        switch f {
+        case .ticker:
             // Drill-down: the ticker is a door, same as the web.
             Button {
                 if let t = h.ticker {
@@ -242,47 +348,142 @@ struct PortfolioPanel: View {
             } label: {
                 Text(h.ticker ?? "—")
                     .font(Term.mono(11, weight: .bold)).foregroundStyle(Term.amber)
-                    .frame(width: 58, alignment: .leading)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .onHover { $0 ? NSCursor.pointingHand.push() : NSCursor.pop() }
+        case .name:
             Text(h.name ?? "")
                 .font(Term.mono(10)).foregroundStyle(Term.fgMuted)
-                .lineLimit(1).frame(maxWidth: .infinity, alignment: .leading)
+                .lineLimit(1).truncationMode(.tail)
+        case .shares:
             Text(h.shares.map { Fmt.money($0, decimals: 0) } ?? "—")
-                .frame(width: 70, alignment: .trailing)
-            Text(Fmt.money(h.price)).frame(width: 72, alignment: .trailing)
-                .tickFlash(h.price)
-            Text(Fmt.money(h.marketValue, decimals: 0)).frame(width: 92, alignment: .trailing)
-                .tickFlash(h.marketValue)
+        case .avgCost:
+            // Per-share paid, sitting beside the per-share mark, because
+            // those are the two numbers a reader compares.
+            Text(Fmt.money(h.costBasis)).foregroundStyle(Term.fgDim)
+        case .last:
+            Text(Fmt.money(h.price)).tickFlash(h.price)
+        case .cost:
+            Text(Fmt.money(h.totalCost, decimals: 0)).foregroundStyle(Term.fgDim)
+        case .value:
+            Text(Fmt.money(h.marketValue, decimals: 0)).tickFlash(h.marketValue)
+        case .wt:
             Text(weight.map { Fmt.pct($0, decimals: 1, signed: false) } ?? "—")
-                .frame(width: 54, alignment: .trailing)
+        case .day:
             Text(h.dayChange.map { Fmt.money($0, decimals: 0) } ?? "—")
-                .foregroundStyle(Term.delta(h.dayChange))
-                .frame(width: 78, alignment: .trailing)
-                .tickFlash(h.dayChange)
+                .foregroundStyle(Term.delta(h.dayChange)).tickFlash(h.dayChange)
+        case .sinceBuy:
+            Text(h.dollarReturn.map { Fmt.money($0, decimals: 0) } ?? "—")
+                .foregroundStyle(Term.delta(h.dollarReturn))
+        case .pct:
+            Text(h.percentReturn.map { Fmt.pct($0, decimals: 1) } ?? "—")
+                .foregroundStyle(Term.delta(h.percentReturn))
+        case .ytd:
+            Text(h.ytdReturn.map { Fmt.pct($0, decimals: 1) } ?? "—")
+                .foregroundStyle(Term.delta(h.ytdReturn))
         }
-        .font(Term.mono(11))
-        .foregroundStyle(Term.white)
-        .padding(.horizontal, 10).padding(.vertical, 3)
     }
 
     private func cashRow(_ c: Holding, total: Double) -> some View {
         let weight = (total > 0 && c.marketValue != nil) ? c.marketValue! / total * 100 : nil
-        return HStack(spacing: 8) {
-            Text("CASH")
-                .font(Term.mono(11, weight: .bold)).foregroundStyle(Term.cyan)
-                .frame(width: 58, alignment: .leading)
-            Spacer().frame(width: 60 + 72 + 72 + 82 + 8 * 4)
-            Text(Fmt.money(c.marketValue, decimals: 0))
-                .font(Term.mono(11)).foregroundStyle(Term.white)
-                .frame(width: 88, alignment: .trailing)
-            Text(weight.map { Fmt.pct($0, decimals: 1, signed: false) } ?? "—")
-                .font(Term.mono(11)).foregroundStyle(Term.fgDim)
-                .frame(width: 50, alignment: .trailing)
+        return HStack(spacing: Self.gap) {
+            ForEach(Field.allCases, id: \.self) { f in
+                sized(f) { cashCell(f, c, weight: weight) }
+            }
         }
+        .font(Term.mono(11))
         .padding(.horizontal, 10).padding(.vertical, 3)
+    }
+
+    @ViewBuilder
+    private func cashCell(_ f: Field, _ c: Holding, weight: Double?) -> some View {
+        switch f {
+        case .ticker:
+            Text("CASH").font(Term.mono(11, weight: .bold)).foregroundStyle(Term.cyan)
+        case .value:
+            Text(Fmt.money(c.marketValue, decimals: 0)).foregroundStyle(Term.white)
+        case .wt:
+            Text(weight.map { Fmt.pct($0, decimals: 1, signed: false) } ?? "—")
+                .foregroundStyle(Term.fgDim)
+        case .name, .shares, .avgCost, .last, .cost, .day, .sinceBuy, .pct, .ytd:
+            // Cash has no basis, no mark and no share count. These stay
+            // empty rather than zero: a zero reads as a measured value.
+            Text("")
+        }
+    }
+
+    /// The book's own line, summed from the MARKED rows rather than read
+    /// off the payload, so it agrees with the header total and with
+    /// every row above it the moment a live print lands.
+    private struct BookTotals {
+        let positions: Int
+        let hasCash: Bool
+        /// nil when no position carries a basis, which is not the same
+        /// as a book that cost nothing.
+        let cost: Double?
+        let value: Double
+        let wt: Double?
+        let day: Double
+        let upl: Double?
+        let uplPct: Double?
+    }
+
+    private func totalsRow(_ positions: [Holding], cash: [Holding], total: Double) -> some View {
+        let costs = positions.compactMap(\.totalCost)
+        let cost = costs.isEmpty ? nil : costs.reduce(0, +)
+        let invested = positions.compactMap(\.marketValue).reduce(0, +)
+        // Cost excludes cash, which has no basis, so the percentage is
+        // return on invested money and not on the account.
+        let t = BookTotals(
+            positions: positions.count,
+            hasCash: !cash.isEmpty,
+            cost: cost,
+            value: total,
+            wt: total > 0 ? invested / total * 100 : nil,
+            day: positions.compactMap(\.dayChange).reduce(0, +),
+            upl: cost.map { invested - $0 },
+            uplPct: (cost.map { $0 > 0 } ?? false) ? (invested - cost!) / cost! * 100 : nil)
+        return HStack(spacing: Self.gap) {
+            ForEach(Field.allCases, id: \.self) { f in
+                sized(f) { totalCell(f, t) }
+            }
+        }
+        .font(Term.mono(11, weight: .bold))
+        .foregroundStyle(Term.white)
+        .padding(.horizontal, 10).padding(.vertical, 5)
+        .background(Term.bgHeader)
+    }
+
+    @ViewBuilder
+    private func totalCell(_ f: Field, _ t: BookTotals) -> some View {
+        switch f {
+        case .ticker:
+            Text("TOTAL").font(Term.mono(10, weight: .bold)).foregroundStyle(Term.blue)
+        case .name:
+            Text("\(t.positions) positions" + (t.hasCash ? " plus cash" : ""))
+                .font(Term.mono(10)).foregroundStyle(Term.fgMuted)
+        case .cost:
+            Text(Fmt.money(t.cost, decimals: 0))
+        case .value:
+            Text(Fmt.money(t.value, decimals: 0)).tickFlash(t.value)
+        case .wt:
+            Text(t.wt.map { Fmt.pct($0, decimals: 1, signed: false) } ?? "—")
+                .foregroundStyle(Term.fgDim)
+        case .day:
+            Text(Fmt.money(t.day, decimals: 0)).foregroundStyle(Term.delta(t.day))
+        case .sinceBuy:
+            Text(t.upl.map { Fmt.money($0, decimals: 0) } ?? "—")
+                .foregroundStyle(Term.delta(t.upl))
+        case .pct:
+            Text(t.uplPct.map { Fmt.pct($0, decimals: 1) } ?? "—")
+                .foregroundStyle(Term.delta(t.uplPct))
+        case .shares, .avgCost, .last, .ytd:
+            // No book-level YTD: the positions were bought at different
+            // points in the year, so a single number would need a base
+            // none of them share. Blank beats a figure nobody can defend.
+            Text("")
+        }
     }
 
     private func load() async {

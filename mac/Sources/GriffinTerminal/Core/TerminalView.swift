@@ -54,8 +54,16 @@ struct TerminalView: View {
             }
             .coordinateSpace(name: "workspace")
             .clipped()
-            .onAppear { ws.canvasSize = geo.size }
-            .onChange(of: geo.size) { _, s in ws.canvasSize = s }
+            .onAppear {
+                ws.canvasSize = geo.size
+                // A layout saved on a larger display restores with panes
+                // outside a smaller one, so this runs at launch too.
+                ws.clampAll(to: geo.size)
+            }
+            .onChange(of: geo.size) { _, s in
+                ws.canvasSize = s
+                ws.clampAll(to: s)
+            }
             .onReceive(NotificationCenter.default.publisher(for: .tilePanes)) { _ in
                 ws.tile(in: geo.size)
             }
