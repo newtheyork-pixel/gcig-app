@@ -847,6 +847,24 @@ router.patch('/drafts/:id', canResearch, async (req, res) => {
       return res.status(409).json({ error: 'That draft has already been sent — it is now a record of what we said, not a document. Write a new one.' });
     }
 
+    // A minor edit keeps the approvals and leaves a permanent mark
+    // saying so. Restricted to the people who could have approved it in
+    // the first place: deciding a change did not need re-signing is the
+    // same authority as signing. And it demands a note, because an
+    // unexplained edit to an approved draft is the exact thing the gate
+    // exists to prevent.
+    const minor = req.body?.minorEdit === true;
+    if (minor && !canApproveOutreach(req.user)) {
+      return res.status(403).json({
+        error: 'A minor edit keeps existing approvals, so it is limited to a President, the CIO or the faculty advisor.',
+      });
+    }
+    if (minor && !req.body?.minorEditNote) {
+      return res.status(400).json({
+        error: 'Say what changed. An unexplained edit to an approved draft is the thing this route exists to avoid.',
+      });
+    }
+
     const subject = req.body?.subject !== undefined ? String(req.body.subject).slice(0, 300) : existing.subject;
     const body = req.body?.body !== undefined ? String(req.body.body).slice(0, 20_000) : existing.body;
     const changed = subject !== existing.subject || body !== existing.body;
