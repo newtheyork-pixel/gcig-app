@@ -1063,6 +1063,16 @@ model ResearchArtifact {
   // Inline text, for guides and memos written in the app.
   body         String?
   note         String?
+  // The handful that actually carry the argument: the model, the DCF,
+  // the final report. A project accumulates dozens of files and the
+  // three somebody needs are the ones newest-first ordering buries
+  // first, since they are written early and revised rarely.
+  //
+  // Set by hand rather than guessed from the filename. Which document
+  // matters is a judgement about the work, and a heuristic that
+  // promoted everything called "model" would quietly demote the one
+  // that mattered by drowning it.
+  keyDoc       Boolean         @default(false)
   uploadedById Int?
   uploadedBy   User?           @relation("ResearchArtifactUploader", fields: [uploadedById], references: [id], onDelete: SetNull)
   createdAt    DateTime        @default(now())

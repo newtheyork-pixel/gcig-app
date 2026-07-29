@@ -125,7 +125,12 @@ router.get('/projects/:id', async (req, res) => {
           // difference between not sending it and hoping the client
           // does not render it.
           where: isSuperAdminEmail(req.user?.email) ? {} : { ownerOnly: false },
-          orderBy: { createdAt: 'desc' },
+          // Key documents first, then newest. Recency is the right
+          // default for everything else and exactly wrong for the three
+          // files that carry the argument: they are written early and
+          // revised rarely, so pure recency buries them under every
+          // screenshot taken since.
+          orderBy: [{ keyDoc: 'desc' }, { createdAt: 'desc' }],
           include: { uploadedBy: { select: { id: true, name: true } } },
         },
         interviews: {
@@ -388,6 +393,7 @@ router.patch('/artifacts/:id', canResearch, async (req, res) => {
     data.ownerOnly = !!req.body.ownerOnly;
   }
   if (req.body?.title) data.title = String(req.body.title).slice(0, 300);
+  if (req.body?.keyDoc !== undefined) data.keyDoc = !!req.body.keyDoc;
   if (req.body?.note !== undefined) {
     data.note = req.body.note ? String(req.body.note).slice(0, 1000) : null;
   }

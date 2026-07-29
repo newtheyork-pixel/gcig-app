@@ -358,6 +358,9 @@ struct ProjectFull: Decodable {
         let filename: String?
         let body: String?
         let note: String?
+        /// The handful that carry the argument. Absent on an older
+        /// payload, so it decodes as nil and reads as false.
+        let keyDoc: Bool?
         let createdAt: String?
         let uploadedBy: Person?
     }
@@ -2790,9 +2793,26 @@ private struct FilesTab: View {
             if artifacts.isEmpty {
                 PanelMessage(text: "Nothing attached yet.")
             } else {
-                ForEach(artifacts) { a in
-                    artifactRow(a)
+                // The server already sorts key documents first. They are
+                // separated under a heading as well, because a colour
+                // alone stops being a signal the moment a project has
+                // twenty files and you are scrolling past it.
+                let key = artifacts.filter { $0.keyDoc == true }
+                let rest = artifacts.filter { $0.keyDoc != true }
+                if !key.isEmpty {
+                    Text("KEY DOCUMENTS")
+                        .font(Term.mono(9, weight: .bold)).tracking(0.6)
+                        .foregroundStyle(Term.amber)
+                        .padding(.top, 2)
+                    ForEach(key) { a in artifactRow(a) }
+                    if !rest.isEmpty {
+                        Text("EVERYTHING ELSE")
+                            .font(Term.mono(9, weight: .bold)).tracking(0.6)
+                            .foregroundStyle(Term.fgMuted)
+                            .padding(.top, 8)
+                    }
                 }
+                ForEach(rest) { a in artifactRow(a) }
             }
         }
     }
@@ -2841,9 +2861,17 @@ private struct FilesTab: View {
     }
 
     private func artifactRow(_ a: ProjectFull.Artifact) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
+        let isKey = a.keyDoc == true
+        return HStack(alignment: .firstTextBaseline, spacing: 8) {
+            // The marker carries the meaning; the colour only makes it
+            // findable. Colour alone would say nothing to a reader who
+            // cannot tell amber from white on a projector.
+            Text(isKey ? "★" : " ")
+                .font(Term.mono(10)).foregroundStyle(Term.amber)
+                .frame(width: 10, alignment: .leading)
             Text((a.kind ?? "document").uppercased())
-                .font(Term.mono(9)).tracking(0.5).foregroundStyle(Term.fgMuted)
+                .font(Term.mono(9)).tracking(0.5)
+                .foregroundStyle(isKey ? Term.amber : Term.fgMuted)
                 .frame(width: 70, alignment: .leading)
             if a.body?.isEmpty == false {
                 Button { onOpenArtifact(a.id) } label: {
@@ -2856,13 +2884,23 @@ private struct FilesTab: View {
                 .onHover { $0 ? NSCursor.pointingHand.push() : NSCursor.pop() }
                 .help("Read in place")
             } else {
-                Text(a.title).font(Term.mono(11)).foregroundStyle(Term.white).lineLimit(1)
+                Text(a.title)
+                    .font(Term.mono(11, weight: isKey ? .bold : .regular))
+                    .foregroundStyle(isKey ? Term.amber : Term.white).lineLimit(1)
                 // A file with no text body has nothing to open here —
                 // say so instead of a link that silently does nothing.
                 Text("(file — open on the web terminal)")
                     .font(Term.mono(9)).foregroundStyle(Term.fgMuted)
             }
             Spacer(minLength: 6)
+            Button(isKey ? "unkey" : "key") {
+                let want = !isKey, aid = a.id
+                Task { await run {
+                    try await ResearchHTTP.patch("/research/artifacts/\(aid)", json: ["keyDoc": want])
+                } }
+            }
+            .buttonStyle(TermButtonStyle()).disabled(busy)
+            .help(isKey ? "Stop pinning this to the top" : "Pin to the top as a key document")
             Text(a.uploadedBy?.name ?? "")
                 .font(Term.mono(9)).foregroundStyle(Term.fgMuted)
             Text(Fmt.date(a.createdAt))

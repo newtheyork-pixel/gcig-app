@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
 import api from '../../api/client.js';
 import PDFModal from '../../components/PDFModal.jsx';
 
@@ -1614,10 +1614,27 @@ function Files({ project, onChanged, setFlash, onOpenDoc, focus, onFocused }) {
             <tr><th>Kind</th><th>Title</th><th>Added</th><th /></tr>
           </thead>
           <tbody>
-            {project.artifacts.map((a) => (
-              <tr key={a.id} ref={(el) => { rowRefs.current[a.id] = el; }}>
-                <td className="sym">{a.kind}</td>
-                <td>
+            {project.artifacts.map((a, i) => {
+              // The server sorts key documents first. The heading row is
+              // what makes that legible: colour alone stops being a
+              // signal the moment a project has twenty files, and it
+              // says nothing at all to a reader who cannot pick amber
+              // out from white.
+              const prev = project.artifacts[i - 1];
+              const startsRest = !a.keyDoc && (i === 0 ? false : !!prev?.keyDoc);
+              return (
+              <Fragment key={a.id}>
+              {i === 0 && a.keyDoc ? (
+                <tr><td colSpan={4} style={{ color: 'var(--term-amber, var(--term-white))', fontSize: 10, letterSpacing: 0.6, paddingTop: 4 }}>KEY DOCUMENTS</td></tr>
+              ) : null}
+              {startsRest ? (
+                <tr><td colSpan={4} style={{ color: 'var(--term-fg-muted)', fontSize: 10, letterSpacing: 0.6, paddingTop: 10 }}>EVERYTHING ELSE</td></tr>
+              ) : null}
+              <tr ref={(el) => { rowRefs.current[a.id] = el; }}>
+                <td className="sym" style={a.keyDoc ? { color: 'var(--term-amber, var(--term-white))' } : undefined}>
+                  {a.keyDoc ? '★ ' : ''}{a.kind}
+                </td>
+                <td style={a.keyDoc ? { color: 'var(--term-amber, var(--term-white))', fontWeight: 600 } : undefined}>
                   {a.fileRef ? (
                     <a
                       href="#"
@@ -1643,10 +1660,22 @@ function Files({ project, onChanged, setFlash, onOpenDoc, focus, onFocused }) {
                   )}
                 </td>
                 <td>{fmtDate(a.createdAt)}</td>
-                <td style={{ textAlign: 'right' }}>
+                <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
                   <a
                     href="#"
-                    style={{ color: 'var(--term-fg-muted)', fontSize: 10 }}
+                    style={{ color: a.keyDoc ? 'var(--term-amber, var(--term-white))' : 'var(--term-fg-muted)', fontSize: 10 }}
+                    title={a.keyDoc ? 'Stop pinning this to the top' : 'Pin to the top as a key document'}
+                    onClick={async (e) => {
+                      e.preventDefault();
+                      await api.patch(`/research/artifacts/${a.id}`, { keyDoc: !a.keyDoc }).catch(() => {});
+                      onChanged();
+                    }}
+                  >
+                    {a.keyDoc ? 'unkey' : 'key'}
+                  </a>
+                  <a
+                    href="#"
+                    style={{ color: 'var(--term-fg-muted)', fontSize: 10, marginLeft: 8 }}
                     onClick={async (e) => {
                       e.preventDefault();
                       await api.delete(`/research/artifacts/${a.id}`).catch(() => {});
@@ -1657,7 +1686,9 @@ function Files({ project, onChanged, setFlash, onOpenDoc, focus, onFocused }) {
                   </a>
                 </td>
               </tr>
-            ))}
+              </Fragment>
+              );
+            })}
           </tbody>
         </table>
       )}
