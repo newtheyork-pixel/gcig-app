@@ -3074,6 +3074,7 @@ function ReplyLog({ draft, target, replies, busy, onRun }) {
             {(REPLY_KINDS.find((k) => k[0] === f.kind) || [])[3]}
             {f.kind === 'Bounce' ? ' — saving this marks the target Unreachable.' : ''}
             {f.kind === 'Declined' ? ' — saving this marks the target Declined.' : ''}
+            {f.kind === 'Interested' ? ' — saving this marks the target Scheduled.' : ''}
           </div>
           <textarea
             style={{ ...termInput, resize: 'vertical', minHeight: 70, lineHeight: 1.5 }}

@@ -2076,11 +2076,12 @@ private struct DraftCard: View {
                         .help("When they replied, not when you are logging it")
                     Spacer()
                 }
-                // Said where the choice is made: two of these five move
+                // Said where the choice is made: three of these five move
                 // the target the moment they are saved.
                 Text((Self.replyKinds.first { $0.0 == replyKind }?.2 ?? "")
                      + (replyKind == "Bounce" ? " — saving this marks the target Unreachable." : "")
-                     + (replyKind == "Declined" ? " — saving this marks the target Declined." : ""))
+                     + (replyKind == "Declined" ? " — saving this marks the target Declined." : "")
+                     + (replyKind == "Interested" ? " — saving this marks the target Scheduled." : ""))
                     .font(Term.mono(9)).foregroundStyle(Term.fgMuted)
                 TextEditor(text: $replyBody)
                     .font(Term.mono(10)).foregroundStyle(Term.white)

@@ -1089,10 +1089,21 @@ const REPLY_KINDS = ['AutoReply', 'Bounce', 'Declined', 'Interested', 'Other'];
 // Only where the reply leaves no room for interpretation. A bounce means
 // the address is dead and a decline is a person saying no, so leaving
 // either on Contacted would keep a target in the follow-up queue that
-// nobody should follow up. AutoReply and Interested deliberately do NOT
-// move it: an out-of-office is still awaiting a real answer, and
-// "Scheduled" is a call that exists, not a warm sentence.
-const STATUS_FOR_KIND = { Bounce: 'Unreachable', Declined: 'Declined' };
+// nobody should follow up.
+//
+// Interested moves to Scheduled too. This first read the other way, on
+// the argument that Scheduled should mean a call in the diary rather
+// than a warm sentence, and Thomas overruled it after logging the first
+// yes and having to move the row by hand. The better argument is his:
+// somebody who has agreed to talk does not belong in the same bucket as
+// the twelve who have not answered, and the distinction between agreed
+// and booked is carried by the reply itself, which is sitting right
+// there under the email.
+//
+// AutoReply is the one kind that still moves nothing. An out-of-office
+// is not an answer, and a target whose only reply is a robot must stay
+// where it can be chased.
+const STATUS_FOR_KIND = { Bounce: 'Unreachable', Declined: 'Declined', Interested: 'Scheduled' };
 
 router.post('/targets/:id/replies', canResearch, async (req, res) => {
   const targetId = Number(req.params.id);
