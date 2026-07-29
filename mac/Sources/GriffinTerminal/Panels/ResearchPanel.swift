@@ -829,6 +829,7 @@ private struct ProjectDetail: View {
     @State private var openTargetID: Int?
     @State private var readerArtifactID: Int?
     @State private var readerInterviewID: Int?
+    @State private var query = ""
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -865,12 +866,29 @@ private struct ProjectDetail: View {
                 } else {
                     VStack(alignment: .leading, spacing: 0) {
                         headerBlock(p)
-                        tabBar(p)
-                        Divider().overlay(Term.border)
-                        ScrollView {
-                            tabContent(p)
+                        searchBar
+                        // Search reaches ACROSS the tabs, so it sits
+                        // above them and replaces the body while active.
+                        // Two answers on screen at once is how a reader
+                        // loses track of which one they are reading.
+                        if query.trimmingCharacters(in: .whitespaces).isEmpty {
+                            tabBar(p)
+                            Divider().overlay(Term.border)
+                            ScrollView {
+                                tabContent(p)
+                                    .padding(10)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                        } else {
+                            Divider().overlay(Term.border)
+                            ScrollView {
+                                SearchResultsView(project: p, query: query) { t in
+                                    tab = t
+                                    query = ""
+                                }
                                 .padding(10)
                                 .frame(maxWidth: .infinity, alignment: .leading)
+                            }
                         }
                     }
                 }
@@ -968,6 +986,31 @@ private struct ProjectDetail: View {
             if initial { state = .failed(error.localizedDescription) }
             else { err = error.localizedDescription }
         }
+    }
+
+    private var searchBar: some View {
+        HStack(spacing: 6) {
+            Text("/").font(Term.mono(12, weight: .bold)).foregroundStyle(Term.orange)
+            TextField("", text: $query,
+                      prompt: Text("Search everything in this project")
+                          .foregroundStyle(Term.fgMuted))
+                .textFieldStyle(.plain)
+                .font(Term.mono(11))
+                .foregroundStyle(Term.amber)
+                .onKeyPress(.escape) {
+                    if query.isEmpty { return .ignored }
+                    query = ""
+                    return .handled
+                }
+            if !query.isEmpty {
+                Button("clear") { query = "" }
+                    .buttonStyle(.plain)
+                    .font(Term.mono(9)).foregroundStyle(Term.fgMuted)
+            }
+        }
+        .padding(.horizontal, 10).padding(.vertical, 5)
+        .background(Term.bg)
+        .overlay(alignment: .bottom) { Rectangle().fill(Term.border).frame(height: 1) }
     }
 
     private func run(_ action: @escaping @MainActor @Sendable () async throws -> Void) async {
@@ -2796,5 +2839,168 @@ private struct ComplianceTab: View {
         if !(iv.consentObtained ?? false) { return "No consent to record was captured for this interview." }
         if iv.screenedAt == nil { return "This transcript has not been screened yet." }
         return "Risk is \((iv.mnpiRisk ?? "unknown").uppercased()) but no reason was recorded — this interview was screened before findings were stored. Re-screen it on the web before deciding."
+    }
+}
+
+// MARK: - Project search
+
+// One index over the whole project.
+//
+// A research project is eight tabs deep by the time it is any good, and
+// the thing you want is almost never on the tab you are looking at: a
+// name you half remember, a phrase from a transcript, which question a
+// claim was pinned to. Without this you open tabs until you find it,
+// which is how people stop using the evidence they gathered.
+//
+// Every row carries the tab it came from, so a hit is a door rather
+// than a readout.
+private struct SearchRow: Identifiable {
+    let id = UUID()
+    let tab: RTab
+    let kind: String
+    let title: String
+    let body: String
+    let meta: String
+
+    var tone: Color {
+        switch kind {
+        case "question":   return Term.amber
+        case "contact":    return Term.white
+        case "draft":      return Term.orange
+        case "interview", "visit", "observation": return Term.cyan
+        case "valuation":  return Term.positive
+        case "claim":      return Term.blue
+        default:            return Term.magenta
+        }
+    }
+}
+
+private func buildSearchIndex(_ p: ProjectFull) -> [SearchRow] {
+    var rows: [SearchRow] = []
+    func add(_ tab: RTab, _ kind: String, _ title: String?, _ body: String?, _ meta: String?) {
+        rows.append(SearchRow(tab: tab, kind: kind, title: title ?? "",
+                              body: body ?? "", meta: meta ?? ""))
+    }
+
+    for q in p.questions ?? [] { add(.questions, "question", q.text, q.rationale, q.status) }
+    for t in p.targets ?? [] {
+        add(.outreach, "contact", t.name,
+            [t.employer, t.email, t.notes].compactMap { $0 }.joined(separator: " · "), t.status)
+        for d in t.drafts ?? [] {
+            add(.outreach, "draft", "\(t.name): \(d.subject)", d.body, d.stage)
+        }
+    }
+    for i in p.interviews ?? [] { add(.interviews, "interview", i.title, i.transcript, i.source?.alias) }
+    for v in p.visits ?? [] {
+        add(.visits, "visit", v.location, v.notes, v.banner)
+        for o in v.siteObservations ?? [] { add(.visits, "observation", v.location, o.text, nil) }
+    }
+    for v in p.valuations ?? [] { add(.valuation, "valuation", v.name, v.note, v.kind) }
+    for c in p.claims ?? [] {
+        add(.ledger, "claim", c.text, c.quote,
+            [c.topic, c.stamp].compactMap { $0 }.joined(separator: " · "))
+    }
+    for a in p.artifacts ?? [] {
+        add(.files, "file", a.title, a.body, [a.kind, a.note].compactMap { $0 }.joined(separator: " · "))
+    }
+    return rows
+}
+
+private struct SearchResultsView: View {
+    let project: ProjectFull
+    let query: String
+    let onGo: (RTab) -> Void
+
+    /// Every term must appear. Multi-word search that ORs is search that
+    /// always matches, which is the same as no search at all.
+    private var terms: [String] {
+        query.lowercased().split(separator: " ").map(String.init).filter { !$0.isEmpty }
+    }
+
+    private var hits: [SearchRow] {
+        let t = terms
+        guard !t.isEmpty else { return [] }
+        return buildSearchIndex(project).filter { row in
+            let hay = "\(row.title) \(row.body) \(row.meta)".lowercased()
+            return t.allSatisfy { hay.contains($0) }
+        }
+    }
+
+    /// The line around the first hit, so a result explains itself rather
+    /// than making you open it to learn why it matched.
+    private func snippet(_ row: SearchRow) -> String {
+        let body = row.body
+        guard !body.isEmpty else { return "" }
+        let low = body.lowercased()
+        var at: String.Index?
+        for t in terms {
+            if let r = low.range(of: t), at == nil || r.lowerBound < at! { at = r.lowerBound }
+        }
+        guard let hit = at else { return String(body.prefix(140)) }
+        let start = body.index(hit, offsetBy: -40, limitedBy: body.startIndex) ?? body.startIndex
+        let end = body.index(hit, offsetBy: 120, limitedBy: body.endIndex) ?? body.endIndex
+        return (start > body.startIndex ? "…" : "") + body[start..<end].trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    var body: some View {
+        let rows = hits
+        if rows.isEmpty {
+            PanelMessage(text: "Nothing in this project matches \u{201C}\(query)\u{201D}. Searches every question, contact, draft, transcript, visit, valuation, claim and file.")
+        } else {
+            VStack(alignment: .leading, spacing: 10) {
+                Text("\(rows.count) match\(rows.count == 1 ? "" : "es") for \u{201C}\(query)\u{201D} · Escape to clear")
+                    .font(Term.mono(9)).foregroundStyle(Term.fgMuted)
+
+                // Grouped by tab rather than ranked: "three hits in
+                // Interviews, one in the Ledger" tells you something a
+                // flat list does not, and it matches the shape the
+                // reader already has in their head.
+                ForEach(RTab.allCases, id: \.self) { t in
+                    let group = rows.filter { $0.tab == t }
+                    if !group.isEmpty {
+                        VStack(alignment: .leading, spacing: 3) {
+                            HStack(spacing: 8) {
+                                SectionLabel(text: "\(t.rawValue) (\(group.count))")
+                                Button("open tab") { onGo(t) }
+                                    .buttonStyle(.plain)
+                                    .font(Term.mono(9)).foregroundStyle(Term.fgMuted)
+                            }
+                            ForEach(group.prefix(8)) { r in
+                                Button { onGo(t) } label: {
+                                    EdgeRow(tone: r.tone) {
+                                        VStack(alignment: .leading, spacing: 1) {
+                                            HStack(spacing: 8) {
+                                                Text(r.kind.uppercased())
+                                                    .font(Term.mono(9)).foregroundStyle(r.tone)
+                                                Text(r.title).font(Term.mono(11))
+                                                    .foregroundStyle(Term.white).lineLimit(1)
+                                                if !r.meta.isEmpty {
+                                                    Text(r.meta).font(Term.mono(9))
+                                                        .foregroundStyle(Term.fgMuted).lineLimit(1)
+                                                }
+                                                Spacer()
+                                            }
+                                            if !r.body.isEmpty {
+                                                Text(snippet(r)).font(Term.mono(10))
+                                                    .foregroundStyle(Term.fgDim).lineLimit(2)
+                                            }
+                                        }
+                                    }
+                                    .contentShape(Rectangle())
+                                }
+                                .buttonStyle(.plain)
+                            }
+                            if group.count > 8 {
+                                // Never a silent cap: a truncated list
+                                // that does not say so reads as the
+                                // whole answer.
+                                Text("and \(group.count - 8) more in \(t.rawValue) — open the tab for all of them")
+                                    .font(Term.mono(9)).foregroundStyle(Term.fgMuted)
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 }

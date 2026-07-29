@@ -254,6 +254,153 @@ function NewProject({ ticker, onDone }) {
   );
 }
 
+// One index over the whole project.
+//
+// A research project is eight tabs deep by the time it is any good, and
+// the thing you want is almost never on the tab you are looking at: a
+// name you half remember, a phrase from a transcript, which question a
+// claim was pinned to. Without this you open tabs until you find it,
+// which is how people stop using the evidence they gathered.
+//
+// Every row knows its tab, so a hit is a door rather than a readout.
+function buildIndex(p) {
+  const rows = [];
+  const add = (tab, kind, title, body, meta) =>
+    rows.push({ tab, kind, title: title || '', body: body || '', meta: meta || '' });
+
+  for (const qq of p.questions || [])
+    add('coverage', 'question', qq.text, qq.rationale, qq.status);
+  for (const t of p.targets || []) {
+    add('targets', 'contact', t.name, [t.employer, t.role, t.email, t.notes].filter(Boolean).join(' · '), t.status);
+    for (const d of t.drafts || [])
+      add('targets', 'draft', `${t.name}: ${d.subject}`, d.body, d.stage);
+  }
+  for (const i of p.interviews || [])
+    add('interviews', 'interview', i.title, i.transcript, i.source?.alias || '');
+  for (const v of p.visits || []) {
+    add('visits', 'visit', v.location, v.notes, v.banner || '');
+    for (const o of v.siteObservations || []) add('visits', 'observation', v.location, o.text, '');
+  }
+  for (const v of p.valuations || [])
+    add('valuation', 'valuation', v.name, [v.note, ...(v.rows || []).map((r) => `${r.label} ${r.value}`)].join(' · '), v.kind || '');
+  for (const c of p.claims || [])
+    add('ledger', 'claim', c.text, c.quote, [c.topic, c.stamp].filter(Boolean).join(' · '));
+  for (const a of p.artifacts || [])
+    add('files', 'file', a.title, a.body, [a.kind, a.note].filter(Boolean).join(' · '));
+  return rows;
+}
+
+// Every term must appear somewhere in the row. Multi-word search that
+// ORs is search that always matches, which is the same as no search.
+function matchRow(row, terms) {
+  const hay = `${row.title} ${row.body} ${row.meta}`.toLowerCase();
+  return terms.every((t) => hay.includes(t));
+}
+
+// The line around the first hit, so a result explains itself instead of
+// making you open it to find out why it matched.
+function snippet(row, terms) {
+  const body = row.body || '';
+  const low = body.toLowerCase();
+  let at = -1;
+  for (const t of terms) {
+    const i = low.indexOf(t);
+    if (i >= 0 && (at < 0 || i < at)) at = i;
+  }
+  if (at < 0) return body.slice(0, 140);
+  return (at > 40 ? '…' : '') + body.slice(Math.max(0, at - 40), at + 120).trim();
+}
+
+const KIND_TONE = {
+  question: 'var(--term-amber)', contact: 'var(--term-white)', draft: 'var(--term-orange)',
+  interview: 'var(--term-cyan)', visit: 'var(--term-cyan)', observation: 'var(--term-cyan)',
+  valuation: 'var(--term-positive)', claim: 'var(--term-blue)', file: 'var(--term-magenta)',
+};
+
+// Results, grouped by where they live.
+//
+// Grouping by tab rather than by relevance is deliberate: "three hits
+// in Interviews, one in the Ledger" tells you something about the
+// project that a flat ranked list does not, and it is the shape the
+// reader already has in their head.
+function SearchResults({ project, q, onGo }) {
+  const terms = q.toLowerCase().split(/\s+/).filter(Boolean);
+  const rows = buildIndex(project).filter((r) => matchRow(r, terms));
+
+  const TABS = [
+    ['coverage', 'Questions'], ['targets', 'Outreach'], ['interviews', 'Interviews'],
+    ['visits', 'Visits'], ['valuation', 'Valuation'], ['ledger', 'Ledger'], ['files', 'Files'],
+  ];
+
+  if (rows.length === 0) {
+    return (
+      <div className="term-loading" style={{ fontSize: 11 }}>
+        Nothing in this project matches “{q}”. Searches every question, contact, draft,
+        transcript, visit, valuation, claim and file.
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ display: 'grid', gap: 8 }}>
+      <div style={{ fontSize: 10, color: 'var(--term-fg-muted)' }}>
+        {rows.length} match{rows.length === 1 ? '' : 'es'} for “{q}” · press Escape to clear
+      </div>
+      {TABS.map(([key, label]) => {
+        const hits = rows.filter((r) => r.tab === key);
+        if (hits.length === 0) return null;
+        return (
+          <div key={key}>
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 2 }}>
+              <span style={{ fontSize: 10, letterSpacing: 0.6, color: 'var(--term-blue)' }}>
+                {label.toUpperCase()} ({hits.length})
+              </span>
+              <a href="#" onClick={(e) => { e.preventDefault(); onGo(key); }}
+                 style={{ fontSize: 10, color: 'var(--term-fg-muted)' }}>
+                open tab
+              </a>
+            </div>
+            {hits.slice(0, 8).map((r, i) => (
+              <div
+                key={i}
+                onClick={() => onGo(key)}
+                style={{
+                  borderLeft: `2px solid ${KIND_TONE[r.kind] || 'var(--term-border)'}`,
+                  paddingLeft: 8, marginBottom: 4, cursor: 'pointer',
+                }}
+              >
+                <div style={{ display: 'flex', gap: 8, alignItems: 'baseline' }}>
+                  <span style={{ fontSize: 9, color: KIND_TONE[r.kind], letterSpacing: 0.5 }}>
+                    {r.kind.toUpperCase()}
+                  </span>
+                  <span style={{ fontSize: 12, color: 'var(--term-white)' }}>
+                    {r.title.slice(0, 110)}
+                  </span>
+                  {r.meta ? (
+                    <span style={{ fontSize: 9, color: 'var(--term-fg-muted)' }}>{String(r.meta).slice(0, 40)}</span>
+                  ) : null}
+                </div>
+                {r.body ? (
+                  <div style={{ fontSize: 10, color: 'var(--term-fg-dim)', lineHeight: 1.4 }}>
+                    {snippet(r, terms)}
+                  </div>
+                ) : null}
+              </div>
+            ))}
+            {hits.length > 8 ? (
+              // Never a silent truncation: a capped list that does not
+              // say it is capped reads as the whole answer.
+              <div style={{ fontSize: 10, color: 'var(--term-fg-muted)', paddingLeft: 10 }}>
+                and {hits.length - 8} more in {label} — open the tab to see them all
+              </div>
+            ) : null}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function ProjectPane({ id, onBack }) {
   const [p, setP] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -261,6 +408,7 @@ function ProjectPane({ id, onBack }) {
   const [tab, setTab] = useState('coverage');
   const [flash, setFlash] = useState(null);
   const [doc, setDoc] = useState(null);
+  const [q, setQ] = useState('');
 
   const load = useCallback(() => {
     setLoading(true);
@@ -336,7 +484,33 @@ function ProjectPane({ id, onBack }) {
         </div>
       ) : null}
 
-      <div className="term-tabs">
+      {/* Search sits ABOVE the tabs because it reaches across them. */}
+      <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+        <span style={{ color: 'var(--term-orange)', fontSize: 12 }}>/</span>
+        <input
+          className="term-input"
+          style={{ flex: 1, fontSize: 12 }}
+          placeholder="Search everything in this project — a name, a phrase, a number"
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Escape') setQ(''); }}
+          spellCheck={false}
+        />
+        {q ? (
+          <a href="#" onClick={(e) => { e.preventDefault(); setQ(''); }}
+             style={{ fontSize: 10, color: 'var(--term-fg-muted)' }}>clear</a>
+        ) : null}
+      </div>
+
+      {q.trim() ? (
+        <SearchResults
+          project={p}
+          q={q}
+          onGo={(tab) => { setTab(tab); setQ(''); }}
+        />
+      ) : null}
+
+      <div className="term-tabs" style={q.trim() ? { opacity: 0.4 } : undefined}>
         {[
           // Counts on a tab should say where the work is, not how much
           // furniture is behind it. "Questions (31)" is the size of the
@@ -376,6 +550,7 @@ function ProjectPane({ id, onBack }) {
         ))}
       </div>
 
+      {q.trim() ? null : (<>
       {tab === 'coverage' ? <Coverage project={p} onChanged={load} /> : null}
       {tab === 'valuation' ? <Valuation project={p} onChanged={load} setFlash={setFlash} /> : null}
       {tab === 'targets' ? <Targets project={p} onChanged={load} /> : null}
@@ -388,6 +563,7 @@ function ProjectPane({ id, onBack }) {
       {tab === 'files' ? (
         <Files project={p} onChanged={load} setFlash={setFlash} onOpenDoc={setDoc} />
       ) : null}
+      </>)}
 
       <PDFModal
         url={doc?.url}
