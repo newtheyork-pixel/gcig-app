@@ -850,8 +850,14 @@ async function ytdPriceReturn(ticker, currentPrice) {
   const hit = ytdCache.get(ticker);
   if (hit && Date.now() - hit.at < YTD_TTL_MS) return hit.pct;
   try {
-    const hist = await getHistory(ticker, 'ytd');
-    const points = (hist?.points || []).filter((p) => p?.close != null);
+    // getHistory returns a plain ARRAY of bars. The { points: [...] }
+    // shape belongs to the /chart route, which maps them for the client
+    // — and reading hist.points here silently yielded undefined for
+    // every ticker, which the guard below then reported as "no usable
+    // history". The endpoint worked, the function worked, and the two
+    // were never speaking the same shape.
+    const bars = await getHistory(ticker, 'ytd');
+    const points = (Array.isArray(bars) ? bars : []).filter((b) => b?.close != null);
     if (points.length < 2) return null;
     // The first bar of the YTD window is the year's opening reference.
     const base = points[0].close;
