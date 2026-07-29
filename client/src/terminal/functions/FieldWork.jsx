@@ -2954,6 +2954,7 @@ function Drafts({ target, onChanged }) {
           key={d.id}
           d={d}
           target={target}
+          replies={(target.replies || []).filter((r) => r.draftId === d.id)}
           busy={busy}
           copied={copied === d.id}
           onCopy={() => copy(d)}
@@ -2964,7 +2965,151 @@ function Drafts({ target, onChanged }) {
   );
 }
 
-function DraftCard({ d, target, busy, copied, onCopy, onRun }) {
+// What came back, sitting under the email it answers.
+//
+// This lived in the target's notes field, which meant the reply to an
+// email was filed somewhere other than the email — findable only by
+// someone who already knew to look, and impossible to count. The states
+// here are not decoration: an out-of-office is not a no, a bounce is a
+// dead address, and a card that showed neither made silence and a
+// failed send look exactly alike.
+const REPLY_KINDS = [
+  ['Interested', 'INTERESTED', 'var(--term-positive)', 'They are willing to talk'],
+  ['Declined', 'DECLINED', 'var(--term-negative)', 'They said no. The target closes'],
+  ['Bounce', 'BOUNCED', 'var(--term-negative)', 'Dead address. The target becomes unreachable'],
+  ['AutoReply', 'AUTO-REPLY', 'var(--term-amber, var(--term-white))', 'Out of office. Nobody has read it yet, so this is still waiting'],
+  ['Other', 'OTHER', 'var(--term-fg-muted)', 'Anything that does not clearly fit'],
+];
+
+function ReplyLog({ draft, target, replies, busy, onRun }) {
+  const [adding, setAdding] = useState(false);
+  const [f, setF] = useState({ kind: 'AutoReply', receivedAt: '', body: '', action: '' });
+
+  // datetime-local wants local wall-clock, not an ISO instant.
+  function nowLocal() {
+    const d = new Date();
+    return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+  }
+
+  const real = replies.filter((r) => r.kind !== 'AutoReply');
+
+  return (
+    <div style={{ borderTop: '1px dashed var(--term-border)', paddingTop: 6, display: 'grid', gap: 6 }}>
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+        <span style={{ fontSize: 10, letterSpacing: 0.6, color: 'var(--term-white)' }}>REPLIES</span>
+        {!adding ? (
+          <TermButton onClick={() => { setAdding(true); setF({ kind: 'AutoReply', receivedAt: nowLocal(), body: '', action: '' }); }}>
+            Log a reply
+          </TermButton>
+        ) : null}
+      </div>
+
+      {/* Three different things, three different sentences. Sent-and-
+          silent is not the same as sent-and-answered, and an
+          out-of-office is neither. */}
+      {replies.length === 0 ? (
+        <div style={{ color: 'var(--term-fg-muted)', fontSize: 11 }}>
+          No reply yet. Sent {fmtDate(draft.sentAt)}.
+        </div>
+      ) : !real.length ? (
+        <div style={{ color: 'var(--term-amber, var(--term-white))', fontSize: 11 }}>
+          Only an automatic reply so far. Nobody has read this yet, so it is still waiting.
+        </div>
+      ) : null}
+
+      {replies.map((r) => {
+        const [, label, tone, help] = REPLY_KINDS.find((k) => k[0] === r.kind) || REPLY_KINDS[4];
+        return (
+          <div key={r.id} style={{ border: '1px solid var(--term-border)', padding: 6, display: 'grid', gap: 4 }}>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'baseline', flexWrap: 'wrap' }}>
+              <span style={{ fontSize: 10, letterSpacing: 0.5, color: tone }} title={help}>{label}</span>
+              <span style={{ fontSize: 10, color: 'var(--term-fg-muted)' }}>
+                {fmtDate(r.receivedAt)}
+                {r.recordedBy ? ` · logged by ${r.recordedBy.name}` : ''}
+              </span>
+              <span style={{ flex: 1 }} />
+              <a
+                href="#"
+                style={{ fontSize: 10 }}
+                onClick={(e) => { e.preventDefault(); onRun(() => api.delete(`/research/replies/${r.id}`)); }}
+              >
+                remove
+              </a>
+            </div>
+            {r.body ? (
+              <pre style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontFamily: 'inherit',
+                            fontSize: 11, lineHeight: 1.5, color: 'var(--term-fg-dim)', margin: 0,
+                            maxHeight: 200, overflowY: 'auto' }}>
+                {r.body}
+              </pre>
+            ) : null}
+            {r.action ? (
+              <div style={{ fontSize: 11, color: 'var(--term-white)' }}>→ {r.action}</div>
+            ) : null}
+          </div>
+        );
+      })}
+
+      {adding ? (
+        <div style={{ display: 'grid', gap: 6 }}>
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+            <select
+              style={{ ...termInput, flex: '0 0 170px' }}
+              value={f.kind}
+              onChange={(e) => setF({ ...f, kind: e.target.value })}
+            >
+              {REPLY_KINDS.map(([v, label]) => <option key={v} value={v}>{label}</option>)}
+            </select>
+            <input
+              type="datetime-local"
+              style={{ ...termInput, flex: '0 0 210px' }}
+              value={f.receivedAt}
+              onChange={(e) => setF({ ...f, receivedAt: e.target.value })}
+              title="When THEY replied, not when you are logging it"
+            />
+          </div>
+          {/* Said where the choice is made. Two of these five change the
+              target's status the moment they are saved. */}
+          <div style={{ fontSize: 10, color: 'var(--term-fg-muted)' }}>
+            {(REPLY_KINDS.find((k) => k[0] === f.kind) || [])[3]}
+            {f.kind === 'Bounce' ? ' — saving this marks the target Unreachable.' : ''}
+            {f.kind === 'Declined' ? ' — saving this marks the target Declined.' : ''}
+          </div>
+          <textarea
+            style={{ ...termInput, resize: 'vertical', minHeight: 70, lineHeight: 1.5 }}
+            placeholder="Paste what they wrote."
+            value={f.body}
+            onChange={(e) => setF({ ...f, body: e.target.value })}
+          />
+          <input
+            style={termInput}
+            placeholder="What we do about it (optional)"
+            value={f.action}
+            onChange={(e) => setF({ ...f, action: e.target.value })}
+          />
+          <div style={{ display: 'flex', gap: 6 }}>
+            <TermButton
+              disabled={busy || !f.receivedAt}
+              onClick={() => onRun(async () => {
+                await api.post(`/research/targets/${target.id}/replies`, {
+                  ...f,
+                  receivedAt: new Date(f.receivedAt).toISOString(),
+                  draftId: draft.id,
+                });
+                setAdding(false);
+              })}
+            >
+              Save reply
+            </TermButton>
+            <TermButton onClick={() => setAdding(false)}>Cancel</TermButton>
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function DraftCard({ d, target, replies = [], busy, copied, onCopy, onRun }) {
   const [editing, setEditing] = useState(false);
   const [f, setF] = useState({ subject: d.subject, body: d.body });
   const [note, setNote] = useState('');
@@ -3116,6 +3261,8 @@ function DraftCard({ d, target, busy, copied, onCopy, onRun }) {
           ) : null}
         </div>
       ) : null}
+
+      {d.sentAt ? <ReplyLog draft={d} target={target} replies={replies} busy={busy} onRun={onRun} /> : null}
 
       {rejecting ? (
         <div style={{ display: 'flex', gap: 6 }}>

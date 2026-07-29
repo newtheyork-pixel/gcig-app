@@ -55,64 +55,65 @@ enum LunchPeriod {
 }
 
 model User {
-  id                Int              @id @default(autoincrement())
-  name              String
-  email             String           @unique
+  id                        Int                   @id @default(autoincrement())
+  name                      String
+  email                     String                @unique
   // Nullable so Google-only signups don't need a local password. They can
   // set one later via the forgot-password flow if they want dual login.
-  passwordHash      String?
-  googleId          String?          @unique
-  role              Role
-  extraRoles        Role[]           @default([])
-  tokenVersion      Int              @default(0)
-  twoFactorSecret        String?
-  twoFactorEnabled       Boolean          @default(false) // any method active
-  twoFactorTotpEnabled   Boolean          @default(false)
-  twoFactorEmailEnabled  Boolean          @default(false)
-  twoFactorMethod        String?          // legacy — retained to backfill; unused
-  failedLogins           Int              @default(0)
-  lockedUntil            DateTime?
-  createdAt              DateTime         @default(now())
+  passwordHash              String?
+  googleId                  String?               @unique
+  role                      Role
+  extraRoles                Role[]                @default([])
+  tokenVersion              Int                   @default(0)
+  twoFactorSecret           String?
+  twoFactorEnabled          Boolean               @default(false) // any method active
+  twoFactorTotpEnabled      Boolean               @default(false)
+  twoFactorEmailEnabled     Boolean               @default(false)
+  twoFactorMethod           String? // legacy — retained to backfill; unused
+  failedLogins              Int                   @default(0)
+  lockedUntil               DateTime?
+  createdAt                 DateTime              @default(now())
   // Day-of-week lunch period schedule. JSON shape:
   //   { mon: "First"|"Second"|"Both"|null, tue: ..., wed: ..., thu: ..., fri: ... }
   // Surfaced on the "Request a Pitch" form so the requester can see when
   // the President / target PM is free for a lunch meeting.
-  lunchSchedule     Json?
-  attendance        Attendance[]
-  createdSessions   VotingSession[]  @relation("SessionCreator")
-  ballots           Ballot[]
-  industries        UserIndustry[]
-  ledIndustries     Industry[]       @relation("IndustryLeader")
-  pitchPresenters   PitchPresenter[]
-  backupCodes       BackupCode[]
-  twoFactorCodes    TwoFactorCode[]
-  knownLogins       KnownLogin[]
-  chatMessages      ChatMessage[]
-  aiChatSessions    AiChatSession[]
-  pitchRequests     PitchRequest[]   @relation("PitchRequestRequester")
-  presidentDecisions PitchRequest[]  @relation("PitchRequestPresident")
-  pmDecisions       PitchRequest[]   @relation("PitchRequestPM")
-  rosterOverrides   EventRosterOverride[]
-  tradeRequests     TradeRequest[]   @relation("TradeRequestCreator")
-  presidentReviewsGiven    PresidentReview[] @relation("PresidentReviewReviewer")
-  presidentReviewsReceived PresidentReview[] @relation("PresidentReviewPresident")
-  researchNotes            ResearchNote[]
-  researchSourcesCreated   ResearchSource[] @relation("ResearchSourceCreator")
-  interviewsConducted      Interview[]      @relation("InterviewInterviewer")
-  interviewsScreened       Interview[]      @relation("InterviewScreener")
-  interviewsAttested       Interview[]      @relation("InterviewAttester")
-  interviewsReviewed       Interview[]      @relation("InterviewReviewer")
-  researchClaimsVerified   ResearchClaim[]  @relation("ResearchClaimVerifier")
-  researchProjectsCreated  ResearchProject[]  @relation("ResearchProjectCreator")
-  researchValuations       ResearchValuation[] @relation("ResearchValuationAuthor")
-  researchArtifacts        ResearchArtifact[] @relation("ResearchArtifactUploader")
-  researchTargets          ResearchTarget[]   @relation("ResearchTargetCreator")
-  outreachDraftsWritten    OutreachDraft[]    @relation("OutreachDraftAuthor")
-  outreachDraftsRejected   OutreachDraft[]    @relation("OutreachDraftRejecter")
-  outreachDraftsSent       OutreachDraft[]    @relation("OutreachDraftSender")
-  outreachDraftsMinorEdited OutreachDraft[]   @relation("OutreachDraftMinorEditor")
-  outreachApprovals        OutreachApproval[] @relation("OutreachApprover")
-  siteVisits               SiteVisit[]        @relation("SiteVisitVisitor")
+  lunchSchedule             Json?
+  attendance                Attendance[]
+  createdSessions           VotingSession[]       @relation("SessionCreator")
+  ballots                   Ballot[]
+  industries                UserIndustry[]
+  ledIndustries             Industry[]            @relation("IndustryLeader")
+  pitchPresenters           PitchPresenter[]
+  backupCodes               BackupCode[]
+  twoFactorCodes            TwoFactorCode[]
+  knownLogins               KnownLogin[]
+  chatMessages              ChatMessage[]
+  aiChatSessions            AiChatSession[]
+  pitchRequests             PitchRequest[]        @relation("PitchRequestRequester")
+  presidentDecisions        PitchRequest[]        @relation("PitchRequestPresident")
+  pmDecisions               PitchRequest[]        @relation("PitchRequestPM")
+  rosterOverrides           EventRosterOverride[]
+  tradeRequests             TradeRequest[]        @relation("TradeRequestCreator")
+  presidentReviewsGiven     PresidentReview[]     @relation("PresidentReviewReviewer")
+  presidentReviewsReceived  PresidentReview[]     @relation("PresidentReviewPresident")
+  researchNotes             ResearchNote[]
+  researchSourcesCreated    ResearchSource[]      @relation("ResearchSourceCreator")
+  interviewsConducted       Interview[]           @relation("InterviewInterviewer")
+  interviewsScreened        Interview[]           @relation("InterviewScreener")
+  interviewsAttested        Interview[]           @relation("InterviewAttester")
+  interviewsReviewed        Interview[]           @relation("InterviewReviewer")
+  researchClaimsVerified    ResearchClaim[]       @relation("ResearchClaimVerifier")
+  researchProjectsCreated   ResearchProject[]     @relation("ResearchProjectCreator")
+  researchValuations        ResearchValuation[]   @relation("ResearchValuationAuthor")
+  researchArtifacts         ResearchArtifact[]    @relation("ResearchArtifactUploader")
+  researchTargets           ResearchTarget[]      @relation("ResearchTargetCreator")
+  outreachDraftsWritten     OutreachDraft[]       @relation("OutreachDraftAuthor")
+  outreachDraftsRejected    OutreachDraft[]       @relation("OutreachDraftRejecter")
+  outreachDraftsSent        OutreachDraft[]       @relation("OutreachDraftSender")
+  outreachDraftsMinorEdited OutreachDraft[]       @relation("OutreachDraftMinorEditor")
+  outreachApprovals         OutreachApproval[]    @relation("OutreachApprover")
+  outreachRepliesLogged     OutreachReply[]       @relation("OutreachReplyRecorder")
+  siteVisits                SiteVisit[]           @relation("SiteVisitVisitor")
 }
 
 // Chat channels are addressed by a simple string:
@@ -149,7 +150,7 @@ model TwoFactorCode {
   id        Int      @id @default(autoincrement())
   userId    Int
   codeHash  String
-  purpose   String   // 'setup' or 'login'
+  purpose   String // 'setup' or 'login'
   expiresAt DateTime
   createdAt DateTime @default(now())
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -188,45 +189,45 @@ model Industry {
 //   a plain http(s) URL (e.g. a Google Drive / Slides link the user pasted).
 // Submission requires a deck attached — empty deckRef is rejected.
 model PitchRequest {
-  id                    Int                @id @default(autoincrement())
-  requesterId           Int
-  requester             User               @relation("PitchRequestRequester", fields: [requesterId], references: [id], onDelete: Cascade)
-  ticker                String
-  companyName           String?
-  thesis                String?
-  industryId            Int?
-  industry              Industry?          @relation(fields: [industryId], references: [id], onDelete: SetNull)
+  id                     Int                @id @default(autoincrement())
+  requesterId            Int
+  requester              User               @relation("PitchRequestRequester", fields: [requesterId], references: [id], onDelete: Cascade)
+  ticker                 String
+  companyName            String?
+  thesis                 String?
+  industryId             Int?
+  industry               Industry?          @relation(fields: [industryId], references: [id], onDelete: SetNull)
   // Snapshot of the PM at submission time so we don't re-resolve on
   // approval/decline (industry leaders can change). Nullable because not
   // every industry has a leader assigned.
-  pmId                  Int?
-  pm                    User?              @relation("PitchRequestPM", fields: [pmId], references: [id], onDelete: SetNull)
+  pmId                   Int?
+  pm                     User?              @relation("PitchRequestPM", fields: [pmId], references: [id], onDelete: SetNull)
   // Proposed meeting date + lunch period so the President / PM can see
   // exactly when the requester wants to meet.
-  proposedDate          DateTime?
-  proposedLunch         LunchPeriod?
+  proposedDate           DateTime?
+  proposedLunch          LunchPeriod?
   // "HH:MM" 24h string. Validated server-side against the lunch-block
   // schedule so we never persist an out-of-range time.
-  proposedStartTime     String?
+  proposedStartTime      String?
   // LIBRARY / LOWER_COMMONS / ATHLETIC_COMMONS — validated server-side
   // against an allowlist (kept as a string so adding rooms is a code
   // change, not a migration).
-  room                  String?
-  notes                 String?
-  deckRef               String             // "onedrive:..." or http(s) URL
-  status                PitchRequestStatus @default(Pending)
-  presidentId           Int?
-  president             User?              @relation("PitchRequestPresident", fields: [presidentId], references: [id], onDelete: SetNull)
-  presidentDecidedAt    DateTime?
+  room                   String?
+  notes                  String?
+  deckRef                String // "onedrive:..." or http(s) URL
+  status                 PitchRequestStatus @default(Pending)
+  presidentId            Int?
+  president              User?              @relation("PitchRequestPresident", fields: [presidentId], references: [id], onDelete: SetNull)
+  presidentDecidedAt     DateTime?
   presidentDeclineReason String?
-  pmDecidedAt           DateTime?
-  pmApproved            Boolean?
-  pmDeclineReason       String?
+  pmDecidedAt            DateTime?
+  pmApproved             Boolean?
+  pmDeclineReason        String?
   // Flags so the requester sees an in-app notification once when the
   // status changes — same pattern as PitchPresenter.seenAt.
-  requesterSeenAt       DateTime?
-  createdAt             DateTime           @default(now())
-  updatedAt             DateTime           @updatedAt
+  requesterSeenAt        DateTime?
+  createdAt              DateTime           @default(now())
+  updatedAt              DateTime           @updatedAt
 
   @@index([status, createdAt])
   @@index([requesterId])
@@ -244,58 +245,58 @@ model UserIndustry {
 model PitchPresenter {
   pitchId    Int
   userId     Int
-  assignedAt DateTime @default(now())
+  assignedAt DateTime  @default(now())
   seenAt     DateTime?
-  pitch      Pitch    @relation(fields: [pitchId], references: [id], onDelete: Cascade)
-  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  pitch      Pitch     @relation(fields: [pitchId], references: [id], onDelete: Cascade)
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@id([pitchId, userId])
 }
 
 model Pitch {
-  id              Int              @id @default(autoincrement())
-  pitcherName     String
-  ticker          String
-  date            DateTime
-  location        String?
-  slideshowUrl    String?
-  industryId      Int?
-  industry        Industry?        @relation(fields: [industryId], references: [id], onDelete: SetNull)
+  id             Int              @id @default(autoincrement())
+  pitcherName    String
+  ticker         String
+  date           DateTime
+  location       String?
+  slideshowUrl   String?
+  industryId     Int?
+  industry       Industry?        @relation(fields: [industryId], references: [id], onDelete: SetNull)
   // What the club decided after the pitch: "Buy" = we bought, "NoBuy" = we
   // voted no, null = not voted / still pending.
-  votedOutcome    String?
-  createdAt       DateTime         @default(now())
-  votingSessions  VotingSession[]
-  presenters      PitchPresenter[]
+  votedOutcome   String?
+  createdAt      DateTime         @default(now())
+  votingSessions VotingSession[]
+  presenters     PitchPresenter[]
 }
 
 model VotingSession {
-  id         Int       @id @default(autoincrement())
-  ticker     String
-  title      String?
-  pitchId    Int?
-  pitch      Pitch?    @relation(fields: [pitchId], references: [id], onDelete: SetNull)
-  status     String    @default("open")
+  id          Int       @id @default(autoincrement())
+  ticker      String
+  title       String?
+  pitchId     Int?
+  pitch       Pitch?    @relation(fields: [pitchId], references: [id], onDelete: SetNull)
+  status      String    @default("open")
   // "buy"  → a pitch vote (Buy/Hold/Sell, proposed allocation).
   // "sell" → a vote to exit a holding we own (Sell/Hold, no amount).
-  kind       String    @default("buy")
+  kind        String    @default("buy")
   // How a Buy session sizes the trade. "average" (default) lets each
   // Buy voter propose a dollar figure and we trade the mean. "fixed"
   // pins the amount up front — the creator names the number and members
   // only ratify it (Buy = yes, No = Hold). Ignored for sell sessions.
-  amountMode  String   @default("average")
+  amountMode  String    @default("average")
   // The pinned dollar figure when amountMode = "fixed". Null otherwise.
   fixedAmount Float?
-  deadline   DateTime
-  createdAt  DateTime  @default(now())
-  createdBy  Int
-  creator    User      @relation("SessionCreator", fields: [createdBy], references: [id])
-  closedAt   DateTime?
+  deadline    DateTime
+  createdAt   DateTime  @default(now())
+  createdBy   Int
+  creator     User      @relation("SessionCreator", fields: [createdBy], references: [id])
+  closedAt    DateTime?
   // LLM-generated 2-3 sentence recap of the closed session: tally, who
   // supported, proposed allocation range, main concerns from notes.
   // Lazily filled the first time someone views the session after it closes.
-  synthesis  String?
-  ballots    Ballot[]
+  synthesis   String?
+  ballots     Ballot[]
 
   // DocuSign trade-confirmation linkage. Populated when an exec clicks
   // "Send trade confirmation" on a closed Buy session. We keep the
@@ -311,7 +312,7 @@ model VotingSession {
   // Trade requests that bundle this session into a multi-ticker envelope.
   // A Buy session is "claimed" once it appears as a non-Sell item on a
   // TradeRequest — the eligible-buys picker excludes claimed sessions.
-  tradeRequestItems    TradeRequestItem[]
+  tradeRequestItems TradeRequestItem[]
 
   @@index([createdAt])
 }
@@ -324,27 +325,27 @@ model VotingSession {
 // The single-session flow on VotingSession.docusign* still works for
 // legacy single-ticker sends; this model is the path going forward.
 model TradeRequest {
-  id                   Int      @id @default(autoincrement())
-  createdAt            DateTime @default(now())
-  createdBy            Int
-  creator              User     @relation("TradeRequestCreator", fields: [createdBy], references: [id])
+  id                  Int                @id @default(autoincrement())
+  createdAt           DateTime           @default(now())
+  createdBy           Int
+  creator             User               @relation("TradeRequestCreator", fields: [createdBy], references: [id])
   // Free-text exec note attached to the envelope (becomes part of the
   // email body). Optional.
-  note                 String?
+  note                String?
   // Frozen snapshot of what we sent — line items + per-line price +
   // grand total — so audits don't drift with later quote changes. Mirrors
   // VotingSession.docusignTradeContext.
-  tradeContext         Json?
-  docusignEnvelopeId   String?
-  docusignStatus       String?
-  docusignSentAt       DateTime?
-  docusignCompletedAt  DateTime?
+  tradeContext        Json?
+  docusignEnvelopeId  String?
+  docusignStatus      String?
+  docusignSentAt      DateTime?
+  docusignCompletedAt DateTime?
   // Settlement. Set when an exec marks the signed envelope as filled, which
   // writes the position + cash movements into the ledger. Null until then, and
   // the marker that makes execution idempotent (a request can't fill twice).
-  executedAt           DateTime?
-  executedByName       String?
-  items                TradeRequestItem[]
+  executedAt          DateTime?
+  executedByName      String?
+  items               TradeRequestItem[]
 
   @@index([createdAt])
 }
@@ -353,51 +354,51 @@ model TradeRequest {
 // no votingSessionId — they're standalone (typically Sell SPY to cover the
 // cash demand of the Buy lines).
 model TradeRequestItem {
-  id              Int           @id @default(autoincrement())
+  id              Int            @id @default(autoincrement())
   tradeRequestId  Int
-  tradeRequest    TradeRequest  @relation(fields: [tradeRequestId], references: [id], onDelete: Cascade)
-  kind            String        // "Buy" | "Sell"
+  tradeRequest    TradeRequest   @relation(fields: [tradeRequestId], references: [id], onDelete: Cascade)
+  kind            String // "Buy" | "Sell"
   ticker          String
   shares          Int
   pricePerShare   Float
   totalCost       Float
   votingSessionId Int?
   votingSession   VotingSession? @relation(fields: [votingSessionId], references: [id], onDelete: SetNull)
-  createdAt       DateTime      @default(now())
+  createdAt       DateTime       @default(now())
 
   @@index([tradeRequestId])
   @@index([votingSessionId])
 }
 
 model Ballot {
-  id               Int            @id @default(autoincrement())
+  id               Int           @id @default(autoincrement())
   sessionId        Int
-  session          VotingSession  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  session          VotingSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
   userId           Int
-  user             User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user             User          @relation(fields: [userId], references: [id], onDelete: Cascade)
   action           VoteAction
   // Required when action = Buy. Dollar amount the voter thinks the club
   // should allocate, constrained to $1,500–$10,000 at the API layer. Null
   // for Hold/Sell.
   investmentAmount Float?
   note             String?
-  castAt           DateTime       @default(now())
+  castAt           DateTime      @default(now())
 
   @@unique([sessionId, userId])
 }
 
 model Event {
-  id              Int          @id @default(autoincrement())
+  id              Int                   @id @default(autoincrement())
   title           String
   date            DateTime
   location        String?
   description     String?
-  durationMinutes Int          @default(60)
-  recurring       Boolean      @default(false)
+  durationMinutes Int                   @default(60)
+  recurring       Boolean               @default(false)
   // Audience scope. 'all' = visible to every member (default);
   // 'advisory' = tagged as an Advisory Board event. Used by the
   // Calendar filter button. Extend with other audiences later if needed.
-  audience        String       @default("all")
+  audience        String                @default("all")
   // Optional deck attached to the event — same scheme as Pitch.slideshowUrl
   // and Report.fileUrl: either an `onedrive:ITEM_ID` ref or a plain http(s)
   // URL (Google Slides, etc.). All members see a "View slideshow" link
@@ -405,7 +406,7 @@ model Event {
   slideshowUrl    String?
   attendance      Attendance[]
   rosterOverrides EventRosterOverride[]
-  createdAt       DateTime     @default(now())
+  createdAt       DateTime              @default(now())
 }
 
 // Per-event roster overrides set by the super admin. Two cases:
@@ -417,11 +418,11 @@ model Event {
 // Marking attendance on a user (POST /attendance) clears any "excluded"
 // override — they're definitely on the roster if they have a status.
 model EventRosterOverride {
-  eventId  Int
-  userId   Int
-  included Boolean
-  event    Event   @relation(fields: [eventId], references: [id], onDelete: Cascade)
-  user     User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  eventId   Int
+  userId    Int
+  included  Boolean
+  event     Event    @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   updatedAt DateTime @default(now()) @updatedAt
 
   @@id([eventId, userId])
@@ -631,10 +632,10 @@ model AiChatMessage {
   id        Int           @id @default(autoincrement())
   sessionId Int
   session   AiChatSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
-  role      String        // 'user' | 'assistant'
+  role      String // 'user' | 'assistant'
   content   String
   // Per-reply telemetry for abuse review / debugging. Null on user rows.
-  model     String?       // which provider served the turn
+  model     String? // which provider served the turn
   latencyMs Int?
   createdAt DateTime      @default(now())
 
@@ -647,15 +648,15 @@ model AiChatMessage {
 // Summaries are slow to produce (10-30s on the local GPU) so we
 // persist them and let the UI fetch cached results.
 model FileSummary {
-  id         Int      @id @default(autoincrement())
-  fileRef    String   @unique
-  filename   String?  // Captured at generation time for display
-  summary    String
-  model      String?  // Which provider generated it (for future invalidation)
-  charCount  Int?     // Size of the extracted text fed into the model
-  truncated  Boolean  @default(false) // True when the source doc exceeded our char cap
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
+  id        Int      @id @default(autoincrement())
+  fileRef   String   @unique
+  filename  String? // Captured at generation time for display
+  summary   String
+  model     String? // Which provider generated it (for future invalidation)
+  charCount Int? // Size of the extracted text fed into the model
+  truncated Boolean  @default(false) // True when the source doc exceeded our char cap
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 // OAuth tokens for file-storage providers (currently: OneDrive via
@@ -671,7 +672,7 @@ model FileProviderToken {
   refreshToken String
   expiresAt    DateTime
   scope        String?
-  email        String?  // Which account the tokens are bound to — displayed in admin.
+  email        String? // Which account the tokens are bound to — displayed in admin.
   updatedAt    DateTime @updatedAt
   createdAt    DateTime @default(now())
 }
@@ -730,18 +731,18 @@ model SeaSnapshot {
 // reviewer × president × cycle; resubmitting upserts. Results are
 // visible to the super-admin only, including the per-reviewer breakdown.
 model PresidentReview {
-  id           Int      @id @default(autoincrement())
-  reviewerId   Int
-  reviewer     User     @relation("PresidentReviewReviewer", fields: [reviewerId], references: [id], onDelete: Cascade)
-  presidentId  Int
-  president    User     @relation("PresidentReviewPresident", fields: [presidentId], references: [id], onDelete: Cascade)
+  id          Int      @id @default(autoincrement())
+  reviewerId  Int
+  reviewer    User     @relation("PresidentReviewReviewer", fields: [reviewerId], references: [id], onDelete: Cascade)
+  presidentId Int
+  president   User     @relation("PresidentReviewPresident", fields: [presidentId], references: [id], onDelete: Cascade)
   // Academic-year string, e.g. "2025-2026". Computed server-side from
   // the submission date so members don't have to think about it.
-  cycle        String
-  ratings      Json
-  comment      String?
-  submittedAt  DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  cycle       String
+  ratings     Json
+  comment     String?
+  submittedAt DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 
   @@unique([reviewerId, presidentId, cycle])
   @@index([presidentId, cycle])
@@ -835,7 +836,7 @@ model ResearchNote {
 // company — which is what governs the MNPI risk — belongs to the person,
 // not to any one conversation.
 model ResearchSource {
-  id           Int      @id @default(autoincrement())
+  id           Int              @id @default(autoincrement())
   // How we refer to them in reports. Sources are often promised
   // anonymity, so the alias is the citable identity and `fullName`
   // stays internal.
@@ -849,12 +850,12 @@ model ResearchSource {
   // is the high-risk one — see Interview.mnpiRisk.
   relationship String
   // Tickers this person can credibly speak to.
-  tickers      String[] @default([])
+  tickers      String[]         @default([])
   notes        String?
   createdById  Int?
-  createdBy    User?    @relation("ResearchSourceCreator", fields: [createdById], references: [id], onDelete: SetNull)
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  createdBy    User?            @relation("ResearchSourceCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
   interviews   Interview[]
   targets      ResearchTarget[]
 
@@ -864,7 +865,7 @@ model ResearchSource {
 // One conversation. Holds the recording reference, the diarized
 // transcript, and the compliance record for the call.
 model Interview {
-  id            Int      @id @default(autoincrement())
+  id            Int            @id @default(autoincrement())
   sourceId      Int
   source        ResearchSource @relation(fields: [sourceId], references: [id], onDelete: Restrict)
   // The company under study. Nullable for industry-level calls that
@@ -873,16 +874,16 @@ model Interview {
   title         String
   conductedAt   DateTime
   interviewerId Int?
-  interviewer   User?    @relation("InterviewInterviewer", fields: [interviewerId], references: [id], onDelete: SetNull)
+  interviewer   User?          @relation("InterviewInterviewer", fields: [interviewerId], references: [id], onDelete: SetNull)
 
   // Draft | Recorded | Transcribed | Extracted | Quarantined
-  status        String   @default("Draft")
+  status String @default("Draft")
 
   // "onedrive:ITEM_ID" — the audio, stored the same way every other
   // member upload is.
-  recordingRef  String?
+  recordingRef    String?
   // Plain reading copy of the transcript.
-  transcript    String?
+  transcript      String?
   // The diarized word stream from scribe_v2: [{text, startMs, endMs,
   // speaker}]. This is the evidence of record — claims index into it by
   // offset, so it is written once and never edited in place. A
@@ -890,55 +891,55 @@ model Interview {
   transcriptWords Json?
   // Which scribe model produced it, for later re-runs.
   transcriptModel String?
-  durationMs    Int?
+  durationMs      Int?
 
   // ── Compliance ──
   // Recording someone without consent is both unlawful in two-party
   // states and fatal to a source relationship. No transcript is
   // accepted for an interview without this set.
-  consentObtained Boolean @default(false)
+  consentObtained Boolean   @default(false)
   consentNote     String?
   // low | elevated | prohibited. Elevated is the default for anyone
   // still inside the company; prohibited quarantines the interview so
   // its claims can never be cited.
-  mnpiRisk        String  @default("low")
+  mnpiRisk        String    @default("low")
   screenedAt      DateTime?
   screenedById    Int?
-  screenedBy      User?   @relation("InterviewScreener", fields: [screenedById], references: [id], onDelete: SetNull)
+  screenedBy      User?     @relation("InterviewScreener", fields: [screenedById], references: [id], onDelete: SetNull)
   // Set when an interview is judged to contain material non-public
   // information. Quarantined interviews stay in the archive for the
   // audit trail but are excluded from every claim query.
-  quarantined     Boolean @default(false)
+  quarantined     Boolean   @default(false)
   quarantineNote  String?
 
   // Pre-call attestation. The screen catches MNPI after the fact; this
   // is the part that shapes the conversation before it happens, which is
   // where compliance actually works. Recorded per interview because it
   // is a statement about THAT call, not a setting.
-  attestedAt      DateTime?
-  attestedById    Int?
-  attestedBy      User?     @relation("InterviewAttester", fields: [attestedById], references: [id], onDelete: SetNull)
+  attestedAt   DateTime?
+  attestedById Int?
+  attestedBy   User?     @relation("InterviewAttester", fields: [attestedById], references: [id], onDelete: SetNull)
   // A person's decision after reading a flagged transcript. Distinct
   // from the automated screen: a machine flag that nobody has looked at
   // is an open question, not a judgement.
-  reviewedAt      DateTime?
-  reviewedById    Int?
-  reviewedBy      User?     @relation("InterviewReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)
-  reviewNote      String?
+  reviewedAt   DateTime?
+  reviewedById Int?
+  reviewedBy   User?     @relation("InterviewReviewer", fields: [reviewedById], references: [id], onDelete: SetNull)
+  reviewNote   String?
   // What the screen actually found: its reason and the phrases that
   // tripped it. Without this the panel can only say "elevated" and has
   // to ask a person what they think, which inverts the job — the model
   // is supposed to do the catching.
-  screenResult    Json?
+  screenResult Json?
 
   // Nullable on purpose: a one-off call, or one logged before anyone
   // opened a project, is still a real interview.
-  projectId     Int?
-  project       ResearchProject? @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  projectId Int?
+  project   ResearchProject? @relation(fields: [projectId], references: [id], onDelete: SetNull)
 
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
-  claims        ResearchClaim[]
+  createdAt DateTime        @default(now())
+  updatedAt DateTime        @updatedAt
+  claims    ResearchClaim[]
 
   @@index([ticker, conductedAt(sort: Desc)])
   @@index([sourceId])
@@ -950,45 +951,45 @@ model Interview {
 // report cites. `startMs`/`endMs` index into the parent interview's
 // transcriptWords, which is why that column is immutable.
 model ResearchClaim {
-  id          Int      @id @default(autoincrement())
-  interviewId Int
-  interview   Interview @relation(fields: [interviewId], references: [id], onDelete: Cascade)
-  ticker      String?
+  id                   Int               @id @default(autoincrement())
+  interviewId          Int
+  interview            Interview         @relation(fields: [interviewId], references: [id], onDelete: Cascade)
+  ticker               String?
   // The assertion in the speaker's own words where possible.
-  text        String
+  text                 String
   // Verbatim supporting quote, for the footnote.
-  quote       String?
-  speaker     String?
-  startMs     Int
-  endMs       Int?
+  quote                String?
+  speaker              String?
+  startMs              Int
+  endMs                Int?
   // Short normalized subject ("rebate structure", "store traffic") so
   // claims from different interviews can be triangulated against each
   // other.
-  topic       String?
+  topic                String?
   // fact | opinion | forecast. A forecast from a distributor is not the
   // same kind of evidence as a fact about their own invoices, and a
   // report should never blur them.
-  kind        String   @default("fact")
+  kind                 String            @default("fact")
   // 0.0-1.0, the extractor's confidence that the claim is faithfully
   // pulled from the transcript. NOT a judgement of whether it is true.
   extractionConfidence Float?
   // Which project question this bears on. Nullable — plenty of good
   // material answers something nobody thought to ask, and forcing every
   // claim into a pre-written bucket would quietly discard it.
-  questionId  Int?
-  question    ResearchQuestion? @relation(fields: [questionId], references: [id], onDelete: SetNull)
+  questionId           Int?
+  question             ResearchQuestion? @relation(fields: [questionId], references: [id], onDelete: SetNull)
   // How this claim came to exist: "extract" from the general sweep of a
   // transcript, "answer-scan" from reading it against one question.
   // Re-extraction wipes and rewrites what the extractor produced, and
   // without this it would take the scan's findings with it — silently,
   // along with every question link on them. Two different ways of
   // reading the same tape, and only one of them owns those rows.
-  origin      String   @default("extract")
+  origin               String            @default("extract")
   // Set by a human who has listened back and agreed the pin is right.
-  verifiedById Int?
-  verifiedBy   User?   @relation("ResearchClaimVerifier", fields: [verifiedById], references: [id], onDelete: SetNull)
-  verifiedAt   DateTime?
-  createdAt   DateTime @default(now())
+  verifiedById         Int?
+  verifiedBy           User?             @relation("ResearchClaimVerifier", fields: [verifiedById], references: [id], onDelete: SetNull)
+  verifiedAt           DateTime?
+  createdAt            DateTime          @default(now())
 
   @@index([ticker, topic])
   @@index([interviewId])
@@ -1028,12 +1029,12 @@ model ResearchProject {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  interviews  Interview[]
-  artifacts   ResearchArtifact[]
-  questions   ResearchQuestion[]
-  targets     ResearchTarget[]
-  visits      SiteVisit[]
-  valuations  ResearchValuation[]
+  interviews Interview[]
+  artifacts  ResearchArtifact[]
+  questions  ResearchQuestion[]
+  targets    ResearchTarget[]
+  visits     SiteVisit[]
+  valuations ResearchValuation[]
 
   @@index([ticker, updatedAt(sort: Desc)])
   @@index([status])
@@ -1044,28 +1045,28 @@ model ResearchProject {
 // project artifact as a PDF they dragged over, and forcing the second
 // shape on the first just makes people keep scripts in Notes instead.
 model ResearchArtifact {
-  id          Int      @id @default(autoincrement())
+  id           Int             @id @default(autoincrement())
   // Owner-only when set: the artifact is filtered out of every read
   // path except the super admin's. Used for material the club holds but
   // should not circulate — a transcription of somebody else's
   // copyrighted research being the case that prompted it.
-  ownerOnly   Boolean  @default(false)
-  projectId   Int
-  project     ResearchProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  ownerOnly    Boolean         @default(false)
+  projectId    Int
+  project      ResearchProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
   // guide | script | document | data | photo | memo | other. A string,
   // so adding a category is a code change rather than a migration.
-  kind        String   @default("document")
-  title       String
+  kind         String          @default("document")
+  title        String
   // "onedrive:ITEM_ID" for uploads; null for inline text.
-  fileRef     String?
-  filename    String?
+  fileRef      String?
+  filename     String?
   // Inline text, for guides and memos written in the app.
-  body        String?
-  note        String?
+  body         String?
+  note         String?
   uploadedById Int?
-  uploadedBy  User?    @relation("ResearchArtifactUploader", fields: [uploadedById], references: [id], onDelete: SetNull)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  uploadedBy   User?           @relation("ResearchArtifactUploader", fields: [uploadedById], references: [id], onDelete: SetNull)
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
 
   @@index([projectId, kind])
 }
@@ -1080,7 +1081,7 @@ model ResearchArtifact {
 // claim and observation links back to one, which is what makes coverage
 // computable: answered, thin, or still open.
 model ResearchQuestion {
-  id        Int      @id @default(autoincrement())
+  id        Int             @id @default(autoincrement())
   projectId Int
   project   ResearchProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
   text      String
@@ -1088,13 +1089,13 @@ model ResearchQuestion {
   // list becoming trivia.
   rationale String?
   // Display order; the questions that decide the thesis go first.
-  rank      Int      @default(0)
+  rank      Int             @default(0)
   // Open | Answered | Abandoned. Set by a human, not inferred: evidence
   // volume is not the same as being satisfied, and only a person should
   // decide a question is closed.
-  status    String   @default("Open")
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  status    String          @default("Open")
+  createdAt DateTime        @default(now())
+  updatedAt DateTime        @updatedAt
 
   claims       ResearchClaim[]
   observations SiteObservation[]
@@ -1111,47 +1112,48 @@ model ResearchQuestion {
 // list with people who never replied, or lose the record of everyone we
 // failed to reach — which is itself a finding about a company.
 model ResearchTarget {
-  id           Int      @id @default(autoincrement())
-  projectId    Int
-  project      ResearchProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  name         String
+  id            Int             @id @default(autoincrement())
+  projectId     Int
+  project       ResearchProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  name          String
   // Where they sit in the value chain: FormerEmployee, Distributor,
   // Customer, Supplier, Competitor, Landlord, IndustryExpert, Other.
-  relationship String
-  employer     String?
-  role         String?
+  relationship  String
+  employer      String?
+  role          String?
   // How we might reach them, kept deliberately vague-friendly — often
   // "via LinkedIn" or "Sarah's old colleague" rather than an address.
-  channel      String?
+  channel       String?
   // The address, on its own, when we actually have one. Kept out of
   // `channel` because a mailto link cannot be built from "LinkedIn, or
   // ask Sarah" and a list you cannot click is a list nobody works.
-  email        String?
+  email         String?
   // Call order. An outreach list is not a set, it is a queue — the
   // whole question on a given afternoon is who to ring first, and a
   // table sorted by insertion time answers a question nobody asked.
   // Null sorts last, so an unranked name is still visible.
-  priority     Int?
+  priority      Int?
   // A short badge for whatever cut actually matters on this project.
   // Deliberately free text: `relationship` says how someone touches the
   // business, which is not the same as what they can tell us. On CHRW
   // two former employees are both FormerEmployee, but one left during
   // the headcount reduction and one left six years before it — they
   // answer different questions and must not be worked as one bucket.
-  tier         String?
+  tier          String?
   // Identified | Contacted | Scheduled | Completed | Declined | Unreachable
-  status       String   @default("Identified")
+  status        String          @default("Identified")
   // Set once outreach converts, so a completed target points at the
   // source record it became.
-  sourceId     Int?
-  source       ResearchSource? @relation(fields: [sourceId], references: [id], onDelete: SetNull)
-  notes        String?
+  sourceId      Int?
+  source        ResearchSource? @relation(fields: [sourceId], references: [id], onDelete: SetNull)
+  notes         String?
   lastContactAt DateTime?
-  createdById  Int?
-  createdBy    User?    @relation("ResearchTargetCreator", fields: [createdById], references: [id], onDelete: SetNull)
-  drafts       OutreachDraft[]
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  createdById   Int?
+  createdBy     User?           @relation("ResearchTargetCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  drafts        OutreachDraft[]
+  replies       OutreachReply[]
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
 
   @@index([projectId, status])
 }
@@ -1188,15 +1190,15 @@ model ResearchTarget {
 // notes: what we actually said to someone is evidence, and the record
 // of who signed off on it is the point of the exercise.
 model OutreachDraft {
-  id           Int      @id @default(autoincrement())
-  targetId     Int
-  target       ResearchTarget @relation(fields: [targetId], references: [id], onDelete: Cascade)
-  subject      String
-  body         String
-  authorId     Int?
-  author       User?    @relation("OutreachDraftAuthor", fields: [authorId], references: [id], onDelete: SetNull)
+  id       Int            @id @default(autoincrement())
+  targetId Int
+  target   ResearchTarget @relation(fields: [targetId], references: [id], onDelete: Cascade)
+  subject  String
+  body     String
+  authorId Int?
+  author   User?          @relation("OutreachDraftAuthor", fields: [authorId], references: [id], onDelete: SetNull)
 
-  approvals    OutreachApproval[]
+  approvals OutreachApproval[]
 
   // The compliance read, re-run on every edit because it is the WORDS
   // that were screened, exactly as with approvals.
@@ -1208,14 +1210,14 @@ model OutreachDraft {
   screenRisk     String?
   screenReason   String?
   screenFindings Json?
-  screenModelOk  Boolean  @default(false)
+  screenModelOk  Boolean   @default(false)
   screenedAt     DateTime?
 
   // A rejection is as much a record as an approval — "we decided not to
   // send this, and why" is worth keeping. One rejection parks the draft
   // until it is edited, which clears it along with the approvals.
   rejectedById Int?
-  rejectedBy   User?    @relation("OutreachDraftRejecter", fields: [rejectedById], references: [id], onDelete: SetNull)
+  rejectedBy   User?     @relation("OutreachDraftRejecter", fields: [rejectedById], references: [id], onDelete: SetNull)
   rejectedAt   DateTime?
   reviewNote   String?
 
@@ -1231,30 +1233,69 @@ model OutreachDraft {
   // approver can see what happened to the thing they signed.
   minorEditAt   DateTime?
   minorEditById Int?
-  minorEditBy   User?    @relation("OutreachDraftMinorEditor", fields: [minorEditById], references: [id], onDelete: SetNull)
+  minorEditBy   User?     @relation("OutreachDraftMinorEditor", fields: [minorEditById], references: [id], onDelete: SetNull)
   minorEditNote String?
 
-  sentAt       DateTime?
-  sentById     Int?
-  sentBy       User?    @relation("OutreachDraftSender", fields: [sentById], references: [id], onDelete: SetNull)
+  sentAt   DateTime?
+  sentById Int?
+  sentBy   User?     @relation("OutreachDraftSender", fields: [sentById], references: [id], onDelete: SetNull)
 
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  replies OutreachReply[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([targetId, createdAt])
+}
+
+// What came back.
+//
+// A row rather than a line in the target's notes, because the states
+// this distinguishes are the ones that decide the next move and none of
+// them can be counted as prose. Silence, an out-of-office, a dead
+// address and an actual no all look identical in a notes field, and
+// only one of them means stop. The funnel has been honest about who we
+// wrote to since the send gate landed; without this it still could not
+// say who ANSWERED, and "13 contacted" would quietly read as progress
+// on a week where twelve of them bounced.
+//
+// receivedAt is when THEY replied, not when we typed it in: the log is
+// evidence about their behaviour and back-dating it by a day of
+// bookkeeping would distort every follow-up interval measured off it.
+model OutreachReply {
+  id           Int            @id @default(autoincrement())
+  targetId     Int
+  target       ResearchTarget @relation(fields: [targetId], references: [id], onDelete: Cascade)
+  // The draft it answers, when we know. Nullable and SetNull because a
+  // reply can arrive on a forwarded thread, or long after, and losing
+  // the draft must never delete the record that somebody responded.
+  draftId      Int?
+  draft        OutreachDraft? @relation(fields: [draftId], references: [id], onDelete: SetNull)
+  // AutoReply | Bounce | Declined | Interested | Other
+  kind         String
+  receivedAt   DateTime
+  body         String?
+  // What we decided to do about it, which is the part a reader needs
+  // three weeks later when the reply itself is no longer surprising.
+  action       String?
+  recordedById Int?
+  recordedBy   User?          @relation("OutreachReplyRecorder", fields: [recordedById], references: [id], onDelete: SetNull)
+  createdAt    DateTime       @default(now())
+
+  @@index([targetId, receivedAt])
 }
 
 // One person signing off on one draft. The unique constraint is the
 // control: without it "two approvals" is a counter anybody can run up
 // on their own, and the whole gate reduces to clicking twice.
 model OutreachApproval {
-  id        Int      @id @default(autoincrement())
+  id        Int           @id @default(autoincrement())
   draftId   Int
   draft     OutreachDraft @relation(fields: [draftId], references: [id], onDelete: Cascade)
   userId    Int
-  user      User     @relation("OutreachApprover", fields: [userId], references: [id], onDelete: Cascade)
+  user      User          @relation("OutreachApprover", fields: [userId], references: [id], onDelete: Cascade)
   note      String?
-  createdAt DateTime @default(now())
+  createdAt DateTime      @default(now())
 
   @@unique([draftId, userId])
 }
@@ -1263,28 +1304,28 @@ model OutreachApproval {
 // asking. For a retail name this is most of the fieldwork: what is on
 // the shelf, what it costs, how busy it is, how many staff are on.
 model SiteVisit {
-  id          Int      @id @default(autoincrement())
-  projectId   Int
-  project     ResearchProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  ticker      String?
+  id           Int             @id @default(autoincrement())
+  projectId    Int
+  project      ResearchProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  ticker       String?
   // "Target #1247, Atlantic Terminal, Brooklyn" — whatever identifies
   // the location well enough to go back.
-  location    String
-  banner      String?
-  visitedAt   DateTime
-  visitorId   Int?
-  visitor     User?    @relation("SiteVisitVisitor", fields: [visitorId], references: [id], onDelete: SetNull)
+  location     String
+  banner       String?
+  visitedAt    DateTime
+  visitorId    Int?
+  visitor      User?           @relation("SiteVisitVisitor", fields: [visitorId], references: [id], onDelete: SetNull)
   // Structured template answers: shelf state, promo depth, staffing,
   // traffic count, stock gaps. JSON because the useful template differs
   // by sector, and a column per field would freeze it to retail.
   observations Json?
-  notes       String?
-  weather     String?
+  notes        String?
+  weather      String?
   // Day of week and hour matter enormously for retail traffic reads — a
   // Tuesday 11am count says nothing about a Saturday.
-  dayPart     String?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  dayPart      String?
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
 
   siteObservations SiteObservation[]
 
@@ -1298,18 +1339,18 @@ model SiteVisit {
 // but it has no recording to walk back to. Keeping them separate lets
 // coverage count both while never blurring where a fact came from.
 model SiteObservation {
-  id         Int      @id @default(autoincrement())
+  id         Int               @id @default(autoincrement())
   visitId    Int
-  visit      SiteVisit @relation(fields: [visitId], references: [id], onDelete: Cascade)
+  visit      SiteVisit         @relation(fields: [visitId], references: [id], onDelete: Cascade)
   questionId Int?
   question   ResearchQuestion? @relation(fields: [questionId], references: [id], onDelete: SetNull)
   text       String
   topic      String?
   // measurement | condition | pricing | traffic | assortment | other
-  kind       String   @default("condition")
+  kind       String            @default("condition")
   // Photographic backup, as an artifact reference.
   artifactId Int?
-  createdAt  DateTime @default(now())
+  createdAt  DateTime          @default(now())
 
   @@index([visitId])
   @@index([questionId])
@@ -1330,22 +1371,22 @@ model SiteObservation {
 // nobody's number at all. Keeping both in one project makes the
 // difference visible instead of letting them look alike in a model.
 model ResearchValuation {
-  id          Int      @id @default(autoincrement())
-  projectId   Int
-  project     ResearchProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  ticker      String?
+  id           Int             @id @default(autoincrement())
+  projectId    Int
+  project      ResearchProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  ticker       String?
   // dcf | merger | comps | other. A merger model asks different
   // questions of the same company — what multiple was paid, not what the
   // cash flows are worth — so the kind changes which assumptions the UI
   // asks for.
-  kind        String   @default("dcf")
-  name        String
+  kind         String          @default("dcf")
+  name         String
   // The three cases. Nullable because a model in progress has a base
   // long before it has a defensible bear, and forcing a placeholder in
   // would put a made-up number where a missing one belongs.
-  bear        Float?
-  base        Float?
-  bull        Float?
+  bear         Float?
+  base         Float?
+  bull         Float?
   // Share price the targets were struck against, so an upside figure
   // stays honest as the market moves.
   priceAtWrite Float?
@@ -1353,37 +1394,37 @@ model ResearchValuation {
   // registered share; rendering that with a dollar sign is not a
   // cosmetic slip, it is a different number. Defaults to USD because
   // most of the book is, but it is stored rather than assumed.
-  currency    String   @default("USD")
+  currency     String          @default("USD")
   // The price we would actually want to be told about. A valuation that
   // concludes the shares are worth more than they cost is an opinion
   // until somebody is watching the gap close — and nobody refreshes a
   // quote daily for a name they do not own.
-  buyBelow    Float?
+  buyBelow     Float?
   // Set when the level was last announced, so a name that sits below it
   // for a fortnight is reported once rather than every morning. Cleared
   // when it climbs back above, so the NEXT crossing is news again.
-  alertedAt   DateTime?
+  alertedAt    DateTime?
   // A model is only good until the facts under it move. Set to the next
   // reporting date, this is what makes the panel say a valuation is
   // stale rather than letting a March DCF look current in August.
-  reviewBy    DateTime?
+  reviewBy     DateTime?
   // Who gets told when the level is hit. Email addresses rather than
   // user ids, and stored on the valuation rather than inferred from a
   // role: the President of a student club changes every year, so a
   // role-based list would quietly hand next year's officers a watch
   // they never set and drop the people who did the work.
-  watchers    String[]
+  watchers     String[]
   // [{ label, value, unit?, claimId?, note? }] — the inputs that drive
   // the cases. claimId points at a ResearchClaim when the assumption
   // came from primary research rather than being picked; validated on
   // write against claims in this same project.
-  assumptions Json?
-  note        String?
-  asOf        DateTime @default(now())
-  createdById Int?
-  createdBy   User?    @relation("ResearchValuationAuthor", fields: [createdById], references: [id], onDelete: SetNull)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  assumptions  Json?
+  note         String?
+  asOf         DateTime        @default(now())
+  createdById  Int?
+  createdBy    User?           @relation("ResearchValuationAuthor", fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
 
   @@index([projectId])
   @@index([ticker, asOf(sort: Desc)])

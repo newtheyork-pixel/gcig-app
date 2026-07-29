@@ -156,7 +156,13 @@ router.get('/projects/:id', async (req, res) => {
         // decided to ring first.
         targets: {
           orderBy: [{ priority: { sort: 'asc', nulls: 'last' } }, { updatedAt: 'desc' }],
-          include: { drafts: { orderBy: { createdAt: 'desc' }, include: DRAFT_VIEW } },
+          include: {
+            drafts: { orderBy: { createdAt: 'desc' }, include: DRAFT_VIEW },
+            replies: {
+              orderBy: { receivedAt: 'desc' },
+              include: { recordedBy: { select: { id: true, name: true } } },
+            },
+          },
         },
         valuations: {
           orderBy: { asOf: 'desc' },
@@ -227,6 +233,19 @@ router.get('/projects/:id', async (req, res) => {
           screenElevated: all.filter((d) => d.screenState === 'elevated' && !d.sentAt).length,
           unscreened: all.filter((d) => d.screenState === 'unscreened' && !d.sentAt).length,
           keywordOnly: all.filter((d) => d.screenState === 'clear-keyword-only' && !d.sentAt).length,
+          // Sent is not answered, and the gap between the two is the
+          // only number that says whether the batch is working. An
+          // out-of-office counts as heard-from but NOT as answered:
+          // nobody has read the email yet, so it stays in the waiting
+          // column where it can still be chased.
+          replied: targets.filter((t) => (t.replies || []).some((r) => r.kind !== 'AutoReply')).length,
+          autoRepliedOnly: targets.filter(
+            (t) => (t.replies || []).length && (t.replies || []).every((r) => r.kind === 'AutoReply')).length,
+          bounced: targets.filter((t) => (t.replies || []).some((r) => r.kind === 'Bounce')).length,
+          interested: targets.filter((t) => (t.replies || []).some((r) => r.kind === 'Interested')).length,
+          awaitingReply: targets.filter(
+            (t) => (t.drafts || []).some((d) => d.sentAt)
+              && !(t.replies || []).some((r) => r.kind !== 'AutoReply')).length,
         };
       })(),
       transcriptionReady: transcriptionConfigured(),
@@ -1054,6 +1073,91 @@ router.post('/drafts/:id/sent', canResearch, async (req, res) => {
   } catch (err) {
     console.error('research/draft sent failed:', err.message);
     res.status(500).json({ error: 'Could not mark it sent' });
+  }
+});
+
+// What came back, and what it means for the funnel.
+//
+// The kinds are deliberately few and each one implies a different next
+// move: an out-of-office is not a no and must not stop the follow-up, a
+// bounce is a dead address and stops it permanently, a decline is an
+// answer and closes the target, and interest is the only one that leads
+// anywhere. Anything genuinely ambiguous is Other, on purpose, so the
+// four that carry consequences stay trustworthy.
+const REPLY_KINDS = ['AutoReply', 'Bounce', 'Declined', 'Interested', 'Other'];
+
+// Only where the reply leaves no room for interpretation. A bounce means
+// the address is dead and a decline is a person saying no, so leaving
+// either on Contacted would keep a target in the follow-up queue that
+// nobody should follow up. AutoReply and Interested deliberately do NOT
+// move it: an out-of-office is still awaiting a real answer, and
+// "Scheduled" is a call that exists, not a warm sentence.
+const STATUS_FOR_KIND = { Bounce: 'Unreachable', Declined: 'Declined' };
+
+router.post('/targets/:id/replies', canResearch, async (req, res) => {
+  const targetId = Number(req.params.id);
+  if (!Number.isInteger(targetId)) return res.status(400).json({ error: 'Bad id' });
+  const { kind, receivedAt, body, action, draftId } = req.body || {};
+  if (!REPLY_KINDS.includes(kind)) {
+    return res.status(400).json({ error: `kind must be one of ${REPLY_KINDS.join(', ')}` });
+  }
+  // Received-when is required rather than defaulted to now(). Logging a
+  // reply days later is normal, and a silently back-filled timestamp
+  // would put a false number under every "days to respond" we compute.
+  const when = receivedAt ? new Date(receivedAt) : null;
+  if (!when || Number.isNaN(when.getTime())) {
+    return res.status(400).json({ error: 'receivedAt must be a date — when THEY replied, not when you logged it' });
+  }
+  try {
+    const target = await prisma.researchTarget.findUnique({ where: { id: targetId } });
+    if (!target) return res.status(404).json({ error: 'No such target' });
+    if (draftId != null) {
+      const d = await prisma.outreachDraft.findUnique({ where: { id: Number(draftId) } });
+      if (!d || d.targetId !== targetId) {
+        return res.status(400).json({ error: 'That draft does not belong to this target' });
+      }
+    }
+
+    const created = await prisma.$transaction(async (tx) => {
+      const reply = await tx.outreachReply.create({
+        data: {
+          targetId,
+          draftId: draftId != null ? Number(draftId) : null,
+          kind,
+          receivedAt: when,
+          body: body ? String(body).slice(0, 20_000) : null,
+          action: action ? String(action).slice(0, 2_000) : null,
+          recordedById: req.user?.id ?? null,
+        },
+        include: { recordedBy: { select: { id: true, name: true } } },
+      });
+      const next = STATUS_FOR_KIND[kind];
+      // Never walk a target BACKWARDS out of a state a person set by
+      // hand. Someone who already booked the call and then logs a late
+      // bounce on an old address should keep the call.
+      if (next && !['Scheduled', 'Completed'].includes(target.status)) {
+        await tx.researchTarget.update({ where: { id: targetId }, data: { status: next } });
+      }
+      return reply;
+    });
+    res.status(201).json(created);
+  } catch (err) {
+    console.error('research/reply create failed:', err.message);
+    res.status(500).json({ error: 'Could not log the reply' });
+  }
+});
+
+router.delete('/replies/:id', canResearch, async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) return res.status(400).json({ error: 'Bad id' });
+  try {
+    await prisma.outreachReply.delete({ where: { id } });
+    // Status is deliberately NOT reverted. It may have been changed by
+    // hand since, and guessing what it used to be is worse than leaving
+    // a value a person can see and correct.
+    res.json({ ok: true });
+  } catch {
+    res.status(404).json({ error: 'No such reply' });
   }
 });
 
