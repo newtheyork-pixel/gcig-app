@@ -1557,6 +1557,20 @@ function ProjectStatus({ project }) {
 }
 
 function Coverage({ project, onChanged }) {
+  // What the project is trying to find out, in three lines. The brief
+  // is prose and gets read once; twenty questions are the work but not
+  // the point. Somebody opening this tab should see the point first.
+  const [editAims, setEditAims] = useState(false);
+  const [aimsText, setAimsText] = useState('');
+  const aimLines = (project.aims || '').split('\n').map((l) => l.trim()).filter(Boolean);
+
+  async function saveAims() {
+    setEditAims(false);
+    const next = aimsText.split('\n').map((l) => l.trim()).filter(Boolean).slice(0, 3).join('\n');
+    if (next === (project.aims || '')) return;
+    await api.patch(`/research/projects/${project.id}`, { aims: next }).catch(() => {});
+    onChanged();
+  }
   const [text, setText] = useState('');
   const [saving, setSaving] = useState(false);
   const [drafting, setDrafting] = useState(false);
@@ -1674,6 +1688,61 @@ function Coverage({ project, onChanged }) {
 
   return (
     <div style={{ display: 'grid', gap: 10 }}>
+      {/* The point, before the questions that serve it. */}
+      <div style={{ borderBottom: '1px solid var(--term-border)', paddingBottom: 8 }}>
+        <div style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+          <span style={{ fontSize: 10, letterSpacing: 0.6, color: 'var(--term-blue)' }}>
+            WHAT WE ARE TRYING TO FIND OUT
+          </span>
+          <a
+            href="#"
+            onClick={(e) => {
+              e.preventDefault();
+              setAimsText(project.aims || '');
+              setEditAims(!editAims);
+            }}
+            style={{ fontSize: 10, color: 'var(--term-fg-muted)' }}
+          >
+            {editAims ? 'cancel' : aimLines.length ? 'edit' : 'add'}
+          </a>
+        </div>
+
+        {editAims ? (
+          <div style={{ marginTop: 6 }}>
+            <textarea
+              autoFocus
+              style={{ ...termInput, width: '100%', minHeight: 62, resize: 'vertical',
+                       color: 'var(--term-amber)', lineHeight: 1.5 }}
+              value={aimsText}
+              onChange={(e) => setAimsText(e.target.value)}
+              onKeyDown={(e) => { if (e.key === 'Escape') setEditAims(false); }}
+              placeholder={'One aim per line, three at most.'}
+            />
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 4 }}>
+              <button className="term-action" onClick={saveAims}>Save</button>
+              <span style={{ fontSize: 10, color: 'var(--term-fg-muted)' }}>
+                {aimsText.split('\n').filter((l) => l.trim()).length} of 3 · anything past the third line is dropped
+              </span>
+            </div>
+          </div>
+        ) : aimLines.length ? (
+          <ul style={{ margin: '6px 0 0', padding: 0, listStyle: 'none' }}>
+            {aimLines.map((line, i) => (
+              <li key={i} style={{ display: 'flex', gap: 8, marginBottom: 3, fontSize: 12,
+                                   color: 'var(--term-white)', lineHeight: 1.45 }}>
+                <span style={{ color: 'var(--term-orange)' }}>{i + 1})</span>
+                <span>{line}</span>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <div style={{ marginTop: 4, fontSize: 11, color: 'var(--term-fg-muted)' }}>
+            Not stated yet. Three lines, before the questions — if it takes more than
+            three, the project has not decided what it is.
+          </div>
+        )}
+      </div>
+
       <div style={{ display: 'flex', gap: 6 }}>
         <input
           style={{ ...termInput, flex: 1 }}

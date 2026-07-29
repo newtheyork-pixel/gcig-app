@@ -264,6 +264,17 @@ router.patch('/projects/:id', canResearch, async (req, res) => {
     const t = String(req.body.ticker || '').toUpperCase().trim().slice(0, 12);
     data.ticker = t || null;
   }
+  if (req.body?.aims !== undefined) {
+    // Three lines, and the cap is enforced here rather than trusted to
+    // the client: the discipline IS the feature, and a fourth bullet
+    // arriving from a stale build would quietly undo it.
+    const lines = String(req.body.aims || '')
+      .split('\n')
+      .map((l) => l.trim())
+      .filter(Boolean)
+      .slice(0, 3);
+    data.aims = lines.length ? lines.join('\n').slice(0, 900) : null;
+  }
   if (req.body?.brief !== undefined) {
     data.brief = req.body.brief ? String(req.body.brief).slice(0, 5000) : null;
   }

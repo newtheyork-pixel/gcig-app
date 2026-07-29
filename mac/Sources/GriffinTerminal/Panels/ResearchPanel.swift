@@ -164,6 +164,9 @@ struct ProjectFull: Decodable {
     let name: String
     let ticker: String?
     let brief: String?
+    /// Three lines, newline-separated: what the project is trying to
+    /// find out, shown above the question spine.
+    let aims: String?
     let status: String?
     let transcriptionReady: Bool?
     let questions: [Question]?
@@ -1118,12 +1121,16 @@ private struct CoverageTab: View {
     /// worded question up rather than fixing it.
     @State private var editingQ: Int?
     @State private var editText = ""
+    @State private var editingAims = false
+    @State private var aimsText = ""
 
     var body: some View {
         let rows = p.coverage?.questions ?? []
         let s = p.coverage?.summary
 
         VStack(alignment: .leading, spacing: 10) {
+            aimsBlock
+
             // Adding a question is the one edit the spine needs weekly.
             HStack(spacing: 6) {
                 TextField("What do we need to find out? (one question)", text: $newQ)
@@ -1174,6 +1181,67 @@ private struct CoverageTab: View {
         editingQ = nil
         Task { await run {
             try await ResearchHTTP.patch("/research/questions/\(q.questionId)", json: ["text": t])
+        } }
+    }
+
+    /// The point, above the questions that serve it. The brief is prose
+    /// and gets read once; twenty questions are the work but not the
+    /// point, and somebody opening this tab cannot see the point
+    /// through them.
+    private var aimsBlock: some View {
+        let lines = (p.aims ?? "").split(separator: "\n")
+            .map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+        return VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 8) {
+                SectionLabel(text: "What we are trying to find out")
+                Button(editingAims ? "cancel" : (lines.isEmpty ? "add" : "edit")) {
+                    aimsText = p.aims ?? ""
+                    editingAims.toggle()
+                }
+                .buttonStyle(.plain)
+                .font(Term.mono(9)).foregroundStyle(Term.fgMuted)
+                Spacer()
+            }
+
+            if editingAims {
+                TextField("One aim per line, three at most.", text: $aimsText, axis: .vertical)
+                    .textFieldStyle(.plain)
+                    .font(Term.mono(11)).foregroundStyle(Term.amber)
+                    .lineLimit(3...6)
+                    .padding(6).background(Term.bg)
+                    .overlay(Rectangle().strokeBorder(Term.borderFocus, lineWidth: 1))
+                HStack(spacing: 8) {
+                    Button("Save") { saveAims() }
+                        .buttonStyle(TermButtonStyle()).disabled(busy)
+                    Text("\(aimsText.split(separator: "\n").filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }.count) of 3 · anything past the third line is dropped")
+                        .font(Term.mono(9)).foregroundStyle(Term.fgMuted)
+                }
+            } else if lines.isEmpty {
+                Text("Not stated yet. Three lines, before the questions — if it takes more than three, the project has not decided what it is.")
+                    .font(Term.mono(10)).foregroundStyle(Term.fgMuted)
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                ForEach(Array(lines.enumerated()), id: \.offset) { i, line in
+                    HStack(alignment: .top, spacing: 8) {
+                        Text("\(i + 1))").font(Term.mono(11)).foregroundStyle(Term.orange)
+                        Text(line).font(Term.mono(11)).foregroundStyle(Term.white)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            }
+
+            Rectangle().fill(Term.border).frame(height: 1).padding(.top, 4)
+        }
+    }
+
+    private func saveAims() {
+        let next = aimsText.split(separator: "\n")
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }.prefix(3).joined(separator: "\n")
+        editingAims = false
+        guard next != (p.aims ?? "") else { return }
+        Task { await run {
+            try await ResearchHTTP.patch("/research/projects/\(p.id)", json: ["aims": next])
         } }
     }
 

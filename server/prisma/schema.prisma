@@ -1011,6 +1011,15 @@ model ResearchProject {
   // the project can be judged against what it set out to answer rather
   // than what it happened to find.
   brief       String?
+  // The same thing in three lines, newline-separated, shown at the top
+  // of the question spine.
+  //
+  // The brief is prose and gets read once. Twenty-two questions is the
+  // work but not the point, and somebody opening the tab cannot see the
+  // point through them. Three bullets is the discipline: if the project
+  // cannot say what it is trying to find out in three lines, that is a
+  // finding about the project. Capped at three in the UI on purpose.
+  aims        String?
   // Open | Fieldwork | Synthesis | Closed
   status      String   @default("Open")
   createdById Int?
