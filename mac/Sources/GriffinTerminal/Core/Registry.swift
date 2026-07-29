@@ -18,6 +18,11 @@ struct TerminalFunction: Identifiable, Equatable {
     var height: CGFloat = 460
     /// False for functions still only on the web.
     var native: Bool = false
+    /// Phase-2 mnemonics: reserved in the grammar so typing ALRT gets
+    /// "planned, not built" instead of a quote for some ticker-shaped
+    /// stranger — which is exactly what happened (ALRT parsed as a
+    /// security and DES tried to price it).
+    var planned: Bool = false
 
     static func == (a: TerminalFunction, b: TerminalFunction) -> Bool { a.id == b.id }
 }
@@ -77,6 +82,15 @@ enum Registry {
         .init(id: "RDR", label: "Weather Radar", help: "Live US NEXRAD radar + active NWS warnings.", width: 780, height: 640, native: true),
         .init(id: "ORG", label: "Organization", help: "The club org chart: leadership tiers, industry groups, profiles one click away. PM and above.", width: 720, height: 660, native: true),
         .init(id: "MACRO", label: "Macro Sensitivity", help: "Portfolio sensitivity to 10Y, oil, USD, VIX, SPY.", width: 660, height: 720, native: true),
+
+        // Phase 2 — reserved, not built. The grammar knows them so the
+        // command line can say so.
+        .init(id: "MON", aliases: ["W"], label: "Club Monitor", help: "The shared coverage watchlist.", planned: true),
+        .init(id: "ALRT", label: "Alerts", help: "Price and news alerts to your inbox.", planned: true),
+        .init(id: "EVTS", aliases: ["ERN"], label: "Earnings Calendar", help: "Earnings keyed to the book and watchlist.", planned: true),
+        .init(id: "HDS", label: "Holders", help: "13F holders and insider filings.", planned: true),
+        .init(id: "EQS", label: "Equity Screener", help: "Screen the universe, funnel-style.", planned: true),
+        .init(id: "DAYB", label: "Morning Page", help: "The auto-composed pre-meeting brief.", planned: true),
     ]
 
     /// Aliases resolve to the same function but stay out of `all`, so a

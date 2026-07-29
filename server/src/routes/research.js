@@ -342,6 +342,23 @@ router.post(
   }
 );
 
+router.patch('/artifacts/:id', canResearch, async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) return res.status(400).json({ error: 'Bad id' });
+  const data = {};
+  if (req.body?.title) data.title = String(req.body.title).slice(0, 300);
+  if (req.body?.note !== undefined) {
+    data.note = req.body.note ? String(req.body.note).slice(0, 1000) : null;
+  }
+  if (Object.keys(data).length === 0) return res.status(400).json({ error: 'Nothing to change' });
+  try {
+    res.json(await prisma.researchArtifact.update({ where: { id }, data }));
+  } catch (err) {
+    console.error('research/artifact rename failed:', err.message);
+    res.status(500).json({ error: 'Could not update artifact' });
+  }
+});
+
 router.delete('/artifacts/:id', canResearch, async (req, res) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id)) return res.status(400).json({ error: 'Bad id' });

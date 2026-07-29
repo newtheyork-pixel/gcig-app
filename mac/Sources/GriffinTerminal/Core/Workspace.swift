@@ -126,6 +126,10 @@ final class Workspace: ObservableObject {
             return
         }
 
+        if fn.planned {
+            flash = Flash(text: "\(fn.id) — \(fn.help) Planned for Phase 2, not built yet.", bad: false)
+            return
+        }
         guard fn.native else {
             // The honest message. This function exists, the user did not
             // mistype, it just is not built here yet.
