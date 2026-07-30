@@ -112,7 +112,7 @@ model User {
   outreachDraftsSent        OutreachDraft[]       @relation("OutreachDraftSender")
   outreachDraftsMinorEdited OutreachDraft[]       @relation("OutreachDraftMinorEditor")
   outreachApprovals         OutreachApproval[]    @relation("OutreachApprover")
-  outreachRepliesLogged     OutreachReply[]       @relation("OutreachReplyRecorder")
+  outreachMessagesLogged    OutreachMessage[]     @relation("OutreachReplyRecorder")
   siteVisits                SiteVisit[]           @relation("SiteVisitVisitor")
 }
 
@@ -1122,9 +1122,9 @@ model ResearchQuestion {
 // list with people who never replied, or lose the record of everyone we
 // failed to reach — which is itself a finding about a company.
 model ResearchTarget {
-  id            Int             @id @default(autoincrement())
+  id            Int               @id @default(autoincrement())
   projectId     Int
-  project       ResearchProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  project       ResearchProject   @relation(fields: [projectId], references: [id], onDelete: Cascade)
   name          String
   // Where they sit in the value chain: FormerEmployee, Distributor,
   // Customer, Supplier, Competitor, Landlord, IndustryExpert, Other.
@@ -1151,19 +1151,19 @@ model ResearchTarget {
   // answer different questions and must not be worked as one bucket.
   tier          String?
   // Identified | Contacted | Scheduled | Completed | Declined | Unreachable
-  status        String          @default("Identified")
+  status        String            @default("Identified")
   // Set once outreach converts, so a completed target points at the
   // source record it became.
   sourceId      Int?
-  source        ResearchSource? @relation(fields: [sourceId], references: [id], onDelete: SetNull)
+  source        ResearchSource?   @relation(fields: [sourceId], references: [id], onDelete: SetNull)
   notes         String?
   lastContactAt DateTime?
   createdById   Int?
-  createdBy     User?           @relation("ResearchTargetCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  createdBy     User?             @relation("ResearchTargetCreator", fields: [createdById], references: [id], onDelete: SetNull)
   drafts        OutreachDraft[]
-  replies       OutreachReply[]
-  createdAt     DateTime        @default(now())
-  updatedAt     DateTime        @updatedAt
+  messages      OutreachMessage[]
+  createdAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
 
   @@index([projectId, status])
 }
@@ -1250,7 +1250,7 @@ model OutreachDraft {
   sentById Int?
   sentBy   User?     @relation("OutreachDraftSender", fields: [sentById], references: [id], onDelete: SetNull)
 
-  replies OutreachReply[]
+  messages OutreachMessage[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1258,21 +1258,26 @@ model OutreachDraft {
   @@index([targetId, createdAt])
 }
 
-// What came back.
+// One message in a correspondence, either direction.
 //
-// A row rather than a line in the target's notes, because the states
-// this distinguishes are the ones that decide the next move and none of
-// them can be counted as prose. Silence, an out-of-office, a dead
-// address and an actual no all look identical in a notes field, and
-// only one of them means stop. The funnel has been honest about who we
-// wrote to since the send gate landed; without this it still could not
-// say who ANSWERED, and "13 contacted" would quietly read as progress
-// on a week where twelve of them bounced.
+// This started as inbound only, which made it useless the first time a
+// reply needed answering: Stamm said "send me some dates" and there was
+// nowhere to record that we did. A log that holds one side of a
+// conversation cannot answer whose turn it is, which is the only
+// question anybody asks of it.
 //
-// receivedAt is when THEY replied, not when we typed it in: the log is
-// evidence about their behaviour and back-dating it by a day of
-// bookkeeping would distort every follow-up interval measured off it.
-model OutreachReply {
+// The states it distinguishes are the ones that decide the next move,
+// and none of them can be counted as prose. Silence, an out-of-office, a
+// dead address and an actual no all look identical in a notes field, and
+// only one of them means stop.
+//
+// occurredAt is when the message happened, not when it was typed in.
+// Logging a day late is normal, and a back-filled timestamp would
+// distort every interval measured off it. Both the model name and this
+// field were renamed once outbound arrived; the table and column keep
+// their original names via @@map, so honest naming in code cost no
+// migration.
+model OutreachMessage {
   id           Int            @id @default(autoincrement())
   targetId     Int
   target       ResearchTarget @relation(fields: [targetId], references: [id], onDelete: Cascade)
@@ -1281,9 +1286,14 @@ model OutreachReply {
   // the draft must never delete the record that somebody responded.
   draftId      Int?
   draft        OutreachDraft? @relation(fields: [draftId], references: [id], onDelete: SetNull)
-  // AutoReply | Bounce | Declined | Interested | Other
+  /// "in" = they wrote to us. "out" = we wrote to them. Defaulting to
+  /// "in" is what makes this a pure column add: every row that exists
+  /// was an inbound reply logged before the log went two-way.
+  direction    String         @default("in")
+  // in:  AutoReply | Bounce | Declined | Interested | Other
+  // out: FollowUp | Reply | Scheduling | Other
   kind         String
-  receivedAt   DateTime
+  occurredAt   DateTime       @map("receivedAt")
   body         String?
   // What we decided to do about it, which is the part a reader needs
   // three weeks later when the reply itself is no longer surprising.
@@ -1292,7 +1302,12 @@ model OutreachReply {
   recordedBy   User?          @relation("OutreachReplyRecorder", fields: [recordedById], references: [id], onDelete: SetNull)
   createdAt    DateTime       @default(now())
 
-  @@index([targetId, receivedAt])
+  @@index([targetId, occurredAt])
+  // The table and every constraint keep their original names. Without
+  // this the rename generates DROP TABLE / CREATE TABLE and takes the
+  // logged replies with it — which is exactly what the first diff said
+  // it would do.
+  @@map("OutreachReply")
 }
 
 // One person signing off on one draft. The unique constraint is the

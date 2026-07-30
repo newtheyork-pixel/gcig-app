@@ -163,8 +163,10 @@ router.get('/projects/:id', async (req, res) => {
           orderBy: [{ priority: { sort: 'asc', nulls: 'last' } }, { updatedAt: 'desc' }],
           include: {
             drafts: { orderBy: { createdAt: 'desc' }, include: DRAFT_VIEW },
-            replies: {
-              orderBy: { receivedAt: 'desc' },
+            // Oldest first: this is a correspondence, and a thread that
+            // reads newest-down is a thread nobody can follow.
+            messages: {
+              orderBy: { occurredAt: 'asc' },
               include: { recordedBy: { select: { id: true, name: true } } },
             },
           },
@@ -239,6 +241,10 @@ router.get('/projects/:id', async (req, res) => {
       // walk through every target.
       outreachQueue: (() => {
         const all = targets.flatMap((t) => (t.drafts || []).map((d) => ({ ...d, target: t.name })));
+        // An auto-reply is not being heard from. Nobody has read the
+        // email, so it must not count toward "replied".
+        const inbound = (t) => (t.messages || []).filter((m) => m.direction === 'in');
+        const heard = (t) => inbound(t).filter((m) => m.kind !== 'AutoReply');
         return {
           awaitingReview: all.filter((d) => !d.sentAt && !d.rejectedAt && !d.fullyApproved).length,
           awaitingMe: all.filter((d) => d.canIApprove).length,
@@ -256,14 +262,27 @@ router.get('/projects/:id', async (req, res) => {
           // out-of-office counts as heard-from but NOT as answered:
           // nobody has read the email yet, so it stays in the waiting
           // column where it can still be chased.
-          replied: targets.filter((t) => (t.replies || []).some((r) => r.kind !== 'AutoReply')).length,
+          replied: targets.filter((t) => heard(t).length).length,
           autoRepliedOnly: targets.filter(
-            (t) => (t.replies || []).length && (t.replies || []).every((r) => r.kind === 'AutoReply')).length,
-          bounced: targets.filter((t) => (t.replies || []).some((r) => r.kind === 'Bounce')).length,
-          interested: targets.filter((t) => (t.replies || []).some((r) => r.kind === 'Interested')).length,
-          awaitingReply: targets.filter(
-            (t) => (t.drafts || []).some((d) => d.sentAt)
-              && !(t.replies || []).some((r) => r.kind !== 'AutoReply')).length,
+            (t) => inbound(t).length && !heard(t).length).length,
+          bounced: targets.filter((t) => inbound(t).some((r) => r.kind === 'Bounce')).length,
+          interested: targets.filter((t) => inbound(t).some((r) => r.kind === 'Interested')).length,
+          // Whose turn it is, which is what the word actually means now
+          // that both directions are logged: the last thing in the thread
+          // came from us. A target we chased twice with no answer is
+          // still awaiting a reply, and one that answered and is sitting
+          // on our desk is not.
+          awaitingReply: targets.filter((t) => {
+            if (!(t.drafts || []).some((d) => d.sentAt)) return false;
+            const last = (t.messages || [])[(t.messages || []).length - 1];
+            return !last || last.direction === 'out';
+          }).length,
+          // Their move and we have not answered. The opposite failure to
+          // silence, and the more embarrassing one.
+          owedAReply: targets.filter((t) => {
+            const last = (t.messages || [])[(t.messages || []).length - 1];
+            return !!last && last.direction === 'in' && last.kind !== 'AutoReply';
+          }).length,
         };
       })(),
       transcriptionReady: transcriptionConfigured(),
@@ -1104,6 +1123,11 @@ router.post('/drafts/:id/sent', canResearch, async (req, res) => {
 // anywhere. Anything genuinely ambiguous is Other, on purpose, so the
 // four that carry consequences stay trustworthy.
 const REPLY_KINDS = ['AutoReply', 'Bounce', 'Declined', 'Interested', 'Other'];
+// What we sent. Separate list because none of these say anything about
+// the target's intent and none of them may move the funnel: chasing
+// somebody four times is not progress, and a status that improved every
+// time we sent another email would be measuring our own activity.
+const SENT_KINDS = ['FollowUp', 'Reply', 'Scheduling', 'Other'];
 
 // Only where the reply leaves no room for interpretation. A bounce means
 // the address is dead and a decline is a person saying no, so leaving
@@ -1124,19 +1148,25 @@ const REPLY_KINDS = ['AutoReply', 'Bounce', 'Declined', 'Interested', 'Other'];
 // where it can be chased.
 const STATUS_FOR_KIND = { Bounce: 'Unreachable', Declined: 'Declined', Interested: 'Scheduled' };
 
-router.post('/targets/:id/replies', canResearch, async (req, res) => {
+// Both paths hit the same handler. /replies stays because a client built
+// before the log went two-way is still a client, and an outbound-capable
+// server that 404s the old route would break it for no gain.
+router.post(['/targets/:id/messages', '/targets/:id/replies'], canResearch, async (req, res) => {
   const targetId = Number(req.params.id);
   if (!Number.isInteger(targetId)) return res.status(400).json({ error: 'Bad id' });
-  const { kind, receivedAt, body, action, draftId } = req.body || {};
-  if (!REPLY_KINDS.includes(kind)) {
-    return res.status(400).json({ error: `kind must be one of ${REPLY_KINDS.join(', ')}` });
+  const { kind, body, action, draftId } = req.body || {};
+  const direction = req.body?.direction === 'out' ? 'out' : 'in';
+  const receivedAt = req.body?.occurredAt ?? req.body?.receivedAt;
+  const allowed = direction === 'out' ? SENT_KINDS : REPLY_KINDS;
+  if (!allowed.includes(kind)) {
+    return res.status(400).json({ error: `kind for a ${direction === 'out' ? 'sent' : 'received'} message must be one of ${allowed.join(', ')}` });
   }
   // Received-when is required rather than defaulted to now(). Logging a
   // reply days later is normal, and a silently back-filled timestamp
   // would put a false number under every "days to respond" we compute.
   const when = receivedAt ? new Date(receivedAt) : null;
   if (!when || Number.isNaN(when.getTime())) {
-    return res.status(400).json({ error: 'receivedAt must be a date — when THEY replied, not when you logged it' });
+    return res.status(400).json({ error: 'occurredAt must be a date — when the message happened, not when you logged it' });
   }
   try {
     const target = await prisma.researchTarget.findUnique({ where: { id: targetId } });
@@ -1149,19 +1179,21 @@ router.post('/targets/:id/replies', canResearch, async (req, res) => {
     }
 
     const created = await prisma.$transaction(async (tx) => {
-      const reply = await tx.outreachReply.create({
+      const reply = await tx.outreachMessage.create({
         data: {
           targetId,
           draftId: draftId != null ? Number(draftId) : null,
+          direction,
           kind,
-          receivedAt: when,
+          occurredAt: when,
           body: body ? String(body).slice(0, 20_000) : null,
           action: action ? String(action).slice(0, 2_000) : null,
           recordedById: req.user?.id ?? null,
         },
         include: { recordedBy: { select: { id: true, name: true } } },
       });
-      const next = STATUS_FOR_KIND[kind];
+      // Only what THEY said may move the funnel.
+      const next = direction === 'in' ? STATUS_FOR_KIND[kind] : null;
       // Never walk a target BACKWARDS out of a state a person set by
       // hand. Someone who already booked the call and then logs a late
       // bounce on an old address should keep the call.
@@ -1177,11 +1209,11 @@ router.post('/targets/:id/replies', canResearch, async (req, res) => {
   }
 });
 
-router.delete('/replies/:id', canResearch, async (req, res) => {
+router.delete(['/messages/:id', '/replies/:id'], canResearch, async (req, res) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id)) return res.status(400).json({ error: 'Bad id' });
   try {
-    await prisma.outreachReply.delete({ where: { id } });
+    await prisma.outreachMessage.delete({ where: { id } });
     // Status is deliberately NOT reverted. It may have been changed by
     // hand since, and guessing what it used to be is worse than leaving
     // a value a person can see and correct.

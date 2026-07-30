@@ -414,24 +414,35 @@ struct Target: Decodable, Identifiable {
     let notes: String?
     let lastContactAt: String?
     let drafts: [Draft]?
-    let replies: [Reply]?
+    let messages: [Message]?
 }
 
-/// What came back. Kinds rather than free text because the four that
-/// matter imply different next moves: an out-of-office is not a no, a
-/// bounce is a dead address, a decline is an answer, and only interest
-/// leads anywhere.
-struct Reply: Decodable, Identifiable {
+/// One message in the correspondence, either direction. Kinds rather
+/// than free text because the ones that matter imply different next
+/// moves: an out-of-office is not a no, a bounce is a dead address, a
+/// decline is an answer, and only interest leads anywhere.
+struct Message: Decodable, Identifiable {
     let id: Int
     let draftId: Int?
+    let direction: String?
     let kind: String
-    let receivedAt: String
+    let occurredAt: String
     let body: String?
     let action: String?
     let recordedBy: ProjectFull.Person?
 
+    var outbound: Bool { direction == "out" }
+
     /// Label, colour and the sentence explaining what the kind means.
     var display: (String, Color, String) {
+        if outbound {
+            switch kind {
+            case "Scheduling": return ("WE SENT DATES", Term.blue, "Times offered, waiting on them to pick")
+            case "Reply":      return ("WE REPLIED", Term.blue, "We answered something they asked")
+            case "FollowUp":   return ("WE FOLLOWED UP", Term.blue, "A chase on an email with no answer")
+            default:           return ("WE SENT", Term.fgMuted, "Anything else we sent")
+            }
+        }
         switch kind {
         case "Interested": return ("INTERESTED", Term.positive, "They are willing to talk")
         case "Declined":   return ("DECLINED", Term.negative, "They said no. The target closes")
@@ -1808,7 +1819,7 @@ private struct DraftsSection: View {
 
             ForEach(drafts) { d in
                 DraftCard(draft: d, target: target,
-                          replies: (target.replies ?? []).filter { $0.draftId == d.id },
+                          messages: (target.messages ?? []).filter { $0.draftId == d.id },
                           busy: $busy, run: run)
             }
         }
@@ -1820,16 +1831,17 @@ private struct DraftsSection: View {
 private struct DraftCard: View {
     let draft: Draft
     let target: Target
-    /// Only this draft's replies. A target can carry several drafts and
-    /// a reply belongs under the email it answers, not under all of them.
-    /// Declared here because the memberwise init follows declaration
-    /// order and the call site passes it third.
-    var replies: [Reply] = []
+    /// Only this draft's messages. A target can carry several drafts and
+    /// a message belongs under the email it answers, not under all of
+    /// them. Declared here because the memberwise init follows
+    /// declaration order and the call site passes it third.
+    var messages: [Message] = []
     @Binding var busy: Bool
     let run: RunAction
 
     @State private var logging = false
     @State private var replyKind = "AutoReply"
+    @State private var replyOut = false
     @State private var replyWhen = ""
     @State private var replyBody = ""
     @State private var replyAction = ""
@@ -2020,40 +2032,59 @@ private struct DraftCard: View {
     /// progress on a week when every address bounced.
     @ViewBuilder
     private func replyLog(_ d: Draft) -> some View {
-        let real = replies.filter { $0.kind != "AutoReply" }
+        let heard = messages.filter { !$0.outbound && $0.kind != "AutoReply" }
+        let last = messages.last
         VStack(alignment: .leading, spacing: 6) {
             Divider().overlay(Term.border)
             HStack(spacing: 8) {
-                Text("REPLIES")
+                Text("CORRESPONDENCE")
                     .font(Term.mono(9, weight: .bold)).tracking(0.6)
                     .foregroundStyle(Term.white)
-                Button(logging ? "Cancel" : "Log a reply") {
-                    if !logging { replyWhen = Self.nowLocal(); replyBody = ""; replyAction = ""; replyKind = "AutoReply" }
-                    logging.toggle()
-                }
-                .buttonStyle(TermButtonStyle()).disabled(busy)
+                Button("Log a reply") { beginLog(out: false) }
+                    .buttonStyle(TermButtonStyle()).disabled(busy)
+                Button("Log what we sent") { beginLog(out: true) }
+                    .buttonStyle(TermButtonStyle()).disabled(busy)
                 Spacer()
             }
 
-            if replies.isEmpty {
-                Text("No reply yet. Sent \(Fmt.date(d.sentAt ?? "")).")
+            // Whose turn it is, in one line. Sent-and-silent is not
+            // sent-and-answered, an out-of-office is neither, and a reply
+            // we have not answered is the opposite failure to silence.
+            if messages.isEmpty {
+                Text("No reply yet. Sent \(Fmt.date(d.sentAt ?? "")), waiting on them.")
                     .font(Term.mono(10)).foregroundStyle(Term.fgMuted)
-            } else if real.isEmpty {
+            } else if let last, !last.outbound, last.kind != "AutoReply" {
+                Text("Their move was last. We owe them a reply.")
+                    .font(Term.mono(10)).foregroundStyle(Term.positive)
+            } else if heard.isEmpty {
                 Text("Only an automatic reply so far. Nobody has read this yet, so it is still waiting.")
                     .font(Term.mono(10)).foregroundStyle(Term.amber)
+            } else {
+                Text("We wrote last. Waiting on them.")
+                    .font(Term.mono(10)).foregroundStyle(Term.fgMuted)
             }
 
-            ForEach(replies) { r in
+            // The first email is part of the thread and belongs at the
+            // top of it, or the log opens mid-conversation.
+            HStack(spacing: 8) {
+                Text("WE SENT THE FIRST EMAIL")
+                    .font(Term.mono(9, weight: .bold)).tracking(0.5).foregroundStyle(Term.blue)
+                Text(Fmt.date(d.sentAt ?? ""))
+                    .font(Term.mono(9)).foregroundStyle(Term.fgMuted)
+                Spacer()
+            }
+
+            ForEach(messages) { r in
                 let (label, tone, help) = r.display
                 VStack(alignment: .leading, spacing: 3) {
                     HStack(spacing: 8) {
                         Text(label).font(Term.mono(9, weight: .bold)).tracking(0.5)
                             .foregroundStyle(tone).help(help)
-                        Text(Fmt.date(r.receivedAt) + (r.recordedBy?.name.map { " · logged by \($0)" } ?? ""))
+                        Text(Fmt.date(r.occurredAt) + (r.recordedBy?.name.map { " · logged by \($0)" } ?? ""))
                             .font(Term.mono(9)).foregroundStyle(Term.fgMuted)
                         Spacer()
                         Button("remove") {
-                            Task { await run { try await ResearchHTTP.delete("/research/replies/\(r.id)") } }
+                            Task { await run { try await ResearchHTTP.delete("/research/messages/\(r.id)") } }
                         }
                         .buttonStyle(TermButtonStyle()).disabled(busy)
                     }
@@ -2068,60 +2099,98 @@ private struct DraftCard: View {
                     }
                 }
                 .padding(6).background(Term.bg).termBorder()
+                // Ours sit left, theirs indent. The shape of the thread
+                // should answer "who said this" before the label is read.
+                .padding(.leading, r.outbound ? 0 : 18)
             }
 
             if logging {
                 HStack(spacing: 6) {
                     Picker("", selection: $replyKind) {
-                        ForEach(Self.replyKinds, id: \.0) { Text($0.1).tag($0.0) }
+                        ForEach(replyOut ? Self.sentKinds : Self.replyKinds, id: \.0) { Text($0.1).tag($0.0) }
                     }
-                    .labelsHidden().frame(width: 150)
-                    // When THEY replied, not when this is being typed in.
-                    // Logging a day late is normal and a defaulted stamp
-                    // would put a false number under every interval.
+                    .labelsHidden().frame(width: 170)
+                    // When the message happened, not when it is being
+                    // typed in. Logging a day late is normal and a
+                    // defaulted stamp would put a false number under
+                    // every interval measured off it.
                     TextField("YYYY-MM-DD HH:MM", text: $replyWhen)
                         .textFieldStyle(.plain)
                         .font(Term.mono(10)).foregroundStyle(Term.white)
                         .padding(5).background(Term.bg).termBorder()
                         .frame(width: 170)
-                        .help("When they replied, not when you are logging it")
+                        .help("When the message happened, not when you are logging it")
                     Spacer()
                 }
-                // Said where the choice is made: three of these five move
-                // the target the moment they are saved.
-                Text((Self.replyKinds.first { $0.0 == replyKind }?.2 ?? "")
-                     + (replyKind == "Bounce" ? " — saving this marks the target Unreachable." : "")
-                     + (replyKind == "Declined" ? " — saving this marks the target Declined." : "")
-                     + (replyKind == "Interested" ? " — saving this marks the target Scheduled." : ""))
+                Text(kindConsequence)
                     .font(Term.mono(9)).foregroundStyle(Term.fgMuted)
                 TextEditor(text: $replyBody)
                     .font(Term.mono(10)).foregroundStyle(Term.white)
                     .scrollContentBackground(.hidden)
                     .frame(minHeight: 60)
                     .padding(4).background(Term.bg).termBorder()
-                TextField("What we do about it (optional)", text: $replyAction)
+                TextField(replyOut ? "Why we sent it (optional)" : "What we do about it (optional)", text: $replyAction)
                     .textFieldStyle(.plain)
                     .font(Term.mono(10)).foregroundStyle(Term.white)
                     .padding(5).background(Term.bg).termBorder()
                 HStack(spacing: 6) {
-                    Button("Save reply") {
+                    Button("Save") {
                         let kind = replyKind
+                        let dir = replyOut ? "out" : "in"
                         let when = Self.iso(from: replyWhen) ?? replyWhen
                         let bodyIn = replyBody, actionIn = replyAction, draftID = d.id
                         Task { await run {
                             _ = try await API.shared.post(
-                                "/research/targets/\(target.id)/replies",
-                                json: ["kind": kind, "receivedAt": when, "draftId": draftID,
-                                       "body": bodyIn, "action": actionIn])
+                                "/research/targets/\(target.id)/messages",
+                                json: ["kind": kind, "direction": dir, "occurredAt": when,
+                                       "draftId": draftID, "body": bodyIn, "action": actionIn])
                             logging = false
                         } }
                     }
                     .buttonStyle(TermButtonStyle()).disabled(busy || replyWhen.isEmpty)
+                    Button("Cancel") { logging = false }.buttonStyle(TermButtonStyle())
                     Spacer()
                 }
             }
         }
     }
+
+    /// Said where the choice is made: three of the received kinds move
+    /// the target the moment they are saved, and nothing we send does.
+    ///
+    /// Built as a plain string rather than inline in the view because the
+    /// chained conditionals defeated the SwiftUI type-checker outright.
+    private var kindConsequence: String {
+        let set = replyOut ? Self.sentKinds : Self.replyKinds
+        var out = set.first { $0.0 == replyKind }?.2 ?? ""
+        if replyOut {
+            out += " — nothing we send changes the target status."
+            return out
+        }
+        switch replyKind {
+        case "Bounce":     out += " — saving this marks the target Unreachable."
+        case "Declined":   out += " — saving this marks the target Declined."
+        case "Interested": out += " — saving this marks the target Scheduled."
+        default: break
+        }
+        return out
+    }
+
+    private func beginLog(out: Bool) {
+        replyOut = out
+        replyKind = out ? "Scheduling" : "AutoReply"
+        replyWhen = Self.nowLocal()
+        replyBody = ""
+        replyAction = ""
+        logging = true
+    }
+
+    private static let sentKinds: [(String, String, String)] = [
+        ("Scheduling", "WE SENT DATES", "Times offered, waiting on them to pick"),
+        ("Reply", "WE REPLIED", "We answered something they asked"),
+        ("FollowUp", "WE FOLLOWED UP", "A chase on an email with no answer"),
+        ("Other", "WE SENT", "Anything else we sent"),
+    ]
 
     private static let replyKinds: [(String, String, String)] = [
         ("Interested", "INTERESTED", "They are willing to talk"),

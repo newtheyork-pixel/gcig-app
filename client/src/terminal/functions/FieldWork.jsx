@@ -3002,7 +3002,7 @@ function Drafts({ target, onChanged }) {
           key={d.id}
           d={d}
           target={target}
-          replies={(target.replies || []).filter((r) => r.draftId === d.id)}
+          replies={(target.messages || []).filter((r) => r.draftId === d.id)}
           busy={busy}
           copied={copied === d.id}
           onCopy={() => copy(d)}
@@ -3029,9 +3029,18 @@ const REPLY_KINDS = [
   ['Other', 'OTHER', 'var(--term-fg-muted)', 'Anything that does not clearly fit'],
 ];
 
+// What we sent after the first email. None of these move the funnel:
+// chasing somebody four times is our activity, not their interest.
+const SENT_KINDS = [
+  ['Scheduling', 'WE SENT DATES', 'var(--term-blue, var(--term-white))', 'Times offered, waiting on them to pick'],
+  ['Reply', 'WE REPLIED', 'var(--term-blue, var(--term-white))', 'We answered something they asked'],
+  ['FollowUp', 'WE FOLLOWED UP', 'var(--term-blue, var(--term-white))', 'A chase on an email with no answer'],
+  ['Other', 'WE SENT', 'var(--term-fg-muted)', 'Anything else we sent'],
+];
+
 function ReplyLog({ draft, target, replies, busy, onRun }) {
   const [adding, setAdding] = useState(false);
-  const [f, setF] = useState({ kind: 'AutoReply', receivedAt: '', body: '', action: '' });
+  const [f, setF] = useState({ kind: 'AutoReply', direction: 'in', receivedAt: '', body: '', action: '' });
 
   // datetime-local wants local wall-clock, not an ISO instant.
   function nowLocal() {
@@ -3052,23 +3061,55 @@ function ReplyLog({ draft, target, replies, busy, onRun }) {
         ) : null}
       </div>
 
-      {/* Three different things, three different sentences. Sent-and-
-          silent is not the same as sent-and-answered, and an
-          out-of-office is neither. */}
-      {replies.length === 0 ? (
-        <div style={{ color: 'var(--term-fg-muted)', fontSize: 11 }}>
-          No reply yet. Sent {fmtDate(draft.sentAt)}.
-        </div>
-      ) : !real.length ? (
-        <div style={{ color: 'var(--term-amber, var(--term-white))', fontSize: 11 }}>
-          Only an automatic reply so far. Nobody has read this yet, so it is still waiting.
-        </div>
-      ) : null}
+      {/* Whose turn it is, said in one line. Sent-and-silent is not
+          sent-and-answered, an out-of-office is neither, and a reply we
+          have not answered is the opposite failure to silence. */}
+      {(() => {
+        const last = replies[replies.length - 1];
+        if (!replies.length) {
+          return <div style={{ color: 'var(--term-fg-muted)', fontSize: 11 }}>
+            No reply yet. Sent {fmtDate(draft.sentAt)}, waiting on them.
+          </div>;
+        }
+        if (last.direction === 'in' && last.kind !== 'AutoReply') {
+          return <div style={{ color: 'var(--term-positive)', fontSize: 11 }}>
+            Their move was last. We owe them a reply.
+          </div>;
+        }
+        if (!real.length) {
+          return <div style={{ color: 'var(--term-amber, var(--term-white))', fontSize: 11 }}>
+            Only an automatic reply so far. Nobody has read this yet, so it is still waiting.
+          </div>;
+        }
+        return <div style={{ color: 'var(--term-fg-muted)', fontSize: 11 }}>
+          We wrote last. Waiting on them.
+        </div>;
+      })()}
+
+      {/* The first email is part of the thread and belongs at the top of
+          it, or the log opens mid-conversation. */}
+      <div style={{ borderLeft: '2px solid var(--term-border)', paddingLeft: 6 }}>
+        <span style={{ fontSize: 10, letterSpacing: 0.5, color: 'var(--term-blue, var(--term-white))' }}>
+          WE SENT THE FIRST EMAIL
+        </span>
+        <span style={{ fontSize: 10, color: 'var(--term-fg-muted)', marginLeft: 8 }}>
+          {fmtDate(draft.sentAt)}
+        </span>
+      </div>
 
       {replies.map((r) => {
-        const [, label, tone, help] = REPLY_KINDS.find((k) => k[0] === r.kind) || REPLY_KINDS[4];
+        const set = r.direction === 'out' ? SENT_KINDS : REPLY_KINDS;
+        const [, label, tone, help] = set.find((k) => k[0] === r.kind) || set[set.length - 1];
         return (
-          <div key={r.id} style={{ border: '1px solid var(--term-border)', padding: 6, display: 'grid', gap: 4 }}>
+          <div
+            key={r.id}
+            style={{
+              border: '1px solid var(--term-border)', padding: 6, display: 'grid', gap: 4,
+              // Ours sit left, theirs indent. The shape of the thread
+              // should answer "who said this" before the label is read.
+              marginLeft: r.direction === 'out' ? 0 : 18,
+            }}
+          >
             <div style={{ display: 'flex', gap: 8, alignItems: 'baseline', flexWrap: 'wrap' }}>
               <span style={{ fontSize: 10, letterSpacing: 0.5, color: tone }} title={help}>{label}</span>
               <span style={{ fontSize: 10, color: 'var(--term-fg-muted)' }}>
@@ -3079,7 +3120,7 @@ function ReplyLog({ draft, target, replies, busy, onRun }) {
               <a
                 href="#"
                 style={{ fontSize: 10 }}
-                onClick={(e) => { e.preventDefault(); onRun(() => api.delete(`/research/replies/${r.id}`)); }}
+                onClick={(e) => { e.preventDefault(); onRun(() => api.delete(`/research/messages/${r.id}`)); }}
               >
                 remove
               </a>
@@ -3106,7 +3147,8 @@ function ReplyLog({ draft, target, replies, busy, onRun }) {
               value={f.kind}
               onChange={(e) => setF({ ...f, kind: e.target.value })}
             >
-              {REPLY_KINDS.map(([v, label]) => <option key={v} value={v}>{label}</option>)}
+              {(f.direction === 'out' ? SENT_KINDS : REPLY_KINDS)
+                .map(([v, label]) => <option key={v} value={v}>{label}</option>)}
             </select>
             <input
               type="datetime-local"
@@ -3119,14 +3161,15 @@ function ReplyLog({ draft, target, replies, busy, onRun }) {
           {/* Said where the choice is made. Two of these five change the
               target's status the moment they are saved. */}
           <div style={{ fontSize: 10, color: 'var(--term-fg-muted)' }}>
-            {(REPLY_KINDS.find((k) => k[0] === f.kind) || [])[3]}
+            {((f.direction === 'out' ? SENT_KINDS : REPLY_KINDS).find((k) => k[0] === f.kind) || [])[3]}
             {f.kind === 'Bounce' ? ' — saving this marks the target Unreachable.' : ''}
             {f.kind === 'Declined' ? ' — saving this marks the target Declined.' : ''}
-            {f.kind === 'Interested' ? ' — saving this marks the target Scheduled.' : ''}
+            {f.direction === 'in' && f.kind === 'Interested' ? ' — saving this marks the target Scheduled.' : ''}
+            {f.direction === 'out' ? ' — nothing we send changes the target status.' : ''}
           </div>
           <textarea
             style={{ ...termInput, resize: 'vertical', minHeight: 70, lineHeight: 1.5 }}
-            placeholder="Paste what they wrote."
+            placeholder={f.direction === 'out' ? 'Paste what we sent.' : 'Paste what they wrote.'}
             value={f.body}
             onChange={(e) => setF({ ...f, body: e.target.value })}
           />
@@ -3140,9 +3183,9 @@ function ReplyLog({ draft, target, replies, busy, onRun }) {
             <TermButton
               disabled={busy || !f.receivedAt}
               onClick={() => onRun(async () => {
-                await api.post(`/research/targets/${target.id}/replies`, {
+                await api.post(`/research/targets/${target.id}/messages`, {
                   ...f,
-                  receivedAt: new Date(f.receivedAt).toISOString(),
+                  occurredAt: new Date(f.receivedAt).toISOString(),
                   draftId: draft.id,
                 });
                 setAdding(false);
