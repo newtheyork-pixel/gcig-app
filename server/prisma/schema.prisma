@@ -113,6 +113,7 @@ model User {
   outreachDraftsMinorEdited OutreachDraft[]       @relation("OutreachDraftMinorEditor")
   outreachApprovals         OutreachApproval[]    @relation("OutreachApprover")
   outreachMessagesLogged    OutreachMessage[]     @relation("OutreachReplyRecorder")
+  watchlistItems            WatchlistItem[]       @relation("WatchlistAdder")
   siteVisits                SiteVisit[]           @relation("SiteVisitVisitor")
 }
 
@@ -1453,4 +1454,34 @@ model ResearchValuation {
 
   @@index([projectId])
   @@index([ticker, asOf(sort: Desc)])
+}
+
+// A name worth watching, and why it got on the list.
+//
+// The source field is the point. A ticker we hold, a ticker a manager we
+// respect disclosed, and a ticker somebody typed in are three different
+// claims, and a watchlist that flattens them into one column is a list
+// nobody can weigh. Provenance also ages: a 13F name is true as of a
+// quarter-end that is already at least 45 days old by the time it is
+// public, and asOf carries that so it can be shown rather than assumed.
+model WatchlistItem {
+  id        Int       @id @default(autoincrement())
+  ticker    String
+  name      String?
+  // holding | seg13f | manual
+  source    String    @default("manual")
+  // Free text for whatever the source needs: the filing it came from,
+  // the weight it carried, the reason somebody typed it in.
+  note      String?
+  // What the source was true as of. Null for a name typed in by hand.
+  asOf      DateTime?
+  addedById Int?
+  addedBy   User?     @relation("WatchlistAdder", fields: [addedById], references: [id], onDelete: SetNull)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  // One row per ticker per source: the same name arriving from the book
+  // and from a filing is two facts, not a duplicate.
+  @@unique([ticker, source])
+  @@index([source])
 }
