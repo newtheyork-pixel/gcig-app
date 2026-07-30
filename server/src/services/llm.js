@@ -299,49 +299,71 @@ export function nativeChatURL(base = process.env.LOCAL_LLM_NATIVE_URL || process
 /// options instead of top-level fields, format:"json" instead of
 /// response_format, and the reply at message.content.
 async function callOllamaNative({ endpoint, apiKey, model, messages, temperature, jsonMode, timeoutMs, numCtx }) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const res = await fetch(endpoint, {
-      method: 'POST',
-      signal: controller.signal,
-      headers: {
-        'Content-Type': 'application/json',
-        ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
-      },
-      body: JSON.stringify({
-        model,
-        messages,
-        stream: false,
-        ...(jsonMode ? { format: 'json' } : {}),
-        options: {
-          num_ctx: numCtx,
-          ...(temperature != null ? { temperature } : {}),
+  const once = async (temp) => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        signal: controller.signal,
+        headers: {
+          'Content-Type': 'application/json',
+          ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
         },
-      }),
-    });
-    if (!res.ok) {
-      return { ok: false, status: res.status, error: (await res.text()).slice(0, 300) };
+        body: JSON.stringify({
+          model,
+          messages,
+          stream: false,
+          ...(jsonMode ? { format: 'json' } : {}),
+          options: { num_ctx: numCtx, ...(temp != null ? { temperature: temp } : {}) },
+        }),
+      });
+      if (!res.ok) {
+        return { ok: false, status: res.status, error: (await res.text()).slice(0, 300) };
+      }
+      const data = await res.json();
+      const content = data?.message?.content;
+      // A prompt longer than the window it was given is still truncated
+      // from the front, which is how this whole class of failure hides.
+      // Say so rather than returning a confident answer to half a question.
+      if (typeof data?.prompt_eval_count === 'number' && data.prompt_eval_count >= numCtx - 8) {
+        console.warn(
+          `local model: prompt filled the ${numCtx}-token window (${data.prompt_eval_count} evaluated) — input may have been truncated`
+        );
+      }
+      if (!content) return { ok: false, status: res.status, error: 'empty response' };
+      // Only when JSON was asked for. Trimming prose off a prose answer
+      // would be the transport editing the model.
+      return { ok: true, content: jsonMode ? extractJson(content) : content };
+    } catch (err) {
+      return { ok: false, status: 0, error: err?.name === 'AbortError' ? 'timeout' : String(err?.message || err) };
+    } finally {
+      clearTimeout(timer);
     }
-    const data = await res.json();
-    const content = data?.message?.content;
-    // A prompt longer than the window it was given is still truncated
-    // from the front, which is how this whole class of failure hides. Say
-    // so rather than returning a confident answer to half a question.
-    if (typeof data?.prompt_eval_count === 'number' && data.prompt_eval_count >= numCtx - 8) {
-      console.warn(
-        `local model: prompt filled the ${numCtx}-token window (${data.prompt_eval_count} evaluated) — input may have been truncated`
-      );
-    }
-    if (!content) return { ok: false, status: res.status, error: 'empty response' };
-    // Only when JSON was asked for. Trimming prose off a prose answer
-    // would be the transport editing the model.
-    return { ok: true, content: jsonMode ? extractJson(content) : content };
-  } catch (err) {
-    return { ok: false, status: 0, error: err?.name === 'AbortError' ? 'timeout' : String(err?.message || err) };
-  } finally {
-    clearTimeout(timer);
-  }
+  };
+
+  const parses = (t) => {
+    try { JSON.parse(t); return true; } catch { return false; }
+  };
+
+  const first = await once(temperature);
+  if (!jsonMode || !first.ok || parses(first.content)) return first;
+
+  // One retry, warmer.
+  //
+  // At temperature 0 the decode is greedy and therefore deterministic,
+  // so a malformed answer stays malformed however many times it is
+  // asked. Interview 9 produced the same broken excerpt array on every
+  // run: a quote opened and every quote after it escaped, so the string
+  // never closed. Measured on that transcript, temperature 0.6 parsed
+  // twice out of twice and 0.9 the same, while 0 never did.
+  //
+  // Determinism is worth giving up only on the failure path. A valid
+  // verdict from a warmer sample beats a reproducible one nobody can
+  // read, and if this also fails the caller still sees an unusable
+  // answer and degrades honestly.
+  const retry = await once(Math.min((Number(temperature) || 0) + 0.6, 1));
+  return retry.ok && parses(retry.content) ? retry : first;
 }
 
 function runProvider(name, { messages, temperature, jsonMode, timeoutMs, localModel, tools }) {
