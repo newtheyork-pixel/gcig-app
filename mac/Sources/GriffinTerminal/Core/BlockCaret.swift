@@ -13,9 +13,15 @@ import SwiftUI
 // AppKit has no supported way to restyle the caret of an NSTextField.
 // What it does have is the FIELD EDITOR: every text field in a window
 // borrows one shared NSTextView to do its editing, and a window may
-// supply its own. So one subclass installed once covers the command
-// line, the search boxes, the reply form, and anything else typed into
-// this app, without touching a single view.
+// supply its own.
+//
+// This does NOT reach a SwiftUI TextField. Instrumenting the hook settled
+// that: the only client asking this window for a field editor is an
+// NSButtonTextField, so SwiftUI's field is not NSTextField-backed here and
+// never asks. The command line therefore owns its own text view — see
+// CommandField. This stays because it does cover genuine AppKit fields,
+// and because the next person to wonder why should find the answer here
+// rather than repeat the experiment.
 //
 // The override that is easy to miss is setNeedsDisplay. AppKit
 // invalidates exactly the hairline it thinks it drew, so a wider caret

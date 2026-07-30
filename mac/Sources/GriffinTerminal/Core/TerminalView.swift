@@ -237,30 +237,29 @@ private struct CommandBarView: View {
                 Text(">")
                     .font(Term.mono(13, weight: .bold))
                     .foregroundStyle(Term.orange)
-                TextField("", text: $value,
-                          prompt: Text("TICKER FUNCTION — e.g. AAPL DES · or ask in plain English")
-                              .foregroundStyle(Term.fgMuted))
-                    .textFieldStyle(.plain)
-                    .font(Term.mono(13))
-                    .foregroundStyle(Term.amber)
-                    .focused($focused)
-                    .onSubmit { submit() }
-                    .onChange(of: value) { _, _ in active = 0; menuOpen = true }
-                    .onKeyPress(.upArrow) { move(-1) }
-                    .onKeyPress(.downArrow) { move(1) }
-                    .onKeyPress(.tab) { fill() }
-                    .onKeyPress(.escape) {
+                // Ours, not SwiftUI's, so the caret can be an amber
+                // block. Every key the old field handled with .onKeyPress
+                // is now an explicit closure — see CommandField.
+                CommandField(
+                    text: $value,
+                    placeholder: "TICKER FUNCTION — e.g. AAPL DES · or ask in plain English",
+                    isFocused: focused,
+                    onSubmit: { submit() },
+                    onEscape: {
                         // The field owns focus almost permanently, so if
                         // Escape only worked when focus was elsewhere it
                         // would effectively never work — which is exactly
                         // the bug this replaces. Bloomberg's <CANCL>
                         // cascade: shut the menu, then clear the line,
                         // then the two-stroke select/close on the panes.
-                        if showMenu { menuOpen = false; return .handled }
-                        if !value.isEmpty { value = ""; return .handled }
+                        if showMenu { menuOpen = false; return }
+                        if !value.isEmpty { value = ""; return }
                         NotificationCenter.default.post(name: .escapeGesture, object: nil)
-                        return .handled
-                    }
+                    },
+                    onMove: { d in _ = move(d) },
+                    onTab: { _ = fill() })
+                    .frame(height: 17)
+                    .onChange(of: value) { _, _ in active = 0; menuOpen = true }
                 if parsing {
                     Text("PARSING…").font(Term.mono(9)).foregroundStyle(Term.fgMuted)
                 }

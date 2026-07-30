@@ -979,10 +979,16 @@ private struct ProjectDetail: View {
     private func tabBar(_ p: ProjectFull) -> some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 0) {
-                ForEach(RTab.allCases, id: \.self) { t in
+                ForEach(Array(RTab.allCases.enumerated()), id: \.element) { i, t in
                     let badge = t.badge(p)
                     Button { tab = t } label: {
                         HStack(spacing: 4) {
+                            // Bloomberg numbers everything you can jump
+                            // to, and the number is the shortcut. Dim so
+                            // it reads as an address rather than data.
+                            Text("\(i + 1))")
+                                .font(Term.mono(10))
+                                .foregroundStyle(tab == t ? Term.orange : Term.fgMuted)
                             Text(t.title(p))
                                 .font(Term.mono(10, weight: tab == t ? .bold : .regular))
                                 .tracking(0.5)

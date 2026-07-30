@@ -47,6 +47,13 @@ enum Term {
         .system(size: size, weight: weight, design: .monospaced)
     }
 
+    /// The AppKit twin, for the views we draw ourselves. Same family and
+    /// the same tabular behaviour, or the command line would sit in a
+    /// different typeface from every panel under it.
+    static func nsMono(_ size: CGFloat, weight: NSFont.Weight = .regular) -> NSFont {
+        NSFont.monospacedSystemFont(ofSize: size, weight: weight)
+    }
+
     // MARK: OKLCH conversion
     //
     // Oklab -> linear sRGB -> gamma sRGB. Björn Ottosson's matrices.
