@@ -2470,9 +2470,24 @@ private struct ValuationTab: View {
             }
 
             HStack(alignment: .top, spacing: 18) {
-                caseCell("BEAR", v.bear, ref: ref, ccy: v.currency)
-                caseCell("BASE", v.base, ref: ref, ccy: v.currency)
-                caseCell("BULL", v.bull, ref: ref, ccy: v.currency)
+                // Three dashes said "we have no numbers" when the record
+                // actually said "this one states a multiple, not a
+                // price". Those are different claims about our own work
+                // and must not render alike.
+                if v.bear == nil && v.base == nil && v.bull == nil {
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text("NO PRICE CASES, BY CHOICE")
+                            .font(Term.mono(9, weight: .bold)).tracking(0.5)
+                            .foregroundStyle(Term.amber)
+                        Text("Stated as a multiple. See the note below.")
+                            .font(Term.mono(10)).foregroundStyle(Term.fgDim)
+                    }
+                    .frame(minWidth: 240, alignment: .leading)
+                } else {
+                    caseCell("BEAR", v.bear, ref: ref, ccy: v.currency)
+                    caseCell("BASE", v.base, ref: ref, ccy: v.currency)
+                    caseCell("BULL", v.bull, ref: ref, ccy: v.currency)
+                }
                 VStack(alignment: .leading, spacing: 1) {
                     Text(ref == nil ? "NO REF PRICE" : (refIsLive ? "VS LIVE" : "VS AT WRITE"))
                         .font(Term.mono(9)).tracking(0.5).foregroundStyle(Term.fgMuted)

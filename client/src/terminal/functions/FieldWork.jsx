@@ -1260,9 +1260,26 @@ function ValuationRow({ v, project, onChanged }) {
       </div>
 
       <div style={{ display: 'flex', gap: 18, marginTop: 4, flexWrap: 'wrap' }}>
-        {cell('BEAR', v.bear)}
-        {cell('BASE', v.base)}
-        {cell('BULL', v.bull)}
+        {/* Three dashes said "we have no numbers" when the record
+            actually said "this one states a multiple, not a price". The
+            two are different claims about our own work and must not
+            render alike — the same rule the compliance chips follow. */}
+        {v.bear == null && v.base == null && v.bull == null ? (
+          <div style={{ minWidth: 240 }}>
+            <div style={{ color: 'var(--term-amber, var(--term-white))', fontSize: 10, letterSpacing: 0.5 }}>
+              NO PRICE CASES, BY CHOICE
+            </div>
+            <div style={{ color: 'var(--term-fg-dim)', fontSize: 11 }}>
+              Stated as a multiple. See the note below.
+            </div>
+          </div>
+        ) : (
+          <>
+            {cell('BEAR', v.bear)}
+            {cell('BASE', v.base)}
+            {cell('BULL', v.bull)}
+          </>
+        )}
         {/* Upside is meaningless without saying what it is against, and a
             stale reference price quietly turns into a wrong percentage. */}
         <div style={{ minWidth: 92 }}>

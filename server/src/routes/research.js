@@ -213,6 +213,19 @@ router.get('/projects/:id', async (req, res) => {
     res.json({
       ...project,
       targets,
+      // Priced valuations first, then newest.
+      //
+      // These two were saved twenty-one seconds apart, and pure
+      // recency put the comps record — whose case fields are
+      // deliberately empty, because a multiple is not a price target —
+      // on top of the DCF that actually carries bear/base/bull. Opening
+      // the tab therefore answered "what do we think it is worth" with
+      // three dashes. A record that states a number is the headline
+      // whatever order they happened to be typed in.
+      valuations: [...(project.valuations || [])].sort((a, b) => {
+        const priced = (v) => (v.bear != null || v.base != null || v.bull != null) ? 1 : 0;
+        return priced(b) - priced(a) || new Date(b.asOf) - new Date(a.asOf);
+      }),
       claims: claims.map((c) => ({
         ...c,
         stamp: formatStamp(c.startMs),
