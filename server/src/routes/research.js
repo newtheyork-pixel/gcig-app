@@ -1847,7 +1847,8 @@ const num = (v) => {
 async function cleanAssumptions(raw, projectId) {
   if (!Array.isArray(raw)) return { assumptions: [], droppedCitations: 0 };
   const wanted = new Set(
-    raw.map((a) => Number(a?.claimId)).filter(Number.isInteger)
+    raw.map((a) => (a?.claimId != null && a.claimId !== '' ? Number(a.claimId) : NaN))
+       .filter(Number.isInteger)
   );
   let valid = new Set();
   if (wanted.size) {
@@ -1859,9 +1860,15 @@ async function cleanAssumptions(raw, projectId) {
   }
   let droppedCitations = 0;
   const assumptions = raw.slice(0, 60).map((a) => {
-    const claimId = Number(a?.claimId);
+    // Number(null) is 0, which passes Number.isInteger — so an
+    // uncited assumption used to be counted as a DROPPED citation.
+    // Twelve honest rows reported twelve dropped citations, and a
+    // warning that fires on every clean save is a warning people learn
+    // to ignore, which costs more than the miss it was meant to catch.
+    const cited = a?.claimId != null && a.claimId !== '';
+    const claimId = cited ? Number(a.claimId) : NaN;
     const keep = Number.isInteger(claimId) && valid.has(claimId);
-    if (Number.isInteger(claimId) && !keep) droppedCitations += 1;
+    if (cited && !keep) droppedCitations += 1;
     return {
       label: String(a?.label || '').slice(0, 120),
       value: String(a?.value ?? '').slice(0, 80),
