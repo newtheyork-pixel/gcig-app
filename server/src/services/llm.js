@@ -241,6 +241,49 @@ export function contextFor(messages, { max = Number(process.env.LOCAL_LLM_MAX_CT
   return Math.min(Math.max(want, 4096), max);
 }
 
+/// The first complete JSON value in a model's reply.
+///
+/// Qwen appends a bare <tool_call> sentinel after the closing brace when
+/// no tools were offered, and JSON.parse on the whole string throws. Ten
+/// call sites parse model output directly, and every one of them catches
+/// the throw and quietly falls back — so a screen that had produced a
+/// perfectly good verdict was recorded as "the model was unavailable".
+/// Interview 9 failed exactly this way on a 1,220-character transcript,
+/// which is how it survived the context fix that repaired everything
+/// else: a different cause with an identical symptom.
+///
+/// Scans for a balanced value rather than regexing to the last brace,
+/// because a brace inside a quoted excerpt is not the end of anything.
+export function extractJson(text) {
+  if (typeof text !== 'string') return text;
+  const s = text.trim().replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '').trim();
+  const start = s.search(/[{[]/);
+  if (start < 0) return s;
+  const open = s[start];
+  const close = open === '{' ? '}' : ']';
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let i = start; i < s.length; i += 1) {
+    const c = s[i];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (c === '\\') escaped = true;
+      else if (c === '"') inString = false;
+      continue;
+    }
+    if (c === '"') inString = true;
+    else if (c === open) depth += 1;
+    else if (c === close) {
+      depth -= 1;
+      if (depth === 0) return s.slice(start, i + 1);
+    }
+  }
+  // Unbalanced: hand back what we have and let the caller's parse fail
+  // honestly rather than inventing a closing brace.
+  return s;
+}
+
 /// The native Ollama chat URL, derived from the configured base by
 /// dropping the OpenAI-compat suffix. Overridable, because a deployment
 /// whose local endpoint is not Ollama should be able to turn this off and
@@ -291,7 +334,9 @@ async function callOllamaNative({ endpoint, apiKey, model, messages, temperature
       );
     }
     if (!content) return { ok: false, status: res.status, error: 'empty response' };
-    return { ok: true, content };
+    // Only when JSON was asked for. Trimming prose off a prose answer
+    // would be the transport editing the model.
+    return { ok: true, content: jsonMode ? extractJson(content) : content };
   } catch (err) {
     return { ok: false, status: 0, error: err?.name === 'AbortError' ? 'timeout' : String(err?.message || err) };
   } finally {

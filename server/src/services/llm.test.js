@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { contextFor, nativeChatURL } from './llm.js';
+import { contextFor, nativeChatURL, extractJson } from './llm.js';
 
 // Ollama defaults to 2048 tokens and truncates from the front, taking the
 // system prompt with it. That turned every long-transcript screen into a
@@ -45,5 +45,37 @@ describe('nativeChatURL', () => {
 
   it('is nothing when no local endpoint is configured', () => {
     assert.equal(nativeChatURL(''), null);
+  });
+});
+
+// Qwen appends a bare <tool_call> sentinel after the closing brace when no
+// tools were offered. Every caller does JSON.parse and catches the throw by
+// falling back, so a good verdict was being recorded as "model unavailable".
+describe('extractJson', () => {
+  it('drops a trailing tool-call sentinel', () => {
+    const raw = '{"risk":"low","reason":"fine"}<tool_call>';
+    assert.deepEqual(JSON.parse(extractJson(raw)), { risk: 'low', reason: 'fine' });
+  });
+
+  it('survives braces inside quoted excerpts', () => {
+    const raw = '{"quote":"he said {this} and }that{","ok":true} trailing junk';
+    assert.deepEqual(JSON.parse(extractJson(raw)), { quote: 'he said {this} and }that{', ok: true });
+  });
+
+  it('handles escaped quotes inside strings', () => {
+    const raw = '{"excerpts":["\\"Hershey?\\",\\"Way more?\\""]}<tool_call>';
+    assert.equal(JSON.parse(extractJson(raw)).excerpts.length, 1);
+  });
+
+  it('unwraps a fenced code block', () => {
+    assert.deepEqual(JSON.parse(extractJson('```json\n{"a":1}\n```')), { a: 1 });
+  });
+
+  it('takes arrays too', () => {
+    assert.deepEqual(JSON.parse(extractJson('[1,2,3] and then some words')), [1, 2, 3]);
+  });
+
+  it('leaves an unbalanced value alone so the parse fails honestly', () => {
+    assert.equal(extractJson('{"a":1'), '{"a":1');
   });
 });
