@@ -363,6 +363,7 @@ struct PanelRouter: View {
         case "TOP":  TopNewsPanel()
         case "RSCH", "FLD": ResearchPanel(ticker: ticker, paneID: paneID)
         case "WL":   WatchlistPanel()
+        case "SUBS": SubscriptionsPanel()
         case "WEB":  WebPanel(url: args)
         case "HELP": HelpPanel()
         case "GP":   ChartPanel(ticker: ticker ?? "")
