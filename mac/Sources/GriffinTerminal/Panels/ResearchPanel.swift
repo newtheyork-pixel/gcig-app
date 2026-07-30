@@ -3285,6 +3285,7 @@ private struct FilesTab: View {
     @State private var bodyText = ""
     @State private var uploading: String?
     @State private var uploadError: String?
+    @State private var openFolders: Set<String> = []
 
     var body: some View {
         let artifacts = p.artifacts ?? []
@@ -3330,15 +3331,58 @@ private struct FilesTab: View {
                         .font(Term.mono(9, weight: .bold)).tracking(0.6)
                         .foregroundStyle(Term.amber)
                         .padding(.top, 2)
-                    ForEach(key) { a in artifactRow(a) }
-                    if !rest.isEmpty {
-                        Text("EVERYTHING ELSE")
-                            .font(Term.mono(9, weight: .bold)).tracking(0.6)
-                            .foregroundStyle(Term.fgMuted)
-                            .padding(.top, 8)
+                    // Full path here on purpose: a key document is being
+                    // pulled out of its folder, so it has to say where it
+                    // actually lives.
+                    ForEach(key) { a in artifactRow(a, label: a.title) }
+                }
+
+                // Two hundred files in one flat list is a list nobody
+                // reads. The paths were already in the titles — model/,
+                // research/annual-reports/, report/ — so the folders
+                // existed and were simply not being rendered as folders.
+                let groups = Self.grouped(rest)
+                if !groups.isEmpty {
+                    Text("FOLDERS (\(groups.count))")
+                        .font(Term.mono(9, weight: .bold)).tracking(0.6)
+                        .foregroundStyle(Term.fgMuted)
+                        .padding(.top, key.isEmpty ? 2 : 8)
+                }
+                ForEach(groups, id: \.0) { name, items in
+                    // Collapsed by default once a project is big enough
+                    // for that to be a mercy; small ones open flat so a
+                    // five-file project is not two clicks deep.
+                    let open = openFolders.contains(name) || rest.count <= 24
+                    Button {
+                        if openFolders.contains(name) { openFolders.remove(name) }
+                        else { openFolders.insert(name) }
+                    } label: {
+                        HStack(spacing: 6) {
+                            Text(open ? "▾" : "▸")
+                                .font(Term.mono(9)).foregroundStyle(Term.fgMuted)
+                                .frame(width: 10, alignment: .leading)
+                            Text(name)
+                                .font(Term.mono(10, weight: .bold)).tracking(0.4)
+                                .foregroundStyle(Term.blue)
+                            Text("\(items.count)")
+                                .font(Term.mono(9)).foregroundStyle(Term.fgMuted)
+                            Spacer()
+                        }
+                        .padding(.vertical, 3)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .onHover { $0 ? NSCursor.pointingHand.push() : NSCursor.pop() }
+                    if open {
+                        // Basename only inside a folder. The header
+                        // carries the path, so repeating it on every row
+                        // just pushes the filename off the right edge.
+                        ForEach(items) { a in
+                            artifactRow(a, label: Self.basename(a.title))
+                                .padding(.leading, 14)
+                        }
                     }
                 }
-                ForEach(rest) { a in artifactRow(a) }
             }
         }
     }
@@ -3437,7 +3481,34 @@ private struct FilesTab: View {
         .padding(8).termBorder()
     }
 
-    private func artifactRow(_ a: ProjectFull.Artifact) -> some View {
+    /// Folder name and basename, split on the last slash. No slash means
+    /// the file is loose at the root.
+    static func split(_ title: String) -> (String?, String) {
+        guard let i = title.lastIndex(of: "/") else { return (nil, title) }
+        return (String(title[title.startIndex..<i]), String(title[title.index(after: i)...]))
+    }
+
+    static func basename(_ title: String) -> String {
+        let n = split(title).1
+        return n.isEmpty ? title : n
+    }
+
+    /// Grouped by path prefix, folders alphabetical, loose files last
+    /// under a heading that says they are loose rather than pretending
+    /// the root is a folder like any other.
+    static func grouped(_ items: [ProjectFull.Artifact]) -> [(String, [ProjectFull.Artifact])] {
+        var byFolder: [String: [ProjectFull.Artifact]] = [:]
+        var loose: [ProjectFull.Artifact] = []
+        for a in items {
+            if let f = split(a.title).0, !f.isEmpty { byFolder[f, default: []].append(a) }
+            else { loose.append(a) }
+        }
+        var out = byFolder.keys.sorted().map { ($0, byFolder[$0]!) }
+        if !loose.isEmpty { out.append(("NOT IN A FOLDER", loose)) }
+        return out
+    }
+
+    private func artifactRow(_ a: ProjectFull.Artifact, label: String? = nil) -> some View {
         let isKey = a.keyDoc == true
         return HStack(alignment: .firstTextBaseline, spacing: 8) {
             // The marker carries the meaning; the colour only makes it
@@ -3452,7 +3523,7 @@ private struct FilesTab: View {
                 .frame(width: 70, alignment: .leading)
             if a.body?.isEmpty == false {
                 Button { onOpenArtifact(a.id) } label: {
-                    Text(a.title)
+                    Text(label ?? a.title)
                         .font(Term.mono(11)).foregroundStyle(Term.amber)
                         .lineLimit(1)
                         .contentShape(Rectangle())
@@ -3462,7 +3533,7 @@ private struct FilesTab: View {
                 .help("Read in place")
             } else if let item = DocumentViewer.itemId(from: a.fileRef) {
                 Button { onOpenFile(item, a.title) } label: {
-                    Text(a.title)
+                    Text(label ?? a.title)
                         .font(Term.mono(11, weight: isKey ? .bold : .regular))
                         .foregroundStyle(isKey ? Term.amber : Term.white)
                         .lineLimit(1)
@@ -3472,7 +3543,7 @@ private struct FilesTab: View {
                 .onHover { $0 ? NSCursor.pointingHand.push() : NSCursor.pop() }
                 .help("Read it here, or open the original")
             } else {
-                Text(a.title)
+                Text(label ?? a.title)
                     .font(Term.mono(11, weight: isKey ? .bold : .regular))
                     .foregroundStyle(isKey ? Term.amber : Term.white).lineLimit(1)
                 // Neither inline text nor a stored file. Nothing to open,

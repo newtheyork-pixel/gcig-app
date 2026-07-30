@@ -1541,7 +1541,61 @@ function ValuationForm({ project, onDone, setFlash }) {
   );
 }
 
+// Two hundred files in one flat list is a list nobody reads. The paths
+// were already sitting in the titles — model/, research/annual-reports/,
+// report/ — so the folders existed and were simply never rendered as
+// folders. Nothing was migrated to do this; the structure was already
+// there.
+//
+// Returns a flat sequence of headings, folder rows and file rows so the
+// table can stay a table. A folder collapsed by default once the project
+// is big enough for that to be a mercy, open flat when it is small, since
+// a five-file project should not be two clicks deep.
+function splitPath(title) {
+  const i = String(title || '').lastIndexOf('/');
+  return i < 0 ? [null, title] : [title.slice(0, i), title.slice(i + 1)];
+}
+
+function fileRows(artifacts, openFolders) {
+  const key = artifacts.filter((a) => a.keyDoc);
+  const rest = artifacts.filter((a) => !a.keyDoc);
+  const alwaysOpen = rest.length <= 24;
+  const out = [];
+  if (key.length) {
+    out.push({ heading: 'KEY DOCUMENTS' });
+    // Full path on a key document: it has been pulled out of its folder,
+    // so it has to say where it actually lives.
+    for (const a of key) out.push({ a, label: a.title });
+  }
+  const byFolder = new Map();
+  const loose = [];
+  for (const a of rest) {
+    const [f] = splitPath(a.title);
+    if (f) {
+      if (!byFolder.has(f)) byFolder.set(f, []);
+      byFolder.get(f).push(a);
+    } else loose.push(a);
+  }
+  const names = [...byFolder.keys()].sort();
+  if (names.length || loose.length) out.push({ heading: `FOLDERS (${names.length})` });
+  for (const name of names) {
+    const items = byFolder.get(name);
+    out.push({ folder: name, count: alwaysOpen ? -1 : items.length });
+    if (alwaysOpen || openFolders.has(name)) {
+      for (const a of items) out.push({ a, label: splitPath(a.title)[1] });
+    }
+  }
+  if (loose.length) {
+    out.push({ folder: 'NOT IN A FOLDER', count: alwaysOpen ? -1 : loose.length });
+    if (alwaysOpen || openFolders.has('NOT IN A FOLDER')) {
+      for (const a of loose) out.push({ a, label: a.title });
+    }
+  }
+  return out;
+}
+
 function Files({ project, onChanged, setFlash, onOpenDoc, focus, onFocused }) {
+  const [openFolders, setOpenFolders] = useState(new Set());
   const fileRef = useRef(null);
   const rowRefs = useRef({});
   const [kind, setKind] = useState('document');
@@ -1631,22 +1685,40 @@ function Files({ project, onChanged, setFlash, onOpenDoc, focus, onFocused }) {
             <tr><th>Kind</th><th>Title</th><th>Added</th><th /></tr>
           </thead>
           <tbody>
-            {project.artifacts.map((a, i) => {
-              // The server sorts key documents first. The heading row is
-              // what makes that legible: colour alone stops being a
-              // signal the moment a project has twenty files, and it
-              // says nothing at all to a reader who cannot pick amber
-              // out from white.
-              const prev = project.artifacts[i - 1];
-              const startsRest = !a.keyDoc && (i === 0 ? false : !!prev?.keyDoc);
+            {fileRows(project.artifacts, openFolders).map(({ a, heading, folder, label, count }) => {
+              if (heading) {
+                return (
+                  <tr key={heading}>
+                    <td colSpan={4} style={{ color: heading === 'KEY DOCUMENTS' ? 'var(--term-amber, var(--term-white))' : 'var(--term-fg-muted)', fontSize: 10, letterSpacing: 0.6, paddingTop: heading === 'KEY DOCUMENTS' ? 4 : 10 }}>
+                      {heading}
+                    </td>
+                  </tr>
+                );
+              }
+              if (folder) {
+                const open = openFolders.has(folder) || count === -1;
+                return (
+                  <tr key={`f:${folder}`}>
+                    <td colSpan={4} style={{ paddingTop: 4 }}>
+                      <a
+                        href="#"
+                        onClick={(e) => {
+                          e.preventDefault();
+                          const next = new Set(openFolders);
+                          if (next.has(folder)) next.delete(folder); else next.add(folder);
+                          setOpenFolders(next);
+                        }}
+                        style={{ color: 'var(--term-blue, var(--term-white))', fontSize: 11, fontWeight: 600 }}
+                      >
+                        {open ? '▾' : '▸'} {folder}
+                      </a>
+                      <span style={{ color: 'var(--term-fg-muted)', fontSize: 10, marginLeft: 6 }}>{count}</span>
+                    </td>
+                  </tr>
+                );
+              }
               return (
               <Fragment key={a.id}>
-              {i === 0 && a.keyDoc ? (
-                <tr><td colSpan={4} style={{ color: 'var(--term-amber, var(--term-white))', fontSize: 10, letterSpacing: 0.6, paddingTop: 4 }}>KEY DOCUMENTS</td></tr>
-              ) : null}
-              {startsRest ? (
-                <tr><td colSpan={4} style={{ color: 'var(--term-fg-muted)', fontSize: 10, letterSpacing: 0.6, paddingTop: 10 }}>EVERYTHING ELSE</td></tr>
-              ) : null}
               <tr ref={(el) => { rowRefs.current[a.id] = el; }}>
                 <td className="sym" style={a.keyDoc ? { color: 'var(--term-amber, var(--term-white))' } : undefined}>
                   {a.keyDoc ? '★ ' : ''}{a.kind}
@@ -1657,11 +1729,11 @@ function Files({ project, onChanged, setFlash, onOpenDoc, focus, onFocused }) {
                       href="#"
                       onClick={(e) => { e.preventDefault(); onOpenDoc({ url: a.fileRef, title: a.title }); }}
                     >
-                      {a.title}
+                      {label}
                     </a>
                   ) : (
                     <details>
-                      <summary style={{ cursor: 'pointer' }}>{a.title}</summary>
+                      <summary style={{ cursor: 'pointer' }}>{label}</summary>
                       <pre
                         style={{
                           whiteSpace: 'pre-wrap',
