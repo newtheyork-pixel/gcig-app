@@ -241,9 +241,87 @@ export function contextFor(messages, { max = Number(process.env.LOCAL_LLM_MAX_CT
   return Math.min(Math.max(want, 4096), max);
 }
 
+/// The native Ollama chat URL, derived from the configured base by
+/// dropping the OpenAI-compat suffix. Overridable, because a deployment
+/// whose local endpoint is not Ollama should be able to turn this off and
+/// keep the compat path.
+export function nativeChatURL(base = process.env.LOCAL_LLM_NATIVE_URL || process.env.LOCAL_LLM_URL) {
+  if (!base) return null;
+  if (process.env.LOCAL_LLM_NATIVE_DISABLED === '1') return null;
+  const root = normalizeBase(base).replace(/\/v1$/, '');
+  return `${root}/api/chat`;
+}
+
+/// Ollama's own endpoint. Same job as callEndpoint, different wire shape:
+/// options instead of top-level fields, format:"json" instead of
+/// response_format, and the reply at message.content.
+async function callOllamaNative({ endpoint, apiKey, model, messages, temperature, jsonMode, timeoutMs, numCtx }) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(endpoint, {
+      method: 'POST',
+      signal: controller.signal,
+      headers: {
+        'Content-Type': 'application/json',
+        ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
+      },
+      body: JSON.stringify({
+        model,
+        messages,
+        stream: false,
+        ...(jsonMode ? { format: 'json' } : {}),
+        options: {
+          num_ctx: numCtx,
+          ...(temperature != null ? { temperature } : {}),
+        },
+      }),
+    });
+    if (!res.ok) {
+      return { ok: false, status: res.status, error: (await res.text()).slice(0, 300) };
+    }
+    const data = await res.json();
+    const content = data?.message?.content;
+    // A prompt longer than the window it was given is still truncated
+    // from the front, which is how this whole class of failure hides. Say
+    // so rather than returning a confident answer to half a question.
+    if (typeof data?.prompt_eval_count === 'number' && data.prompt_eval_count >= numCtx - 8) {
+      console.warn(
+        `local model: prompt filled the ${numCtx}-token window (${data.prompt_eval_count} evaluated) — input may have been truncated`
+      );
+    }
+    if (!content) return { ok: false, status: res.status, error: 'empty response' };
+    return { ok: true, content };
+  } catch (err) {
+    return { ok: false, status: 0, error: err?.name === 'AbortError' ? 'timeout' : String(err?.message || err) };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 function runProvider(name, { messages, temperature, jsonMode, timeoutMs, localModel, tools }) {
   if (name === 'local') {
     if (!process.env.LOCAL_LLM_URL) return null;
+    // Ollama's NATIVE api, not the OpenAI-compatible one, because the
+    // context window can only be set through the native options object.
+    // Measured, twice, on the same 9,339-token prompt: native honoured
+    // num_ctx and evaluated all of it; the compat endpoint reported 2,050
+    // tokens and returned {} — including immediately after the model had
+    // been loaded at 16k, so it is not a stale-instance effect. The
+    // compat path remains for any local server that is not Ollama.
+    const native = nativeChatURL();
+    if (native) {
+      return callOllamaNative({
+        endpoint: native,
+        apiKey: process.env.LOCAL_LLM_API_KEY,
+        model: localModel || process.env.LOCAL_LLM_MODEL || DEFAULT_LOCAL_MODEL,
+        messages,
+        temperature,
+        jsonMode,
+        timeoutMs,
+        numCtx: contextFor(messages),
+      });
+    }
     return callEndpoint({
       endpoint: `${normalizeBase(process.env.LOCAL_LLM_URL)}/chat/completions`,
       apiKey: process.env.LOCAL_LLM_API_KEY,
@@ -262,7 +340,6 @@ function runProvider(name, { messages, temperature, jsonMode, timeoutMs, localMo
       jsonMode,
       timeoutMs,
       tools,
-      extraBody: { options: { num_ctx: contextFor(messages) } },
     });
   }
   if (name === 'anthropic') {

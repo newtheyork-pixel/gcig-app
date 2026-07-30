@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { contextFor } from './llm.js';
+import { contextFor, nativeChatURL } from './llm.js';
 
 // Ollama defaults to 2048 tokens and truncates from the front, taking the
 // system prompt with it. That turned every long-transcript screen into a
@@ -27,5 +27,23 @@ describe('contextFor', () => {
   it('counts every message, not just the last one', () => {
     const split = contextFor([{ content: 'x'.repeat(15_000) }, { content: 'x'.repeat(15_000) }]);
     assert.equal(split, contextFor([{ content: 'x'.repeat(30_000) }]));
+  });
+});
+
+// The compat endpoint silently ignores num_ctx: measured twice on the same
+// 9,339-token prompt, it reported 2,050 evaluated and returned {}, even
+// straight after the model had been loaded at 16k. Only Ollama's own
+// endpoint honours the window, so the local path has to reach it.
+describe('nativeChatURL', () => {
+  it('drops the OpenAI-compat suffix', () => {
+    assert.equal(nativeChatURL('https://llm.example.org/v1'), 'https://llm.example.org/api/chat');
+  });
+
+  it('works when the base has no suffix', () => {
+    assert.equal(nativeChatURL('https://llm.example.org'), 'https://llm.example.org/api/chat');
+  });
+
+  it('is nothing when no local endpoint is configured', () => {
+    assert.equal(nativeChatURL(''), null);
   });
 });
