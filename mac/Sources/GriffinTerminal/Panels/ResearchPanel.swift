@@ -503,6 +503,29 @@ struct LiveQuote: Decodable {
 // X-New-Token rotation, and the server's own error sentence surfaced
 // instead of a generic failure. If a third panel ever needs these verbs
 // they belong on the actor, and this enum should be deleted.
+/// Builds the JSON body OFF the main actor and posts it.
+///
+/// The add-forms assemble their payload from a handful of optional text
+/// fields, which means a `[String: Any]` built inside a `@MainActor`
+/// view. Handing that to the API actor is a Swift 6 sending violation,
+/// so the dictionary is assembled here instead: the inputs crossing the
+/// boundary are Sendable strings and ints, and the untyped dictionary
+/// never exists on the main actor at all. Empty strings are dropped
+/// rather than sent, because the server stores "" as a value and a blank
+/// employer field would otherwise overwrite nothing with nothing.
+private enum ResearchWrite {
+    static func create(
+        _ path: String,
+        text: [String: String],
+        numbers: [String: Int] = [:]
+    ) async throws {
+        var json: [String: Any] = [:]
+        for (k, v) in text where !v.isEmpty { json[k] = v }
+        for (k, v) in numbers { json[k] = v }
+        _ = try await API.shared.post(path, json: json)
+    }
+}
+
 private enum ResearchHTTP {
     struct WriteError: LocalizedError {
         let message: String
@@ -797,6 +820,44 @@ private func moneyCcy(_ v: Double?, _ ccy: String?) -> String {
 /// the whole correspondence record lives there. Anything that doesn't
 /// match the shape is shown as-is rather than dropped, so an older
 /// record stays readable.
+/// The one-line input look shared by every write form in this panel.
+/// Defined once because there are now four of them and a form that does
+/// not look like the others reads as a different app.
+private extension View {
+    func termInput(width: CGFloat? = nil) -> some View {
+        font(Term.mono(11))
+            .foregroundStyle(Term.white)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 4)
+            .frame(width: width)
+            .background(Term.bg)
+            .termBorder()
+    }
+}
+
+/// A labelled Menu that writes a single string, matching statusMenu's
+/// look so the pickers in the add-forms are not a new visual language.
+private struct TermPicker: View {
+    let options: [String]
+    @Binding var value: String
+    let placeholder: String
+    var width: CGFloat = 118
+
+    var body: some View {
+        Menu {
+            ForEach(options, id: \.self) { o in
+                Button(o) { value = o }
+            }
+        } label: {
+            Text(value.isEmpty ? placeholder : value)
+                .font(Term.mono(10))
+                .foregroundStyle(value.isEmpty ? Term.fgMuted : Term.fgDim)
+        }
+        .menuStyle(.borderlessButton)
+        .frame(width: width, alignment: .leading)
+    }
+}
+
 private func noteSections(_ notes: String?) -> [(heading: String?, body: String)] {
     guard let notes, !notes.isEmpty else { return [] }
     func isHeading(_ s: String) -> Bool {
@@ -1085,7 +1146,7 @@ private struct ProjectDetail: View {
         case .interviews:
             InterviewsTab(p: p, onOpenTranscript: { readerInterviewID = $0 })
         case .visits:
-            VisitsTab(p: p)
+            VisitsTab(p: p, busy: $busy, run: run)
         case .valuation:
             ValuationTab(p: p)
         case .ledger:
@@ -1575,6 +1636,23 @@ private struct OutreachTab: View {
         "Identified", "Contacted", "Scheduled", "Completed", "Declined", "Unreachable",
     ]
 
+    // The house vocabulary, same set the /sources route validates
+    // against. The targets route stores relationship as free text, but
+    // typing a fresh spelling here would silently fork the funnel's
+    // grouping, so the picker is the only way in.
+    private static let relationships = [
+        "FormerEmployee", "CurrentEmployee", "Customer", "Distributor",
+        "Supplier", "Competitor", "IndustryExpert", "Other",
+    ]
+
+    @State private var adding = false
+    @State private var nName = ""
+    @State private var nRelationship = ""
+    @State private var nEmployer = ""
+    @State private var nRole = ""
+    @State private var nEmail = ""
+    @State private var nNotes = ""
+
     var body: some View {
         let targets = p.targets ?? []
         let fn = p.funnel
@@ -1591,6 +1669,8 @@ private struct OutreachTab: View {
             // reader who sees only the first will assume the second.
             queueLine(q)
 
+            addTargetForm
+
             if targets.count > 8 {
                 HStack(spacing: 12) {
                     Chip(label: "ALL \(targets.count)", active: only == .all) { only = .all }
@@ -1604,7 +1684,7 @@ private struct OutreachTab: View {
 
             let shown = targets.filter(matches)
             if targets.isEmpty {
-                PanelMessage(text: "No targets yet. The list is built on the web terminal — map the value chain, then work it.")
+                PanelMessage(text: "No targets yet. Map the value chain, add the names above, then work the list.")
             } else if shown.isEmpty {
                 // An empty bucket is good news here, and a blank table
                 // does not say so.
@@ -1615,7 +1695,7 @@ private struct OutreachTab: View {
                 }
             }
 
-            Text("Adding targets and writing first drafts happen on the web terminal; everything about working the list is here.")
+            Text("The whole funnel runs here: add a name, draft, screen, approve, send, log the reply, move the status.")
                 .font(Term.mono(9)).foregroundStyle(Term.fgMuted)
         }
     }
@@ -1703,6 +1783,65 @@ private struct OutreachTab: View {
         }
         .padding(.vertical, 4)
         .overlay(alignment: .bottom) { Rectangle().fill(Term.border).frame(height: 1).opacity(0.5) }
+    }
+
+    /// Adding a name is the other edit the funnel needs weekly, and it
+    /// used to mean opening a browser. Collapsed by default so the tab
+    /// still opens on the list rather than on a form.
+    @ViewBuilder private var addTargetForm: some View {
+        if adding {
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 6) {
+                    TextField("Name", text: $nName)
+                        .textFieldStyle(.plain).termInput(width: 150)
+                    TermPicker(options: Self.relationships, value: $nRelationship,
+                               placeholder: "Relationship")
+                    TextField("Employer", text: $nEmployer)
+                        .textFieldStyle(.plain).termInput(width: 140)
+                    TextField("Role", text: $nRole)
+                        .textFieldStyle(.plain).termInput(width: 140)
+                }
+                HStack(spacing: 6) {
+                    TextField("Email (optional)", text: $nEmail)
+                        .textFieldStyle(.plain).termInput(width: 190)
+                    TextField("Why this person", text: $nNotes)
+                        .textFieldStyle(.plain).termInput(width: 250)
+                        .onSubmit { addTarget() }
+                    Button("Add") { addTarget() }
+                        .buttonStyle(TermButtonStyle())
+                        .disabled(busy || nName.isEmpty || nRelationship.isEmpty)
+                    Button("Cancel") { adding = false; clearTarget() }
+                        .buttonStyle(TermButtonStyle())
+                        .disabled(busy)
+                }
+                Text("Name and relationship required. A malformed address is rejected rather than stored, because a bad one looks like a working address until the bounce comes back.")
+                    .font(Term.mono(9)).foregroundStyle(Term.fgMuted)
+            }
+            .padding(.vertical, 4)
+        } else {
+            Button("+ ADD NAME") { adding = true }
+                .buttonStyle(TermButtonStyle())
+                .disabled(busy)
+        }
+    }
+
+    private func addTarget() {
+        guard !nName.isEmpty, !nRelationship.isEmpty else { return }
+        let fields = [
+            "name": nName, "relationship": nRelationship, "employer": nEmployer,
+            "role": nRole, "email": nEmail, "notes": nNotes,
+        ]
+        let path = "/research/projects/\(p.id)/targets"
+        Task { await run {
+            try await ResearchWrite.create(path, text: fields)
+            clearTarget()
+            adding = false
+        } }
+    }
+
+    private func clearTarget() {
+        nName = ""; nRelationship = ""; nEmployer = ""
+        nRole = ""; nEmail = ""; nNotes = ""
     }
 
     private func statusMenu(_ t: Target) -> some View {
@@ -2531,12 +2670,40 @@ private struct TranscriptReader: View {
 
 private struct VisitsTab: View {
     let p: ProjectFull
+    @Binding var busy: Bool
+    let run: RunAction
+
+    // Day-part is free text on the server but a fixed list here: the
+    // whole value of the field is comparing like with like, and one
+    // analyst writing "morning" while another writes "Weekday AM"
+    // destroys that silently.
+    private static let dayParts = [
+        "Weekday AM", "Weekday midday", "Weekday PM",
+        "Weekday evening", "Saturday", "Sunday",
+    ]
+    private static let obsKinds = [
+        "condition", "measurement", "pricing", "traffic", "assortment", "other",
+    ]
+
+    @State private var logging = false
+    @State private var vLocation = ""
+    @State private var vBanner = ""
+    @State private var vDayPart = ""
+    @State private var vWeather = ""
+    @State private var vNotes = ""
+
+    @State private var obsFor: Int?
+    @State private var oText = ""
+    @State private var oKind = "condition"
+    @State private var oQuestionID: Int?
 
     var body: some View {
         let visits = p.visits ?? []
         VStack(alignment: .leading, spacing: 8) {
+            logVisitForm
+
             if visits.isEmpty {
-                PanelMessage(text: "No visits logged. For a retail name this is most of the work — and three different stores beat three trips to one.")
+                PanelMessage(text: "No visits logged. For a retail name this is most of the work, and three different stores beat three trips to one.")
             } else {
                 ForEach(visits) { v in
                     VStack(alignment: .leading, spacing: 2) {
@@ -2546,6 +2713,12 @@ private struct VisitsTab: View {
                                 Text("· \(b)").font(Term.mono(10)).foregroundStyle(Term.fgMuted)
                             }
                             Spacer()
+                            Button(obsFor == v.id ? "CLOSE" : "+ OBSERVATION") {
+                                obsFor = (obsFor == v.id) ? nil : v.id
+                                oText = ""; oKind = "condition"; oQuestionID = nil
+                            }
+                            .buttonStyle(TermButtonStyle())
+                            .disabled(busy)
                         }
                         Text([
                             Fmt.date(v.visitedAt),
@@ -2569,14 +2742,126 @@ private struct VisitsTab: View {
                             }
                             .padding(.leading, 8)
                         }
+
+                        if obsFor == v.id {
+                            observationForm(visitID: v.id)
+                        }
                     }
                     .padding(.vertical, 4)
                     .overlay(alignment: .top) { Rectangle().fill(Term.border).frame(height: 1).opacity(0.5) }
                 }
             }
-            Text("Logging visits and observations happens on the web terminal.")
+            Text("Observations count toward question coverage by distinct location, so link one to the question it answers. Eight trips to one store is still one data point.")
                 .font(Term.mono(9)).foregroundStyle(Term.fgMuted)
         }
+    }
+
+    @ViewBuilder private var logVisitForm: some View {
+        if logging {
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 6) {
+                    TextField("Location", text: $vLocation)
+                        .textFieldStyle(.plain).termInput(width: 190)
+                    TextField("Banner / fascia", text: $vBanner)
+                        .textFieldStyle(.plain).termInput(width: 140)
+                    TermPicker(options: Self.dayParts, value: $vDayPart,
+                               placeholder: "Day part", width: 128)
+                    TextField("Weather", text: $vWeather)
+                        .textFieldStyle(.plain).termInput(width: 110)
+                }
+                HStack(spacing: 6) {
+                    TextField("What the trip was for, and what you saw overall", text: $vNotes)
+                        .textFieldStyle(.plain).termInput(width: 420)
+                        .onSubmit { logVisit() }
+                    Button("Log") { logVisit() }
+                        .buttonStyle(TermButtonStyle())
+                        .disabled(busy || vLocation.isEmpty)
+                    Button("Cancel") { logging = false; clearVisit() }
+                        .buttonStyle(TermButtonStyle())
+                        .disabled(busy)
+                }
+                Text("Location is required. The visit is stamped now unless you are backfilling, and it inherits the project ticker.")
+                    .font(Term.mono(9)).foregroundStyle(Term.fgMuted)
+            }
+            .padding(.vertical, 4)
+        } else {
+            Button("+ LOG VISIT") { logging = true }
+                .buttonStyle(TermButtonStyle())
+                .disabled(busy)
+        }
+    }
+
+    private func observationForm(visitID: Int) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                TextField("What you observed", text: $oText)
+                    .textFieldStyle(.plain).termInput(width: 300)
+                    .onSubmit { addObservation(visitID: visitID) }
+                TermPicker(options: Self.obsKinds, value: $oKind,
+                           placeholder: "kind", width: 108)
+                questionLink
+                Button("Add") { addObservation(visitID: visitID) }
+                    .buttonStyle(TermButtonStyle())
+                    .disabled(busy || oText.isEmpty)
+            }
+        }
+        .padding(.leading, 8)
+        .padding(.vertical, 2)
+    }
+
+    /// Linking an observation to a question is what turns a store trip
+    /// into coverage rather than an anecdote, so the picker is inline
+    /// rather than a second step somebody skips.
+    @ViewBuilder private var questionLink: some View {
+        let qs = p.questions ?? []
+        if qs.isEmpty {
+            Text("no questions to link")
+                .font(Term.mono(9)).foregroundStyle(Term.fgMuted)
+        } else {
+            Menu {
+                Button("Not linked") { oQuestionID = nil }
+                ForEach(qs) { q in
+                    Button(String(q.text.prefix(70))) { oQuestionID = q.id }
+                }
+            } label: {
+                Text(oQuestionID == nil
+                     ? "link to question"
+                     : "Q\(qs.firstIndex(where: { $0.id == oQuestionID }).map { $0 + 1 } ?? 0)")
+                    .font(Term.mono(10))
+                    .foregroundStyle(oQuestionID == nil ? Term.fgMuted : Term.positive)
+            }
+            .menuStyle(.borderlessButton)
+            .frame(width: 116, alignment: .leading)
+        }
+    }
+
+    private func logVisit() {
+        guard !vLocation.isEmpty else { return }
+        let fields = [
+            "location": vLocation, "banner": vBanner,
+            "dayPart": vDayPart, "weather": vWeather, "notes": vNotes,
+        ]
+        let path = "/research/projects/\(p.id)/visits"
+        Task { await run {
+            try await ResearchWrite.create(path, text: fields)
+            clearVisit()
+            logging = false
+        } }
+    }
+
+    private func addObservation(visitID: Int) {
+        guard !oText.isEmpty else { return }
+        let fields = ["text": oText, "kind": oKind]
+        let nums = oQuestionID.map { ["questionId": $0] } ?? [:]
+        let path = "/research/visits/\(visitID)/observations"
+        Task { await run {
+            try await ResearchWrite.create(path, text: fields, numbers: nums)
+            oText = ""; oQuestionID = nil
+        } }
+    }
+
+    private func clearVisit() {
+        vLocation = ""; vBanner = ""; vDayPart = ""; vWeather = ""; vNotes = ""
     }
 }
 
