@@ -36,18 +36,55 @@ const revealLimiter = rateLimit({
   message: { error: 'Too many credential reads in an hour.' },
 });
 
+/// Flat per-subscription variables, which is what a person actually
+/// wants to type into a hosting dashboard:
+///
+///   SUB_WSJ_LABEL  Wall Street Journal
+///   SUB_WSJ_USER   club@gcschool.org
+///   SUB_WSJ_PASS   ...
+///   SUB_WSJ_URL    https://www.wsj.com/client/login
+///   SUB_WSJ_NOTE   Ask before changing the password
+///
+/// The middle segment is the key, so SUB_FT_USER and SUB_BARRONS_USER
+/// add a second and third without touching any code. JSON escaping in a
+/// single-line web form is a footgun, and the first person to paste a
+/// password containing a quote would have broken the whole list.
+function fromFlatVars() {
+  const found = new Map();
+  for (const name of Object.keys(process.env)) {
+    const m = /^SUB_([A-Z0-9]+)_(LABEL|USER|PASS|URL|NOTE)$/.exec(name);
+    if (!m) continue;
+    const key = m[1].toLowerCase();
+    const value = process.env[name];
+    if (!value) continue;
+    const row = found.get(key) || { key };
+    if (m[2] === 'LABEL') row.label = value;
+    if (m[2] === 'USER') row.username = value;
+    if (m[2] === 'PASS') row.password = value;
+    if (m[2] === 'URL') row.loginUrl = value;
+    if (m[2] === 'NOTE') row.note = value;
+    found.set(key, row);
+  }
+  return [...found.values()];
+}
+
 function parsed() {
+  const flat = fromFlatVars();
   const raw = process.env.SUBSCRIPTIONS;
-  if (!raw) return [];
+  if (!raw) return flat;
   try {
     const list = JSON.parse(raw);
-    return Array.isArray(list) ? list : [];
+    // Both forms work. Flat variables win on a key collision, because
+    // they are the ones somebody edited most recently by hand.
+    if (!Array.isArray(list)) return flat;
+    const keys = new Set(flat.map((f) => f.key));
+    return [...flat, ...list.filter((s) => !keys.has(String(s?.key)))];
   } catch {
     // A malformed variable is a configuration error, and returning an
     // empty list would render as "the club has no subscriptions" — a
     // sentence that is false and that nobody would think to question.
-    console.error('SUBSCRIPTIONS is set but is not valid JSON — no subscriptions will be served');
-    return null;
+    console.error('SUBSCRIPTIONS is set but is not valid JSON — serving only the SUB_* variables');
+    return flat.length ? flat : null;
   }
 }
 
