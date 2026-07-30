@@ -582,7 +582,7 @@ private enum ResearchHTTP {
 
 /// The action runner every write goes through: do the thing, then
 /// re-fetch the project so all eight tabs agree again.
-private typealias RunAction = (@escaping @MainActor @Sendable () async throws -> Void) async -> Void
+typealias RunAction = (@escaping @MainActor @Sendable () async throws -> Void) async -> Void
 
 // MARK: Shared style tables
 //
@@ -1144,7 +1144,7 @@ private struct ProjectDetail: View {
         case .outreach:
             OutreachTab(p: p, busy: $busy, run: run, onOpenTarget: { openTargetID = $0 })
         case .interviews:
-            InterviewsTab(p: p, onOpenTranscript: { readerInterviewID = $0 })
+            InterviewsTab(p: p, busy: $busy, run: run, onOpenTranscript: { readerInterviewID = $0 })
         case .visits:
             VisitsTab(p: p, busy: $busy, run: run)
         case .valuation:
@@ -2516,11 +2516,35 @@ private struct DraftCard: View {
 
 private struct InterviewsTab: View {
     let p: ProjectFull
+    @Binding var busy: Bool
+    let run: RunAction
     let onOpenTranscript: (Int) -> Void
+
+    @State private var opening = false
+    @State private var importingFor: Int?
+    @State private var working: String?
 
     var body: some View {
         let list = p.interviews ?? []
         VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                Button(opening ? "Cancel" : "+ New interview") { opening.toggle() }
+                    .buttonStyle(TermButtonStyle()).disabled(busy)
+                if let w = working {
+                    Text(w).font(Term.mono(9)).foregroundStyle(Term.amber)
+                }
+                Spacer()
+            }
+            if opening {
+                NewInterviewForm(projectId: p.id, ticker: p.ticker, busy: $busy, run: run,
+                                 onDone: { opening = false })
+                    .padding(8).background(Term.bg).termBorder()
+            }
+            if let id = importingFor {
+                TranscriptImportForm(interviewId: id, busy: $busy, run: run,
+                                     onDone: { importingFor = nil })
+                    .padding(8).background(Term.bg).termBorder()
+            }
             if list.isEmpty {
                 PanelMessage(text: "No interviews on this project yet.")
             } else {
@@ -2541,8 +2565,74 @@ private struct InterviewsTab: View {
                     interviewRow(iv)
                 }
             }
-            Text("Recording upload, transcript import and claim extraction run on the web terminal.")
-                .font(Term.mono(9)).foregroundStyle(Term.fgMuted)
+        }
+    }
+
+    /// What this interview still owes, as buttons rather than a sentence
+    /// pointing at another application. Each one is hidden when the
+    /// server would refuse it: no audio without consent, no extraction
+    /// without a transcript. A control that always 409s teaches nothing.
+    @ViewBuilder
+    private func interviewActions(_ iv: ProjectFull.Interview) -> some View {
+        let hasTranscript = !(iv.transcript?.isEmpty ?? true)
+        let claims = iv.counts?.claims ?? 0
+        HStack(spacing: 6) {
+            if !hasTranscript {
+                if iv.consentObtained == true {
+                    Button("Upload recording") { pickRecording(for: iv.id) }
+                        .buttonStyle(TermButtonStyle()).disabled(busy || working != nil)
+                } else {
+                    Text("no consent on file — audio cannot be stored")
+                        .font(Term.mono(9)).foregroundStyle(Term.amber)
+                }
+                Button("Import transcript") { importingFor = iv.id }
+                    .buttonStyle(TermButtonStyle()).disabled(busy)
+            }
+            if hasTranscript && claims == 0 && !(iv.quarantined ?? false) {
+                Button("Extract claims") {
+                    let id = iv.id
+                    Task {
+                        working = "Extracting claims…"
+                        await run { _ = try await API.shared.post("/research/interviews/\(id)/extract", json: [:]) }
+                        working = nil
+                    }
+                }
+                .buttonStyle(TermButtonStyle()).disabled(busy || working != nil)
+            }
+            if hasTranscript {
+                Button("Re-screen") {
+                    let id = iv.id
+                    Task {
+                        working = "Screening…"
+                        await run { _ = try await API.shared.post("/research/interviews/\(id)/screen", json: [:]) }
+                        working = nil
+                    }
+                }
+                .buttonStyle(TermButtonStyle()).disabled(busy || working != nil)
+            }
+            Spacer()
+        }
+    }
+
+    /// Audio only. The server takes what it is given, but a video file is
+    /// a hundred megabytes of pixels nobody transcribes, so the picker
+    /// says what it wants.
+    private func pickRecording(for id: Int) {
+        let panel = NSOpenPanel()
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        panel.message = "Pick the recording"
+        panel.prompt = "Upload"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        Task {
+            working = "Uploading and transcribing \(url.lastPathComponent)…"
+            await run {
+                let scoped = url.startAccessingSecurityScopedResource()
+                defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+                _ = try await API.shared.upload("/research/interviews/\(id)/recording",
+                                               fileURL: url, fields: [:])
+            }
+            working = nil
         }
     }
 
@@ -2613,6 +2703,7 @@ private struct InterviewsTab: View {
             }
             if !(iv.consentObtained ?? false) {
                 Text("no consent").font(Term.mono(8)).foregroundStyle(Term.negative)
+                interviewActions(iv)
             }
         }
     }

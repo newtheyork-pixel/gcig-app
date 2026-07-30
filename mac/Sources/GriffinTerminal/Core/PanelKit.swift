@@ -165,6 +165,24 @@ enum Fmt {
         return f.string(from: NSNumber(value: v)) ?? "—"
     }
 
+    /// Local wall-clock, which is what somebody reading a calendar is
+    /// looking at. Converted to an instant on the way out so the server
+    /// stores a real point in time and not a timezone-less string.
+    static func localStamp(_ date: Date = Date()) -> String {
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd HH:mm"
+        return f.string(from: date)
+    }
+
+    static func isoFromLocal(_ local: String) -> String? {
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd HH:mm"
+        guard let d = f.date(from: local.trimmingCharacters(in: .whitespaces)) else { return nil }
+        let out = ISO8601DateFormatter()
+        out.formatOptions = [.withInternetDateTime]
+        return out.string(from: d)
+    }
+
     static func pct(_ v: Double?, decimals: Int = 2, signed: Bool = true) -> String {
         guard let v else { return "—" }
         let s = String(format: "%.\(decimals)f", abs(v))
