@@ -221,6 +221,16 @@ final class Workspace: ObservableObject {
         numberedMenu = NumberedMenu(paneID: paneID, actions: actions)
     }
 
+    /// Which pane currently owns the digits. Exposed so a panel can tell
+    /// whether the map still belongs to it before clearing on the way out
+    /// — otherwise closing an old pane wipes the numbers a newer one just
+    /// published, and Number <GO> silently stops working.
+    var numbersOwner: UUID? { numberedMenu?.paneID }
+
+    func clearNumbers(for paneID: UUID) {
+        if numberedMenu?.paneID == paneID { numberedMenu = nil }
+    }
+
     /// Cascade from the top-left, wrapping before a pane can open with its
     /// title bar off-screen — an unreachable window is the one bug that
     /// makes a floating layout feel broken rather than flexible.

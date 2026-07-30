@@ -22,6 +22,9 @@ import SwiftUI
 // a citation and this panel renders exactly what it sends.
 struct ResearchPanel: View {
     let ticker: String?
+    /// Nil in a popped-out window, which owns no workspace pane and so
+    /// must not publish numbers that Number <GO> would fire at nothing.
+    var paneID: UUID? = nil
 
     @State private var projects: Loadable<[Project]> = .loading
     @State private var openID: Int?
@@ -29,7 +32,7 @@ struct ResearchPanel: View {
     var body: some View {
         Group {
             if let id = openID {
-                ProjectDetail(projectId: id, onBack: { openID = nil })
+                ProjectDetail(projectId: id, paneID: paneID, onBack: { openID = nil })
             } else {
                 list
             }
@@ -861,7 +864,12 @@ private enum RTab: String, CaseIterable {
 
 private struct ProjectDetail: View {
     let projectId: Int
+    /// Passed down so the tab bar can register itself with Number <GO>,
+    /// the oldest navigation idiom the terminal has. The digits were
+    /// already printed beside each tab; without this they were decoration.
+    var paneID: UUID?
     let onBack: () -> Void
+    @EnvironmentObject private var ws: Workspace
 
     @State private var state: Loadable<ProjectFull> = .loading
     @State private var tab: RTab = .questions
@@ -951,7 +959,56 @@ private struct ProjectDetail: View {
                 }
             }
         }
+        .safeAreaInset(edge: .bottom, spacing: 0) { statusLine }
         .task { await load(initial: true) }
+        .onAppear { publishTabs() }
+        // Re-published when the pane takes focus, because the map is
+        // global and the last panel to publish owns the digits. Without
+        // this, opening a second RSCH pane leaves 5 <GO> firing at the
+        // one you are no longer looking at.
+        .onChange(of: ws.focusedID) { _, _ in publishTabs() }
+        .onDisappear {
+            if let id = paneID, ws.numbersOwner == id { ws.clearNumbers(for: id) }
+        }
+    }
+
+    /// Bloomberg's bottom line: the grammar of the panel you are looking
+    /// at, stated rather than discovered. A terminal that hides its own
+    /// shortcuts is a terminal people drive with the mouse.
+    private var statusLine: some View {
+        HStack(spacing: 14) {
+            Text("\(RTab.allCases.firstIndex(of: tab).map { $0 + 1 } ?? 1)) \(tab.rawValue.uppercased())")
+                .font(Term.mono(9, weight: .bold)).tracking(0.5).foregroundStyle(Term.amber)
+            Text("1-8 <GO> TAB")
+                .font(Term.mono(9)).foregroundStyle(Term.fgMuted)
+            Text("/ SEARCH")
+                .font(Term.mono(9)).foregroundStyle(Term.fgMuted)
+            Text("ESC BACK")
+                .font(Term.mono(9)).foregroundStyle(Term.fgMuted)
+            Spacer()
+            if paneID == nil {
+                // A popped-out window owns no pane, so the digits cannot
+                // be wired to it. Saying so beats printing a shortcut
+                // that does nothing out here.
+                Text("POPPED OUT · NUMBER GO UNAVAILABLE")
+                    .font(Term.mono(9)).foregroundStyle(Term.fgMuted)
+            }
+        }
+        .padding(.horizontal, 10).padding(.vertical, 4)
+        .background(Term.bgHeader)
+        .overlay(alignment: .top) { Rectangle().fill(Term.border).frame(height: 1) }
+    }
+
+    /// The tab bar, registered with Number <GO>. Bloomberg's grammar is
+    /// that a printed number is a typeable address, so printing them
+    /// without registering them would be a promise the terminal breaks.
+    private func publishTabs() {
+        guard let id = paneID, ws.focusedID == id else { return }
+        var map: [Int: () -> Void] = [:]
+        for (i, t) in RTab.allCases.enumerated() {
+            map[i + 1] = { tab = t }
+        }
+        ws.publishNumbers(for: id, map)
     }
 
     // Brief, standing, and the compliance strip — what the project IS,
@@ -982,30 +1039,37 @@ private struct ProjectDetail: View {
             HStack(spacing: 0) {
                 ForEach(Array(RTab.allCases.enumerated()), id: \.element) { i, t in
                     let badge = t.badge(p)
+                    let on = tab == t
                     Button { tab = t } label: {
                         HStack(spacing: 4) {
                             // Bloomberg numbers everything you can jump
-                            // to, and the number is the shortcut. Dim so
-                            // it reads as an address rather than data.
+                            // to, and the number IS the shortcut: type it
+                            // on the command line and press GO. Published
+                            // below so the digits mean something.
                             Text("\(i + 1))")
                                 .font(Term.mono(10))
-                                .foregroundStyle(tab == t ? Term.orange : Term.fgMuted)
+                                .foregroundStyle(on ? Term.bg : Term.fgMuted)
                             Text(t.title(p))
-                                .font(Term.mono(10, weight: tab == t ? .bold : .regular))
+                                .font(Term.mono(10, weight: on ? .bold : .regular))
                                 .tracking(0.5)
-                                .foregroundStyle(tab == t ? Term.amber : Term.fgDim)
+                                .foregroundStyle(on ? Term.bg : Term.fgDim)
                             if badge > 0 {
                                 Text("\(badge)")
                                     .font(Term.mono(9, weight: .bold))
-                                    .foregroundStyle(Term.orange)
+                                    .foregroundStyle(on ? Term.bg : Term.orange)
                                     .help("\(badge) outstanding")
                             }
                         }
                         .padding(.horizontal, 8).padding(.vertical, 5)
-                        .background(tab == t ? Term.bgPanelHover : Color.clear)
+                        // Reverse video for the selected tab. A slightly
+                        // lighter panel colour is how a web app shows a
+                        // selected tab; amber ground with dark text is how
+                        // a terminal does, and it is legible across a room.
+                        .background(on ? Term.amber : Color.clear)
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
+                    .help("Type \(i + 1) and press GO")
                 }
             }
         }

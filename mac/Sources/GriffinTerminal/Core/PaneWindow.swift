@@ -361,7 +361,7 @@ struct PanelRouter: View {
         case "PM":   PortfolioPanel()
         case "MOVR": MoversPanel()
         case "TOP":  TopNewsPanel()
-        case "RSCH", "FLD": ResearchPanel(ticker: ticker)
+        case "RSCH", "FLD": ResearchPanel(ticker: ticker, paneID: paneID)
         case "HELP": HelpPanel()
         case "GP":   ChartPanel(ticker: ticker ?? "")
         case "GIP":  IntradayPanel(ticker: ticker ?? "")
