@@ -275,7 +275,12 @@ router.get('/projects/:id', async (req, res) => {
           awaitingReply: targets.filter((t) => {
             if (!(t.drafts || []).some((d) => d.sentAt)) return false;
             const last = (t.messages || [])[(t.messages || []).length - 1];
-            return !last || last.direction === 'out';
+            // An inbound AUTO-REPLY leaves the ball in their court. The
+            // first cut tested direction alone and dropped Stoopes out of
+            // the waiting column because a robot had answered him, which
+            // is the precise mistake this whole distinction exists to
+            // prevent.
+            return !last || last.direction === 'out' || last.kind === 'AutoReply';
           }).length,
           // Their move and we have not answered. The opposite failure to
           // silence, and the more embarrassing one.
