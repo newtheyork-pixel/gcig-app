@@ -157,9 +157,15 @@ final class BlockCaretTextView: NSTextView {
             .font: font ?? Term.nsMono(13),
             .foregroundColor: NSColor(Term.fgMuted),
         ]
-        // Baseline-aligned with the real text: same font, same origin the
-        // layout manager would use for the first line fragment.
-        placeholderText.draw(at: NSPoint(x: 0, y: 0), withAttributes: attrs)
+        // The caret sits at position zero on an empty line, which is
+        // exactly where the hint's first letter was — so the block landed
+        // on top of the T in TICKER and ate it. A block cursor and text
+        // cannot share a cell, so the hint starts one cell to the right
+        // whenever the caret is actually on screen, and reclaims the space
+        // when the field is not focused and there is no caret to avoid.
+        let hasCaret = window?.firstResponder === self
+        let x = hasCaret ? caretWidth + 3 : 0
+        placeholderText.draw(at: NSPoint(x: x, y: 0), withAttributes: attrs)
     }
 
     /// The caret only blinks while the view is first responder, and a
@@ -167,6 +173,14 @@ final class BlockCaretTextView: NSTextView {
     /// stop typing into.
     override func becomeFirstResponder() -> Bool {
         let ok = super.becomeFirstResponder()
+        // The hint shifts when the caret appears, so both transitions
+        // have to repaint or it stays offset with no cursor beside it.
+        needsDisplay = true
+        return ok
+    }
+
+    override func resignFirstResponder() -> Bool {
+        let ok = super.resignFirstResponder()
         needsDisplay = true
         return ok
     }
