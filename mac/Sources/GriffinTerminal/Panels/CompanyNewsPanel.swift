@@ -164,7 +164,7 @@ struct CompanyNewsPanel: View {
     private func row(_ a: Article) -> some View {
         Button {
             if let s = a.url, let u = URL(string: s) {
-                NSWorkspace.shared.open(u)
+                NotificationCenter.default.post(name: .openInReader, object: u.absoluteString)
             }
         } label: {
             HStack(alignment: .firstTextBaseline, spacing: 8) {

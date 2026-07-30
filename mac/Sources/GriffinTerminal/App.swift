@@ -152,6 +152,9 @@ extension Notification.Name {
     static let handoffCode = Notification.Name("handoffCode")
     static let saveLayoutPrompt = Notification.Name("saveLayoutPrompt")
     static let escapeGesture = Notification.Name("escapeGesture")
+    /// A story to read in the terminal rather than in Safari. Posted by
+    /// any list that holds a URL; the workspace decides where it lands.
+    static let openInReader = Notification.Name("openInReader")
 }
 
 // MARK: Session

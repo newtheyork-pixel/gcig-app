@@ -39,7 +39,7 @@ struct TopNewsPanel: View {
 
     private func item(_ a: Article) -> some View {
         Button {
-            if let u = URL(string: a.url) { NSWorkspace.shared.open(u) }
+            NotificationCenter.default.post(name: .openInReader, object: a.url)
         } label: {
             VStack(alignment: .leading, spacing: 2) {
                 Text(a.title)

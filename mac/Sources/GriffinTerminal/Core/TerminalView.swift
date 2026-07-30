@@ -37,6 +37,14 @@ struct TerminalView: View {
         .onReceive(NotificationCenter.default.publisher(for: .runCommand)) { note in
             if let cmd = note.object as? String { ws.run(cmd) }
         }
+        // A headline opens in the terminal, not in Safari. Panels post
+        // the URL and the workspace decides where it lands, which keeps
+        // every news list ignorant of how reading works.
+        .onReceive(NotificationCenter.default.publisher(for: .openInReader)) { note in
+            if let u = note.object as? String {
+                ws.open(Command(ticker: nil, function: "WEB", args: u))
+            }
+        }
         .onReceive(NotificationCenter.default.publisher(for: .escapeGesture)) { _ in
             ws.escapePressed()
         }
@@ -528,7 +536,7 @@ private struct BreakingStrip: View {
                 let a = arts[idx % arts.count]
                 let isBreaking = (p.classified ?? false) && (a.breaking ?? 0) >= (p.threshold ?? 7)
                 Button {
-                    if let u = URL(string: a.url) { NSWorkspace.shared.open(u) }
+                    NotificationCenter.default.post(name: .openInReader, object: a.url)
                 } label: {
                     HStack(spacing: 8) {
                         Text(isBreaking ? "● BREAKING" : ((p.classified ?? false) ? "WIRE" : "WIRE·RAW"))
