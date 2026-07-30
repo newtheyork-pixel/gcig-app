@@ -23,7 +23,6 @@ struct WatchlistPanel: View {
     struct Payload: Decodable {
         let items: [Item]?
         let counts: Counts?
-        let caveat: String?
         let quotesAvailable: Bool?
         struct Counts: Decodable { let holdings: Int?; let seg13f: Int?; let manual: Int? }
     }
@@ -39,7 +38,18 @@ struct WatchlistPanel: View {
         let weight: Double?
         let alsoHeld: Bool?
         let quote: Quote?
+        let stats: Stats?
         struct Quote: Decodable { let last: Double?; let changePct: Double?; let prevClose: Double? }
+        /// Volume and the longer windows, off the same bars the charts
+        /// use. Absent when a name has no usable history, which renders
+        /// as dashes rather than zeros.
+        struct Stats: Decodable {
+            let avgVolume20d: Double?
+            let pct1m: Double?
+            let pct3m: Double?
+            let pct1y: Double?
+            let ytd: Double?
+        }
 
         var display: (String, Color) {
             switch source {
@@ -65,14 +75,6 @@ struct WatchlistPanel: View {
                     LazyVStack(spacing: 0) {
                         ForEach(items) { row($0) }
                     }
-                }
-                if let c = p.caveat, filter != "holding" {
-                    // The limits of a 13F belong on the screen showing
-                    // one, not in a note somebody has to remember.
-                    Text(c)
-                        .font(Term.mono(9)).foregroundStyle(Term.fgMuted)
-                        .padding(.horizontal, 10).padding(.vertical, 5)
-                        .background(Term.bgHeader)
                 }
             }
         }
@@ -130,8 +132,13 @@ struct WatchlistPanel: View {
             Text("SOURCE").frame(width: 62, alignment: .leading)
             Text("NAME").frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
             Text("LAST").frame(width: 76, alignment: .trailing)
-            Text("CHG").frame(width: 62, alignment: .trailing)
-            Text("NOTE").frame(width: 210, alignment: .leading)
+            Text("DAY").frame(width: 58, alignment: .trailing)
+            Text("1M").frame(width: 58, alignment: .trailing)
+            Text("3M").frame(width: 58, alignment: .trailing)
+            Text("YTD").frame(width: 58, alignment: .trailing)
+            Text("1Y").frame(width: 58, alignment: .trailing)
+            Text("AVG VOL").frame(width: 74, alignment: .trailing)
+            Text("NOTE").frame(width: 150, alignment: .leading)
         }
         .font(Term.mono(9, weight: .bold)).tracking(0.5)
         .foregroundStyle(Term.blue)
@@ -166,15 +173,37 @@ struct WatchlistPanel: View {
                 .lineLimit(1).frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
             Text(Fmt.money(i.quote?.last))
                 .frame(width: 76, alignment: .trailing).tickFlash(i.quote?.last)
-            Text(i.quote?.changePct.map { Fmt.pct($0, decimals: 1) } ?? "—")
-                .foregroundStyle(Term.delta(i.quote?.changePct))
-                .frame(width: 62, alignment: .trailing)
+            perf(i.quote?.changePct, 58)
+            perf(i.stats?.pct1m, 58)
+            perf(i.stats?.pct3m, 58)
+            perf(i.stats?.ytd, 58)
+            perf(i.stats?.pct1y, 58)
+            Text(Self.vol(i.stats?.avgVolume20d))
+                .foregroundStyle(Term.fgDim)
+                .frame(width: 74, alignment: .trailing)
+                .help("Average daily volume over the last 20 sessions")
             Text(i.note ?? "")
                 .font(Term.mono(9)).foregroundStyle(Term.fgDim)
-                .lineLimit(1).frame(width: 210, alignment: .leading)
+                .lineLimit(1).frame(width: 150, alignment: .leading)
         }
         .font(Term.mono(11)).foregroundStyle(Term.white)
         .padding(.horizontal, 10).padding(.vertical, 3)
+    }
+
+    private func perf(_ v: Double?, _ w: CGFloat) -> some View {
+        Text(v.map { Fmt.pct($0, decimals: 1) } ?? "—")
+            .foregroundStyle(Term.delta(v))
+            .frame(width: w, alignment: .trailing)
+    }
+
+    /// Volume in the units a person reads it in. 1,240,000 is a number
+    /// you have to count the digits of; 1.2M is one you do not.
+    static func vol(_ v: Double?) -> String {
+        guard let v, v > 0 else { return "—" }
+        if v >= 1_000_000_000 { return String(format: "%.1fB", v / 1_000_000_000) }
+        if v >= 1_000_000 { return String(format: "%.1fM", v / 1_000_000) }
+        if v >= 1_000 { return String(format: "%.0fK", v / 1_000) }
+        return String(format: "%.0f", v)
     }
 
     private func add() {

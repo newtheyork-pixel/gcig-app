@@ -3,6 +3,8 @@ import { PrismaClient } from '@prisma/client';
 import { verifyJwt, requireTerminalAccess } from '../middleware/auth.js';
 import { getSheetPortfolio } from '../services/sheetPortfolio.js';
 import { getLiveQuotes } from '../services/liveQuotes.js';
+import { getHistory } from '../services/priceHistory.js';
+import { ytdPriceReturn } from './terminal.js';
 
 const prisma = new PrismaClient();
 const router = express.Router();
@@ -69,20 +71,45 @@ router.get('/', async (req, res) => {
       quotes = {};
     }
 
+    // Volume and the longer performance windows, from the same bar
+    // history the charts use. Best-effort per ticker and bounded, because
+    // a watchlist of 120 names must not turn into 120 serial fetches on
+    // every open — a name whose history is unavailable renders without
+    // the columns rather than holding up the list.
+    const stats = {};
+    await Promise.all(
+      tickers.slice(0, 60).map(async (t) => {
+        try {
+          const bars = (await getHistory(t, '1y')) || [];
+          const closes = bars.filter((b) => b?.close != null);
+          if (closes.length < 2) return;
+          const last = closes[closes.length - 1];
+          const at = (n) => closes[Math.max(0, closes.length - 1 - n)]?.close;
+          const pct = (from) => (from ? ((last.close - from) / from) * 100 : null);
+          // Average volume over the last twenty sessions, which is what
+          // "is this liquid enough for us" actually asks. A single day's
+          // print answers a different and less useful question.
+          const vols = closes.slice(-20).map((b) => b.volume).filter((v) => v != null);
+          stats[t] = {
+            avgVolume20d: vols.length ? Math.round(vols.reduce((a, b) => a + b, 0) / vols.length) : null,
+            pct1m: pct(at(21)),
+            pct3m: pct(at(63)),
+            pct1y: pct(closes[0].close),
+            ytd: await ytdPriceReturn(t, last.close),
+          };
+        } catch {
+          /* no history for this one; the row still renders */
+        }
+      })
+    );
+
     res.json({
-      items: items.map((i) => ({ ...i, quote: quotes[i.ticker] || null })),
+      items: items.map((i) => ({ ...i, quote: quotes[i.ticker] || null, stats: stats[i.ticker] || null })),
       counts: {
         holdings: items.filter((i) => i.source === 'holding').length,
         seg13f: items.filter((i) => i.source === 'seg13f').length,
         manual: items.filter((i) => i.source === 'manual').length,
       },
-      // Said once, at the top, so nothing downstream has to remember it:
-      // a 13F is US-listed long equity as of a quarter-end already 45
-      // days stale when it publishes. No shorts, no bonds, no cash, and
-      // nothing listed abroad — which is exactly why Lindt would never
-      // appear on one.
-      caveat:
-        'A 13F shows only US-listed long equity positions as of the quarter-end shown, published up to 45 days later. It excludes shorts, debt, cash and every foreign listing.',
       quotesAvailable: Object.keys(quotes).length > 0,
     });
   } catch (err) {

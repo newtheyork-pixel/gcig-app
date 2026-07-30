@@ -845,7 +845,7 @@ router.get('/movers', async (_req, res) => {
 const ytdCache = new Map(); // ticker -> { at, pct }
 const YTD_TTL_MS = 60 * 60 * 1000;
 
-async function ytdPriceReturn(ticker, currentPrice) {
+export async function ytdPriceReturn(ticker, currentPrice) {
   if (!ticker || currentPrice == null) return null;
   const hit = ytdCache.get(ticker);
   if (hit && Date.now() - hit.at < YTD_TTL_MS) return hit.pct;
