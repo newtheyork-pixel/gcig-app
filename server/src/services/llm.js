@@ -59,6 +59,7 @@ async function callEndpoint({
   jsonMode,
   timeoutMs,
   tools,
+  extraBody,
 }) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -68,6 +69,9 @@ async function callEndpoint({
       messages,
       ...(jsonMode ? { response_format: { type: 'json_object' } } : {}),
       ...(Array.isArray(tools) && tools.length ? { tools } : {}),
+      // Provider-specific fields. Only the local endpoint gets any: a
+      // hosted API rejects an unknown key outright.
+      ...(extraBody || {}),
     };
     if (!isReasoningModel(model) && temperature != null) {
       body.temperature = temperature;
@@ -211,6 +215,32 @@ function logFailure(provider, result) {
 // Individual provider callers, keyed by name. Each returns the shared
 // { ok, content, ... } result shape and is a no-op (returns null) when its
 // env isn't configured, so the runner can just skip it.
+// How much context to ask the local model for.
+//
+// Ollama defaults to 2048 tokens and silently drops whatever does not
+// fit — from the FRONT, which takes the system prompt with it. A 30,000
+// character transcript therefore reached the model as a fragment with no
+// instructions attached, and the model answered the only way it could:
+// an empty JSON object, in under a second. Every caller read that as
+// "the model was unavailable" and fell back to its keyword floor.
+//
+// Nothing errored. The MNPI screen returned risk "low" on interviews it
+// had never actually read, and the only visible symptom was a
+// modelAvailable flag that nobody had reason to question.
+//
+// Measured on the real thing: default context evaluated 2,050 tokens of
+// a 9,339 token prompt and returned {}. At 16k it evaluated all 9,339
+// and returned a verdict.
+//
+// Sized per call because a large window costs KV cache on a shared box.
+// Chars/3.5 is a deliberate over-estimate of tokens, plus room to answer.
+export function contextFor(messages, { max = Number(process.env.LOCAL_LLM_MAX_CTX) || 16_384 } = {}) {
+  const chars = (messages || []).reduce((n, m) => n + String(m?.content || '').length, 0);
+  const want = Math.ceil(chars / 3.5) + 1024;
+  // Never below Ollama's own default, never above what the box can hold.
+  return Math.min(Math.max(want, 4096), max);
+}
+
 function runProvider(name, { messages, temperature, jsonMode, timeoutMs, localModel, tools }) {
   if (name === 'local') {
     if (!process.env.LOCAL_LLM_URL) return null;
@@ -232,6 +262,7 @@ function runProvider(name, { messages, temperature, jsonMode, timeoutMs, localMo
       jsonMode,
       timeoutMs,
       tools,
+      extraBody: { options: { num_ctx: contextFor(messages) } },
     });
   }
   if (name === 'anthropic') {
