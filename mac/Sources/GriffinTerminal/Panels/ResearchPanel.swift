@@ -437,6 +437,7 @@ struct Message: Decodable, Identifiable {
     var display: (String, Color, String) {
         if outbound {
             switch kind {
+            case "Outreach":   return ("WE WROTE FIRST", Term.blue, "The opening email, when it was not sent from a draft here")
             case "Scheduling": return ("WE SENT DATES", Term.blue, "Times offered, waiting on them to pick")
             case "Reply":      return ("WE REPLIED", Term.blue, "We answered something they asked")
             case "FollowUp":   return ("WE FOLLOWED UP", Term.blue, "A chase on an email with no answer")
@@ -1775,6 +1776,12 @@ private struct DraftsSection: View {
 
     var body: some View {
         let drafts = target.drafts ?? []
+        // Correspondence that never came from a draft in this app: a
+        // thread run out of Outlook before the log existed, or one
+        // started by a colleague. Without this it is stored and
+        // invisible, because the thread view lives inside a draft card
+        // and there is no card to hang it on.
+        let unlinked = (target.messages ?? []).filter { $0.draftId == nil }
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 8) {
                 Text("OUTREACH EMAIL").font(Term.mono(9, weight: .bold)).tracking(0.6)
@@ -1787,6 +1794,10 @@ private struct DraftsSection: View {
                     .disabled(busy)
                 }
                 Spacer()
+            }
+
+            if !unlinked.isEmpty {
+                UnlinkedThread(target: target, messages: unlinked, busy: $busy, run: run)
             }
 
             if composing {
@@ -1831,6 +1842,58 @@ private struct DraftsSection: View {
         }
         .padding(.top, 8)
         .overlay(alignment: .top) { Rectangle().fill(Term.border).frame(height: 1) }
+    }
+}
+
+/// A thread with no draft behind it, rendered on the target itself.
+///
+/// The in-card log answers "what happened to this email". This answers
+/// "what has passed between us and this person", which is the same
+/// question one level up and the only place a conversation started
+/// outside the app can live.
+private struct UnlinkedThread: View {
+    let target: Target
+    let messages: [Message]
+    @Binding var busy: Bool
+    let run: RunAction
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                Text("CORRESPONDENCE")
+                    .font(Term.mono(9, weight: .bold)).tracking(0.6).foregroundStyle(Term.white)
+                Text("not sent from a draft here")
+                    .font(Term.mono(9)).foregroundStyle(Term.fgMuted)
+                Spacer()
+            }
+            ForEach(messages) { r in
+                let (label, tone, help) = r.display
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 8) {
+                        Text(label).font(Term.mono(9, weight: .bold)).tracking(0.5)
+                            .foregroundStyle(tone).help(help)
+                        Text(Fmt.date(r.occurredAt) + (r.recordedBy?.name.map { " · logged by \($0)" } ?? ""))
+                            .font(Term.mono(9)).foregroundStyle(Term.fgMuted)
+                        Spacer()
+                        Button("remove") {
+                            Task { await run { try await ResearchHTTP.delete("/research/messages/\(r.id)") } }
+                        }
+                        .buttonStyle(TermButtonStyle()).disabled(busy)
+                    }
+                    if let b = r.body, !b.isEmpty {
+                        Text(b).font(Term.mono(10)).foregroundStyle(Term.fgDim)
+                            .lineSpacing(3).textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    if let a = r.action, !a.isEmpty {
+                        Text("→ \(a)").font(Term.mono(10)).foregroundStyle(Term.white)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+                .padding(6).background(Term.bg).termBorder()
+                .padding(.leading, r.outbound ? 0 : 18)
+            }
+        }
     }
 }
 
@@ -2192,6 +2255,7 @@ private struct DraftCard: View {
     }
 
     private static let sentKinds: [(String, String, String)] = [
+        ("Outreach", "WE WROTE FIRST", "The opening email, when it was not sent from a draft here"),
         ("Scheduling", "WE SENT DATES", "Times offered, waiting on them to pick"),
         ("Reply", "WE REPLIED", "We answered something they asked"),
         ("FollowUp", "WE FOLLOWED UP", "A chase on an email with no answer"),

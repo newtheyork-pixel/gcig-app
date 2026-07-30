@@ -2991,6 +2991,48 @@ function Drafts({ target, onChanged }) {
         </div>
       ) : null}
 
+      {/* Correspondence that never came from a draft here: a thread run
+          out of Outlook before this log existed, or one a colleague
+          started. Without its own section it is stored and invisible,
+          because the thread view lives inside a draft card and there is
+          no card to hang it on. */}
+      {(target.messages || []).some((m) => m.draftId == null) ? (
+        <div style={{ border: '1px solid var(--term-border)', padding: 8, display: 'grid', gap: 6 }}>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'baseline' }}>
+            <span style={{ fontSize: 10, letterSpacing: 0.6, color: 'var(--term-white)' }}>CORRESPONDENCE</span>
+            <span style={{ fontSize: 10, color: 'var(--term-fg-muted)' }}>not sent from a draft here</span>
+          </div>
+          {(target.messages || []).filter((m) => m.draftId == null).map((r) => {
+            const set = r.direction === 'out' ? SENT_KINDS : REPLY_KINDS;
+            const [, label, tone, help] = set.find((k) => k[0] === r.kind) || set[set.length - 1];
+            return (
+              <div
+                key={r.id}
+                style={{
+                  border: '1px solid var(--term-border)', padding: 6, display: 'grid', gap: 4,
+                  marginLeft: r.direction === 'out' ? 0 : 18,
+                }}
+              >
+                <div style={{ display: 'flex', gap: 8, alignItems: 'baseline', flexWrap: 'wrap' }}>
+                  <span style={{ fontSize: 10, letterSpacing: 0.5, color: tone }} title={help}>{label}</span>
+                  <span style={{ fontSize: 10, color: 'var(--term-fg-muted)' }}>
+                    {fmtDate(r.occurredAt)}{r.recordedBy ? ` · logged by ${r.recordedBy.name}` : ''}
+                  </span>
+                </div>
+                {r.body ? (
+                  <pre style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontFamily: 'inherit',
+                                fontSize: 11, lineHeight: 1.5, color: 'var(--term-fg-dim)', margin: 0,
+                                maxHeight: 240, overflowY: 'auto' }}>
+                    {r.body}
+                  </pre>
+                ) : null}
+                {r.action ? <div style={{ fontSize: 11, color: 'var(--term-white)' }}>→ {r.action}</div> : null}
+              </div>
+            );
+          })}
+        </div>
+      ) : null}
+
       {drafts.length === 0 && !composing ? (
         <div className="term-loading" style={{ fontSize: 11 }}>
           Nothing drafted. Anything written here needs two sign-offs before it can go out.
@@ -3032,6 +3074,7 @@ const REPLY_KINDS = [
 // What we sent after the first email. None of these move the funnel:
 // chasing somebody four times is our activity, not their interest.
 const SENT_KINDS = [
+  ['Outreach', 'WE WROTE FIRST', 'var(--term-blue, var(--term-white))', 'The opening email, when it was not sent from a draft here'],
   ['Scheduling', 'WE SENT DATES', 'var(--term-blue, var(--term-white))', 'Times offered, waiting on them to pick'],
   ['Reply', 'WE REPLIED', 'var(--term-blue, var(--term-white))', 'We answered something they asked'],
   ['FollowUp', 'WE FOLLOWED UP', 'var(--term-blue, var(--term-white))', 'A chase on an email with no answer'],

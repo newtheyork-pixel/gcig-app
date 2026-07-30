@@ -1132,7 +1132,7 @@ const REPLY_KINDS = ['AutoReply', 'Bounce', 'Declined', 'Interested', 'Other'];
 // the target's intent and none of them may move the funnel: chasing
 // somebody four times is not progress, and a status that improved every
 // time we sent another email would be measuring our own activity.
-const SENT_KINDS = ['FollowUp', 'Reply', 'Scheduling', 'Other'];
+const SENT_KINDS = ['Outreach', 'FollowUp', 'Reply', 'Scheduling', 'Other'];
 
 // Only where the reply leaves no room for interpretation. A bounce means
 // the address is dead and a decline is a person saying no, so leaving
