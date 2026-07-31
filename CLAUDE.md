@@ -640,6 +640,55 @@ Hit-rate stats count `Approved` toward Voted Yes too.
 
 ## Recent fixes / playbook notes
 
+- **companyfacts `fy` is the FILING's year, not the fact's (Jul '26,
+  critical)**: FA and GF printed General Dynamics' calendar-2023 income
+  statement under the heading FY2025 — a two-year shift on every annual
+  row of every holding, with the two most recent years missing entirely
+  and margins derived across two different years. A 10-K carries three
+  comparative years and stamps all three with the filing's own `fy`, so
+  keying on it collapsed them; the tiebreak could not separate them
+  (same accession, same `filed`) and SEC returns the units array sorted
+  by `end` ASCENDING, so the survivor was the oldest. `extractConcept`
+  now groups by accession and recovers the year from POSITION: of n
+  distinct period-ends, the newest is the filing's fiscal year and each
+  earlier one is a year further back.
+  **Never derive a fiscal year from calendar arithmetic on the end
+  date.** JNJ's fiscal 2020 ended 3 January 2021, and Walmart's fiscal
+  2026 ended 31 January 2026 — the same month means opposite things, so
+  only the filer's own `fy` anchor plus ordinal position is safe.
+  Verified across five conventions: GD (Dec), MLAB (Mar), AIT (Jun), WMT
+  (Jan), JNJ (52/53-week).
+- **Customer concentration comes from inline XBRL
+  (`services/xbrlConcentration.js`, Jul '26)**: JNJ tags three
+  wholesalers at 21.8 / 15.5 / 11.1% of net sales and NAMES NONE of
+  them, so SPLC's prose read reported no customers for a company selling
+  half its output through three counterparties. companyfacts cannot
+  supply this — it carries only no-dimension facts, and JNJ's newest
+  concentration row there is from a 2016 filing — so it is read from the
+  filing HTML we already fetch. Three guards, each earned from a filer
+  that broke a previous cut:
+    - **A missing benchmark is never assumed to be revenue.** Palantir
+      tags a customer at 25% of accounts RECEIVABLE while stating that no
+      customer reached 10% of revenue.
+    - **The risk type must say customer where stated.** Apple's
+      SUPPLIERS sit on `srt:MajorCustomersAxis` and are distinguishable
+      only by `CreditConcentrationRiskMember`.
+    - **Shares that sum past 100 are flagged, never added.** NVIDIA tags
+      a 76% grouping beside the 22% and 14% inside it; McKesson a "ten
+      largest customers" beside three of them. Nothing in either filing
+      says which line contains which.
+  The prose path stays because the two are complementary: JNJ discloses
+  in XBRL and anonymises in text, GD does the reverse. And we never
+  supply a name the filer withheld — "Wholesaler 1" is what they filed.
+- **RSCH tabs are flat (Jul '26)**: fieldwork was one tab with four
+  inside it, so an interview took two clicks and project search reported
+  three interviews and a claim as "FIELD (4)" — then opened them all
+  through `readerInterviewID`, feeding a visit's id to the transcript
+  reader. Eight top-level tabs now, matching the web terminal, which had
+  been flat all along. The numbering is derived from `RTab.allCases` in
+  one place: the sub-bar used to print 6-9 while `publishTabs` registered
+  only 1-5, so those digits were addresses that went nowhere.
+
 - **EDGAR rate-limits, and we used to call that broken data (Jul '26)**:
   SEC publishes a cap of ten requests a second and answers a burst above
   it with 403 or 429. Every ticker panel reads from EDGAR, so opening
