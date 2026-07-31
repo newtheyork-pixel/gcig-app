@@ -169,3 +169,38 @@ test('directors the proxy parse missed are filled in from filings', () => {
   assert.equal(merged[1].name, 'Mary Dean Hall');
   assert.equal(merged[1]._source, 'ownership');
 });
+
+test('a vice president is not the president', () => {
+  // The real General Dynamics titles, which collapsed six sitting
+  // officers into one "office" and reported five of them as departed.
+  assert.equal(officeOf('Executive Vice President'), null);
+  assert.equal(officeOf('Vice President'), null);
+  assert.equal(officeOf('Vice President and Controller'), null);
+  assert.equal(officeOf('Senior Vice President'), null);
+  // A divisional president is not the office of President either.
+  assert.equal(officeOf('President, Aerospace'), null);
+  assert.equal(officeOf('President of Global Operations'), null);
+  // The real thing still resolves, and a VP-CFO is genuinely the CFO.
+  assert.equal(officeOf('President'), 'pres');
+  assert.equal(officeOf('President and Chief Operating Officer'), 'coo');
+  assert.equal(officeOf('Vice President-CFO & Treasurer'), 'cfo');
+});
+
+test('sitting officers who share a title are all still sitting', () => {
+  const roster = buildRoster([
+    { filedName: 'Burns Mark Lagrand', title: 'Executive Vice President', isOfficer: true, form: '4', filedAt: '2026-02-10' },
+    { filedName: 'Gilliland Marguerite Amy', title: 'Executive Vice President', isOfficer: true, form: '4', filedAt: '2026-03-01' },
+    { filedName: 'Maisano Dana Omahen', title: 'Executive Vice President', isOfficer: true, form: '3', filedAt: '2026-04-13' },
+    { filedName: 'Moss William A', title: 'Vice President and Controller', isOfficer: true, form: '4', filedAt: '2026-01-05' },
+  ]);
+  assert.equal(roster.length, 4);
+  assert.equal(roster.filter((p) => p.former).length, 0, 'nobody with a plural title may be marked departed');
+});
+
+test('one person under two spellings does not succeed themselves', () => {
+  const roster = buildRoster([
+    { filedName: 'Sakys John', title: 'CFO', isOfficer: true, form: '4', filedAt: '2026-01-10' },
+    { filedName: 'Sakys John V', title: 'CFO', isOfficer: true, form: '4', filedAt: '2026-06-23' },
+  ]);
+  assert.equal(roster.filter((p) => p.former).length, 0);
+});

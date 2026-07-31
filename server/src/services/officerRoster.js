@@ -93,6 +93,10 @@ export function displayName(filed) {
 ///
 /// Order matters. "President and CEO" is the chief executive, not the
 /// president, so CEO is tested first.
+///
+/// Only offices that are SINGULAR by definition belong in this list,
+/// because the successor rule below assumes one holder. Everything else
+/// returns null and is never displaced by anybody.
 const OFFICES = [
   ['ceo', /\bCEO\b|CHIEF\s+EXEC/i, 'Chief Executive Officer'],
   ['cfo', /\bCFO\b|CHIEF\s+FINANC/i, 'Chief Financial Officer'],
@@ -100,13 +104,29 @@ const OFFICES = [
   ['cao', /\bCAO\b|CHIEF\s+ACCOUNT/i, 'Chief Accounting Officer'],
   ['cto', /\bCTO\b|CHIEF\s+TECHNOL/i, 'Chief Technology Officer'],
   ['clo', /\bGENERAL\s+COUNSEL\b|\bCLO\b|CHIEF\s+LEGAL/i, 'General Counsel'],
-  ['pres', /\bPRESIDENT\b|\bPRES\b/i, 'President'],
+  ['pres', /\bPRESIDENT\b/i, 'President'],
 ];
+
+/// A vice president is not the president, and a company has many of
+/// them. General Dynamics carries six Executive Vice Presidents and
+/// Vice Presidents at once; matching the word PRESIDENT inside their
+/// titles filed all six under one office, where the successor rule
+/// promptly declared five of them departed. They had not gone anywhere.
+///
+/// A divisional president is the same trap one level down — "President,
+/// Aerospace" is not the office of President — so the title has to be
+/// the corporate one, alone or paired with another C-suite role.
+const NOT_PRESIDENT = /\b(VICE|VP|EVP|SVP|AVP|DEPUTY|ASSISTANT|ASSOC(IATE)?)\b|VICE[-\s]*PRES/i;
+const DIVISIONAL = /\bPRESIDENT\b\s*[-,–—]|\bPRESIDENT\s+OF\b/i;
 
 export function officeOf(title) {
   const t = String(title || '');
   if (!t.trim()) return null;
-  for (const [key, re] of OFFICES) if (re.test(t)) return key;
+  for (const [key, re] of OFFICES) {
+    if (!re.test(t)) continue;
+    if (key === 'pres' && (NOT_PRESIDENT.test(t) || DIVISIONAL.test(t))) return null;
+    return key;
+  }
   return null;
 }
 
@@ -216,7 +236,10 @@ export function buildRoster(docs) {
   for (const p of all) {
     if (!p.office) continue;
     const holder = byOffice.get(p.office);
-    if (holder !== p) {
+    // A filer who writes "Sakys John" one quarter and "Sakys John V" the
+    // next is one person under two keys, and without this check he
+    // succeeds himself and half of him is reported as having left.
+    if (holder !== p && !sameHuman(holder.name, p.name)) {
       p.former = true;
       // The successor's first filing is the best-dated evidence we have
       // of when the handover happened. It is an upper bound, not the
