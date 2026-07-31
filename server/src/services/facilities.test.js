@@ -43,3 +43,31 @@ describe('searchTermFor precision', () => {
     assert.equal(searchTermFor('3M CO'), '3M');
   });
 });
+
+import { sitesNearStorm } from './facilities.js';
+
+// A storm and a holding are two facts a reader should not have to join
+// by hand. This is the join.
+describe('sitesNearStorm', () => {
+  const sites = [
+    { name: 'Houma plant', lat: 29.6, lon: -90.7 },
+    { name: 'Seattle plant', lat: 47.6, lon: -122.3 },
+    { name: 'No coordinates', lat: null, lon: null },
+  ];
+
+  it('finds only the plants actually near the storm', () => {
+    const near = sitesNearStorm(sites, { latitude: 29.2, longitude: -90.5 }, 300);
+    assert.equal(near.length, 1);
+    assert.equal(near[0].name, 'Houma plant');
+    assert.ok(near[0].milesFromStorm < 40);
+  });
+
+  it('leaves out sites with no coordinates rather than guessing', () => {
+    const near = sitesNearStorm(sites, { latitude: 29.2, longitude: -90.5 }, 5000);
+    assert.equal(near.some((s) => s.name === 'No coordinates'), false);
+  });
+
+  it('returns nothing when the storm has no position', () => {
+    assert.deepEqual(sitesNearStorm(sites, {}), []);
+  });
+});

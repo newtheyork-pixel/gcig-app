@@ -124,3 +124,30 @@ export async function getFacilities(companyName, deps = {}) {
 export function _resetFacilitiesCache() {
   cache.clear();
 }
+
+/// How close a storm is to a company's plants.
+///
+/// This is what makes a weather panel worth opening. "Active storm, 28N
+/// 92W" and "we hold PEP" are two facts a reader has to join by hand;
+/// "the storm is 40 miles from PepsiCo's plant in Houma" is the one they
+/// wanted. Sites without coordinates are excluded rather than guessed at
+/// — an address is not a position, and a plant placed by assumption is
+/// worse than a plant left out.
+export function sitesNearStorm(facilities, storm, withinMiles = 300) {
+  const lat = Number(storm?.latitude);
+  const lon = Number(storm?.longitude);
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) return [];
+  const R = 3958.8;
+  const rad = (d) => (d * Math.PI) / 180;
+  const out = [];
+  for (const f of facilities || []) {
+    if (f.lat == null || f.lon == null) continue;
+    const dLat = rad(f.lat - lat);
+    const dLon = rad(f.lon - lon);
+    const h = Math.sin(dLat / 2) ** 2 +
+      Math.cos(rad(lat)) * Math.cos(rad(f.lat)) * Math.sin(dLon / 2) ** 2;
+    const miles = Math.round(2 * R * Math.asin(Math.sqrt(h)));
+    if (miles <= withinMiles) out.push({ ...f, milesFromStorm: miles });
+  }
+  return out.sort((a, b) => a.milesFromStorm - b.milesFromStorm);
+}
