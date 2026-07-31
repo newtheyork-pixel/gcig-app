@@ -77,23 +77,6 @@ struct CommandField: NSViewRepresentable {
 
         func textDidChange(_ notification: Notification) {
             guard let v = notification.object as? NSTextView else { return }
-            // Upper case as you type.
-            //
-            // The parser already upper-cases before it reads anything, so
-            // this changes no behaviour — but a Bloomberg command line
-            // shows what it is going to do with what you typed, and
-            // lower-case letters on an amber prompt look like a text box
-            // somebody dropped into a terminal.
-            //
-            // The selection is restored around the replacement, or the
-            // caret jumps to the end on every keystroke and typing into
-            // the middle of a command becomes impossible.
-            let upper = v.string.uppercased()
-            if upper != v.string {
-                let sel = v.selectedRange()
-                v.string = upper
-                v.setSelectedRange(sel)
-            }
             parent.text = v.string
         }
 
@@ -183,6 +166,23 @@ final class BlockCaretTextView: NSTextView {
         let hasCaret = window?.firstResponder === self
         let x = hasCaret ? caretWidth + 3 : 0
         placeholderText.draw(at: NSPoint(x: x, y: 0), withAttributes: attrs)
+    }
+
+    /// Upper case at the point of typing, not afterwards.
+    ///
+    /// The first attempt rewrote the whole string inside textDidChange,
+    /// which re-enters the change notification and fights the caret: the
+    /// field bounced and became impossible to type into. Transforming
+    /// the character on its way in has no such loop — AppKit is already
+    /// mid-insertion and the selection looks after itself.
+    override func insertText(_ string: Any, replacementRange: NSRange) {
+        if let s = string as? String {
+            super.insertText(s.uppercased(), replacementRange: replacementRange)
+        } else if let a = string as? NSAttributedString {
+            super.insertText(a.string.uppercased(), replacementRange: replacementRange)
+        } else {
+            super.insertText(string, replacementRange: replacementRange)
+        }
     }
 
     /// The caret only blinks while the view is first responder, and a
