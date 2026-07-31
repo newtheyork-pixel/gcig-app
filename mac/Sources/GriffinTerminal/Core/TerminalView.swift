@@ -28,6 +28,7 @@ struct TerminalView: View {
             ws.refreshLayoutNames()
             // The arrangement you left is the arrangement you get back.
             ws.restoreCurrentIfEmpty()
+            GriffinVolume.shared.prepare()
         }
         .background(BlockCaretInstaller().frame(width: 0, height: 0))
         .sheet(isPresented: $namingLayout) { LayoutNameSheet() }
@@ -87,6 +88,8 @@ struct TerminalView: View {
 // and the custodian both run on — an open terminal should feel alive
 // even when no panel is refreshing.
 private struct TopBar: View {
+    @ObservedObject private var volume = GriffinVolume.shared
+
     @EnvironmentObject var session: Session
 
     var body: some View {
@@ -95,9 +98,24 @@ private struct TopBar: View {
                 .font(Term.mono(12, weight: .bold))
                 .tracking(2)
                 .foregroundStyle(Term.amber)
-            Text("TERMINAL")
+            // TERMINAL and the version are one concatenated Text, so
+            // nothing may be inserted between them.
+            (Text("TERMINAL")
                 .font(Term.mono(10)).tracking(1.6).foregroundStyle(Term.fgDim)
-            + Text(" v1").font(Term.mono(10)).foregroundStyle(Term.fgMuted)
+             + Text(" v1").font(Term.mono(10)).foregroundStyle(Term.fgMuted))
+            // One button, for everybody. The app already holds the
+            // session token, so nobody types a credential and there is no
+            // setup to write down.
+            Button(volume.state.mounted ? "◉ GRIFFIN FUND" : "ADD TO FINDER") {
+                if volume.state.mounted { volume.reveal() } else { volume.startAndMount() }
+            }
+            .buttonStyle(TermButtonStyle())
+            .help(volume.state.mounted
+                  ? "Open the Griffin Fund volume in Finder"
+                  : "Mount the research files as a volume in Finder")
+            if let e = volume.state.error {
+                Text(e).font(Term.mono(9)).foregroundStyle(Term.negative).lineLimit(1)
+            }
 
             Spacer()
 
