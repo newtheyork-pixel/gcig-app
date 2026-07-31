@@ -3378,6 +3378,19 @@ private struct FilesTab: View {
     @State private var uploadError: String?
     @State private var openFolders: Set<String> = []
     @State private var syncing: String?
+    @ObservedObject private var drive = GriffinDrive.shared
+
+    /// What the drive is doing, in one line. Pushing, pulling and idle
+    /// are three different states and an idle sync that never says so
+    /// looks identical to a broken one.
+    private var driveStatusLine: String {
+        let s = drive.status
+        if s.pending > 0 { return "uploading \(s.pending)…" }
+        if let e = s.error { return "last error: \(e)" }
+        let bits = [s.lastPush.map { "pushed \($0)" }, s.lastPull.map { "pulled \($0)" }]
+            .compactMap { $0 }
+        return bits.isEmpty ? "watching, nothing changed yet" : bits.joined(separator: " · ")
+    }
 
     var body: some View {
         let artifacts = p.artifacts ?? []
@@ -3390,6 +3403,23 @@ private struct FilesTab: View {
                 composer
             } else {
                 HStack(spacing: 8) {
+                    // Live two-way sync for this project. Off until asked
+                    // for, because it downloads what it does not have and
+                    // a project can be gigabytes.
+                    Button(drive.status.running ? "◉ Griffin Drive on" : "Griffin Drive") {
+                        if drive.status.running { drive.stop() }
+                        else { drive.start(projectId: p.id, ticker: p.ticker) }
+                    }
+                    .buttonStyle(TermButtonStyle())
+                    .help("Keep ~/Griffin Fund and this project in step, both directions")
+                    if drive.status.running {
+                        Button("Open in Finder") {
+                            if let r = drive.root { FinderSync.reveal(r) }
+                        }
+                        .buttonStyle(TermButtonStyle())
+                        Text(driveStatusLine)
+                            .font(Term.mono(9)).foregroundStyle(Term.fgMuted)
+                    }
                     Button("+ Upload files") { pickAndUpload() }
                         .buttonStyle(TermButtonStyle())
                         .disabled(busy || uploading != nil)

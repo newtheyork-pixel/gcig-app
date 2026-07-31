@@ -451,6 +451,58 @@ router.patch('/artifacts/:id', canResearch, async (req, res) => {
   }
 });
 
+// Replace an artifact's bytes, keeping the row.
+//
+// Needed for two-way sync: editing a model in Finder has to update the
+// artifact everyone else reads, and creating a NEW artifact on every save
+// would turn one spreadsheet into forty rows named the same thing.
+//
+// The old OneDrive item is deliberately left in place rather than
+// deleted. A file somebody edited is the last thing to destroy on the
+// strength of an upload that might itself be a mistake, and orphaned
+// items cost storage rather than work.
+router.put(
+  '/artifacts/:id/file',
+  canResearch,
+  upload.single('file'),
+  async (req, res) => {
+    const id = Number(req.params.id);
+    if (!Number.isInteger(id)) return res.status(400).json({ error: 'Bad id' });
+    if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+    try {
+      const existing = await prisma.researchArtifact.findUnique({ where: { id } });
+      if (!existing) return res.status(404).json({ error: 'No such artifact' });
+      const stored = await uploadFile({
+        buffer: req.file.buffer,
+        filename: req.file.originalname || existing.filename || 'artifact',
+        contentType: req.file.mimetype || 'application/octet-stream',
+      });
+      if (!stored?.id) {
+        return res.status(502).json({ error: 'File storage failed — nothing was changed.' });
+      }
+      const row = await prisma.researchArtifact.update({
+        where: { id },
+        data: {
+          fileRef: `onedrive:${stored.id}`,
+          filename: req.file.originalname || existing.filename,
+        },
+        include: { uploadedBy: { select: { id: true, name: true } } },
+      });
+      await prisma.researchProject.update({
+        where: { id: existing.projectId },
+        data: { updatedAt: new Date() },
+      });
+      res.json(row);
+    } catch (err) {
+      if (err.code === 'NOT_AUTHORIZED') {
+        return res.status(503).json({ error: 'File storage is not connected.' });
+      }
+      console.error('research/artifact replace failed:', err.message);
+      res.status(500).json({ error: 'Could not replace the file' });
+    }
+  }
+);
+
 router.delete('/artifacts/:id', canResearch, async (req, res) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id)) return res.status(400).json({ error: 'Bad id' });
