@@ -31,6 +31,20 @@ struct WebPanel: View {
     @State private var subs: [Sub] = []
     @State private var signInState: String?
     @State private var attempts = 0
+    /// Reader by default. The point of opening a story in the terminal is
+    /// to read it in the terminal, not to run a browser inside a pane
+    /// with its own navigation, adverts and consent banners.
+    @State private var showPage = false
+    @State private var article: Article?
+    @State private var extractNote: String?
+
+    struct Article: Decodable {
+        let title: String?
+        let byline: String?
+        let published: String?
+        let text: String?
+        let words: Int?
+    }
 
     /// A subscription we hold a login for, with the host that login
     /// belongs to. The host is the safety control, not a convenience:
@@ -53,12 +67,24 @@ struct WebPanel: View {
             bar
             Divider().overlay(Term.border)
             if let u = current {
-                WebView(url: u, nav: nav,
-                        onTitle: { title = $0 },
-                        onLoading: { loading = $0 },
-                        onFailure: { failure = $0 },
-                        onHistory: { back, fwd in canGoBack = back; canGoForward = fwd },
-                        onPageDone: { host in autoSignIn(on: host) })
+                ZStack(alignment: .topLeading) {
+                    // The web view stays in the hierarchy whatever mode we
+                    // are in: it holds the signed-in session and it is
+                    // what the extractor reads. Hiding it by not building
+                    // it would mean re-loading, and re-loading a paywalled
+                    // page is how you lose the session you just used.
+                    WebView(url: u, nav: nav,
+                            onTitle: { title = $0 },
+                            onLoading: { loading = $0 },
+                            onFailure: { failure = $0 },
+                            onHistory: { back, fwd in canGoBack = back; canGoForward = fwd },
+                            onPageDone: { host in
+                                autoSignIn(on: host)
+                                Task { await pullArticle() }
+                            })
+                        .opacity(showPage ? 1 : 0)
+                    if !showPage { reader }
+                }
             } else if let f = failure {
                 PanelMessage(text: f)
             } else {
@@ -97,6 +123,12 @@ struct WebPanel: View {
                     .buttonStyle(TermButtonStyle())
                     .help("Fill the club's \(m.label) login on this page")
             }
+            // The page is still there and one click away, because login
+            // forms, consent banners and anything with a CAPTCHA need the
+            // real thing.
+            Button(showPage ? "Read" : "Page") { showPage.toggle() }
+                .buttonStyle(TermButtonStyle())
+                .help(showPage ? "Back to the article text" : "Show the page as the site renders it")
             // Some pages genuinely need a browser: SSO, downloads, video
             // that wants a plugin. Sending them on beats stranding them.
             Button("Safari") {
@@ -107,6 +139,70 @@ struct WebPanel: View {
         }
         .padding(.horizontal, 8).padding(.vertical, 5)
         .background(Term.bgHeader)
+    }
+
+    /// The story, in the terminal's own type. Measure capped near 90
+    /// characters because a full-width column of mono is unreadable, and
+    /// the whole point of this mode is that it reads better than the page.
+    @ViewBuilder
+    private var reader: some View {
+        if let a = article, let body = a.text, !body.isEmpty {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text(a.title ?? title)
+                        .font(Term.mono(15, weight: .bold)).foregroundStyle(Term.white)
+                        .textSelection(.enabled)
+                    Text([a.byline, a.published, a.words.map { "\($0) words" }]
+                            .compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · "))
+                        .font(Term.mono(9)).foregroundStyle(Term.fgMuted)
+                    Divider().overlay(Term.border)
+                    Text(body)
+                        .font(Term.mono(12)).foregroundStyle(Term.fgDim)
+                        .lineSpacing(6).textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .frame(maxWidth: 760, alignment: .leading)
+                .padding(.horizontal, 20).padding(.vertical, 16)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .background(Term.bgPanel)
+        } else {
+            // Never a blank pane. Extraction failing and a page still
+            // loading are different states and a reader can act on the
+            // difference.
+            VStack(alignment: .leading, spacing: 8) {
+                Text(loading ? "Loading…" : (extractNote ?? "Nothing to read here yet."))
+                    .font(Term.mono(11)).foregroundStyle(Term.fgMuted)
+                if !loading {
+                    Button("Show the page instead") { showPage = true }
+                        .buttonStyle(TermButtonStyle())
+                }
+            }
+            .padding(20)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .background(Term.bgPanel)
+        }
+    }
+
+    private func pullArticle() async {
+        guard let raw = await nav.extract?() else { return }
+        guard let data = raw.data(using: .utf8),
+              let a = try? JSONDecoder().decode(Article.self, from: data) else {
+            extractNote = "Could not read this page as an article."
+            return
+        }
+        // A paywall stub and a real story both return text. The word count
+        // is what separates them, and saying which one this is beats
+        // rendering four sentences as though they were the article.
+        if (a.words ?? 0) < 120 {
+            article = nil
+            extractNote = (a.words ?? 0) == 0
+                ? "No article text on this page."
+                : "Only \(a.words ?? 0) words came back — this is probably a paywall stub or an index page."
+            return
+        }
+        extractNote = nil
+        article = a
     }
 
     /// The subscription whose host matches what is on screen. Nil when
@@ -196,6 +292,8 @@ final class WebNav: ObservableObject {
     /// Fills the login form on the page and submits it. Returns what it
     /// did so the caller can say so rather than claiming success.
     var fill: ((String, String) async -> String)?
+    /// Pulls the article out of the rendered page as JSON.
+    var extract: (() async -> String?)?
 }
 
 private struct WebView: NSViewRepresentable {
@@ -252,6 +350,83 @@ private struct WebView: NSViewRepresentable {
             nav.fill = { [weak v] user, pass in
                 guard let v else { return "no view" }
                 return await Self.fillLogin(in: v, user: user, pass: pass)
+            }
+            nav.extract = { [weak v] in
+                guard let v else { return nil }
+                return await Self.extractArticle(in: v)
+            }
+        }
+
+        /// Pull the story out of the rendered page.
+        ///
+        /// Runs against the DOM the browser actually built, which is the
+        /// only version that exists for a site rendering its body in
+        /// JavaScript, and the only one that includes what a subscription
+        /// unlocked. A server-side fetch would get the logged-out page.
+        ///
+        /// Scoring rather than a selector list: every publication marks
+        /// its article container differently and a list of them is a list
+        /// that rots. The container holding the most paragraph text is the
+        /// article on essentially every news page, and it needs no
+        /// per-site maintenance.
+        @MainActor
+        static func extractArticle(in v: WKWebView) async -> String? {
+            let js = """
+            (function () {
+              function clean(root) {
+                var junk = root.querySelectorAll(
+                  'script,style,noscript,nav,aside,header,footer,form,iframe,svg,figure,figcaption,' +
+                  '[aria-hidden=true],[role=navigation],[role=complementary],[role=banner],' +
+                  '[class*=newsletter i],[class*=promo i],[class*=advert i],[class*=related i],' +
+                  '[class*=share i],[class*=subscribe i],[id*=comment i]');
+                for (var i = 0; i < junk.length; i++) { junk[i].remove(); }
+                return root;
+              }
+              function textOf(el) {
+                var ps = el.querySelectorAll('p, h2, h3, li, blockquote');
+                var out = [];
+                for (var i = 0; i < ps.length; i++) {
+                  var t = (ps[i].innerText || '').replace(/\\s+/g, ' ').trim();
+                  // Short fragments are captions, bylines and nav crumbs.
+                  if (t.length > 40 || (ps[i].tagName === 'H2' || ps[i].tagName === 'H3') && t.length > 8) {
+                    out.push(ps[i].tagName === 'H2' || ps[i].tagName === 'H3' ? '\\n' + t + '\\n' : t);
+                  }
+                }
+                return out.join('\\n\\n');
+              }
+              var doc = document.cloneNode(true);
+              clean(doc);
+              var best = null, bestLen = 0;
+              var cands = doc.querySelectorAll('article, main, [role=main], [class*=article i], [class*=story i], [class*=body i], [itemprop=articleBody]');
+              for (var i = 0; i < cands.length; i++) {
+                var t = textOf(cands[i]);
+                if (t.length > bestLen) { bestLen = t.length; best = cands[i]; }
+              }
+              if (!best || bestLen < 400) {
+                var b = textOf(doc.body || doc);
+                if (b.length > bestLen) { bestLen = b.length; best = doc.body; }
+              }
+              var text = best ? textOf(best) : '';
+              function meta(names) {
+                for (var i = 0; i < names.length; i++) {
+                  var el = document.querySelector(names[i]);
+                  if (el) { var c = el.getAttribute('content') || el.innerText; if (c && c.trim()) return c.trim(); }
+                }
+                return null;
+              }
+              var title = meta(['meta[property="og:title"]', 'meta[name="twitter:title"]', 'h1']) || document.title || '';
+              var byline = meta(['meta[name="author"]', 'meta[property="article:author"]',
+                                 '[rel=author]', '[class*=byline i]', '[itemprop=author]']);
+              var published = meta(['meta[property="article:published_time"]', 'meta[name="date"]', 'time']);
+              var words = text ? text.split(/\\s+/).filter(Boolean).length : 0;
+              return JSON.stringify({ title: title, byline: byline, published: published, text: text, words: words });
+            })();
+            """
+            do {
+                let r = try await v.evaluateJavaScript(js)
+                return r as? String
+            } catch {
+                return nil
             }
         }
 
