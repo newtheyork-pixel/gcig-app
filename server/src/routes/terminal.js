@@ -189,7 +189,10 @@ router.get('/fundamentals/:ticker', async (req, res) => {
     res.json(await getFundamentals(raw, freq));
   } catch (err) {
     if (err.status === 404)
-      return res.status(404).json({ error: 'No SEC fundamentals for this ticker' });
+      // The service knows WHY — a fund, a foreign filer, an unknown
+      // symbol — and replacing that with one flat sentence threw the
+      // only useful part away.
+      return res.status(404).json({ error: err.message || 'No SEC fundamentals for this ticker' });
     if (err.status === 400)
       return res.status(400).json({ error: 'Invalid ticker' });
     // The real message, not a bare "failed". A panel that says only
@@ -213,7 +216,7 @@ router.get('/statements/:ticker', async (req, res) => {
     res.json(await getStatements(raw, freq));
   } catch (err) {
     if (err.status === 404)
-      return res.status(404).json({ error: 'No SEC statements for this ticker' });
+      return res.status(404).json({ error: err.message || 'No SEC statements for this ticker' });
     if (err.status === 400) return res.status(400).json({ error: 'Invalid ticker' });
     console.error(`terminal/statements(${raw}) failed:`, err.message);
     res.status(502).json({ error: `Statements fetch failed: ${err.message}` });
