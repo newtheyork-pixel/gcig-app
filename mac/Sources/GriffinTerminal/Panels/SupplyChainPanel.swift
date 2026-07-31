@@ -39,6 +39,12 @@ struct SupplyChainPanel: View {
         let customers: [Entity]?
         let suppliers: [Entity]?
         let materials: [Entity]?
+        /// False when the extraction never ran or came back unreadable.
+        /// Without this a model that timed out and a filing that names
+        /// nobody render the same sentence, and the panel claims
+        /// coverage it does not have.
+        let extracted: Bool?
+        let unavailable: String?
     }
 
     @State private var state: Loadable<Payload> = .loading
@@ -64,7 +70,7 @@ struct SupplyChainPanel: View {
                         }
                         if customers.isEmpty && suppliers.isEmpty
                             && materials.isEmpty {
-                            emptySentence
+                            if p.extracted == false { unreadable(p) } else { emptySentence }
                         }
                         if !customers.isEmpty { customersSection(customers) }
                         if !suppliers.isEmpty { suppliersSection(suppliers) }
@@ -143,6 +149,25 @@ struct SupplyChainPanel: View {
     // The web's sentence, verbatim. An empty read is the expected
     // answer for plenty of real companies, and saying why beats a
     // blank pane that looks broken.
+    /// A read that did not happen, said as such.
+    ///
+    /// This is the distinction the panel was missing: "the filing names
+    /// nobody" is a finding about a diversified business, and "we could
+    /// not read the filing" is not a finding at all.
+    private func unreadable(_ p: Payload) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("EXTRACTION DID NOT RUN")
+                .font(Term.mono(9, weight: .bold))
+                .foregroundStyle(Term.amber)
+            Text(p.unavailable ?? "The extraction model could not be reached.")
+                .font(Term.mono(11)).foregroundStyle(Term.fgDim)
+            Text("This is not the same as the filing naming nobody. Nothing here has been read — try again shortly.")
+                .font(Term.mono(10)).foregroundStyle(Term.fgMuted)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.vertical, 8)
+    }
+
     private var emptySentence: some View {
         Text("The latest 10-K names no specific customers, suppliers, or inputs — common for diversified consumer names that disclose no single customer above the 10% threshold.")
             .font(Term.mono(11))

@@ -28,7 +28,7 @@ function decodeEntities(s) {
     .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n)));
 }
 
-function htmlToText(html) {
+export function htmlToText(html) {
   return decodeEntities(
     String(html)
       .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, ' ')
@@ -48,28 +48,70 @@ function htmlToText(html) {
 const KEYWORDS =
   /\b(customers?|suppliers?|concentrat\w*|raw materials?|vendors?|distributors?|merchants?|accounted for|% of (?:net )?(?:revenue|sales)|depend\w+ (?:on|upon)|principal|contract manufacturers?|sourc\w+|procure\w*)\b/i;
 
+/// Not every paragraph that mentions a customer is worth the model's
+/// attention, and the good ones are rarely at the front.
+///
+/// The first version of this took matching paragraphs in DOCUMENT ORDER
+/// until it had 9,000 characters, which in a 338,000-character filing
+/// means the opening pages of the business description. The disclosure
+/// that actually answers the question sits much later — in MD&A, or in
+/// the concentration-of-credit-risk note. So General Dynamics returned
+/// no customers and no concentration while its 10-K said "approximately
+/// 70% of our consolidated revenue was from the U.S. government", which
+/// is a named customer and a percentage in one sentence.
+///
+/// Scored instead. A stated percentage is the strongest signal there is,
+/// because a filer only quantifies a relationship that matters.
+const SIGNALS = [
+  [6, /\baccounted for\s+(?:approximately\s+)?\d/i],
+  [6, /\d+(?:\.\d+)?\s*%\s+of\s+(?:our\s+)?(?:total\s+|net\s+|consolidated\s+)?(?:revenue|sales)/i],
+  [5, /\b(?:customer concentration|concentration of credit risk|no single customer|one customer|largest customers?|principal customers?|major customers?|significant customers?)\b/i],
+  [5, /\b(?:U\.?S\.?\s+government|United States Government|Department of Defense|federal government)\b/i],
+  [4, /\b(?:sole[- ]source|single[- ]source|principal suppliers?|primary suppliers?|key suppliers?)\b/i],
+  [3, /\braw materials?\b/i],
+  [3, /\b(?:depend\w+|reli\w+)\s+(?:on|upon)\b/i],
+  [2, /\b(?:distributors?|wholesalers?|contract manufacturers?)\b/i],
+];
+
+export function scorePassage(p) {
+  let s = KEYWORDS.test(p) ? 1 : 0;
+  if (!s) return 0;
+  for (const [w, re] of SIGNALS) if (re.test(p)) s += w;
+  return s;
+}
+
 // Pull the paragraphs that mention relationships, deduped and capped, so
-// the LLM sees signal instead of a multi-megabyte filing.
-function gatherPassages(text, cap = 9000) {
+// the LLM sees signal instead of a multi-megabyte filing. Selected by
+// score, then restored to document order — a filing read out of sequence
+// invites the model to join two unrelated disclosures.
+export function gatherPassages(text, cap = 12000) {
   const paras = text
     .split('\n')
     .map((s) => s.trim())
     .filter((p) => p.length > 40 && p.length < 1200 && KEYWORDS.test(p));
+
   const seen = new Set();
-  const out = [];
-  let total = 0;
-  for (const p of paras) {
+  const scored = [];
+  paras.forEach((p, i) => {
     const key = p.slice(0, 90).toLowerCase();
-    if (seen.has(key)) continue;
+    if (seen.has(key)) return;
     seen.add(key);
-    if (total + p.length > cap) break;
-    out.push(p);
-    total += p.length;
+    scored.push({ p, i, score: scorePassage(p) });
+  });
+
+  scored.sort((a, b) => b.score - a.score || a.i - b.i);
+  const picked = [];
+  let total = 0;
+  for (const row of scored) {
+    if (total + row.p.length > cap) continue;
+    picked.push(row);
+    total += row.p.length;
   }
-  return out.join('\n\n');
+  picked.sort((a, b) => a.i - b.i);
+  return picked.map((r) => r.p).join('\n\n');
 }
 
-const SYSTEM =
+export const SYSTEM =
   'You are a supply-chain analyst at the Griffin Fund, a student investment fund, reading excerpts from a company\'s 10-K annual report. ' +
   'Extract the named business relationships. Reply with STRICT JSON only — no prose, no code fences.\n' +
   'Shape: {"summary": string, "concentration": string|null, ' +
@@ -112,6 +154,26 @@ function isGeneric(name) {
   return GENERIC.has(String(name || '').trim().toLowerCase());
 }
 
+/// Bodies a 10-K names constantly and buys from never.
+///
+/// Johnson & Johnson came back listing the U.S. Department of Justice as
+/// a customer. It appears all over the filing — subpoenas, settlements,
+/// investigations — and a model asked to find named organizations in a
+/// document will find it. But being named is not being a customer, and a
+/// regulator or a litigant is the opposite of one.
+///
+/// The exception is deliberate: a stated percentage of revenue is proof
+/// of a commercial relationship, so a body that genuinely does buy from
+/// the filer survives on the strength of the number. General Dynamics
+/// selling to the U.S. government at 68% of revenue is not affected.
+const NON_CUSTOMER =
+  /\b(department of justice|\bDOJ\b|securities and exchange commission|\bSEC\b|food and drug administration|\bFDA\b|environmental protection agency|\bEPA\b|internal revenue service|\bIRS\b|federal trade commission|\bFTC\b|department of labor|attorney general|european commission|court|tribunal)\b/i;
+
+function isNonCustomer(name, pct) {
+  if (pct != null && pct > 0) return false;
+  return NON_CUSTOMER.test(String(name || ''));
+}
+
 function num(v) {
   const n = Number(v);
   return Number.isFinite(n) ? n : null;
@@ -128,11 +190,12 @@ function cleanEntity(e, withPct) {
     // A real disclosed concentration is never 0%; treat 0 (and out-of-range)
     // as "not stated" so it renders as — rather than a phantom 0% bar.
     out.pct = p != null && p > 0 && p <= 100 ? p : null;
+    if (isNonCustomer(name, out.pct)) return null;
   }
   return out;
 }
 
-function sanitize(parsed) {
+export function sanitize(parsed) {
   if (!parsed || typeof parsed !== 'object') return null;
   const arr = (v) => (Array.isArray(v) ? v : []);
   const customers = arr(parsed.customers).map((e) => cleanEntity(e, true)).filter(Boolean).slice(0, 20);
@@ -174,22 +237,39 @@ export async function getSupplyChain(ticker) {
           sourceDate: tenK.filingDate || null,
           sourceUrl: tenK.url,
         };
+        // The three states this can end in are genuinely different and
+        // used to render identically. A filing that names nobody is a
+        // real answer about a diversified business; a model that never
+        // replied is not an answer at all, and showing the second as
+        // the first is the panel quietly lying about its own coverage.
+        const blank = { summary: '', concentration: null, customers: [], suppliers: [], materials: [] };
         if (passages) {
           const raw = await llmChat({ messages: [
             { role: 'system', content: SYSTEM },
             { role: 'user', content: `Company: ${key}\n\n10-K excerpts:\n${passages}` },
-          ], jsonMode: true, temperature: 0, timeoutMs: 25_000 });
+            // A cold model takes longer than a warm one to answer a
+            // twelve-thousand-character prompt, and 25s sat under that
+            // line often enough that the first open of SPLC after a
+            // quiet spell reliably came back empty.
+          ], jsonMode: true, temperature: 0, timeoutMs: 60_000 });
           let parsed = null;
           try {
+            // llmChat already runs extractJson on a jsonMode reply, so
+            // `raw` is the balanced JSON text and wants parsing, not
+            // extracting again.
             parsed = raw ? sanitize(JSON.parse(raw)) : null;
           } catch {
             parsed = null;
           }
           value = parsed
-            ? { ...base, ...parsed }
-            : { ...base, summary: '', concentration: null, customers: [], suppliers: [], materials: [] };
+            ? { ...base, ...parsed, extracted: true }
+            : { ...base, ...blank, extracted: false,
+                unavailable: raw ? 'The model replied but not in a form we could read.'
+                                 : 'The extraction model could not be reached.' };
         } else {
-          value = { ...base, summary: '', concentration: null, customers: [], suppliers: [], materials: [] };
+          // Nothing in the filing even mentions a relationship. That is
+          // a fact about the document, not a failure.
+          value = { ...base, ...blank, extracted: true, noPassages: true };
         }
       }
     }
