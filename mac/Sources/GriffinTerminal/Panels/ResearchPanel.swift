@@ -884,19 +884,45 @@ private func noteSections(_ notes: String?) -> [(heading: String?, body: String)
 
 // MARK: Detail
 
-private enum RTab: String, CaseIterable {
-    case questions, outreach, interviews, visits, valuation, ledger, files, compliance
+// The panel is a research workspace, not a fieldwork tool.
+//
+// Eight top-level tabs were the fieldwork spine — questions, outreach,
+// interviews, visits, ledger, compliance — with files and valuation
+// wedged in beside them. That reads as "this is for going out and
+// interviewing people", which is one kind of research and not the one
+// most projects here do: the forty imported from OneDrive have files and
+// a model and nothing else.
+//
+// So the top level is what any project has, and the fieldwork tabs move
+// under FIELD where they belong together.
+/// The fieldwork sections. Kept separate from RTab so the top level
+/// stays what every project has, and going out to interview people stays
+/// one thing a project may or may not do.
+private enum FieldTab: String, CaseIterable {
+    case interviews, visits, ledger, compliance
 
     func title(_ p: ProjectFull) -> String {
         switch self {
-        case .questions:  return "QUESTIONS (\(p.questions?.count ?? 0))"
-        case .outreach:   return "OUTREACH (\(p.funnel?.total ?? p.targets?.count ?? 0))"
         case .interviews: return "INTERVIEWS (\(p.interviews?.count ?? 0))"
         case .visits:     return "VISITS (\(p.visits?.count ?? 0))"
-        case .valuation:  return "VALUATION (\(p.valuations?.count ?? 0))"
         case .ledger:     return "LEDGER (\(p.claims?.count ?? 0))"
-        case .files:      return "FILES (\(p.artifacts?.count ?? 0))"
         case .compliance: return "COMPLIANCE"
+        }
+    }
+}
+
+private enum RTab: String, CaseIterable {
+    case files, valuation, questions, outreach, field
+
+    func title(_ p: ProjectFull) -> String {
+        switch self {
+        case .files:      return "FILES (\(p.artifacts?.count ?? 0))"
+        case .valuation:  return "VALUATION (\(p.valuations?.count ?? 0))"
+        case .questions:  return "QUESTIONS (\(p.questions?.count ?? 0))"
+        case .outreach:   return "OUTREACH (\(p.funnel?.total ?? p.targets?.count ?? 0))"
+        case .field:
+            let n = (p.interviews?.count ?? 0) + (p.visits?.count ?? 0)
+            return n > 0 ? "FIELD (\(n))" : "FIELD"
         }
     }
 
@@ -912,7 +938,9 @@ private enum RTab: String, CaseIterable {
             let q = p.outreachQueue
             let me = q?.awaitingMe ?? 0
             return me > 0 ? me : (q?.readyToSend ?? 0)
-        case .compliance:
+        case .field:
+            // Anything in the fieldwork section that needs a person:
+            // an unreviewed interview with a flag on it.
             return (p.interviews ?? []).filter {
                 $0.reviewedAt == nil &&
                 (($0.quarantined ?? false) || ($0.mnpiRisk ?? "low") != "low" || !($0.consentObtained ?? false))
@@ -933,7 +961,9 @@ private struct ProjectDetail: View {
     @EnvironmentObject private var ws: Workspace
 
     @State private var state: Loadable<ProjectFull> = .loading
-    @State private var tab: RTab = .questions
+    @State private var tab: RTab = .files
+    @State private var field: FieldTab = .interviews
+    @State private var briefOpen = false
     @State private var busy = false
     @State private var err: String?
     @State private var openTargetID: Int?
@@ -1007,7 +1037,7 @@ private struct ProjectDetail: View {
                                         switch t {
                                         case .outreach:   openTargetID = id
                                         case .files:      readerArtifactID = id
-                                        case .interviews: readerInterviewID = id
+                                        case .field:      readerInterviewID = id
                                         default:          break
                                         }
                                     }
@@ -1076,15 +1106,30 @@ private struct ProjectDetail: View {
     // above the tabs that hold what it contains.
     @ViewBuilder
     private func headerBlock(_ p: ProjectFull) -> some View {
+        // The header used to open with two lines of brief, a coverage bar
+        // and a compliance strip, above eight tabs — for a project that
+        // is often just a folder of PDFs, all of it noise before anything
+        // useful. The brief collapses to one line you can open, and the
+        // coverage bar only appears where there are questions to cover.
         VStack(alignment: .leading, spacing: 6) {
             if let brief = p.brief, !brief.isEmpty {
-                Text(brief)
-                    .font(Term.mono(10)).foregroundStyle(Term.fgDim)
-                    .lineLimit(2)
-                    .help(brief)
+                Button { briefOpen.toggle() } label: {
+                    HStack(alignment: .top, spacing: 5) {
+                        Text(briefOpen ? "▾" : "▸")
+                            .font(Term.mono(9)).foregroundStyle(Term.fgMuted)
+                        Text(brief)
+                            .font(Term.mono(10)).foregroundStyle(Term.fgDim)
+                            .lineLimit(briefOpen ? nil : 1)
+                            .multilineTextAlignment(.leading)
+                        Spacer(minLength: 0)
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
             }
-            ProjectStatusBar(p: p)
-            ComplianceStripView(interviews: p.interviews ?? [], onOpen: { tab = .compliance })
+            if (p.questions?.count ?? 0) > 0 { ProjectStatusBar(p: p) }
+            ComplianceStripView(interviews: p.interviews ?? [],
+                                onOpen: { tab = .field; field = .compliance })
             if p.transcriptionReady == false {
                 // Say it here rather than letting someone find out at
                 // the end of a long upload on the web.
@@ -1139,25 +1184,54 @@ private struct ProjectDetail: View {
     @ViewBuilder
     private func tabContent(_ p: ProjectFull) -> some View {
         switch tab {
-        case .questions:
-            CoverageTab(p: p, busy: $busy, run: run)
-        case .outreach:
-            OutreachTab(p: p, busy: $busy, run: run, onOpenTarget: { openTargetID = $0 })
-        case .interviews:
-            InterviewsTab(p: p, busy: $busy, run: run, onOpenTranscript: { readerInterviewID = $0 })
-        case .visits:
-            VisitsTab(p: p, busy: $busy, run: run)
-        case .valuation:
-            ValuationTab(p: p)
-        case .ledger:
-            LedgerTab(p: p, busy: $busy, run: run)
         case .files:
             FilesTab(p: p, busy: $busy, run: run,
                      onOpenArtifact: { readerArtifactID = $0 },
                      onOpenFile: { id, title in openFile = OpenFile(itemId: id, title: title) })
-        case .compliance:
-            ComplianceTab(p: p)
+        case .valuation:
+            ValuationTab(p: p)
+        case .questions:
+            CoverageTab(p: p, busy: $busy, run: run)
+        case .outreach:
+            OutreachTab(p: p, busy: $busy, run: run, onOpenTarget: { openTargetID = $0 })
+        case .field:
+            VStack(alignment: .leading, spacing: 0) {
+                fieldBar(p)
+                Divider().overlay(Term.border)
+                switch field {
+                case .interviews:
+                    InterviewsTab(p: p, busy: $busy, run: run, onOpenTranscript: { readerInterviewID = $0 })
+                case .visits:
+                    VisitsTab(p: p, busy: $busy, run: run)
+                case .ledger:
+                    LedgerTab(p: p, busy: $busy, run: run)
+                case .compliance:
+                    ComplianceTab(p: p)
+                }
+            }
         }
+    }
+
+    /// The fieldwork sections, one level down. Same numbering grammar as
+    /// the tabs above them, continuing rather than restarting, so a
+    /// printed number means one thing on the panel.
+    private func fieldBar(_ p: ProjectFull) -> some View {
+        HStack(spacing: 0) {
+            ForEach(Array(FieldTab.allCases.enumerated()), id: \.element) { i, f in
+                let on = field == f
+                Button { field = f } label: {
+                    Text("\(RTab.allCases.count + i + 1)) \(f.title(p))")
+                        .font(Term.mono(9, weight: on ? .bold : .regular)).tracking(0.4)
+                        .foregroundStyle(on ? Term.bg : Term.fgDim)
+                        .padding(.horizontal, 8).padding(.vertical, 4)
+                        .background(on ? Term.amber : Color.clear)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+            Spacer()
+        }
+        .padding(.horizontal, 10).padding(.vertical, 3)
     }
 
     // One fetch per open; a soft reload after writes keeps the current
@@ -3888,14 +3962,16 @@ private func buildSearchIndex(_ p: ProjectFull) -> [SearchRow] {
             add(.outreach, "draft", "\(t.name): \(d.subject)", d.body, d.stage, t.id)
         }
     }
-    for i in p.interviews ?? [] { add(.interviews, "interview", i.title, i.transcript, i.source?.alias, i.id) }
+    // Fieldwork rows all point at FIELD now; the section within it is
+    // chosen when the row opens.
+    for i in p.interviews ?? [] { add(.field, "interview", i.title, i.transcript, i.source?.alias, i.id) }
     for v in p.visits ?? [] {
-        add(.visits, "visit", v.location, v.notes, v.banner, v.id)
-        for o in v.siteObservations ?? [] { add(.visits, "observation", v.location, o.text, nil, v.id) }
+        add(.field, "visit", v.location, v.notes, v.banner, v.id)
+        for o in v.siteObservations ?? [] { add(.field, "observation", v.location, o.text, nil, v.id) }
     }
     for v in p.valuations ?? [] { add(.valuation, "valuation", v.name, v.note, v.kind, v.id) }
     for c in p.claims ?? [] {
-        add(.ledger, "claim", c.text, c.quote,
+        add(.field, "claim", c.text, c.quote,
             [c.topic, c.stamp].compactMap { $0 }.joined(separator: " · "), c.questionId)
     }
     for a in p.artifacts ?? [] {
