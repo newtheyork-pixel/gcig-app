@@ -3403,23 +3403,10 @@ private struct FilesTab: View {
                 composer
             } else {
                 HStack(spacing: 8) {
-                    // Live two-way sync for this project. Off until asked
-                    // for, because it downloads what it does not have and
-                    // a project can be gigabytes.
-                    Button(drive.status.running ? "◉ Griffin Drive on" : "Griffin Drive") {
-                        if drive.status.running { drive.stop() }
-                        else { drive.start(projectId: p.id, ticker: p.ticker) }
-                    }
-                    .buttonStyle(TermButtonStyle())
-                    .help("Keep ~/Griffin Fund and this project in step, both directions")
-                    if drive.status.running {
-                        Button("Open in Finder") {
-                            if let r = drive.root { FinderSync.reveal(r) }
-                        }
-                        .buttonStyle(TermButtonStyle())
-                        Text(driveStatusLine)
-                            .font(Term.mono(9)).foregroundStyle(Term.fgMuted)
-                    }
+                    // No switch. The drive runs for every project from
+                    // launch; this line only says what it is doing.
+                    Text(driveStatusLine)
+                        .font(Term.mono(9)).foregroundStyle(Term.fgMuted)
                     Button("+ Upload files") { pickAndUpload() }
                         .buttonStyle(TermButtonStyle())
                         .disabled(busy || uploading != nil)
@@ -3495,17 +3482,6 @@ private struct FilesTab: View {
                     }
                     .buttonStyle(.plain)
                     .onHover { $0 ? NSCursor.pointingHand.push() : NSCursor.pop() }
-                    .overlay(alignment: .trailing) {
-                        HStack(spacing: 6) {
-                            if syncing == name {
-                                Text("syncing…").font(Term.mono(9)).foregroundStyle(Term.amber)
-                            }
-                            Button("⤓ Finder") { syncToFinder(name, items) }
-                                .buttonStyle(TermButtonStyle())
-                                .disabled(busy || syncing != nil)
-                                .help("Download this folder to ~/Griffin Fund and open it in Finder")
-                        }
-                    }
                     if open {
                         // Basename only inside a folder. The header
                         // carries the path, so repeating it on every row
@@ -3612,31 +3588,6 @@ private struct FilesTab: View {
             }
         }
         .padding(8).termBorder()
-    }
-
-    /// Download a folder's files and show them in Finder. Only the ones
-    /// that are actually stored files: an inline note has no bytes to
-    /// write and would land as an empty document.
-    private func syncToFinder(_ folder: String, _ items: [ProjectFull.Artifact]) {
-        let files = items.compactMap { a -> FinderSync.Item? in
-            guard let id = DocumentViewer.itemId(from: a.fileRef) else { return nil }
-            return FinderSync.Item(itemId: id, path: a.title)
-        }
-        guard !files.isEmpty else { return }
-        syncing = folder
-        Task {
-            let r = await FinderSync.sync(files, project: p.ticker) { name in
-                syncing = "\(folder) · \(name)"
-            }
-            syncing = nil
-            if let dest = r.destination {
-                let sub = folder == "NOT IN A FOLDER" ? dest : dest.appendingPathComponent(folder)
-                FinderSync.reveal(sub)
-            }
-            if !r.failed.isEmpty {
-                uploadError = "\(r.written) written, \(r.skipped) already current, failed: \(r.failed.joined(separator: ", "))"
-            }
-        }
     }
 
     /// Folder name and basename, split on the last slash. No slash means

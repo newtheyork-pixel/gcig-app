@@ -32,6 +32,7 @@ import tradeRequestRoutes from './routes/tradeRequests.js';
 import presidentReviewRoutes from './routes/presidentReview.js';
 import terminalRoutes from './routes/terminal.js';
 import watchlistRoutes from './routes/watchlist.js';
+import davRoutes from './routes/dav.js';
 import subscriptionRoutes from './routes/subscriptions.js';
 import secDocProxyRoutes from './routes/secDocProxy.js';
 import notesRoutes from './routes/notes.js';
@@ -142,6 +143,7 @@ app.use('/api/president-review', presidentReviewRoutes);
 // the router file.
 app.use('/api/terminal/sec-doc-proxy', secDocProxyRoutes);
 app.use('/api/terminal', terminalRoutes);
+app.use('/dav', davRoutes);
 app.use('/api/watchlist', watchlistRoutes);
 app.use('/api/subscriptions', subscriptionRoutes);
 app.use('/api/notes', notesRoutes);
