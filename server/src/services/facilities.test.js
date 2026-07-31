@@ -25,3 +25,21 @@ describe('searchTermFor', () => {
     assert.equal(searchTermFor('INC'), null);
   });
 });
+
+// Precision, measured against what the query actually returned.
+describe('searchTermFor precision', () => {
+  it('drops initials rather than searching on them', () => {
+    // "C H" matched 68 plants belonging to unrelated companies, for a
+    // freight broker that owns no factories.
+    assert.equal(searchTermFor('C. H. ROBINSON WORLDWIDE, INC.'), 'ROBINSON');
+  });
+
+  it('asks for one word, because EPA matches on substring', () => {
+    // The parent is recorded as COCA-COLA, so "COCA COLA" finds nothing.
+    assert.equal(searchTermFor('COCA COLA CO'), 'COCA');
+  });
+
+  it('keeps a two-character name', () => {
+    assert.equal(searchTermFor('3M CO'), '3M');
+  });
+});

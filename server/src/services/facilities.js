@@ -33,13 +33,26 @@ export function searchTermFor(name) {
     .replace(/\s+/g, ' ')
     .trim();
   if (!cleaned) return null;
-  const words = cleaned.split(' ');
-  // Two words when the first is short or generic ("GENERAL", "AMERICAN"),
-  // one otherwise. "BERKSHIRE" is enough; "GENERAL" is not.
-  const generic = /^(GENERAL|AMERICAN|NATIONAL|UNITED|FIRST|GLOBAL|INTERNATIONAL|NEW)$/;
-  if (words.length > 1 && (words[0].length <= 4 || generic.test(words[0]))) {
-    return `${words[0]} ${words[1]}`;
-  }
+  // Single letters are initials, not a name. "C. H. ROBINSON WORLDWIDE,
+  // INC." reduced to "C H", which matched sixty-eight unrelated plants
+  // belonging to every company whose parent starts with those letters —
+  // for a freight broker that owns no factories at all.
+  //
+  // The floor is two characters rather than three, because 3M is a real
+  // company and a three-character floor threw it away.
+  const words = cleaned.split(' ').filter((w) => w.length >= 2);
+  if (!words.length) return null;
+
+  // One word, because EPA matches on substring: searching "COCA COLA"
+  // finds nothing, since the parent is recorded as "COCA-COLA". The
+  // first real word is both the most permissive and the most accurate
+  // thing to ask for.
+  //
+  // The exception is a first word too generic to mean a company on its
+  // own, where the second narrows it without the substring problem —
+  // those names are spaced rather than hyphenated in practice.
+  const generic = /^(GENERAL|AMERICAN|NATIONAL|UNITED|FIRST|GLOBAL|INTERNATIONAL|NEW|GREAT|STANDARD)$/;
+  if (words.length > 1 && generic.test(words[0])) return `${words[0]} ${words[1]}`;
   return words[0];
 }
 
