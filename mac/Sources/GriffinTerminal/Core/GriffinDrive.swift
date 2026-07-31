@@ -227,33 +227,65 @@ final class GriffinDrive: ObservableObject {
         }
         guard let data = try? await API.shared.get("/research/projects/\(pid)"),
               let w = try? await API.shared.decode(Wrap.self, from: data) else { return }
-        var pulled = 0
+
+        // The shape first, the bytes after.
+        //
+        // Two hundred files fetched one at a time is minutes of an empty
+        // folder, which reads as broken rather than busy — it is what
+        // Thomas saw. Creating every directory up front costs
+        // milliseconds and means opening the volume shows the whole
+        // project immediately, with files filling in underneath.
+        var wanted: [(row: Wrap.Row, item: String, dest: URL)] = []
         for row in w.artifacts ?? [] {
             guard let item = DocumentViewer.itemId(from: row.fileRef) else { continue }
             remoteIdByPath[row.title] = row.id
             let dest = base.appendingPathComponent(row.title)
+            try? FileManager.default.createDirectory(
+                at: dest.deletingLastPathComponent(), withIntermediateDirectories: true)
             if FileManager.default.fileExists(atPath: dest.path) { continue }
-            do {
-                try FileManager.default.createDirectory(
-                    at: dest.deletingLastPathComponent(), withIntermediateDirectories: true)
-                let bytes = try await API.shared.get("/files/\(escaped(item))")
-                try bytes.write(to: dest, options: .atomic)
-                // Recorded before the watcher sees it, so our own write is
-                // not read back as a local edit and pushed straight up
-                // again — the loop that makes a naive two-way sync eat
-                // itself.
-                known[row.title] = bytes.count
-                pulled += 1
-            } catch {
-                status.error = "pull \(row.title): \(error.localizedDescription)"
+            wanted.append((row, item, dest))
+        }
+        guard !wanted.isEmpty else { return }
+
+        status.pending = wanted.count
+        // Six at a time. Each fetch is our API waking OneDrive, so serial
+        // is dominated by latency rather than bandwidth; unbounded would
+        // open two hundred sockets and have Render rate-limit us.
+        var pulled = 0
+        var index = 0
+        await withTaskGroup(of: (String, Int)?.self) { group in
+            func submit() {
+                guard index < wanted.count else { return }
+                let job = wanted[index]
+                index += 1
+                group.addTask {
+                    guard let bytes = try? await API.shared.get("/files/\(Self.escape(job.item))") else { return nil }
+                    do {
+                        try bytes.write(to: job.dest, options: .atomic)
+                        return (job.row.title, bytes.count)
+                    } catch { return nil }
+                }
+            }
+            for _ in 0..<min(6, wanted.count) { submit() }
+            while let done = await group.next() {
+                if let (title, size) = done {
+                    // Recorded before the watcher can see it, or our own
+                    // download is read back as a local edit and pushed
+                    // straight up again.
+                    known[title] = size
+                    pulled += 1
+                    status.pending = max(0, wanted.count - pulled)
+                }
+                submit()
             }
         }
+        status.pending = 0
         if pulled > 0 { status.lastPull = "\(pulled) file\(pulled == 1 ? "" : "s") at \(Fmt.localStamp())" }
     }
 
     // MARK: Helpers
 
-    private func escaped(_ s: String) -> String {
+    nonisolated static func escape(_ s: String) -> String {
         s.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? s
     }
 
