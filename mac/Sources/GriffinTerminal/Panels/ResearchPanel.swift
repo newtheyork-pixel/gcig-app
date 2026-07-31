@@ -939,24 +939,21 @@ private func noteSections(_ notes: String?) -> [(heading: String?, body: String)
 //
 // So the top level is what any project has, and the fieldwork tabs move
 // under FIELD where they belong together.
-/// The fieldwork sections. Kept separate from RTab so the top level
-/// stays what every project has, and going out to interview people stays
-/// one thing a project may or may not do.
-private enum FieldTab: String, CaseIterable {
-    case interviews, visits, ledger, compliance
-
-    func title(_ p: ProjectFull) -> String {
-        switch self {
-        case .interviews: return "INTERVIEWS (\(p.interviews?.count ?? 0))"
-        case .visits:     return "VISITS (\(p.visits?.count ?? 0))"
-        case .ledger:     return "LEDGER (\(p.claims?.count ?? 0))"
-        case .compliance: return "COMPLIANCE"
-        }
-    }
-}
-
+/// The research tabs, flat.
+///
+/// Fieldwork used to be one tab with four of its own inside it, so
+/// reaching an interview meant clicking FIELD and then INTERVIEWS, and a
+/// search that found three interviews and a claim reported all four as
+/// "FIELD". The nesting was hiding the part of the panel people actually
+/// came for.
+///
+/// Flattening also repairs the numbering. Bloomberg's grammar is that a
+/// printed number is a typeable address, and the sub-tabs printed 6 to 9
+/// while publishTabs only ever registered 1 to 5 — so those four digits
+/// were promises the terminal did not keep. Every tab here is numbered
+/// and every number is registered.
 private enum RTab: String, CaseIterable {
-    case files, valuation, questions, outreach, field
+    case files, valuation, questions, outreach, interviews, visits, ledger, compliance
 
     func title(_ p: ProjectFull) -> String {
         switch self {
@@ -964,9 +961,10 @@ private enum RTab: String, CaseIterable {
         case .valuation:  return "VALUATION (\(p.valuations?.count ?? 0))"
         case .questions:  return "QUESTIONS (\(p.questions?.count ?? 0))"
         case .outreach:   return "OUTREACH (\(p.funnel?.total ?? p.targets?.count ?? 0))"
-        case .field:
-            let n = (p.interviews?.count ?? 0) + (p.visits?.count ?? 0)
-            return n > 0 ? "FIELD (\(n))" : "FIELD"
+        case .interviews: return "INTERVIEWS (\(p.interviews?.count ?? 0))"
+        case .visits:     return "VISITS (\(p.visits?.count ?? 0))"
+        case .ledger:     return "LEDGER (\(p.claims?.count ?? 0))"
+        case .compliance: return "COMPLIANCE"
         }
     }
 
@@ -982,9 +980,10 @@ private enum RTab: String, CaseIterable {
             let q = p.outreachQueue
             let me = q?.awaitingMe ?? 0
             return me > 0 ? me : (q?.readyToSend ?? 0)
-        case .field:
-            // Anything in the fieldwork section that needs a person:
-            // an unreviewed interview with a flag on it.
+        case .interviews:
+            // An interview nobody has reviewed that carries a flag. This
+            // used to sit on FIELD, where it could equally have meant a
+            // visit or a claim needed attention.
             return (p.interviews ?? []).filter {
                 $0.reviewedAt == nil &&
                 (($0.quarantined ?? false) || ($0.mnpiRisk ?? "low") != "low" || !($0.consentObtained ?? false))
@@ -1006,7 +1005,6 @@ private struct ProjectDetail: View {
 
     @State private var state: Loadable<ProjectFull> = .loading
     @State private var tab: RTab = .files
-    @State private var field: FieldTab = .interviews
     @State private var briefOpen = false
     @State private var busy = false
     @State private var err: String?
@@ -1081,7 +1079,13 @@ private struct ProjectDetail: View {
                                         switch t {
                                         case .outreach:   openTargetID = id
                                         case .files:      readerArtifactID = id
-                                        case .field:      readerInterviewID = id
+                                        // Only an interview row carries an
+                                        // interview id. This branch used to
+                                        // fire for visits and claims too and
+                                        // fed their ids to the transcript
+                                        // reader, which opened the wrong
+                                        // record or none at all.
+                                        case .interviews: readerInterviewID = id
                                         default:          break
                                         }
                                     }
@@ -1173,7 +1177,7 @@ private struct ProjectDetail: View {
             }
             if (p.questions?.count ?? 0) > 0 { ProjectStatusBar(p: p) }
             ComplianceStripView(interviews: p.interviews ?? [],
-                                onOpen: { tab = .field; field = .compliance })
+                                onOpen: { tab = .compliance })
             if p.transcriptionReady == false {
                 // Say it here rather than letting someone find out at
                 // the end of a long upload on the web.
@@ -1238,44 +1242,15 @@ private struct ProjectDetail: View {
             CoverageTab(p: p, busy: $busy, run: run)
         case .outreach:
             OutreachTab(p: p, busy: $busy, run: run, onOpenTarget: { openTargetID = $0 })
-        case .field:
-            VStack(alignment: .leading, spacing: 0) {
-                fieldBar(p)
-                Divider().overlay(Term.border)
-                switch field {
-                case .interviews:
-                    InterviewsTab(p: p, busy: $busy, run: run, onOpenTranscript: { readerInterviewID = $0 })
-                case .visits:
-                    VisitsTab(p: p, busy: $busy, run: run)
-                case .ledger:
-                    LedgerTab(p: p, busy: $busy, run: run)
-                case .compliance:
-                    ComplianceTab(p: p)
-                }
-            }
+        case .interviews:
+            InterviewsTab(p: p, busy: $busy, run: run, onOpenTranscript: { readerInterviewID = $0 })
+        case .visits:
+            VisitsTab(p: p, busy: $busy, run: run)
+        case .ledger:
+            LedgerTab(p: p, busy: $busy, run: run)
+        case .compliance:
+            ComplianceTab(p: p)
         }
-    }
-
-    /// The fieldwork sections, one level down. Same numbering grammar as
-    /// the tabs above them, continuing rather than restarting, so a
-    /// printed number means one thing on the panel.
-    private func fieldBar(_ p: ProjectFull) -> some View {
-        HStack(spacing: 0) {
-            ForEach(Array(FieldTab.allCases.enumerated()), id: \.element) { i, f in
-                let on = field == f
-                Button { field = f } label: {
-                    Text("\(RTab.allCases.count + i + 1)) \(f.title(p))")
-                        .font(Term.mono(9, weight: on ? .bold : .regular)).tracking(0.4)
-                        .foregroundStyle(on ? Term.bg : Term.fgDim)
-                        .padding(.horizontal, 8).padding(.vertical, 4)
-                        .background(on ? Term.amber : Color.clear)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-            }
-            Spacer()
-        }
-        .padding(.horizontal, 10).padding(.vertical, 3)
     }
 
     // One fetch per open; a soft reload after writes keeps the current
@@ -4065,16 +4040,18 @@ private func buildSearchIndex(_ p: ProjectFull) -> [SearchRow] {
             add(.outreach, "draft", "\(t.name): \(d.subject)", d.body, d.stage, t.id)
         }
     }
-    // Fieldwork rows all point at FIELD now; the section within it is
-    // chosen when the row opens.
-    for i in p.interviews ?? [] { add(.field, "interview", i.title, i.transcript, i.source?.alias, i.id) }
+    // Each fieldwork row points at the tab it actually lives on. They
+    // all pointed at FIELD before, so a search reported "FIELD (4)" for
+    // three interviews and a claim and dropped the reader on whichever
+    // sub-tab happened to be selected.
+    for i in p.interviews ?? [] { add(.interviews, "interview", i.title, i.transcript, i.source?.alias, i.id) }
     for v in p.visits ?? [] {
-        add(.field, "visit", v.location, v.notes, v.banner, v.id)
-        for o in v.siteObservations ?? [] { add(.field, "observation", v.location, o.text, nil, v.id) }
+        add(.visits, "visit", v.location, v.notes, v.banner, v.id)
+        for o in v.siteObservations ?? [] { add(.visits, "observation", v.location, o.text, nil, v.id) }
     }
     for v in p.valuations ?? [] { add(.valuation, "valuation", v.name, v.note, v.kind, v.id) }
     for c in p.claims ?? [] {
-        add(.field, "claim", c.text, c.quote,
+        add(.ledger, "claim", c.text, c.quote,
             [c.topic, c.stamp].compactMap { $0 }.joined(separator: " · "), c.questionId)
     }
     for a in p.artifacts ?? [] {
