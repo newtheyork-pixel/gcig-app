@@ -15,6 +15,7 @@ import {
   getStatus,
   disconnect,
   isConfigured,
+  listChildren,
 } from '../services/oneDriveStorage.js';
 import {
   summarizeFile,
@@ -246,6 +247,22 @@ router.post(
 
 // Cached summary — cheap read, no LLM call. Returns 404 if none
 // exists yet so the UI can prompt a generation.
+// Browse the drive. Super-admin only: this exposes the whole OneDrive
+// account, not just what the club has attached to a project.
+router.get('/browse', verifyJwt, requireSuperAdmin, async (req, res) => {
+  try {
+    const items = await listChildren({
+      path: req.query.path ? String(req.query.path) : undefined,
+      itemId: req.query.itemId ? String(req.query.itemId) : undefined,
+    });
+    res.json({ items });
+  } catch (err) {
+    if (err.code === 'NOT_AUTHORIZED') return res.status(503).json({ error: 'OneDrive not connected' });
+    console.error('browse failed:', err.message);
+    res.status(err.status === 404 ? 404 : 502).json({ error: err.message });
+  }
+});
+
 router.get('/:itemId/summary', verifyJwt, async (req, res) => {
   try {
     const row = await getCachedSummary(req.params.itemId);

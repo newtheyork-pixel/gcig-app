@@ -380,6 +380,45 @@ export async function downloadBuffer(itemId) {
   };
 }
 
+/// List what is inside a folder, by path or by item id.
+///
+/// Read-only and additive: nothing else in this service could enumerate
+/// the drive, only fetch an item we already had an id for, so importing
+/// an existing folder tree was impossible without it.
+export async function listChildren({ path, itemId } = {}) {
+  const token = await getAccessToken();
+  const base = itemId
+    ? `${GRAPH}/me/drive/items/${encodeURIComponent(itemId)}/children`
+    : path
+    ? `${GRAPH}/me/drive/root:/${encodeGraphPath(String(path).split('/').filter(Boolean))}:/children`
+    : `${GRAPH}/me/drive/root/children`;
+  const out = [];
+  let url = `${base}?$top=200&$select=id,name,size,folder,file,webUrl,lastModifiedDateTime`;
+  // Graph pages at 200. A research folder with three hundred PDFs in it
+  // would silently come back truncated without this.
+  while (url) {
+    const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+    if (!res.ok) {
+      const err = new Error(`Graph ${res.status}: ${(await res.text()).slice(0, 200)}`);
+      err.status = res.status;
+      throw err;
+    }
+    const body = await res.json();
+    for (const it of body.value || []) {
+      out.push({
+        id: it.id,
+        name: it.name,
+        size: it.size ?? null,
+        isFolder: !!it.folder,
+        childCount: it.folder?.childCount ?? null,
+        modified: it.lastModifiedDateTime ?? null,
+      });
+    }
+    url = body['@odata.nextLink'] || null;
+  }
+  return out;
+}
+
 export async function getMetadata(itemId) {
   const token = await getAccessToken();
   const url = `${GRAPH}/me/drive/items/${encodeURIComponent(itemId)}`;
