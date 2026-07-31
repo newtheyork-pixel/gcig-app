@@ -77,6 +77,23 @@ struct CommandField: NSViewRepresentable {
 
         func textDidChange(_ notification: Notification) {
             guard let v = notification.object as? NSTextView else { return }
+            // Upper case as you type.
+            //
+            // The parser already upper-cases before it reads anything, so
+            // this changes no behaviour — but a Bloomberg command line
+            // shows what it is going to do with what you typed, and
+            // lower-case letters on an amber prompt look like a text box
+            // somebody dropped into a terminal.
+            //
+            // The selection is restored around the replacement, or the
+            // caret jumps to the end on every keystroke and typing into
+            // the middle of a command becomes impossible.
+            let upper = v.string.uppercased()
+            if upper != v.string {
+                let sel = v.selectedRange()
+                v.string = upper
+                v.setSelectedRange(sel)
+            }
             parent.text = v.string
         }
 

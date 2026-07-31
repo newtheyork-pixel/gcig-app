@@ -1,4 +1,5 @@
 import SwiftUI
+import MapKit
 
 // FAC — where a company's plants are.
 //
@@ -15,6 +16,11 @@ struct FacilitiesPanel: View {
 
     @State private var state: Loadable<Payload> = .loading
     @State private var query = ""
+    @State private var camera: MapCameraPosition = .automatic
+    @State private var picked: Site?
+    /// The map is the point; the list is the fallback for records EPA
+    /// never geocoded, which cannot be pinned and would otherwise vanish.
+    @State private var asList = false
 
     struct Payload: Decodable {
         let ticker: String?
@@ -59,12 +65,16 @@ struct FacilitiesPanel: View {
             VStack(alignment: .leading, spacing: 0) {
                 header(p, showing: shown.count, total: all.count)
                 Divider().overlay(Term.border)
-                columnHeads
-                Divider().overlay(Term.border)
-                ScrollView {
-                    LazyVStack(spacing: 0) {
-                        ForEach(shown) { row($0) }
+                if asList {
+                    columnHeads
+                    Divider().overlay(Term.border)
+                    ScrollView {
+                        LazyVStack(spacing: 0) {
+                            ForEach(shown) { row($0) }
+                        }
                     }
+                } else {
+                    map(shown)
                 }
                 if let c = p.caveat {
                     Text(c)
@@ -95,6 +105,8 @@ struct FacilitiesPanel: View {
                     .font(Term.mono(9, weight: .bold)).foregroundStyle(Term.amber)
                     .help("The registry returned its maximum page — there are more sites than these")
             }
+            Button(asList ? "Map" : "List") { asList.toggle() }
+                .buttonStyle(TermButtonStyle())
             Spacer()
             TextField("", text: $query,
                       prompt: Text("town, state or street").foregroundStyle(Term.fgMuted))
@@ -104,6 +116,65 @@ struct FacilitiesPanel: View {
                 .frame(width: 200)
         }
         .padding(.horizontal, 10).padding(.vertical, 6)
+    }
+
+    /// Pins, and the ones that cannot be pinned said out loud.
+    @ViewBuilder
+    private func map(_ sites: [Site]) -> some View {
+        let placed = sites.filter { $0.lat != nil && $0.lon != nil }
+        ZStack(alignment: .bottomLeading) {
+            Map(position: $camera) {
+                ForEach(placed) { s in
+                    Annotation(s.name ?? "", coordinate: CLLocationCoordinate2D(
+                        latitude: s.lat!, longitude: s.lon!)) {
+                        Button { picked = s } label: {
+                            // Amber, because it is a thing of ours on a
+                            // map that belongs to Apple.
+                            Circle()
+                                .fill(Term.amber)
+                                .stroke(Term.bg, lineWidth: 1.5)
+                                .frame(width: picked?.key == s.key ? 13 : 9,
+                                       height: picked?.key == s.key ? 13 : 9)
+                        }
+                        .buttonStyle(.plain)
+                        .help("\(s.name ?? "") — \(s.city ?? ""), \(s.state ?? "")")
+                    }
+                }
+            }
+            .mapStyle(.standard(elevation: .flat))
+
+            VStack(alignment: .leading, spacing: 4) {
+                if let s = picked {
+                    // The detail sits over the map rather than in a
+                    // sidebar: one pin at a time is what anybody clicking
+                    // a map wants, and a permanent panel would eat the
+                    // half of the country you are looking at.
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(s.name ?? "").font(Term.mono(11, weight: .bold)).foregroundStyle(Term.white)
+                        Text([s.address, s.city, s.state, s.zip].compactMap { $0 }.joined(separator: ", "))
+                            .font(Term.mono(10)).foregroundStyle(Term.fgDim)
+                        HStack(spacing: 8) {
+                            Button("Open in Maps") { if let u = mapsURL(s) { NSWorkspace.shared.open(u) } }
+                                .buttonStyle(TermButtonStyle())
+                            Button("Close") { picked = nil }.buttonStyle(TermButtonStyle())
+                        }
+                    }
+                    .padding(8)
+                    .background(Term.bgPanel)
+                    .termBorder()
+                }
+                if placed.count < sites.count {
+                    // Never silently drop them. A site with no coordinates
+                    // is a real plant EPA never geocoded, and the list
+                    // view is where it can still be read.
+                    Text("\(sites.count - placed.count) of \(sites.count) have no coordinates and cannot be pinned — see the list")
+                        .font(Term.mono(9)).foregroundStyle(Term.fgMuted)
+                        .padding(.horizontal, 6).padding(.vertical, 3)
+                        .background(Term.bgHeader)
+                }
+            }
+            .padding(10)
+        }
     }
 
     private var columnHeads: some View {
