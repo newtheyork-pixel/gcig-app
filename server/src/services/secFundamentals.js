@@ -72,18 +72,23 @@ function daysBetween(start, end) {
 // most recently filed value so restatements win.
 export function extractConcept(facts, candidates, { unit, freq, instant = false }) {
   const root = facts?.facts?.['us-gaap'] || {};
-  let entries = null;
+  // Every candidate, not the first one that has rows.
+  //
+  // Concept names drift, and a filer that changed tag mid-history has its
+  // years split across two of them. Taking the first and breaking meant
+  // C.H. Robinson showed revenue for eight years of seventeen: it moved
+  // to RevenueFromContractWithCustomer in 2018 and everything before that
+  // sat under Revenues, unread. Earlier candidates still win a period
+  // they both cover, so the preference order still means something.
+  const tagged = [];
   for (const c of candidates) {
     const u = root[c]?.units?.[unit];
-    if (Array.isArray(u) && u.length) {
-      entries = u;
-      break;
-    }
+    if (Array.isArray(u) && u.length) tagged.push({ rank: tagged.length, rows: u });
   }
-  if (!entries) return new Map();
+  if (!tagged.length) return new Map();
 
   const byPeriod = new Map();
-  for (const e of entries) {
+  for (const { rank, rows } of tagged) for (const e of rows) {
     if (e.val == null || e.fy == null || !e.end) continue;
     // Income-statement and cash-flow lines are *durations* (a quarter or
     // a year of activity); balance-sheet lines are *instants* (a snapshot
@@ -106,11 +111,14 @@ export function extractConcept(facts, candidates, { unit, freq, instant = false 
     const period = freq === 'annual' ? `FY${e.fy}` : `${e.fy} ${fp}`;
     const filed = e.filed || '';
     const prev = byPeriod.get(period);
-    if (!prev || filed > prev.filed) {
+    // A better-ranked tag wins outright; within one tag, the most
+    // recently filed value wins so restatements replace originals.
+    if (!prev || rank < prev.rank || (rank === prev.rank && filed > prev.filed)) {
       byPeriod.set(period, {
         period,
         fy: e.fy,
         fp,
+        rank,
         t: Date.parse(e.end),
         val: e.val,
         filed,
@@ -232,8 +240,8 @@ const INCOME_DEFS = [
   { key: 'revenue', label: 'Revenue', concepts: ['RevenueFromContractWithCustomerExcludingAssessedTax', 'Revenues', 'SalesRevenueNet'] },
   { key: 'cogs', label: 'COGS', concepts: ['CostOfGoodsAndServicesSold', 'CostOfRevenue', 'CostOfGoodsSold'] },
   { key: 'grossProfit', label: 'Gross Profit', concepts: ['GrossProfit'] },
-  { key: 'sga', label: 'SG&A Expense', concepts: ['SellingGeneralAndAdministrativeExpense'] },
-  { key: 'rnd', label: 'R&D Expense', concepts: ['ResearchAndDevelopmentExpense'] },
+  { key: 'sga', label: 'SG&A Expense', concepts: ['SellingGeneralAndAdministrativeExpense', 'GeneralAndAdministrativeExpense', 'OtherSellingGeneralAndAdministrativeExpense'] },
+  { key: 'rnd', label: 'R&D Expense', concepts: ['ResearchAndDevelopmentExpense', 'ResearchAndDevelopmentExpenseExcludingAcquiredInProcessCost'] },
   { key: 'opex', label: 'Operating Expenses', concepts: ['OperatingExpenses', 'CostsAndExpenses'] },
   { key: 'operatingIncome', label: 'Operating Income', concepts: ['OperatingIncomeLoss'] },
   { key: 'otherIncome', label: 'Other Income/(Expense)', concepts: ['NonoperatingIncomeExpense', 'OtherNonoperatingIncomeExpense'] },
@@ -247,8 +255,8 @@ const INCOME_DEFS = [
 const BALANCE_DEFS = [
   { key: 'cash', label: 'Cash & Equivalents', concepts: ['CashAndCashEquivalentsAtCarryingValue'] },
   { key: 'sti', label: 'Short-Term Investments', concepts: ['ShortTermInvestments'] },
-  { key: 'receivables', label: 'Receivables', concepts: ['AccountsReceivableNetCurrent'] },
-  { key: 'inventory', label: 'Inventory', concepts: ['InventoryNet'] },
+  { key: 'receivables', label: 'Receivables', concepts: ['AccountsReceivableNetCurrent', 'ReceivablesNetCurrent', 'AccountsAndOtherReceivablesNetCurrent'] },
+  { key: 'inventory', label: 'Inventory', concepts: ['InventoryNet', 'InventoryFinishedGoods', 'InventoryGross'] },
   { key: 'currentAssets', label: 'Total Current Assets', concepts: ['AssetsCurrent'] },
   { key: 'ppe', label: 'Net PP&E', concepts: ['PropertyPlantAndEquipmentNet'] },
   { key: 'totalAssets', label: 'Total Assets', concepts: ['Assets'] },
@@ -337,6 +345,25 @@ export async function getStatements(rawTicker, freq = 'annual') {
   const income = build(INCOME_DEFS, false);
   const balance = build(BALANCE_DEFS, true);
   const cashflow = build(CASHFLOW_DEFS, false);
+
+  // Gross profit, where the filer does not report it.
+  //
+  // Plenty of service companies never tag GrossProfit at all — C.H.
+  // Robinson files 411 us-gaap concepts and not one of them is it — so
+  // the row rendered empty for every year while revenue and cost sat
+  // right above it. Revenue minus cost is the definition, and deriving
+  // it beats showing a blank line that looks like missing data.
+  const revenue = income.find((r) => r.key === 'revenue')?.points;
+  const cogs = income.find((r) => r.key === 'cogs')?.points;
+  const gross = income.find((r) => r.key === 'grossProfit');
+  if (gross && revenue && cogs) {
+    for (const [period, rev] of revenue) {
+      if (gross.points.has(period)) continue;
+      const c = cogs.get(period);
+      if (!c || rev.val == null || c.val == null) continue;
+      gross.points.set(period, { ...rev, val: rev.val - c.val, derived: true });
+    }
+  }
 
   // Shared period axis: the union of every period any line reported.
   const pmap = new Map();
