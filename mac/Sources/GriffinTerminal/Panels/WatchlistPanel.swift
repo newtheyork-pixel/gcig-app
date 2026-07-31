@@ -14,7 +14,6 @@ import SwiftUI
 // the first time somebody traded.
 struct WatchlistPanel: View {
     @State private var state: Loadable<Payload> = .loading
-    @State private var filter: String = "all"
     @State private var adding = false
     @State private var newTicker = ""
     @State private var newNote = ""
@@ -65,7 +64,10 @@ struct WatchlistPanel: View {
                    emptyWhen: { ($0.items ?? []).isEmpty },
                    emptyText: "Nothing on the watchlist yet.",
                    retry: { Task { await load() } }) { p in
-            let items = (p.items ?? []).filter { filter == "all" || $0.source == filter }
+            // One list. Filtering by where a name came from split a
+            // watchlist into four short lists nobody scanned; the source
+            // is still on the row for anyone who wants it.
+            let items = p.items ?? []
             VStack(alignment: .leading, spacing: 0) {
                 header(p)
                 Divider().overlay(Term.border)
@@ -85,10 +87,8 @@ struct WatchlistPanel: View {
         VStack(alignment: .leading, spacing: 4) {
             HStack(spacing: 10) {
                 SectionLabel(text: "Watchlist")
-                chip("all", "ALL", (p.counts?.holdings ?? 0) + (p.counts?.seg13f ?? 0) + (p.counts?.manual ?? 0))
-                chip("holding", "HELD", p.counts?.holdings ?? 0)
-                chip("seg13f", "SEG 13F", p.counts?.seg13f ?? 0)
-                chip("manual", "MANUAL", p.counts?.manual ?? 0)
+                Text("\((p.items ?? []).count) names")
+                    .font(Term.mono(10)).foregroundStyle(Term.fgMuted)
                 Spacer()
                 if p.quotesAvailable == false {
                     // A blank price column and a dead vendor look the
@@ -115,16 +115,6 @@ struct WatchlistPanel: View {
         .padding(.horizontal, 10).padding(.vertical, 6)
     }
 
-    private func chip(_ key: String, _ label: String, _ n: Int) -> some View {
-        Button { filter = key } label: {
-            Text("\(label) \(n)")
-                .font(Term.mono(9, weight: filter == key ? .bold : .regular)).tracking(0.4)
-                .foregroundStyle(filter == key ? Term.bg : Term.fgDim)
-                .padding(.horizontal, 6).padding(.vertical, 2)
-                .background(filter == key ? Term.amber : Color.clear)
-        }
-        .buttonStyle(.plain)
-    }
 
     private var columnHeads: some View {
         HStack(spacing: 8) {
@@ -138,7 +128,6 @@ struct WatchlistPanel: View {
             Text("YTD").frame(width: 58, alignment: .trailing)
             Text("1Y").frame(width: 58, alignment: .trailing)
             Text("AVG VOL").frame(width: 74, alignment: .trailing)
-            Text("NOTE").frame(width: 150, alignment: .leading)
         }
         .font(Term.mono(9, weight: .bold)).tracking(0.5)
         .foregroundStyle(Term.blue)
@@ -182,9 +171,7 @@ struct WatchlistPanel: View {
                 .foregroundStyle(Term.fgDim)
                 .frame(width: 74, alignment: .trailing)
                 .help("Average daily volume over the last 20 sessions")
-            Text(i.note ?? "")
-                .font(Term.mono(9)).foregroundStyle(Term.fgDim)
-                .lineLimit(1).frame(width: 150, alignment: .leading)
+
         }
         .font(Term.mono(11)).foregroundStyle(Term.white)
         .padding(.horizontal, 10).padding(.vertical, 3)

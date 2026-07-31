@@ -133,30 +133,30 @@ router.post('/', async (req, res) => {
   const mine = req.body?.scope === 'mine';
   const userId = mine ? req.user?.id ?? null : null;
   try {
-    const row = await prisma.watchlistItem.upsert({
-      where: { ticker_source_userId: { ticker, source, userId } },
-      // Re-adding a name refreshes what we know about it rather than
-      // erroring; the unique index is there to stop duplicates, not to
-      // stop updates.
-      update: {
-        name: req.body?.name ? String(req.body.name).slice(0, 200) : undefined,
-        note: req.body?.note ? String(req.body.note).slice(0, 500) : undefined,
-        asOf: req.body?.asOf ? new Date(req.body.asOf) : undefined,
-      },
-      create: {
-        ticker,
-        source,
-        userId,
-        name: req.body?.name ? String(req.body.name).slice(0, 200) : null,
-        note: req.body?.note ? String(req.body.note).slice(0, 500) : null,
-        asOf: req.body?.asOf ? new Date(req.body.asOf) : null,
-        addedById: req.user?.id ?? null,
-      },
-    });
+    // findFirst + create/update rather than upsert.
+    //
+    // upsert needs the compound unique key by its generated name, which
+    // ties this handler to the exact shape of the index. That coupling
+    // broke the moment the key gained a column, and the failure surfaced
+    // as a bare 500 with nothing to read. This does the same job without
+    // naming the index at all.
+    const existing = await prisma.watchlistItem.findFirst({ where: { ticker, source, userId } });
+    const data = {
+      name: req.body?.name ? String(req.body.name).slice(0, 200) : undefined,
+      note: req.body?.note !== undefined ? String(req.body.note).slice(0, 500) : undefined,
+      asOf: req.body?.asOf ? new Date(req.body.asOf) : undefined,
+    };
+    const row = existing
+      ? await prisma.watchlistItem.update({ where: { id: existing.id }, data })
+      : await prisma.watchlistItem.create({
+          data: { ticker, source, userId, ...data, addedById: req.user?.id ?? null },
+        });
     res.status(201).json(row);
   } catch (err) {
-    console.error('watchlist add failed:', err.message);
-    res.status(500).json({ error: 'Could not add it' });
+    console.error('watchlist add failed:', err);
+    // The message, not just "could not". A 500 with nothing in it is how
+    // a schema mismatch looks exactly like a network problem.
+    res.status(500).json({ error: `Could not add it: ${String(err?.message || err).slice(0, 200)}` });
   }
 });
 
