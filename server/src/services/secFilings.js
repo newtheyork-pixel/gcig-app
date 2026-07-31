@@ -266,3 +266,62 @@ export async function getRecentFilingsForTickers(tickers, opts = {}) {
   });
   return out;
 }
+
+// The registrant's own particulars, as the registrant states them.
+//
+// Head office, industry classification and fiscal year end are fields on
+// the submissions feed, not sentences to be mined out of a filing. That
+// distinction cost something to learn: reading "headquarters in <place>"
+// out of Item 1 put General Dynamics in St. Louis, because the sentence
+// it matched was about a building GD was helping a customer construct.
+// A field cannot be misread that way.
+//
+// SIC beats the vendor's sector string too — Finnhub calls Applied
+// Industrial "Trading Companies & Distributors" for both sector AND
+// industry, which is one fact printed twice.
+const identityCache = new Map();
+
+export async function getCompanyIdentity(ticker) {
+  const upper = String(ticker || '').toUpperCase();
+  if (!upper) return null;
+  const hit = identityCache.get(upper);
+  if (hit && Date.now() - hit.at < FILINGS_TTL_MS) return hit.data;
+
+  let out = null;
+  try {
+    const info = await resolveCik(upper);
+    if (info) {
+      const d = await fetchJson(`${SUBMISSIONS_BASE}/submissions/CIK${info.cik}.json`);
+      const b = d?.addresses?.business || {};
+      const city = [b.city, b.stateOrCountry].filter(Boolean).join(', ');
+      // "0630" is a fiscal year ending 30 June, which for a distributor
+      // like Applied is the difference between a clean comparison and a
+      // nonsensical one.
+      const fy = String(d?.fiscalYearEnd || '');
+      out = {
+        legalName: d?.name || null,
+        headquarters: city ? titleCasePlace(city) : null,
+        street: [b.street1, b.street2].filter(Boolean).join(', ') || null,
+        phone: d?.phone || null,
+        sic: d?.sic || null,
+        sicDescription: d?.sicDescription || null,
+        fiscalYearEnd: /^\d{4}$/.test(fy) ? `${fy.slice(0, 2)}-${fy.slice(2)}` : null,
+        exchanges: (d?.exchanges || []).filter(Boolean),
+        stateOfIncorporation: d?.stateOfIncorporation || null,
+        formerNames: (d?.formerNames || []).map((f) => f.name).filter(Boolean).slice(0, 3),
+        cik: info.cikInt,
+      };
+    }
+  } catch (err) {
+    console.warn(`SEC identity(${upper}) failed:`, err.message);
+  }
+  identityCache.set(upper, { at: Date.now(), data: out });
+  return out;
+}
+
+// EDGAR shouts every address. "RESTON, VA" beside "Reston, Virginia" in
+// the same panel reads as two different sources disagreeing.
+function titleCasePlace(s) {
+  return String(s).replace(/[A-Za-z]+/g, (w) =>
+    (w.length === 2 && w === w.toUpperCase()) ? w : w[0].toUpperCase() + w.slice(1).toLowerCase());
+}

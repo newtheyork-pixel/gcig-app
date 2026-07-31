@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { extractItem1Business } from './secBusinessSummary.js';
+import { extractItem1Business, openOnBusiness, stripLeadIn, corporateFacts, sentences } from './secBusinessSummary.js';
 
 // The brittle part of pulling a company description out of a 10-K is the
 // HTML itself: the phrase "Item 1. Business" appears first in the table of
@@ -151,4 +151,53 @@ test('strips tags and collapses whitespace into readable prose', () => {
 
   assert.equal(out, 'Delta makes things for people.');
   assert.ok(!out.includes('<'));
+});
+
+test('the description opens on the business, not the drafting conventions', () => {
+  // Mesa's real Item 1 opening.
+  const mesa = 'In this annual report, Mesa Laboratories, Inc., a Colorado corporation, '
+    + 'together with its subsidiaries is collectively referred to as "we," "us," "our," the "Company," or "Mesa." '
+    + 'Mesa was organized in 1982 as a Colorado corporation. General We are a global leader in the design '
+    + 'and manufacture of life sciences tools. We offer products and services to help our customers.';
+  const out = openOnBusiness(mesa);
+  assert.match(out, /^We are a global leader/);
+  assert.doesNotMatch(out, /collectively referred to as/);
+});
+
+test('a leading section header goes, a company called General does not', () => {
+  assert.equal(stripLeadIn('General We are a global leader in design.'),
+    'We are a global leader in design.');
+  assert.equal(
+    stripLeadIn('(Dollars in millions, unless otherwise noted) BUSINESS OVERVIEW General Dynamics is a global aerospace company.'),
+    'General Dynamics is a global aerospace company.');
+  assert.equal(stripLeadIn('General Dynamics is a global aerospace company.'),
+    'General Dynamics is a global aerospace company.');
+});
+
+test('a description that already opens well is left alone', () => {
+  const good = 'We are a leading distributor of industrial motion technologies. '
+    + 'Through our network of 600 facilities we serve customers.';
+  assert.equal(openOnBusiness(good), good);
+});
+
+test('sentences survive abbreviations and figures', () => {
+  const s = sentences('Applied Industrial Technologies, Inc. is an Ohio corporation. '
+    + 'We had approximately 6,800 associates. That is all.');
+  assert.equal(s.length, 3);
+  assert.match(s[0], /Inc\. is an Ohio corporation\.$/);
+});
+
+test('headcount is read only when the company says it of itself', () => {
+  assert.equal(corporateFacts('we had approximately 6,800 associates in fiscal 2025.').employees, 6800);
+  assert.equal(corporateFacts('Our global workforce of approximately 117,000 people.').employees, 117000);
+  // The sentences that produced wrong numbers: a policy statement and a
+  // customer's site, neither of which is a headcount for this filer.
+  assert.equal(corporateFacts('The safety of our employees is paramount.').employees, null);
+  assert.equal(corporateFacts('The segment operates plants with 40,000 employees nearby.').employees, null);
+});
+
+test('founded reads an incorporation, not any nearby year', () => {
+  assert.equal(corporateFacts('Mesa was organized in 1982 as a Colorado corporation.').founded, 1982);
+  assert.equal(corporateFacts('Applied and its predecessor companies have engaged in business since 1923.').founded, 1923);
+  assert.equal(corporateFacts('Revenue grew since 2019 across the segment.').founded, null);
 });

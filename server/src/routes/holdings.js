@@ -115,7 +115,8 @@ import prisma from '../db.js';
 import { verifyJwt, requireSuperAdmin, requireRole } from '../middleware/auth.js';
 import { getSheetPortfolio, withResolvedDayChange } from '../services/sheetPortfolio.js';
 import { getNewsForTicker, extractArticle } from '../services/news.js';
-import { getBusinessSummary } from '../services/secBusinessSummary.js';
+import { getBusinessProfile } from '../services/secBusinessSummary.js';
+import { getCompanyIdentity } from '../services/secFilings.js';
 import {
   generateRiskCommentary,
   detectThesisDrift,
@@ -233,6 +234,46 @@ router.use(verifyJwt);
 // Live portfolio pulled from the club's Google Sheet.
 // The sheet IS the source of truth — the local Holding table is unused
 // in this mode.
+
+// The DES description, and the corporate particulars Bloomberg prints
+// beside it.
+//
+// Two sources with two different jobs. The 10-K's Item 1 supplies the
+// prose and the facts a company states about itself in it; the
+// submissions feed supplies head office, industry code and fiscal year
+// end, which are FIELDS and therefore cannot be misread the way a
+// sentence can. Both are best-effort — a description is worth waiting a
+// moment for, but never worth failing a live quote over.
+async function describeCompany(ticker, data) {
+  const [profile, identity] = await Promise.all([
+    getBusinessProfile(ticker).catch(() => null),
+    getCompanyIdentity(ticker).catch(() => null),
+  ]);
+  const out = { ...data };
+  if (!out.summary && profile?.summary) out.summary = profile.summary;
+  if (profile?.summary) {
+    // Where the words came from, so a reader can go and check them.
+    out.summarySource = { form: '10-K', filedAt: profile.filedAt, url: profile.url };
+  }
+  // A vendor headcount, where one exists, beats our extraction; ours
+  // fills the gap rather than overwriting anybody.
+  if (out.employees == null && profile?.employees != null) out.employees = profile.employees;
+  if (profile?.founded != null) out.founded = profile.founded;
+  if (identity) {
+    out.headquarters = identity.headquarters ?? null;
+    out.street = identity.street ?? null;
+    out.phone = identity.phone ?? null;
+    out.sicDescription = identity.sicDescription ?? null;
+    out.fiscalYearEnd = identity.fiscalYearEnd ?? null;
+    out.stateOfIncorporation = identity.stateOfIncorporation ?? null;
+    out.formerNames = identity.formerNames ?? [];
+    out.legalName = identity.legalName ?? null;
+    out.cik = identity.cik ?? null;
+    if (!out.exchange && identity.exchanges?.length) out.exchange = identity.exchanges.join(', ');
+  }
+  return out;
+}
+
 router.get('/quotes', async (_req, res) => {
   try {
     const raw = await getSheetPortfolio();
@@ -292,11 +333,9 @@ router.get('/info/:ticker', tickerDataLimiter, async (req, res) => {
         // (the same wall as the GSAM scraper). EDGAR's 10-K Item 1 is
         // reachable from Render; use it. Best-effort and cached a week —
         // never let it block the live quote we already have.
-        if (!finnhubData.summary) {
-          finnhubData.summary = await getBusinessSummary(raw);
-        }
-        setTickerCache(raw, { at: Date.now(), data: finnhubData });
-        return res.json(finnhubData);
+        const enriched = await describeCompany(raw, finnhubData);
+        setTickerCache(raw, { at: Date.now(), data: enriched });
+        return res.json(enriched);
       }
     }
 
@@ -348,7 +387,7 @@ router.get('/info/:ticker', tickerDataLimiter, async (req, res) => {
     // Yahoo wraps numbers as { raw: 12345, fmt: "12.3K" } — unwrap .raw.
     const r = (v) => (v && typeof v === 'object' && 'raw' in v ? v.raw : v);
 
-    const data = {
+    let data = {
       ticker: raw,
       name:
         quote?.longName ||
@@ -386,7 +425,7 @@ router.get('/info/:ticker', tickerDataLimiter, async (req, res) => {
     // Yahoo's longBusinessSummary is usually empty from datacenter IPs;
     // fall back to EDGAR so the description still loads when Finnhub is
     // down and we're on this path.
-    if (!data.summary) data.summary = await getBusinessSummary(raw);
+    data = await describeCompany(raw, data);
 
     setTickerCache(raw, { at: Date.now(), data });
     res.json(data);

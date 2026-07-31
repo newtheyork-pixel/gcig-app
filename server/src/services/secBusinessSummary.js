@@ -99,6 +99,149 @@ export function extractItem1Business(html) {
   return body || null;
 }
 
+/// Split into sentences without cutting a company in half.
+///
+/// "Mesa Laboratories, Inc." and "approximately 6,800" both carry a full
+/// stop that ends nothing, so the split needs the following token to
+/// look like the start of a sentence and the preceding one not to be a
+/// known abbreviation.
+const ABBREV = /(?:\b(?:Inc|Corp|Co|Ltd|LLC|LP|Sr|Jr|Dr|Mr|Mrs|Ms|St|No|Nos|approx|Ave|vs|etc|al|U\.S|Fig)|\b[A-Z])\.$/;
+
+export function sentences(text) {
+  const parts = String(text || '').split(/(?<=\.)\s+(?=[A-Z“"(])/);
+  const out = [];
+  for (const p of parts) {
+    if (out.length && ABBREV.test(out[out.length - 1])) out[out.length - 1] += ' ' + p;
+    else out.push(p);
+  }
+  return out.map((s) => s.trim()).filter(Boolean);
+}
+
+/// The paragraph every 10-K opens with and nobody wants to read.
+///
+/// Item 1 does not begin with the business, it begins with the drafting
+/// conventions of the document — who "we" refers to, which state the
+/// company was chartered in, when the fiscal year ends. Mesa's
+/// description opened "In this annual report, Mesa Laboratories, Inc., a
+/// Colorado corporation, together with its subsidiaries is collectively
+/// referred to as 'we,' 'us,' 'our'…", and Applied's opened on a bare
+/// full stop. That is legal furniture, not a description.
+const BOILERPLATE = [
+  /^\W*in this (annual report|report|form 10-K)/i,
+  /collectively referred to as/i,
+  /^references? (in this|to)\b/i,
+  /unless (the )?(context|otherwise)/i,
+  /^the fiscal year (end|ended)/i,
+  /^\W*(general|overview|our business|the company)\W*$/i,
+  /^\W*$/,
+  /^\S{1,3}$/,
+];
+
+/// A sentence that actually says what the company does. This is what we
+/// want the description to OPEN on, the way Bloomberg's does.
+const DESCRIPTIVE =
+  /\b(?:we|the company|it)\s+(?:are|is|design|designs|manufactures?|provides?|offers?|operates?|distributes?|develops?|sells?|makes?|serves?)\b|\b(?:is|are)\s+a\s+(?:leading|global|major|worldwide|premier|diversified)\b|\bis\s+(?:a|an)\s+[A-Za-z-]+\s+(?:company|manufacturer|distributor|provider|producer|retailer|operator)\b/i;
+
+/**
+ * Drop the drafting conventions and start on the business.
+ *
+ * Conservative by design: if nothing in the opening looks like a
+ * description, only the sentences that are unmistakably boilerplate are
+ * removed and the rest is left exactly as filed. Returning a worse
+ * description than we started with is the one outcome worth avoiding —
+ * these are the company's own words and we are only choosing where to
+ * begin quoting.
+ */
+/// Section furniture that survives the flattening and lands glued to the
+/// front of the first real sentence: "General We are a global leader…",
+/// "(Dollars in millions, unless otherwise noted) BUSINESS OVERVIEW…".
+///
+/// The single-word case needs care. "General We are…" is a header
+/// followed by a sentence; "General Dynamics is…" is a company. So a
+/// lone header word is only removed when what follows it unmistakably
+/// begins a sentence, and a RUN of capitals is removed unconditionally
+/// because no real sentence is written in block capitals.
+const HEADER_WORD = /^(General|Overview|Introduction|Background|Business|Company)\s+(?=(?:We|Our|The|It|Its|This)\b)/;
+
+export function stripLeadIn(s) {
+  let out = String(s || '').trim();
+  for (let i = 0; i < 4; i++) {
+    const before = out;
+    out = out.replace(/^\([^)]{0,120}\)\s*/, '');
+    out = out.replace(/^(?:[A-Z][A-Z&.,'-]*\s+){1,5}(?=[A-Z][a-z])/, '');
+    out = out.replace(HEADER_WORD, '');
+    out = out.replace(/^[\s.,;:—–-]+/, '');
+    if (out === before) break;
+  }
+  return out || String(s || '').trim();
+}
+
+export function openOnBusiness(text) {
+  const sents = sentences(text).map((s, i) => (i === 0 ? stripLeadIn(s) : s));
+  if (!sents.length) return text;
+
+  // Look for a real opening line inside the preamble only. A 10-K that
+  // says what it does in its first sentence must not be re-cut from
+  // somewhere in the middle.
+  const scan = Math.min(sents.length, 8);
+  let start = -1;
+  for (let i = 0; i < scan; i++) {
+    if (DESCRIPTIVE.test(sents[i])) { start = i; break; }
+  }
+
+  if (start >= 0) {
+    const picked = sents.slice(start);
+    picked[0] = stripLeadIn(picked[0]);
+    return picked.join(' ');
+  }
+
+  const kept = sents.filter((s, i) => !(i < scan && BOILERPLATE.some((re) => re.test(s))));
+  const out = kept.length ? kept : sents;
+  out[0] = stripLeadIn(out[0]);
+  return out.join(' ');
+}
+
+/// Facts Bloomberg prints in a field of their own rather than burying in
+/// the prose.
+///
+/// Both patterns here are deliberately narrow, because the loose version
+/// of this function invented things. Matching "headquarters in <Place>"
+/// anywhere in Item 1 gave General Dynamics a head office in St. Louis,
+/// Missouri — read from "we supported NGA in the development of their
+/// new headquarters", a sentence about a customer's building. GD is run
+/// from Reston, Virginia. Head office now comes from the submissions
+/// feed, which states it as a field and cannot be misread; nothing is
+/// extracted from prose that a structured source already answers.
+///
+/// Headcount survived only in the first person. "approximately 40,000
+/// employees" appears in segment discussions, safety policies and
+/// customer descriptions; "we had approximately 6,800 associates" is the
+/// company speaking about itself. Where a filer does not use that form
+/// the answer is null, and null renders as a dash — which is the honest
+/// outcome, and the one the source-discipline rule demands.
+export function corporateFacts(text) {
+  const t = String(text || '');
+  const founded = t.match(
+    /\b(?:was|were)\s+(?:originally\s+)?(?:organized|incorporated|founded|established|formed)\b[^.]{0,60}?\b(1[89]\d\d|20[0-2]\d)\b/i
+  ) || t.match(/\b(?:have|has)\s+engaged in business since\s+(1[89]\d\d|20[0-2]\d)\b/i)
+    || t.match(/\b(?:founded|established)\s+in\s+(1[89]\d\d|20[0-2]\d)\b/i);
+
+  const emp = t.match(
+    /\b(?:we|the company)\s+(?:had|have|employ|employed|currently employ)\s+(?:approximately|about|roughly|over|more than|nearly|some)?\s*([\d,]{3,12})\s+(?:full-?\s?time\s+|regular\s+|salaried\s+)?(?:employees|people|team members|associates|employee associates)\b/i
+  ) || t.match(
+    /\bour\s+(?:global\s+)?workforce\s+(?:of|numbers|totals|comprises|consisted of)\s+(?:approximately|about|roughly|over|more than|nearly)?\s*([\d,]{3,12})\b/i
+  );
+  const n = emp ? Number(String(emp[1]).replace(/,/g, '')) : null;
+
+  return {
+    founded: founded ? Number(founded[1]) : null,
+    // A two-figure floor rules out a stray page number; a five-million
+    // ceiling rules out a dollar amount that happened to precede the
+    // word "employees".
+    employees: n && n >= 10 && n < 5_000_000 ? n : null,
+  };
+}
+
 // 10-Ks are annual; once we've parsed one, hold it for a week so a click
 // storm doesn't re-pull a multi-megabyte filing.
 const TTL_MS = 7 * 24 * 60 * 60 * 1000;
@@ -116,7 +259,18 @@ function trimToSentence(s) {
   return (dot > MAX_CHARS * 0.5 ? cut.slice(0, dot + 1) : cut).trim() + ' […]';
 }
 
+/// The description alone, for callers that only want prose.
 export async function getBusinessSummary(ticker) {
+  return (await getBusinessProfile(ticker))?.summary || null;
+}
+
+/**
+ * The description plus the corporate facts stated alongside it: when the
+ * company was founded, where it is run from, how many people work there.
+ * Bloomberg gives each of those its own field on DES, and every one of
+ * them is sitting in Item 1 already.
+ */
+export async function getBusinessProfile(ticker) {
   const key = String(ticker || '').trim().toUpperCase();
   if (!key) return null;
 
@@ -132,7 +286,17 @@ export async function getBusinessSummary(ticker) {
       });
       if (r.ok) {
         const item1 = extractItem1Business(await r.text());
-        if (item1) value = trimToSentence(item1);
+        if (item1) {
+          // Facts are read from the WHOLE section, then the prose is
+          // trimmed. Doing it the other way round loses the headcount,
+          // which is usually stated well past the opening paragraph.
+          value = {
+            summary: trimToSentence(openOnBusiness(item1)),
+            ...corporateFacts(item1),
+            filedAt: tenK.filingDate || null,
+            url: tenK.url,
+          };
+        }
       }
     }
   } catch {
