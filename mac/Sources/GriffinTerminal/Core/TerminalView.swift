@@ -29,6 +29,7 @@ struct TerminalView: View {
             // The arrangement you left is the arrangement you get back.
             ws.restoreCurrentIfEmpty()
             GriffinVolume.shared.mountIfPrepared()
+            GriffinVolume.shared.clearFileProviderDomains()
         }
         .background(BlockCaretInstaller().frame(width: 0, height: 0))
         .sheet(isPresented: $namingLayout) { LayoutNameSheet() }

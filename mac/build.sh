@@ -41,7 +41,9 @@ DEV_CERT="${GRIFFIN_SIGN_ID:-Apple Development: DOMINIQUE,CHRISTINE SCHULTE (264
 GROUP="${GRIFFIN_APP_GROUP:-PW2VT56789.org.thegriffinfund.terminal}"
 XCODE_SDK="$(ls -d /Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk 2>/dev/null || true)"
 
-if [ -n "$XCODE_SDK" ] && security find-identity -v -p codesigning 2>/dev/null | grep -q "$DEV_CERT"; then
+# Off until the app is an Xcode project with a real extension target;
+# a hand-assembled appex registers a domain nothing can serve.
+if [ "${GRIFFIN_FILE_PROVIDER:-0}" = "1" ] && [ -n "$XCODE_SDK" ] && security find-identity -v -p codesigning 2>/dev/null | grep -q "$DEV_CERT"; then
   echo "==> file provider extension"
   mkdir -p "$EXT/Contents/MacOS"
   swiftc -sdk "$XCODE_SDK" -target arm64-apple-macos15.0 \
@@ -55,17 +57,36 @@ if [ -n "$XCODE_SDK" ] && security find-identity -v -p codesigning 2>/dev/null |
 <plist version="1.0"><dict>
   <key>com.apple.security.application-groups</key><array><string>$GROUP</string></array>
   <key>com.apple.security.get-task-allow</key><true/>
+  <!-- The extension is sandboxed and fetches from the API itself. Without
+       network.client its URLSession never completes and Finder shows a
+       folder that spins until it times out. -->
+  <key>com.apple.security.app-sandbox</key><true/>
+  <key>com.apple.security.network.client</key><true/>
+</dict></plist>
+ENT
+  # Two entitlement sets, deliberately.
+  #
+  # The EXTENSION is sandboxed and needs network access to reach the API
+  # itself. The APP must not be sandboxed: it mounts a disk image, reads
+  # Application Support and drives Finder, none of which survive a
+  # sandbox. Signing both from one file killed the app on launch.
+  cat > /tmp/griffin.app.entitlements <<ENT
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>com.apple.security.application-groups</key><array><string>$GROUP</string></array>
+  <key>com.apple.security.get-task-allow</key><true/>
 </dict></plist>
 ENT
   codesign --force --sign "$DEV_CERT" --entitlements /tmp/griffin.entitlements \
     --timestamp=none "$EXT" 2>/dev/null || echo "   (extension unsigned)"
-  codesign --force --sign "$DEV_CERT" --entitlements /tmp/griffin.entitlements \
+  codesign --force --sign "$DEV_CERT" --entitlements /tmp/griffin.app.entitlements \
     --timestamp=none "$APP" 2>/dev/null || echo "   (app unsigned)"
 else
   # No certificate: build the app without the extension rather than ship
   # one that cannot load. The volume still works; only the cloud icon and
   # download-on-demand are missing.
-  echo "==> no Apple Development cert — skipping the file provider"
+  echo "==> file provider off (set GRIFFIN_FILE_PROVIDER=1 to build it)"
   rm -rf "$EXT"
   codesign --force --deep --sign - "$APP" 2>/dev/null || echo "   (unsigned)"
 fi

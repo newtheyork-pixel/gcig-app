@@ -85,25 +85,22 @@ final class GriffinVolume: ObservableObject {
         return there && isDir.boolValue
     }
 
-    /// Try to register the File Provider domain, and say exactly what the
-    /// system answers.
+    /// Clear any File Provider domain this app registered.
     ///
-    /// This has to run inside the app that CONTAINS the extension: the
-    /// system will not let an unrelated process register somebody else's
-    /// provider, and testing it from a standalone binary produced a -2001
-    /// that said nothing about whether the signing was right.
-    func tryFileProvider() {
-        let domain = NSFileProviderDomain(
-            identifier: NSFileProviderDomainIdentifier("org.thegriffinfund.terminal.FileProvider"),
-            displayName: "Griffin Fund")
-        NSFileProviderManager.add(domain) { error in
-            let line: String
-            if let e = error as NSError? {
-                line = "FILEPROVIDER: refused \(e.domain) \(e.code) — \(e.localizedDescription)"
-            } else {
-                line = "FILEPROVIDER: ACCEPTED — domain registered"
+    /// The extension registers a domain the system then cannot route to,
+    /// because pluginkit never discovers a hand-assembled appex — every
+    /// working provider on this machine was built as an Xcode extension
+    /// target. The result is a Locations entry that opens and times out.
+    ///
+    /// A broken location is worse than no location, so this removes it on
+    /// every launch. It runs unconditionally rather than behind a flag:
+    /// somebody who ran an earlier build has a dead entry in their
+    /// sidebar and no way to know why.
+    func clearFileProviderDomains() {
+        NSFileProviderManager.getDomainsWithCompletionHandler { domains, _ in
+            for d in domains where d.identifier.rawValue.contains("thegriffinfund") {
+                NSFileProviderManager.remove(d) { _ in }
             }
-            FileHandle.standardError.write((line + "\n").data(using: .utf8)!)
         }
     }
 
