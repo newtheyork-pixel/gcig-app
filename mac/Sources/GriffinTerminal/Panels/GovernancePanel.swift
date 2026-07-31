@@ -35,6 +35,41 @@ struct GovernancePanel: View {
         let since: Int?
         let priorRoles: [String]?
         let totalComp: Double?
+        /// Set when the name came from an ownership filing rather than
+        /// the proxy. `isNew` means they took the office after the
+        /// proxy went out, which is precisely the case the proxy alone
+        /// gets wrong.
+        let office: String?
+        let appointedAt: String?
+        let isNew: Bool?
+        let former: Bool?
+        let supersededBy: String?
+        let supersededByAt: String?
+    }
+
+    /// Who holds the office today, and how we know.
+    ///
+    /// A DEF 14A is filed once a year, so reading leadership out of its
+    /// compensation table means the panel is wrong for however many
+    /// months separate a change from the next proxy — Mesa showed a CEO
+    /// who had left in April right through July. Forms 3 and 4 carry the
+    /// same titles in a structured field within days of an appointment,
+    /// and that is what this section is.
+    struct Leadership: Decodable {
+        let source: String?
+        let asOf: String?
+        let proxyAsOf: String?
+        let officers: [Person]?
+        let former: [Person]?
+        let events: [ChangeEvent]?
+        let changedSinceProxy: Bool?
+    }
+
+    struct ChangeEvent: Decodable, Identifiable {
+        let filedAt: String?
+        let url: String?
+        let summary: String?
+        var id: String { (filedAt ?? "") + (url ?? "") }
     }
 
     struct Director: Decodable {
@@ -78,6 +113,7 @@ struct GovernancePanel: View {
         let board: [Director]?
         let comp: Comp?
         let network: Network?
+        let leadership: Leadership?
     }
 
     struct BiosPayload: Decodable {
@@ -233,9 +269,12 @@ struct GovernancePanel: View {
 
     @ViewBuilder
     private func leadership(_ p: Payload) -> some View {
+        provenance(p.leadership)
         if let ceo = p.ceo {
             ceoCard(ceo)
         }
+        departures(p.leadership)
+        changeEvents(p.leadership)
         let execs = p.execs ?? []
         if execs.isEmpty {
             Text("No executive bios parsed.")
@@ -264,6 +303,96 @@ struct GovernancePanel: View {
         }
     }
 
+    /// Where these names came from and how old they are.
+    ///
+    /// Two dates, because they are two different documents and the gap
+    /// between them is exactly the window in which a proxy-only panel
+    /// tells you a lie with a straight face.
+    @ViewBuilder
+    private func provenance(_ l: Leadership?) -> some View {
+        if let l, l.source == "sec-ownership" {
+            HStack(spacing: 8) {
+                Text("OFFICERS PER SEC FORMS 3/4")
+                    .font(Term.mono(9, weight: .bold))
+                    .foregroundStyle(Term.positive)
+                if let a = l.asOf, !a.isEmpty {
+                    Text("filed to \(a)").font(Term.mono(9)).foregroundStyle(Term.fgMuted)
+                }
+                if let p = l.proxyAsOf, !p.isEmpty {
+                    Text("· age and pay from the proxy of \(p)")
+                        .font(Term.mono(9)).foregroundStyle(Term.fgMuted)
+                }
+                Spacer()
+            }
+            .padding(.bottom, 2)
+        } else if let l, l.source == "proxy" {
+            // Never let a degraded read look like the good one.
+            Text("Leadership from the proxy only — no ownership filings resolved, so a recent change would not show here.")
+                .font(Term.mono(9)).foregroundStyle(Term.amber)
+                .padding(.bottom, 2)
+        }
+    }
+
+    /// Who has left, and who replaced them.
+    ///
+    /// The old panel simply listed a departed CEO as staff, title and
+    /// all. Naming him under a heading that says he is gone is the
+    /// difference between stale data and a record.
+    @ViewBuilder
+    private func departures(_ l: Leadership?) -> some View {
+        let gone = l?.former ?? []
+        if !gone.isEmpty {
+            VStack(alignment: .leading, spacing: 3) {
+                Text("DEPARTED")
+                    .font(Term.mono(9, weight: .bold)).foregroundStyle(Term.fgMuted)
+                ForEach(Array(gone.enumerated()), id: \.offset) { _, f in
+                    Text(departureLine(f))
+                        .font(Term.mono(10)).foregroundStyle(Term.fgDim)
+                        .lineLimit(2)
+                }
+            }
+            .padding(.vertical, 6)
+        }
+    }
+
+    private func departureLine(_ f: Person) -> String {
+        var s = "\(f.name ?? "—") · \(f.title ?? "—")"
+        if let by = f.supersededBy {
+            s += " — succeeded by \(by)"
+            // "by" rather than "on": the successor's first filing bounds
+            // the handover, it does not date it.
+            if let at = f.supersededByAt { s += " by \(at)" }
+        }
+        return s
+    }
+
+    /// The 8-K that announced the change, in the company's own words.
+    @ViewBuilder
+    private func changeEvents(_ l: Leadership?) -> some View {
+        let events = (l?.events ?? []).prefix(2)
+        if !events.isEmpty {
+            VStack(alignment: .leading, spacing: 5) {
+                Text("ANNOUNCED (8-K ITEM 5.02)")
+                    .font(Term.mono(9, weight: .bold)).foregroundStyle(Term.fgMuted)
+                ForEach(Array(events)) { e in
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(e.filedAt ?? "—")
+                            .font(Term.mono(9, weight: .bold)).foregroundStyle(Term.blue)
+                        Text(e.summary ?? "")
+                            .font(Term.mono(10)).foregroundStyle(Term.fgDim)
+                            .lineLimit(4).lineSpacing(2)
+                    }
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        if let u = e.url, let url = URL(string: u) { NSWorkspace.shared.open(url) }
+                    }
+                    .help("Open the filing on EDGAR")
+                }
+            }
+            .padding(.vertical, 6)
+        }
+    }
+
     private func ceoCard(_ ceo: Person) -> some View {
         VStack(alignment: .leading, spacing: 3) {
             Text("\(ceo.name ?? "—") · \(ceo.title ?? "—")")
@@ -284,7 +413,16 @@ struct GovernancePanel: View {
     }
 
     private func ceoSubline(_ ceo: Person) -> String {
-        var s = "age \(ceo.age.map(String.init) ?? "—") · since \(ceo.since.map(String.init) ?? "—")"
+        // A chief executive appointed since the last proxy has no age or
+        // tenure on file anywhere — the proxy is the only document that
+        // carries them. Saying when they took the office beats two
+        // dashes, and it is the more useful fact besides.
+        var s: String
+        if ceo.age == nil && ceo.since == nil, let at = ceo.appointedAt {
+            s = "appointed \(at) · age and tenure not yet in a proxy"
+        } else {
+            s = "age \(ceo.age.map(String.init) ?? "—") · since \(ceo.since.map(String.init) ?? "—")"
+        }
         if let prior = ceo.priorRoles, !prior.isEmpty {
             s += " · prior: \(prior.joined(separator: "; "))"
         }
@@ -302,6 +440,14 @@ struct GovernancePanel: View {
                 .font(Term.mono(11))
                 .foregroundStyle(Term.white)
                 .lineLimit(1)
+            // Appointed after the last proxy, so this is a name the
+            // compensation table cannot know about.
+            if e.isNew == true {
+                Text("NEW")
+                    .font(Term.mono(8, weight: .bold))
+                    .foregroundStyle(Term.positive)
+                    .help("Appointed since the last proxy — \(e.appointedAt ?? "date on the Form 3")")
+            }
             Spacer(minLength: 6)
             Text(e.age.map(String.init) ?? "—")
                 .font(Term.mono(11))

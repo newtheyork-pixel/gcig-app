@@ -11,6 +11,7 @@ import { resolveCik } from '../services/secFundamentals.js';
 import { getProxyStatement } from '../services/proxyStatement.js';
 import { getExecutiveBios } from '../services/executiveBios.js';
 import { parseLeadership, parseBoard, parseComp, buildNetwork } from '../services/governanceParsers.js';
+import { getOfficerRoster, mergeLeadership, mergeBoard } from '../services/officerRoster.js';
 import { getPeers, getPeerSnapshot, getEarnings, getConsensus } from '../services/marketData.js';
 import { getNewsForTicker } from '../services/news.js';
 import { getWorldIndices, REGION_ORDER } from '../services/worldIndices.js';
@@ -242,9 +243,17 @@ router.get('/governance/:ticker', async (req, res) => {
   }
   try {
     const proxy = await getProxyStatement(raw);
-    const { ceo, execs } = parseLeadership(proxy.html);
+    const parsed = parseLeadership(proxy.html);
     const board = parseBoard(proxy.html);
     const comp = parseComp(proxy.html);
+
+    // The proxy names who was PAID last year; ownership filings name who
+    // holds the office today. Where they disagree the filings win, and
+    // they disagree whenever somebody changed jobs mid-year — which is
+    // the only time anyone is looking. Best-effort: an unreachable
+    // roster leaves the proxy reading exactly as it did before.
+    const roster = await getOfficerRoster(raw).catch(() => null);
+    const { ceo, execs, leadership } = mergeLeadership(parsed, roster, { proxyFiledAt: proxy.filedAt });
     let holdings = [];
     try {
       const hp = await getSheetPortfolio();
@@ -253,8 +262,16 @@ router.get('/governance/:ticker', async (req, res) => {
     } catch {
       holdings = [];
     }
-    const network = buildNetwork(raw, board, holdings);
-    res.json({ ticker: raw, asOf: proxy.filedAt, source: proxy._source, ceo, execs, board, comp, network });
+    const fullBoard = mergeBoard(board, roster);
+    const network = buildNetwork(raw, fullBoard, holdings);
+    res.json({
+      ticker: raw, asOf: proxy.filedAt, source: proxy._source,
+      ceo, execs, board: fullBoard, comp, network,
+      // The provenance of the two halves, said out loud: the roster is
+      // days old, the pay figures are a year old, and a reader deciding
+      // whether to trust a name needs to know which they are looking at.
+      leadership,
+    });
   } catch (err) {
     console.error(`terminal/governance(${raw}) failed:`, err.message);
     res.status(502).json({ error: 'Governance data unavailable' });

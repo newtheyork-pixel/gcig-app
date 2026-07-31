@@ -418,6 +418,50 @@ struct Target: Decodable, Identifiable {
     let lastContactAt: String?
     let drafts: [Draft]?
     let messages: [Message]?
+    let followUp: FollowUp?
+}
+
+/// Whether this person is owed a chase, and when.
+///
+/// Thirteen CHRW emails went out and one came back. The other twelve are
+/// not refusals, they are silence, and nobody can hold twelve dates in
+/// their head. The server counts in WORKING days, so an email sent on
+/// Friday afternoon is one day old on Monday rather than three, and a
+/// recommendation can never come due at the weekend.
+struct FollowUp: Decodable {
+    /// answered · owed · bounced · closed · waiting · due · overdue ·
+    /// exhausted · none
+    let state: String
+    let recommendation: String?
+    let dueAt: String?
+    let dueDay: String?
+    let workingDaysWaited: Int?
+    let waitTarget: Int?
+    let attempts: Int?
+    let autoReplyReset: Bool?
+
+    var isActionable: Bool { state == "due" || state == "overdue" || state == "owed" }
+
+    var label: String? {
+        switch state {
+        case "overdue": return "CHASE — \(workingDaysWaited ?? 0)d"
+        case "due": return "CHASE NOW"
+        case "owed": return "REPLY OWED"
+        case "waiting": return dueAt.map { "chase \($0)" }
+        case "exhausted": return "GIVE UP"
+        case "bounced": return "BAD ADDRESS"
+        default: return nil
+        }
+    }
+
+    var tint: Color {
+        switch state {
+        case "overdue", "owed": return Term.negative
+        case "due": return Term.amber
+        case "exhausted", "bounced": return Term.fgMuted
+        default: return Term.fgDim
+        }
+    }
 }
 
 /// One message in the correspondence, either direction. Kinds rather
@@ -1743,6 +1787,8 @@ private struct OutreachTab: View {
             // reader who sees only the first will assume the second.
             queueLine(q)
 
+            chaseLine(targets)
+
             addTargetForm
 
             if targets.count > 8 {
@@ -1817,6 +1863,37 @@ private struct OutreachTab: View {
         }
     }
 
+    /// What to send today, and when the next one comes up.
+    ///
+    /// The point is that a quiet day still says something. "Nothing due"
+    /// with the next date attached is an answer; a blank strip is not,
+    /// and would be indistinguishable from the feature not working.
+    @ViewBuilder
+    private func chaseLine(_ targets: [Target]) -> some View {
+        let rows = targets.compactMap { t in t.followUp.map { (t, $0) } }
+        let now = rows.filter { $0.1.isActionable }
+        if !rows.isEmpty {
+            HStack(alignment: .top, spacing: 8) {
+                if now.isEmpty {
+                    let next = rows.compactMap { $0.1.state == "waiting" ? $0.1.dueAt : nil }.sorted().first
+                    Text(next.map { "Nothing to chase today. Next follow-up due \($0)." }
+                         ?? "Nothing to chase.")
+                        .font(Term.mono(10)).foregroundStyle(Term.positive)
+                } else {
+                    Text("FOLLOW UP TODAY")
+                        .font(Term.mono(9, weight: .bold)).foregroundStyle(Term.amber)
+                    Text(now.map { $0.0.name }.joined(separator: ", "))
+                        .font(Term.mono(10)).foregroundStyle(Term.white)
+                        .lineLimit(2)
+                    Text("· counted in working days, so weekends and public holidays do not age a thread")
+                        .font(Term.mono(9)).foregroundStyle(Term.fgMuted)
+                        .lineLimit(1)
+                }
+                Spacer()
+            }
+        }
+    }
+
     private func targetRow(_ t: Target) -> some View {
         HStack(alignment: .top, spacing: 8) {
             Text(t.priority.map(String.init) ?? "—")
@@ -1851,9 +1928,18 @@ private struct OutreachTab: View {
             // "Identified" also stamps lastContactAt on the server.
             statusMenu(t)
                 .frame(width: 92, alignment: .trailing)
-            Text(t.lastContactAt.map { Fmt.date($0) } ?? "—")
-                .font(Term.mono(9)).foregroundStyle(Term.fgMuted)
-                .frame(width: 62, alignment: .trailing)
+            VStack(alignment: .trailing, spacing: 1) {
+                Text(t.lastContactAt.map { Fmt.date($0) } ?? "—")
+                    .font(Term.mono(9)).foregroundStyle(Term.fgMuted)
+                if let f = t.followUp, let label = f.label {
+                    Text(label)
+                        .font(Term.mono(8, weight: f.isActionable ? .bold : .regular))
+                        .foregroundStyle(f.tint)
+                        .lineLimit(1)
+                        .help(f.recommendation ?? "")
+                }
+            }
+            .frame(width: 84, alignment: .trailing)
         }
         .padding(.vertical, 4)
         .overlay(alignment: .bottom) { Rectangle().fill(Term.border).frame(height: 1).opacity(0.5) }
@@ -1985,6 +2071,23 @@ private struct TargetDetailView: View {
                      ? "No title or employer recorded"
                      : [t.role, t.employer].compactMap { $0 }.joined(separator: " · "))
                     .font(Term.mono(11)).foregroundStyle(Term.fgDim)
+
+                // The one sentence somebody opening this record wants:
+                // is it my move, and if not, when does it become my move.
+                if let f = t.followUp, let rec = f.recommendation {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(rec)
+                            .font(Term.mono(11, weight: f.isActionable ? .bold : .regular))
+                            .foregroundStyle(f.isActionable ? Term.amber : Term.fgDim)
+                        if f.autoReplyReset == true {
+                            Text("Clock restarted at their out-of-office — no point chasing somebody on holiday.")
+                                .font(Term.mono(9)).foregroundStyle(Term.fgMuted)
+                        }
+                    }
+                    .padding(.horizontal, 8).padding(.vertical, 5)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Term.bgHeader)
+                }
 
                 HStack(spacing: 10) {
                     TierChip(tier: t.tier)

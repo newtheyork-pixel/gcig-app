@@ -8,6 +8,7 @@ import { extractClaims } from '../services/claimExtraction.js';
 import { scanForAnswer } from '../services/answerScan.js';
 import { assessTopics, formatCitation } from '../services/corroboration.js';
 import { assessCoverage, funnel } from '../services/questionCoverage.js';
+import { assessOutreach } from '../services/followUp.js';
 import { synthesize } from '../services/synthesis.js';
 import { screenTranscript, RISK } from '../services/mnpiScreen.js';
 import { screenOutreach } from '../services/outreachScreen.js';
@@ -225,9 +226,15 @@ router.get('/projects/:id', async (req, res) => {
       drafts: (t.drafts || []).map((d) => decorate(d, req.user)),
     }));
 
+    // When each silent target is worth chasing, counted in working days
+    // so a Friday send is not treated as three days old on Monday.
+    const chase = assessOutreach(targets);
+    const chaseById = new Map(chase.rows.map((r) => [r.targetId, r]));
+
     res.json({
       ...project,
-      targets,
+      targets: targets.map((t) => ({ ...t, followUp: chaseById.get(t.id) || null })),
+      followUps: chase,
       // Priced valuations first, then newest.
       //
       // These two were saved twenty-one seconds apart, and pure
