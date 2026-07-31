@@ -245,6 +245,13 @@ final class GriffinDrive: ObservableObject {
             if FileManager.default.fileExists(atPath: dest.path) { continue }
             wanted.append((row, item, dest))
         }
+        // Before the early return, not after it. Reconciling only when
+        // something was downloaded meant a pure rename — where every
+        // file already exists under its new name and nothing needs
+        // fetching — skipped the cleanup entirely, which is why the old
+        // copies survived the CHRW filing.
+        let titles = Set((w.artifacts ?? []).map(\.title))
+        reconcile(base: base, against: titles)
         guard !wanted.isEmpty else { return }
 
         status.pending = wanted.count
@@ -281,6 +288,47 @@ final class GriffinDrive: ObservableObject {
         }
         status.pending = 0
         if pulled > 0 { status.lastPull = "\(pulled) file\(pulled == 1 ? "" : "s") at \(Fmt.localStamp())" }
+    }
+
+    /// Remove local files the project no longer has.
+    ///
+    /// "Never delete" was the rule and it was right in one direction
+    /// only. A file disappearing from the volume is usually a move or a
+    /// Finder accident, so a local deletion must not delete the artifact.
+    /// But a rename on the SERVER is a delete-and-add from the volume's
+    /// point of view, and without this every rename left the old copy
+    /// behind — filing twenty-three CHRW artifacts into folders produced
+    /// twenty-three duplicates sitting loose beside them.
+    ///
+    /// The safety is the age check. Anything touched in the last two
+    /// minutes is left alone, because a file somebody has just dropped in
+    /// has not been uploaded yet and is not in the artifact list either —
+    /// deleting it would eat their work between the drop and the push.
+    private func reconcile(base: URL, against titles: Set<String>) {
+        let cutoff = Date().addingTimeInterval(-120)
+        for (path, _) in Self.walk(base) where !titles.contains(path) {
+            let url = base.appendingPathComponent(path)
+            let name = (path as NSString).lastPathComponent
+            if name.hasPrefix(".") || name.hasPrefix("~$") { continue }
+            let modified = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?
+                .contentModificationDate ?? Date()
+            guard modified < cutoff else { continue }
+            try? FileManager.default.removeItem(at: url)
+            known[path] = nil
+        }
+        // Directories a rename emptied. Only empty ones, and only inside
+        // this project, so nothing a person made by hand is swept up.
+        if let e = FileManager.default.enumerator(at: base, includingPropertiesForKeys: [.isDirectoryKey]) {
+            let dirs = (e.allObjects as? [URL] ?? []).filter {
+                (try? $0.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true
+            }
+            for dir in dirs.sorted(by: { $0.pathComponents.count > $1.pathComponents.count }) {
+                let kids = (try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? []
+                if kids.filter({ !$0.hasPrefix(".") }).isEmpty {
+                    try? FileManager.default.removeItem(at: dir)
+                }
+            }
+        }
     }
 
     // MARK: Helpers
