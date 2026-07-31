@@ -114,6 +114,7 @@ model User {
   outreachApprovals         OutreachApproval[]    @relation("OutreachApprover")
   outreachMessagesLogged    OutreachMessage[]     @relation("OutreachReplyRecorder")
   watchlistItems            WatchlistItem[]       @relation("WatchlistAdder")
+  watchlistOwned            WatchlistItem[]       @relation("WatchlistOwner")
   siteVisits                SiteVisit[]           @relation("SiteVisitVisitor")
 }
 
@@ -1486,8 +1487,16 @@ model WatchlistItem {
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
 
-  // One row per ticker per source: the same name arriving from the book
-  // and from a filing is two facts, not a duplicate.
-  @@unique([ticker, source])
+  // Whose list this is. Null means the club's, which is what everybody
+  // sees by default; a user id means a private list only that member
+  // works from. One table rather than two, because the difference
+  // between "we are watching this" and "I am watching this" is one
+  // column and not a different kind of thing.
+  userId Int?
+  user   User? @relation("WatchlistOwner", fields: [userId], references: [id], onDelete: Cascade)
+
+  // One row per ticker per source per list.
+  @@unique([ticker, source, userId])
   @@index([source])
+  @@index([userId])
 }

@@ -314,7 +314,14 @@ private struct WebView: NSViewRepresentable {
         cfg.websiteDataStore = .default()
         let v = WKWebView(frame: .zero, configuration: cfg)
         v.navigationDelegate = context.coordinator
-        v.setValue(false, forKey: "drawsBackground")
+        // Draw the page's own background.
+        //
+        // This was false so the pane would blend into the terminal, which
+        // works for the reader and is unusable for the page: a site that
+        // paints no background of its own inherits the dark pane and
+        // renders dark text on dark, which is exactly what happened. A
+        // browser has to show the page as the site built it.
+        v.setValue(true, forKey: "drawsBackground")
         v.allowsBackForwardNavigationGestures = true
         context.coordinator.attach(v, nav: nav)
         v.load(URLRequest(url: url))

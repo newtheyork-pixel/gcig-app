@@ -27,7 +27,10 @@ router.get('/', async (req, res) => {
   try {
     const [rows, sheet] = await Promise.all([
       prisma.watchlistItem.findMany({
-        orderBy: [{ source: 'asc' }, { ticker: 'asc' }],
+        // The club's list, plus this member's own. Someone else's private
+        // list is not theirs to see.
+        where: { OR: [{ userId: null }, { userId: req.user?.id ?? -1 }] },
+        orderBy: [{ ticker: 'asc' }],
         include: { addedBy: { select: { id: true, name: true } } },
       }),
       getSheetPortfolio().catch(() => null),
@@ -124,9 +127,14 @@ router.post('/', async (req, res) => {
     return res.status(400).json({ error: 'A ticker is required' });
   }
   const source = SOURCES.has(req.body?.source) ? req.body.source : 'manual';
+  // A member adding a name adds it to their own list unless they say
+  // otherwise; only the club list is shared, and sharing should be a
+  // deliberate act rather than the default.
+  const mine = req.body?.scope === 'mine';
+  const userId = mine ? req.user?.id ?? null : null;
   try {
     const row = await prisma.watchlistItem.upsert({
-      where: { ticker_source: { ticker, source } },
+      where: { ticker_source_userId: { ticker, source, userId } },
       // Re-adding a name refreshes what we know about it rather than
       // erroring; the unique index is there to stop duplicates, not to
       // stop updates.
@@ -138,6 +146,7 @@ router.post('/', async (req, res) => {
       create: {
         ticker,
         source,
+        userId,
         name: req.body?.name ? String(req.body.name).slice(0, 200) : null,
         note: req.body?.note ? String(req.body.note).slice(0, 500) : null,
         asOf: req.body?.asOf ? new Date(req.body.asOf) : null,
