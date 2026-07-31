@@ -89,44 +89,94 @@ export function extractConcept(facts, candidates, { unit, freq, instant = false 
   if (!tagged.length) return new Map();
 
   const byPeriod = new Map();
-  for (const { rank, rows } of tagged) for (const e of rows) {
-    if (e.val == null || e.fy == null || !e.end) continue;
-    // Income-statement and cash-flow lines are *durations* (a quarter or
-    // a year of activity); balance-sheet lines are *instants* (a snapshot
-    // at period end, tagged with only an `end`). The duration window
-    // separates annual from quarterly flows; instants skip it and lean on
-    // the fiscal-period tag alone.
-    if (!instant) {
-      if (!e.start) continue;
-      const d = daysBetween(e.start, e.end);
-      if (freq === 'annual' && !(d >= 350 && d <= 380)) continue;
-      if (freq === 'quarterly' && !(d >= 80 && d <= 100)) continue;
-    }
+  for (const { rank, rows } of tagged) {
+    const kept = rows.filter((e) => {
+      if (e.val == null || e.fy == null || !e.end) return false;
+      // Income-statement and cash-flow lines are *durations* (a quarter
+      // or a year of activity); balance-sheet lines are *instants* (a
+      // snapshot at period end, tagged with only an `end`). The duration
+      // window separates annual from quarterly flows; instants skip it
+      // and lean on the fiscal-period tag alone.
+      if (!instant) {
+        if (!e.start) return false;
+        const d = daysBetween(e.start, e.end);
+        if (freq === 'annual' && !(d >= 350 && d <= 380)) return false;
+        if (freq === 'quarterly' && !(d >= 80 && d <= 100)) return false;
+      }
+      const fp = e.fp || (freq === 'annual' ? 'FY' : '');
+      // The full-year line is fp 'FY'; a quarter is Q1–Q4. Belt-and-braces
+      // alongside the duration test for filers with loose tagging.
+      if (freq === 'annual' && fp !== 'FY') return false;
+      if (freq === 'quarterly' && fp === 'FY') return false;
+      return true;
+    });
 
-    const fp = e.fp || (freq === 'annual' ? 'FY' : '');
-    // The full-year line is fp 'FY'; a quarter is Q1–Q4. Belt-and-braces
-    // alongside the duration test for filers with loose tagging.
-    if (freq === 'annual' && fp !== 'FY') continue;
-    if (freq === 'quarterly' && fp === 'FY') continue;
-
-    const period = freq === 'annual' ? `FY${e.fy}` : `${e.fy} ${fp}`;
-    const filed = e.filed || '';
-    const prev = byPeriod.get(period);
-    // A better-ranked tag wins outright; within one tag, the most
-    // recently filed value wins so restatements replace originals.
-    if (!prev || rank < prev.rank || (rank === prev.rank && filed > prev.filed)) {
-      byPeriod.set(period, {
-        period,
-        fy: e.fy,
-        fp,
-        rank,
-        t: Date.parse(e.end),
-        val: e.val,
-        filed,
-      });
+    for (const [, group] of groupByAccession(kept)) {
+      // Every comparative in one filing is stamped with that FILING's
+      // fiscal year, so the year each figure actually belongs to has to
+      // be recovered from its position in the filing.
+      const ends = [...new Set(group.map((e) => e.end))].sort();
+      const n = ends.length;
+      for (const e of group) {
+        const back = n - 1 - ends.indexOf(e.end);
+        const trueFy = Number(e.fy) - back;
+        const fp = e.fp || (freq === 'annual' ? 'FY' : '');
+        const period = freq === 'annual' ? `FY${trueFy}` : `${trueFy} ${fp}`;
+        const filed = e.filed || '';
+        const prev = byPeriod.get(period);
+        // A better-ranked tag wins outright; within one tag, the most
+        // recently filed value wins so restatements replace originals.
+        if (!prev || rank < prev.rank || (rank === prev.rank && filed > prev.filed)) {
+          byPeriod.set(period, {
+            period,
+            fy: trueFy,
+            reportedFy: e.fy,
+            fp,
+            rank,
+            t: Date.parse(e.end),
+            end: e.end,
+            val: e.val,
+            filed,
+          });
+        }
+      }
     }
   }
   return byPeriod;
+}
+
+/// The comparatives in one filing, kept together.
+///
+/// This is the whole fix for a bug that had General Dynamics' calendar
+/// 2023 income statement printed under the heading FY2025.
+///
+/// In companyfacts, `fy` and `fp` describe THE REPORT A FACT APPEARED
+/// IN, not the fact. A 10-K carries three comparative years and stamps
+/// all three with the filing's own fiscal year, so all three collapsed
+/// onto one key `FY${e.fy}`; the tiebreak could not separate them (same
+/// accession, same `filed`), and SEC returns the array sorted by `end`
+/// ascending, so the survivor was the OLDEST of the three. Every annual
+/// row came out labelled two fiscal years ahead of its data, and the two
+/// most recent years never appeared at all.
+///
+/// Position inside the filing recovers the real year: of n distinct
+/// period-ends, the newest IS the filing's fiscal year and each earlier
+/// one is a year further back. Counting periods rather than January
+/// boundaries is what makes this safe for the 52/53-week filers whose
+/// year-end wanders across New Year — Johnson & Johnson's fiscal 2020
+/// ended on 3 January 2021, and any arithmetic on calendar years labels
+/// it 2021.
+function groupByAccession(rows) {
+  const out = new Map();
+  for (const e of rows) {
+    // `filed` is the fallback grouping key: two facts filed the same day
+    // by the same company are the same document in practice, and an
+    // accession is missing only on very old rows.
+    const key = e.accn || e.filed || '';
+    if (!out.has(key)) out.set(key, []);
+    out.get(key).push(e);
+  }
+  return out;
 }
 
 // Assemble every metric into period rows, oldest→newest, with margins

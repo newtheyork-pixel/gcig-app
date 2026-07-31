@@ -45,6 +45,35 @@ struct SupplyChainPanel: View {
         /// coverage it does not have.
         let extracted: Bool?
         let unavailable: String?
+        /// Concentration the filer TAGGED, as distinct from names a model
+        /// read out of prose. Johnson & Johnson discloses three
+        /// wholesalers at 21.8%, 15.5% and 11.1% of net sales and names
+        /// none of them, so the prose read reported no customers at all
+        /// for a company selling half its output through three
+        /// counterparties.
+        let concentrationFacts: ConcentrationFacts?
+    }
+
+    struct ConcentrationFacts: Decodable {
+        let available: Bool?
+        let reason: String?
+        let period: String?
+        let total: Double?
+        let overlapping: Bool?
+        let overlapNote: String?
+        let rows: [Row]?
+        let source: Source?
+
+        struct Row: Decodable {
+            let label: String?
+            let pct: Double?
+            let benchmark: String?
+        }
+        struct Source: Decodable {
+            let form: String?
+            let filedAt: String?
+            let url: String?
+        }
     }
 
     @State private var state: Loadable<Payload> = .loading
@@ -65,6 +94,7 @@ struct SupplyChainPanel: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 10) {
                         if let s = p.summary, !s.isEmpty { filingRead(s) }
+                        tagged(p.concentrationFacts)
                         if let c = p.concentration, !c.isEmpty {
                             concentrationBlock(c)
                         }
@@ -149,6 +179,68 @@ struct SupplyChainPanel: View {
     // The web's sentence, verbatim. An empty read is the expected
     // answer for plenty of real companies, and saying why beats a
     // blank pane that looks broken.
+    /// The disclosed shares, straight off the filing's own tags.
+    ///
+    /// This sits above the model's reading on purpose. One is a number
+    /// the company published in a structured field; the other is a name
+    /// a model found in a sentence. Both are useful and they are not the
+    /// same kind of thing, so the panel does not blend them.
+    @ViewBuilder
+    private func tagged(_ c: ConcentrationFacts?) -> some View {
+        if let c, c.available == true, let rows = c.rows, !rows.isEmpty {
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 8) {
+                    Text("DISCLOSED CUSTOMER CONCENTRATION")
+                        .font(Term.mono(9, weight: .bold)).tracking(0.5)
+                        .foregroundStyle(Term.amber)
+                    if let p = c.period {
+                        Text("year ended \(p)").font(Term.mono(9)).foregroundStyle(Term.fgMuted)
+                    }
+                    if let t = c.total {
+                        Text(String(format: "%.1f%% combined", t))
+                            .font(Term.mono(9, weight: .bold)).foregroundStyle(Term.white)
+                    }
+                    Spacer()
+                    if let u = c.source?.url {
+                        Button("10-K") { if let url = URL(string: u) { NSWorkspace.shared.open(url) } }
+                            .buttonStyle(.plain)
+                            .font(Term.mono(9)).foregroundStyle(Term.blue)
+                            .help("Open the filing these figures are tagged in")
+                    }
+                }
+                ForEach(Array((rows).enumerated()), id: \.offset) { _, r in
+                    HStack(spacing: 8) {
+                        Text(r.label ?? "—")
+                            .font(Term.mono(11)).foregroundStyle(Term.white).lineLimit(1)
+                            .frame(width: 250, alignment: .leading)
+                        // The bar is the point: 21.8% and 11.1% are hard
+                        // to compare as digits and trivial as lengths.
+                        GeometryReader { geo in
+                            Rectangle().fill(Term.amber.opacity(0.55))
+                                .frame(width: geo.size.width * CGFloat(min((r.pct ?? 0) / 100, 1)), height: 8)
+                        }
+                        .frame(height: 8)
+                        Text(String(format: "%.1f%%", r.pct ?? 0))
+                            .font(Term.mono(11, weight: .bold)).foregroundStyle(Term.amber)
+                            .frame(width: 58, alignment: .trailing)
+                    }
+                }
+                // A filer can tag a group and its members side by side,
+                // and nothing in the filing says which is which. Adding
+                // them up would invent a company selling 112% of itself.
+                if c.overlapping == true, let note = c.overlapNote {
+                    Text(note)
+                        .font(Term.mono(9)).foregroundStyle(Term.orange)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Text("Tagged by the filer in XBRL. Where a company anonymises a counterparty — \u{201C}Wholesaler 1\u{201D} — that is how it filed it, and we do not supply a name it did not give.")
+                    .font(Term.mono(9)).foregroundStyle(Term.fgMuted)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(.vertical, 8)
+        }
+    }
+
     /// A read that did not happen, said as such.
     ///
     /// This is the distinction the panel was missing: "the filing names

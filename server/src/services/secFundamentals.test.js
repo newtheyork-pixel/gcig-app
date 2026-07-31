@@ -101,3 +101,107 @@ test('a directory outage is never reported as "not a filer"', async () => {
   assert.equal(notAFiler.status, 404);
   assert.match(notAFiler.message, /ETFs and funds/);
 });
+
+// The comparatives-collapse bug, which put General Dynamics' calendar
+// 2023 income statement on screen under the heading FY2025.
+//
+// One 10-K carries three years and stamps all three with the FILING's
+// fiscal year. Keyed on that field they collapsed to a single row, the
+// tiebreak could not separate them, and SEC returns the array sorted by
+// `end` ascending — so the oldest won and every label was two years
+// ahead of its data.
+function threeYearTenK() {
+  const row = (start, end, val) => ({
+    start, end, val, fy: 2025, fp: 'FY', form: '10-K',
+    accn: '0000040533-26-000006', filed: '2026-01-30',
+  });
+  return {
+    facts: {
+      'us-gaap': {
+        Revenues: {
+          units: {
+            USD: [
+              row('2023-01-01', '2023-12-31', 42272000000),
+              row('2024-01-01', '2024-12-31', 47716000000),
+              row('2025-01-01', '2025-12-31', 52550000000),
+            ],
+          },
+        },
+      },
+    },
+  };
+}
+
+test('each comparative in a filing keeps its own fiscal year', () => {
+  const m = extractConcept(threeYearTenK(), ['Revenues'], { unit: 'USD', freq: 'annual' });
+  assert.equal(m.size, 3, 'all three years survive; they used to collapse to one');
+  assert.equal(m.get('FY2025').val, 52550000000);
+  assert.equal(m.get('FY2024').val, 47716000000);
+  assert.equal(m.get('FY2023').val, 42272000000);
+  // The label and the period end must agree. This is the assertion that
+  // would have caught the original bug: FY2025 held 2023-12-31.
+  for (const [period, p] of m) {
+    assert.equal(new Date(p.t).getUTCFullYear(), Number(period.slice(2)),
+      `${period} must end in its own year`);
+  }
+});
+
+test('a 52/53-week year ending in January keeps the prior year label', () => {
+  // Johnson & Johnson's fiscal 2020 ended on 3 January 2021. Any
+  // arithmetic on calendar years labels it 2021; counting position
+  // inside the filing gets it right.
+  const jnj = {
+    facts: {
+      'us-gaap': {
+        Revenues: {
+          units: {
+            USD: [
+              { start: '2018-12-31', end: '2019-12-29', val: 82059000000, fy: 2020, fp: 'FY', accn: 'A', filed: '2021-02-22' },
+              { start: '2019-12-30', end: '2021-01-03', val: 82584000000, fy: 2020, fp: 'FY', accn: 'A', filed: '2021-02-22' },
+            ],
+          },
+        },
+      },
+    },
+  };
+  const m = extractConcept(jnj, ['Revenues'], { unit: 'USD', freq: 'annual' });
+  assert.deepEqual([...m.keys()].sort(), ['FY2019', 'FY2020']);
+  assert.equal(new Date(m.get('FY2020').t).toISOString().slice(0, 10), '2021-01-03');
+});
+
+test('a restatement in a later filing still wins its year', () => {
+  const original = {
+    start: '2024-01-01', end: '2024-12-31', val: 100, fy: 2024, fp: 'FY',
+    accn: 'OLD', filed: '2025-01-30',
+  };
+  const restated = {
+    start: '2024-01-01', end: '2024-12-31', val: 111, fy: 2025, fp: 'FY',
+    accn: 'NEW', filed: '2026-01-30',
+  };
+  const current = {
+    start: '2025-01-01', end: '2025-12-31', val: 222, fy: 2025, fp: 'FY',
+    accn: 'NEW', filed: '2026-01-30',
+  };
+  const m = extractConcept(
+    { facts: { 'us-gaap': { Revenues: { units: { USD: [original, restated, current] } } } } },
+    ['Revenues'], { unit: 'USD', freq: 'annual' }
+  );
+  assert.equal(m.get('FY2024').val, 111, 'the later filing supersedes the original');
+  assert.equal(m.get('FY2025').val, 222);
+});
+
+test('quarterly comparatives are separated the same way', () => {
+  // A 10-Q carries this quarter and the same quarter a year ago, both
+  // stamped with the filing's fiscal year.
+  const q = (start, end, val) => ({
+    start, end, val, fy: 2025, fp: 'Q3', accn: 'Q', filed: '2025-10-29',
+  });
+  const m = extractConcept(
+    { facts: { 'us-gaap': { Revenues: { units: { USD: [
+      q('2024-07-01', '2024-09-29', 11), q('2025-06-30', '2025-09-28', 12),
+    ] } } } } },
+    ['Revenues'], { unit: 'USD', freq: 'quarterly' }
+  );
+  assert.equal(m.get('2025 Q3').val, 12);
+  assert.equal(m.get('2024 Q3').val, 11);
+});

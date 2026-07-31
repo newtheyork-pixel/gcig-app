@@ -47,7 +47,7 @@ export function htmlToText(html) {
 // these are the lines where a filer names who it buys from, who it sells
 // to, and what it depends on.
 const KEYWORDS =
-  /\b(customers?|suppliers?|concentrat\w*|raw materials?|vendors?|distributors?|merchants?|accounted for|% of (?:net )?(?:revenue|sales)|depend\w+ (?:on|upon)|principal|contract manufacturers?|sourc\w+|procure\w*)\b/i;
+  /\b(customers?|suppliers?|concentrat\w*|raw materials?|vendors?|distributors?|wholesalers?|merchants?|accounted for|% of (?:net )?(?:revenue|sales)|depend\w+ (?:on|upon)|principal|contract manufacturers?|sourc\w+|procure\w*)\b/i;
 
 /// Not every paragraph that mentions a customer is worth the model's
 /// attention, and the good ones are rarely at the front.
@@ -63,9 +63,23 @@ const KEYWORDS =
 ///
 /// Scored instead. A stated percentage is the strongest signal there is,
 /// because a filer only quantifies a relationship that matters.
+///
+/// Two later corrections, both from one paragraph in Johnson & Johnson's
+/// 10-K: "the Company utilized three wholesalers distributing products
+/// for both segments that represented approximately 21.8%, 15.5% and
+/// 11.1% of the total gross revenues". It scored ZERO. KEYWORDS had no
+/// wholesaler at all, and `distributors?` does not match the gerund
+/// "distributing", so the line was never even a candidate. And the
+/// stated-percentage signal required its qualifiers contiguous and in
+/// one fixed order, which "of the total gross revenues" breaks twice.
+///
+/// The noun form `wholesalers?` is deliberate over `wholesal\w+`: the
+/// looser version matches the adjective, which drags in every stock
+/// performance graph naming Costco Wholesale Corporation in its peer
+/// group.
 const SIGNALS = [
   [6, /\baccounted for\s+(?:approximately\s+)?\d/i],
-  [6, /\d+(?:\.\d+)?\s*%\s+of\s+(?:our\s+)?(?:total\s+|net\s+|consolidated\s+)?(?:revenue|sales)/i],
+  [6, /\d+(?:\.\d+)?\s*%\s+of\s+(?:the\s+|our\s+|its\s+|total\s+|net\s+|gross\s+|consolidated\s+|worldwide\s+|annual\s+)*(?:revenue|sales)/i],
   [5, /\b(?:customer concentration|concentration of credit risk|no single customer|one customer|largest customers?|principal customers?|major customers?|significant customers?)\b/i],
   [5, /\b(?:U\.?S\.?\s+government|United States Government|Department of Defense|federal government)\b/i],
   [4, /\b(?:sole[- ]source|single[- ]source|principal suppliers?|primary suppliers?|key suppliers?)\b/i],

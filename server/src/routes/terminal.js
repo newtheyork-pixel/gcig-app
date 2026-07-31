@@ -12,6 +12,7 @@ import { getProxyStatement } from '../services/proxyStatement.js';
 import { getExecutiveBios } from '../services/executiveBios.js';
 import { parseLeadership, parseBoard, parseComp, buildNetwork } from '../services/governanceParsers.js';
 import { getOfficerRoster, mergeLeadership, mergeBoard } from '../services/officerRoster.js';
+import { getCustomerConcentration } from '../services/xbrlConcentration.js';
 import { getPeers, getPeerSnapshot, getEarnings, getConsensus } from '../services/marketData.js';
 import { getNewsForTicker } from '../services/news.js';
 import { getWorldIndices, REGION_ORDER } from '../services/worldIndices.js';
@@ -1025,9 +1026,19 @@ router.get('/portfolio', async (_req, res) => {
 // panel renders that as "no filing" rather than an error.
 router.get('/supply-chain/:ticker', async (req, res) => {
   try {
-    const data = await getSupplyChain(req.params.ticker);
+    // Two readings of the same filing, and they answer different
+    // questions. The model finds NAMES in prose; the XBRL carries
+    // QUANTIFIED shares, including for filers who disclose a customer
+    // without naming them. Johnson & Johnson tags three wholesalers at
+    // 21.8%, 15.5% and 11.1% of net sales and names none of them, so the
+    // prose read alone reported no customers at all for a company that
+    // sells nearly half its output through three counterparties.
+    const [data, concentration] = await Promise.all([
+      getSupplyChain(req.params.ticker),
+      getCustomerConcentration(req.params.ticker).catch(() => null),
+    ]);
     if (!data) return res.status(404).json({ error: 'No 10-K supply-chain disclosure found for this ticker.' });
-    res.json(data);
+    res.json({ ...data, concentrationFacts: concentration });
   } catch (err) {
     console.error('terminal/supply-chain failed:', err.message);
     res.status(502).json({ error: 'Supply-chain read failed — could not reach EDGAR.' });
