@@ -13,6 +13,8 @@
 // CIK — they file too, just less interesting (NQ-related schedules).
 // We don't filter form types here — the UI can decide what to show.
 
+import { secFetchJson } from './secFetch.js';
+
 const EDGAR_BASE = 'https://www.sec.gov';
 const SUBMISSIONS_BASE = 'https://data.sec.gov';
 const TICKERS_URL = `${EDGAR_BASE}/files/company_tickers.json`;
@@ -33,20 +35,9 @@ let tickersCache = { at: 0, map: null };
 const filingsCache = new Map(); // upperTicker → { at, data }
 
 async function fetchJson(url) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 10_000);
-  try {
-    const res = await fetch(url, {
-      signal: controller.signal,
-      headers: { 'User-Agent': UA, Accept: 'application/json' },
-    });
-    if (!res.ok) {
-      throw new Error(`SEC ${res.status} ${res.statusText} for ${url}`);
-    }
-    return await res.json();
-  } finally {
-    clearTimeout(timer);
-  }
+  // Retries live in secFetch: EDGAR answers a burst above ten requests
+  // a second with a 403, and every ticker panel here reads from EDGAR.
+  return secFetchJson(url, { headers: { 'User-Agent': UA }, timeoutMs: 10_000 });
 }
 
 async function getTickerMap() {

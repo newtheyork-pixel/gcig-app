@@ -1,4 +1,5 @@
 import { getCikForTicker, SEC_UA } from './secFilings.js';
+import { secFetchJson } from './secFetch.js';
 
 // SEC XBRL companyfacts — the structured financial-statement numbers a
 // company tags in its filings, the same source Bloomberg's GF graphs.
@@ -162,23 +163,24 @@ export function extractFundamentals(facts, freq = 'annual') {
 }
 
 async function fetchFacts(cik) {
-  const controller = new AbortController();
   // companyfacts is a fat document (a megabyte-plus for old filers), so
-  // a longer leash than the filings feed.
-  const timer = setTimeout(() => controller.abort(), 15_000);
+  // a longer leash than the filings feed. Retries and the 404-versus-
+  // throttled distinction live in secFetch.
   try {
-    const res = await fetch(FACTS_URL(cik), {
-      signal: controller.signal,
-      headers: { 'User-Agent': SEC_UA, Accept: 'application/json' },
+    return await secFetchJson(FACTS_URL(cik), {
+      headers: { 'User-Agent': SEC_UA },
+      timeoutMs: 20_000,
     });
-    if (!res.ok) {
-      const err = new Error(`SEC companyfacts ${res.status}`);
-      err.status = res.status === 404 ? 404 : 502;
-      throw err;
+  } catch (err) {
+    // A trust like QQQ has a CIK and no companyfacts at all, so the
+    // ticker resolves and the document 404s. Say what that means rather
+    // than handing the panel an API URL to render.
+    if (err.status === 404) {
+      const e = new Error('No XBRL financial data on file — this is a fund or trust, not an operating company');
+      e.status = 404;
+      throw e;
     }
-    return await res.json();
-  } finally {
-    clearTimeout(timer);
+    throw err;
   }
 }
 
@@ -210,15 +212,16 @@ export async function getFundamentals(rawTicker, freq = 'annual') {
 
   const info = await resolveCik(ticker);
   if (!info) {
-    const e = new Error('Ticker not found in SEC EDGAR');
+    // An ETF is not a filer with financial statements, and saying so is
+    // a different message from "something went wrong". QQQ arrives here
+    // every time somebody types FA against a fund.
+    const e = new Error('Not an SEC operating filer — ETFs and funds file no XBRL financial statements');
     e.status = 404;
     throw e;
   }
 
   const hit = cache.get(info.cik);
-  if (hit && Date.now() - hit.at < TTL_MS) {
-    return { ticker, cik: info.cik, name: info.name, freq: wantFreq, rows: hit.value[wantFreq] };
-  }
+  if (hit && Date.now() - hit.at < TTL_MS) return shape(ticker, info, wantFreq, hit.value);
 
   const facts = await fetchFacts(info.cik);
   const value = {
@@ -226,7 +229,25 @@ export async function getFundamentals(rawTicker, freq = 'annual') {
     quarterly: extractFundamentals(facts, 'quarterly'),
   };
   cache.set(info.cik, { at: Date.now(), value });
-  return { ticker, cik: info.cik, name: info.name, freq: wantFreq, rows: value[wantFreq] };
+  return shape(ticker, info, wantFreq, value);
+}
+
+/// An empty result with no explanation reads as a broken panel.
+///
+/// Brookfield resolves to a real CIK and returns nothing, because it is
+/// a Canadian issuer filing a 40-F: the financial statements are there
+/// as a PDF exhibit and none of it is XBRL-tagged us-gaap. That is a
+/// fact about the filer, not a gap in the extractor, and the panel can
+/// only say so if the payload does.
+function shape(ticker, info, wantFreq, value) {
+  const rows = value[wantFreq] || [];
+  const out = { ticker, cik: info.cik, name: info.name, freq: wantFreq, rows };
+  if (!rows.length) {
+    out.note = (value.annual || []).length || (value.quarterly || []).length
+      ? 'Nothing tagged at this frequency. Try the other one.'
+      : 'This filer tags no us-gaap XBRL data. Foreign private issuers (40-F, 20-F) file statements as exhibits rather than tagged data, so there is nothing here to read.';
+  }
+  return out;
 }
 
 // ── FA: the full statements ───────────────────────────────────────────
