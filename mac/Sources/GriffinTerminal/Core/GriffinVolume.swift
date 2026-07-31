@@ -113,6 +113,48 @@ final class GriffinVolume: ObservableObject {
         if !run("/usr/bin/hdiutil", ["attach", image.path, "-quiet"]) || !isMounted {
             throw Failure.attach
         }
+        setIcon()
+    }
+
+    /// A cloud in the terminal's amber, so the volume reads as a synced
+    /// location rather than a spare disk somebody left plugged in.
+    ///
+    /// Drawn rather than copied. Apple's own iCloud glyph is Apple's, and
+    /// a location that borrows it is claiming to be something it is not —
+    /// this one is ours, in our colour, and cannot be mistaken for a
+    /// system service.
+    ///
+    /// Written into the volume itself, so it survives unmount and follows
+    /// the image to any machine it is opened on.
+    private func setIcon() {
+        let path = Self.mountPoint.path
+        guard let icon = Self.cloudIcon() else { return }
+        NSWorkspace.shared.setIcon(icon, forFile: path, options: [])
+    }
+
+    static func cloudIcon(size: CGFloat = 512) -> NSImage? {
+        let config = NSImage.SymbolConfiguration(pointSize: size * 0.62, weight: .regular)
+        guard let glyph = NSImage(systemSymbolName: "cloud.fill",
+                                  accessibilityDescription: "Griffin Fund")?
+            .withSymbolConfiguration(config) else { return nil }
+
+        let out = NSImage(size: NSSize(width: size, height: size))
+        out.lockFocus()
+        defer { out.unlockFocus() }
+
+        // Terminal amber, the same OKLCH value the panels use, converted
+        // once here rather than approximated by eye.
+        let amber = NSColor(Term.amber)
+        let box = NSRect(x: 0, y: 0, width: size, height: size)
+        let g = glyph.size
+        let scale = min(box.width / g.width, box.height / g.height) * 0.86
+        let drawn = NSRect(x: (size - g.width * scale) / 2,
+                           y: (size - g.height * scale) / 2,
+                           width: g.width * scale, height: g.height * scale)
+        amber.set()
+        glyph.draw(in: drawn, from: .zero, operation: .sourceOver, fraction: 1)
+        drawn.fill(using: .sourceAtop)
+        return out
     }
 
     @discardableResult
