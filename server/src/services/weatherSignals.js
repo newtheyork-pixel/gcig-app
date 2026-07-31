@@ -79,6 +79,56 @@ function emptyStudy() {
   };
 }
 
+/// Where a storm is, in words.
+///
+/// A panel that says "active storm, TS Genevieve, 22.1N 128.6W" has told
+/// a reader nothing they can act on: two numbers they cannot place, and
+/// no way to tell that this one is a thousand miles from anywhere. The
+/// bearing to the nearest coast we care about, and whether it is over
+/// open ocean, is the whole difference between a headline and a fact.
+const COASTS = [
+  { name: 'Texas coast', lat: 28.8, lon: -95.4 },
+  { name: 'Louisiana coast', lat: 29.2, lon: -90.5 },
+  { name: 'Florida panhandle', lat: 30.0, lon: -85.7 },
+  { name: 'South Florida', lat: 25.8, lon: -80.2 },
+  { name: 'Carolinas', lat: 33.9, lon: -78.0 },
+  { name: 'Mid-Atlantic', lat: 38.0, lon: -75.2 },
+  { name: 'New England', lat: 41.4, lon: -70.6 },
+  { name: 'Southern California', lat: 32.7, lon: -117.2 },
+  { name: 'Hawaii', lat: 20.8, lon: -156.3 },
+  { name: 'Puerto Rico', lat: 18.2, lon: -66.4 },
+];
+
+function milesBetween(aLat, aLon, bLat, bLon) {
+  const R = 3958.8;
+  const toRad = (d) => (d * Math.PI) / 180;
+  const dLat = toRad(bLat - aLat);
+  const dLon = toRad(bLon - aLon);
+  const h = Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(aLat)) * Math.cos(toRad(bLat)) * Math.sin(dLon / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(h));
+}
+
+export function placeStorm(storm) {
+  const lat = Number(storm?.latitude);
+  const lon = Number(storm?.longitude);
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+    return { where: 'position unknown', miles: null, nearest: null, threatening: false };
+  }
+  let best = null;
+  for (const c of COASTS) {
+    const miles = milesBetween(lat, lon, c.lat, c.lon);
+    if (!best || miles < best.miles) best = { ...c, miles: Math.round(miles) };
+  }
+  // Under 300 miles is close enough to matter to something on shore;
+  // beyond about a thousand it is weather happening to nobody.
+  const threatening = best.miles <= 300;
+  const where = best.miles > 1000
+    ? `open ocean, ${best.miles} mi from ${best.name}`
+    : `${best.miles} mi from ${best.name}`;
+  return { where, miles: best.miles, nearest: best.name, threatening };
+}
+
 export async function getWeatherImpact(holdings, deps = {}) {
   const runStudy = deps.runEventStudy || defaultRunEventStudy;
   const landfalls = Array.isArray(deps.landfalls) ? deps.landfalls : FIXTURE_LANDFALLS;
@@ -97,7 +147,9 @@ export async function getWeatherImpact(holdings, deps = {}) {
   const activeP = (async () => {
     try {
       const list = await getActive();
-      return Array.isArray(list) ? list : [];
+      // Every storm carries where it is, so nothing downstream has to
+      // work it out from a latitude.
+      return Array.isArray(list) ? list.map((s) => ({ ...s, place: placeStorm(s) })) : [];
     } catch (err) {
       console.warn('weatherSignals: NHC active-storm fetch failed:', err.message);
       return [];

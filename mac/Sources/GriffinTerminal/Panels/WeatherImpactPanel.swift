@@ -25,6 +25,15 @@ struct WeatherImpactPanel: View {
         let classification: String?
         let intensity: Double?
         let lastUpdate: String?
+        /// Where it is, in words. A latitude is not a place.
+        let place: Place?
+        struct Place: Decodable {
+            let der: String?
+            let miles: Double?
+            let nearest: String?
+            let threatening: Bool?
+            enum CodingKeys: String, CodingKey { case der = "where", miles, nearest, threatening }
+        }
     }
 
     struct Win: Decodable {
@@ -81,6 +90,7 @@ struct WeatherImpactPanel: View {
                 Divider().overlay(Term.border)
                 ScrollView {
                     VStack(alignment: .leading, spacing: 10) {
+                        verdict(storms, exposures)
                         stormsCard(storms)
                         ForEach(exposures) { e in exposureCard(e) }
                         footer(archiveN)
@@ -135,6 +145,39 @@ struct WeatherImpactPanel: View {
         .overlay(Rectangle().strokeBorder(Term.border, lineWidth: 1))
     }
 
+    /// The answer first: does any of this touch what we own.
+    ///
+    /// The panel led with a storm list and a table of historical returns,
+    /// which is a lot of screen for a question nobody had asked. What a
+    /// reader wants to know on opening it is whether to care, and most
+    /// days the honest answer is no — which is worth saying plainly
+    /// rather than leaving them to work out from coordinates.
+    @ViewBuilder
+    private func verdict(_ storms: [Storm], _ exposures: [ExposureRow]) -> some View {
+        let near = storms.filter { $0.place?.threatening == true }
+        let held = exposures.flatMap { $0.holdingsOverlap ?? [] }
+        VStack(alignment: .leading, spacing: 3) {
+            if storms.isEmpty {
+                Text("No active storms.")
+                    .font(Term.mono(12)).foregroundStyle(Term.fgDim)
+            } else if near.isEmpty {
+                Text("\(storms.count) active storm\(storms.count == 1 ? "" : "s"), none near a coast.")
+                    .font(Term.mono(12)).foregroundStyle(Term.fgDim)
+                Text("Nothing to act on. The study below is history, not a forecast.")
+                    .font(Term.mono(10)).foregroundStyle(Term.fgMuted)
+            } else if held.isEmpty {
+                Text("\(near.count) storm\(near.count == 1 ? "" : "s") near a coast, nothing we hold is in an exposed basket.")
+                    .font(Term.mono(12)).foregroundStyle(Term.amber)
+            } else {
+                Text("\(near.count) storm\(near.count == 1 ? "" : "s") near a coast, and we hold \(held.joined(separator: ", ")).")
+                    .font(Term.mono(12, weight: .bold)).foregroundStyle(Term.amber)
+            }
+        }
+        .padding(.horizontal, 10).padding(.vertical, 8)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Term.bgHeader)
+    }
+
     private func stormRow(_ s: Storm) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 12) {
             Text(s.name ?? "—")
@@ -146,6 +189,14 @@ struct WeatherImpactPanel: View {
             Text(knots(s.intensity))
                 .font(Term.mono(11))
                 .foregroundStyle(Term.fgDim)
+            // The part that makes this a fact rather than a headline.
+            // Amber when it is near a coast, dim when it is a thousand
+            // miles out and concerns nobody.
+            if let place = s.place?.der {
+                Text(place)
+                    .font(Term.mono(11))
+                    .foregroundStyle(s.place?.threatening == true ? Term.amber : Term.fgMuted)
+            }
             Spacer(minLength: 6)
             Text("updated \(updated(s.lastUpdate))")
                 .font(Term.mono(10))
