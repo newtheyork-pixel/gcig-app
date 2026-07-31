@@ -132,29 +132,51 @@ final class GriffinVolume: ObservableObject {
         NSWorkspace.shared.setIcon(icon, forFile: path, options: [])
     }
 
-    static func cloudIcon(size: CGFloat = 512) -> NSImage? {
-        let config = NSImage.SymbolConfiguration(pointSize: size * 0.62, weight: .regular)
+    /// The cloud, at every size Finder asks for.
+    ///
+    /// One 1024px representation is not enough: the SIDEBAR draws at 16
+    /// and 32, and with nothing that small in the file macOS falls back
+    /// to the generic disk glyph — which is exactly what it did on the
+    /// first attempt. Each size is rendered rather than downsampled from
+    /// one bitmap, so the 16px version is a legible cloud instead of a
+    /// grey smudge.
+    static func cloudIcon() -> NSImage? {
+        let sizes: [CGFloat] = [16, 32, 128, 256, 512, 1024]
+        let out = NSImage(size: NSSize(width: 512, height: 512))
+        var any = false
+        for px in sizes {
+            guard let rep = render(px: px) else { continue }
+            out.addRepresentation(rep)
+            any = true
+        }
+        return any ? out : nil
+    }
+
+    private static func render(px: CGFloat) -> NSBitmapImageRep? {
+        let config = NSImage.SymbolConfiguration(pointSize: px * 0.62, weight: .regular)
         guard let glyph = NSImage(systemSymbolName: "cloud.fill",
                                   accessibilityDescription: "Griffin Fund")?
             .withSymbolConfiguration(config) else { return nil }
+        guard let rep = NSBitmapImageRep(
+            bitmapDataPlanes: nil,
+            pixelsWide: Int(px), pixelsHigh: Int(px),
+            bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+            colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0) else { return nil }
+        rep.size = NSSize(width: px, height: px)
 
-        let out = NSImage(size: NSSize(width: size, height: size))
-        out.lockFocus()
-        defer { out.unlockFocus() }
-
-        // Terminal amber, the same OKLCH value the panels use, converted
-        // once here rather than approximated by eye.
-        let amber = NSColor(Term.amber)
-        let box = NSRect(x: 0, y: 0, width: size, height: size)
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
+        // Terminal amber, the same OKLCH value the panels use.
         let g = glyph.size
-        let scale = min(box.width / g.width, box.height / g.height) * 0.86
-        let drawn = NSRect(x: (size - g.width * scale) / 2,
-                           y: (size - g.height * scale) / 2,
-                           width: g.width * scale, height: g.height * scale)
-        amber.set()
-        glyph.draw(in: drawn, from: .zero, operation: .sourceOver, fraction: 1)
-        drawn.fill(using: .sourceAtop)
-        return out
+        let scale = min(px / g.width, px / g.height) * 0.86
+        let box = NSRect(x: (px - g.width * scale) / 2,
+                         y: (px - g.height * scale) / 2,
+                         width: g.width * scale, height: g.height * scale)
+        glyph.draw(in: box, from: .zero, operation: .sourceOver, fraction: 1)
+        NSColor(Term.amber).set()
+        box.fill(using: .sourceAtop)
+        NSGraphicsContext.restoreGraphicsState()
+        return rep
     }
 
     @discardableResult
