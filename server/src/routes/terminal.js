@@ -192,8 +192,12 @@ router.get('/fundamentals/:ticker', async (req, res) => {
       return res.status(404).json({ error: 'No SEC fundamentals for this ticker' });
     if (err.status === 400)
       return res.status(400).json({ error: 'Invalid ticker' });
+    // The real message, not a bare "failed". A panel that says only
+    // that a fetch failed sends somebody to the server logs for a fact
+    // the response could have carried, and on Render that is a slow
+    // trip for a one-line answer.
     console.error(`terminal/fundamentals(${raw}) failed:`, err.message);
-    res.status(502).json({ error: 'Fundamentals fetch failed' });
+    res.status(502).json({ error: `Fundamentals fetch failed: ${err.message}` });
   }
 });
 
@@ -212,7 +216,7 @@ router.get('/statements/:ticker', async (req, res) => {
       return res.status(404).json({ error: 'No SEC statements for this ticker' });
     if (err.status === 400) return res.status(400).json({ error: 'Invalid ticker' });
     console.error(`terminal/statements(${raw}) failed:`, err.message);
-    res.status(502).json({ error: 'Statements fetch failed' });
+    res.status(502).json({ error: `Statements fetch failed: ${err.message}` });
   }
 });
 
