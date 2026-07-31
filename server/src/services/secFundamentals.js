@@ -1,4 +1,4 @@
-import { getCikForTicker, SEC_UA } from './secFilings.js';
+import { getCikForTicker, SEC_UA, tickerDirectoryLoaded } from './secFilings.js';
 import { secFetchJson } from './secFetch.js';
 
 // SEC XBRL companyfacts — the structured financial-statement numbers a
@@ -201,6 +201,29 @@ export async function resolveCik(ticker) {
 // companyfacts fetch, so flipping annual↔quarterly is free after the
 // first call. Throws { status } on a bad ticker or upstream failure; an
 // empty rows array is a normal "this filer tags none of these".
+
+/// Why a symbol failed to resolve.
+///
+/// Two very different reasons, and calling the first one the second is
+/// how Mesa Labs, Applied Industrial and General Dynamics all came back
+/// "not an SEC operating filer" in the same minute — which was true of
+/// none of them. EDGAR was rate-limiting the directory fetch on a fresh
+/// boot, so every symbol on earth looked unknown, and the panel reported
+/// our outage as a fact about the company.
+///
+/// A 503 is the honest status for the first: nothing is wrong with the
+/// ticker and the answer will differ in a minute.
+export function unresolvedError(directoryLoaded) {
+  if (!directoryLoaded) {
+    const e = new Error("EDGAR's symbol directory is unavailable right now — this is our outage, not a fact about the company. Try again shortly.");
+    e.status = 503;
+    return e;
+  }
+  const e = new Error('Not an SEC operating filer — ETFs and funds file no XBRL financial statements');
+  e.status = 404;
+  return e;
+}
+
 export async function getFundamentals(rawTicker, freq = 'annual') {
   const ticker = String(rawTicker || '').trim().toUpperCase();
   if (!ticker || !/^[A-Z0-9.\-]{1,12}$/.test(ticker)) {
@@ -211,14 +234,7 @@ export async function getFundamentals(rawTicker, freq = 'annual') {
   const wantFreq = freq === 'quarterly' ? 'quarterly' : 'annual';
 
   const info = await resolveCik(ticker);
-  if (!info) {
-    // An ETF is not a filer with financial statements, and saying so is
-    // a different message from "something went wrong". QQQ arrives here
-    // every time somebody types FA against a fund.
-    const e = new Error('Not an SEC operating filer — ETFs and funds file no XBRL financial statements');
-    e.status = 404;
-    throw e;
-  }
+  if (!info) throw unresolvedError(tickerDirectoryLoaded());
 
   const hit = cache.get(info.cik);
   if (hit && Date.now() - hit.at < TTL_MS) return shape(ticker, info, wantFreq, hit.value);

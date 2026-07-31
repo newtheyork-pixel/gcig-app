@@ -84,3 +84,20 @@ test('fundamentals rows carry derived margins, oldest first', () => {
   assert.equal(rows[0].grossMargin, null);
   assert.ok(Math.abs(rows[0].netMargin - 100 / 1000) < 1e-9);
 });
+
+test('a directory outage is never reported as "not a filer"', async () => {
+  // The regression this guards: EDGAR rate-limited the symbol directory
+  // on a fresh boot, every symbol failed to resolve, and MLAB, AIT and
+  // GD all came back "not an SEC operating filer" in the same minute.
+  const { unresolvedError } = await import('./secFundamentals.js');
+
+  const outage = unresolvedError(false);
+  assert.equal(outage.status, 503);
+  assert.match(outage.message, /our outage/);
+  assert.doesNotMatch(outage.message, /not an SEC operating filer/i);
+
+  // With the directory in hand, an unknown symbol really is not a filer.
+  const notAFiler = unresolvedError(true);
+  assert.equal(notAFiler.status, 404);
+  assert.match(notAFiler.message, /ETFs and funds/);
+});

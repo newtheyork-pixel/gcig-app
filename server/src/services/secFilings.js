@@ -34,10 +34,21 @@ const FILINGS_TTL_MS = 6 * 60 * 60 * 1000; // 6h
 let tickersCache = { at: 0, map: null };
 const filingsCache = new Map(); // upperTicker → { at, data }
 
-async function fetchJson(url) {
+async function fetchJson(url, opts = {}) {
   // Retries live in secFetch: EDGAR answers a burst above ten requests
   // a second with a 403, and every ticker panel here reads from EDGAR.
-  return secFetchJson(url, { headers: { 'User-Agent': UA }, timeoutMs: 10_000 });
+  return secFetchJson(url, { headers: { 'User-Agent': UA }, timeoutMs: 10_000, ...opts });
+}
+
+/// Whether we currently hold EDGAR's symbol directory.
+///
+/// Everything ticker-scoped resolves through it, so when it is missing
+/// EVERY symbol looks unknown — and a caller that reports that as "not
+/// a filer" is describing our outage as a fact about the company. On a
+/// fresh boot there is no stale map to fall back on, which is exactly
+/// when a throttled first fetch does the most damage.
+export function tickerDirectoryLoaded() {
+  return !!tickersCache.map;
 }
 
 async function getTickerMap() {
@@ -45,7 +56,10 @@ async function getTickerMap() {
     return tickersCache.map;
   }
   try {
-    const data = await fetchJson(TICKERS_URL);
+    // Patient here in a way the per-panel reads are not: this is fetched
+    // once a day and everything else depends on it, so it is worth
+    // waiting out a throttle rather than leaving every symbol unknown.
+    const data = await fetchJson(TICKERS_URL, { attempts: 5, timeoutMs: 20_000 });
     const map = new Map();
     for (const k of Object.keys(data)) {
       const row = data[k];
