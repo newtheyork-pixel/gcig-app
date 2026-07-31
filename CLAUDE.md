@@ -640,6 +640,81 @@ Hit-rate stats count `Approved` toward Voted Yes too.
 
 ## Recent fixes / playbook notes
 
+- **EDGAR rate-limits, and we used to call that broken data (Jul '26)**:
+  SEC publishes a cap of ten requests a second and answers a burst above
+  it with 403 or 429. Every ticker panel reads from EDGAR, so opening
+  several at once — or sweeping the book — trips it, and the failures
+  surfaced as "Fundamentals fetch failed" on companies whose data was
+  perfectly fine a minute later. All SEC reads now go through
+  `services/secFetch.js`, which retries 403/429/5xx twice on a short
+  backoff, never retries a 404 (that is an answer), and names throttling
+  as throttling when it gives up. Three rules came out of it:
+    1. **Never cache a failure under a success's TTL.** `secSupplyChain`,
+       `secBusinessSummary` and `getLatestFilingByForm` all stored `null`
+       on error under the TTL meant for an annual filing, so one
+       throttled minute cost three companies their supply chain for a
+       week. Failures expire in two minutes; successes keep their long
+       life.
+    2. **Never report our outage as a fact about the company.** Every
+       ticker resolves through one symbol-directory document, and on a
+       fresh boot there is no stale copy — so a single throttled fetch
+       made MLAB, AIT and GD all return "not an SEC operating filer".
+       `unresolvedError(directoryLoaded)` splits the two: no directory is
+       a 503 that says the fault is ours, an unknown symbol with the
+       directory in hand is the 404 it always was.
+    3. A precise error that is wrong is worse than a vague one. "Fetch
+       failed" sends somebody to look; "this is not an operating filer"
+       makes them stop looking.
+- **Leadership comes from ownership filings, never the proxy (Jul '26)**:
+  MGMT read who runs a company out of the DEF 14A, which is filed once a
+  year and whose compensation table records who was PAID last fiscal
+  year. Mesa Labs showed "Gary Owens, Former CEO and President" four
+  months after he left, with no mention of his successor. Forms 3 and 4
+  carry `<officerTitle>` in a structured field within days of an
+  appointment — Siddhartha Kadia's Form 3 was on EDGAR eleven weeks
+  before the proxy we were reading, and `insiderTx.js` had been parsing
+  that field and discarding it since it was written.
+  `services/officerRoster.js` builds the roster from them; the proxy
+  still owns age, tenure and pay, matched on by name.
+  **The successor rule only applies to offices that are singular by
+  definition.** "Executive Vice President" contains the word PRESIDENT,
+  which filed six sitting General Dynamics officers under one office and
+  declared five of them departed. Any VICE / EVP / SVP / DEPUTY form is
+  excluded, as is the divisional "President, Aerospace".
+- **Ask a structured source before mining prose (Jul '26)**: head office,
+  SIC and fiscal year end are FIELDS on the submissions feed. The first
+  cut read them out of Item 1 with a regex and gave General Dynamics a
+  head office in St. Louis, Missouri — matched from "we supported NGA in
+  the development of their new headquarters", a sentence about a
+  customer's building. GD is run from Reston, Virginia. Headcount has no
+  structured source and survives only in the first person ("we had
+  approximately 6,800 associates"), because "approximately 40,000
+  employees" turns up in segment discussions and safety policies; where a
+  filer does not use that form the answer is null and renders as a dash.
+- **A 10-K's answer is rarely in its first nine pages (Jul '26)**: SPLC
+  took keyword-matching paragraphs in DOCUMENT ORDER until it had 9,000
+  characters, which in a 338,000-character filing is the business
+  description. General Dynamics returned no customers while its 10-K said
+  "68% of our consolidated revenue was from the U.S. government".
+  Passages are now scored — a stated percentage scores highest, because a
+  filer only quantifies a relationship that matters — then restored to
+  document order so the model cannot join two unrelated disclosures.
+  Being named is also not being a customer: J&J listed the Department of
+  Justice, which appears all through the filing as a litigant. Regulators
+  and courts are rejected unless a percentage of revenue is stated
+  against them.
+- **Outreach follow-ups are counted in WORKING days
+  (`services/followUp.js`, Jul '26)**: an email sent Friday afternoon is
+  one day old on Monday, not three, and counting the weekend as waiting
+  time produces a chase that arrives before the first email was read.
+  Counting this way also means a recommendation can never fall due at a
+  weekend, because adding working days always lands on a working day.
+  US federal holidays are computed, not listed, so the long weekend
+  Thomas asked about handles itself. Five working days to the first
+  chase, eight to the second, then stop. A human reply ends it; an
+  out-of-office restarts the clock rather than counting as being heard
+  from; a bounce asks for a new address rather than the same message.
+
 - **Claims that located perfectly and said something else (Jul '26)**:
   `locateQuote` proves the words were spoken. It says nothing about
   whether the sentence written above them is a fair reading, and that
