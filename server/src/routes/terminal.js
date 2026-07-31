@@ -6,6 +6,8 @@ import { getHistory, getIntraday } from '../services/priceHistory.js';
 import { getFundamentals, getStatements } from '../services/secFundamentals.js';
 import { getPortfolioMovers, getSheetPortfolio } from '../services/sheetPortfolio.js';
 import { getSupplyChain } from '../services/secSupplyChain.js';
+import { getFacilities } from '../services/facilities.js';
+import { resolveCik } from '../services/secFundamentals.js';
 import { getProxyStatement } from '../services/proxyStatement.js';
 import { getExecutiveBios } from '../services/executiveBios.js';
 import { parseLeadership, parseBoard, parseComp, buildNetwork } from '../services/governanceParsers.js';
@@ -786,6 +788,30 @@ export async function insiderClustersHandler(req, res, deps = {}) {
     });
   }
 }
+
+// FAC — where a company's plants are.
+router.get('/facilities/:ticker', async (req, res) => {
+  const raw = String(req.params.ticker || '').trim().toUpperCase();
+  if (!/^[A-Z0-9.\-]{1,12}$/.test(raw)) return res.status(400).json({ error: 'Bad ticker' });
+  try {
+    const info = await resolveCik(raw);
+    if (!info) return res.status(404).json({ error: `${raw} is not in SEC EDGAR.` });
+    const out = await getFacilities(info.name);
+    res.json({
+      ticker: raw,
+      company: info.name,
+      ...out,
+      // Said with the data, not in a tooltip: TRI covers manufacturers
+      // over a reporting threshold, so an empty list means "does not
+      // report to TRI" and never "has no operations".
+      source: 'EPA Toxics Release Inventory, facilities whose parent company matches',
+      caveat: 'TRI covers manufacturing and processing sites above a reporting threshold. Banks, insurers and most software companies file nothing here, so an empty list is not evidence of no operations.',
+    });
+  } catch (err) {
+    console.error('facilities failed:', err.message);
+    res.status(502).json({ error: `Could not reach the EPA facility registry: ${err.message}` });
+  }
+});
 
 router.get('/weather-impact', (req, res) => weatherImpactHandler(req, res));
 router.get('/wx-alerts', (req, res) => weatherAlertsHandler(req, res));
