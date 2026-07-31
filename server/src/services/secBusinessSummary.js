@@ -245,6 +245,7 @@ export function corporateFacts(text) {
 // 10-Ks are annual; once we've parsed one, hold it for a week so a click
 // storm doesn't re-pull a multi-megabyte filing.
 const TTL_MS = 7 * 24 * 60 * 60 * 1000;
+const FAILURE_TTL_MS = 2 * 60 * 1000;
 const cache = new Map();
 
 // EDGAR's Item 1 can run many pages of legalese; the DES panel wants a
@@ -303,6 +304,9 @@ export async function getBusinessProfile(ticker) {
     value = null;
   }
 
-  cache.set(key, { at: Date.now(), value });
+  // A failed read is not a week-old fact. Caching null under the
+  // annual-filing TTL means one throttled minute costs a company its
+  // description until next week.
+  cache.set(key, { at: value ? Date.now() : Date.now() - TTL_MS + FAILURE_TTL_MS, value });
   return value;
 }

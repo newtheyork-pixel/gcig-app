@@ -11,6 +11,7 @@
 // about being a filing read, not a market-wide graph.
 
 import { getLatestFilingByForm, SEC_UA } from './secFilings.js';
+import { secFetch } from './secFetch.js';
 import { llmChat } from './llm.js';
 
 const BLOCK_TAG =
@@ -215,6 +216,9 @@ export function sanitize(parsed) {
 // 10-Ks are annual; hold a parsed result for a week so a click storm
 // doesn't re-pull and re-summarize a multi-megabyte filing.
 const TTL_MS = 7 * 24 * 60 * 60 * 1000;
+// Long enough to stop a panel hammering EDGAR on every reopen, short
+// enough that a throttle clears itself while somebody is still looking.
+const FAILURE_TTL_MS = 2 * 60 * 1000;
 const cache = new Map();
 
 export async function getSupplyChain(ticker) {
@@ -228,7 +232,12 @@ export async function getSupplyChain(ticker) {
   try {
     const tenK = await getLatestFilingByForm(key, /^10-K(405|SB)?$/i);
     if (tenK?.url) {
-      const r = await fetch(tenK.url, { headers: { 'User-Agent': SEC_UA, Accept: 'text/html' } });
+      // Through secFetch, so a throttled read is retried rather than
+      // becoming a week-long empty panel.
+      const r = await secFetch(tenK.url, {
+        headers: { 'User-Agent': SEC_UA, Accept: 'text/html' },
+        timeoutMs: 25_000,
+      });
       if (r.ok) {
         const passages = gatherPassages(htmlToText(await r.text()));
         const base = {
@@ -278,6 +287,14 @@ export async function getSupplyChain(ticker) {
     value = null;
   }
 
-  cache.set(key, { at: Date.now(), value });
+  // A failure must not be cached for a week.
+  //
+  // This is how one throttled minute turned into three companies with
+  // no supply chain until August: any error stored `null` under the
+  // seven-day TTL that exists for successful reads of an annual filing.
+  // A 10-K does not change for a year; a rate limit changes in seconds,
+  // and the two must not share an expiry.
+  if (value) cache.set(key, { at: Date.now(), value });
+  else cache.set(key, { at: Date.now() - TTL_MS + FAILURE_TTL_MS, value });
   return value;
 }

@@ -30,6 +30,7 @@ export { UA as SEC_UA };
 
 const TICKERS_TTL_MS = 24 * 60 * 60 * 1000; // 24h
 const FILINGS_TTL_MS = 6 * 60 * 60 * 1000; // 6h
+const FAILURE_TTL_MS = 2 * 60 * 1000;
 
 let tickersCache = { at: 0, map: null };
 const filingsCache = new Map(); // upperTicker → { at, data }
@@ -185,7 +186,14 @@ export async function getLatestFilingByForm(ticker, formRe) {
     console.warn(`SEC latest ${formRe.source}(${upper}) failed:`, err.message);
   }
 
-  latestFormCache.set(cacheKey, { at: Date.now(), data: result });
+  // Same rule as everywhere else: a miss caused by EDGAR refusing to
+  // talk to us must expire in minutes, not six hours. A real "this filer
+  // has no 10-K" is indistinguishable here, so both expire quickly —
+  // the cost is one extra feed read, and the feed is one JSON document.
+  latestFormCache.set(cacheKey, {
+    at: result ? Date.now() : Date.now() - FILINGS_TTL_MS + FAILURE_TTL_MS,
+    data: result,
+  });
   return result;
 }
 
