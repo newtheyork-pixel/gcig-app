@@ -1025,6 +1025,12 @@ model ResearchProject {
   aims        String?
   // Open | Fieldwork | Synthesis | Closed
   status      String   @default("Open")
+  // Owner-only: the project is filtered out of every read path except the
+  // super admin's, the same rule ResearchArtifact already follows. An
+  // artifact could be hidden but its project could not, so importing
+  // forty private folders would have put forty empty projects in front of
+  // everybody.
+  ownerOnly   Boolean  @default(false)
   createdById Int?
   createdBy   User?    @relation("ResearchProjectCreator", fields: [createdById], references: [id], onDelete: SetNull)
   createdAt   DateTime @default(now())

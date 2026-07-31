@@ -90,9 +90,17 @@ const PROJECT_STATUSES = new Set(['Open', 'Fieldwork', 'Synthesis', 'Closed']);
 
 router.get('/projects', async (req, res) => {
   try {
+    // Owner-only projects never enter a non-owner's payload at all, the
+    // same rule artifacts follow: filtering in the query rather than the
+    // response is the difference between not sending it and hoping the
+    // client does not render it.
+    const visibility = isSuperAdminEmail(req.user?.email) ? {} : { ownerOnly: false };
     const ticker = req.query.ticker ? String(req.query.ticker).toUpperCase() : null;
     const projects = await prisma.researchProject.findMany({
-      where: ticker ? { ticker } : undefined,
+      // One where, not two: a second `where` key silently replaces the
+      // first in an object literal, which quietly disabled the
+      // owner-only filter entirely.
+      where: { ...visibility, ...(ticker ? { ticker } : {}) },
       orderBy: { updatedAt: 'desc' },
       include: {
         createdBy: { select: { id: true, name: true } },
@@ -184,6 +192,11 @@ router.get('/projects/:id', async (req, res) => {
         },
       },
     });
+    // Hiding a project from the list while a direct link still opens it
+    // is not hiding it.
+    if (project?.ownerOnly && !isSuperAdminEmail(req.user?.email)) {
+      return res.status(404).json({ error: 'Not found' });
+    }
     if (!project) return res.status(404).json({ error: 'Not found' });
 
     const claims = await prisma.researchClaim.findMany({
@@ -301,12 +314,14 @@ router.get('/projects/:id', async (req, res) => {
 router.post('/projects', canResearch, async (req, res) => {
   const { ticker, name, brief } = req.body || {};
   if (!name) return res.status(400).json({ error: 'name is required' });
+  const ownerOnly = req.body?.ownerOnly === true || req.body?.ownerOnly === 'true';
   try {
     const project = await prisma.researchProject.create({
       data: {
         ticker: ticker ? String(ticker).toUpperCase().slice(0, 12) : null,
         name: String(name).slice(0, 300),
         brief: brief ? String(brief).slice(0, 5000) : null,
+        ownerOnly,
         createdById: req.user?.id ?? null,
       },
     });
@@ -372,8 +387,8 @@ router.post(
     if (!Number.isInteger(id)) return res.status(400).json({ error: 'Bad id' });
     const title = req.body?.title || req.file?.originalname;
     if (!title) return res.status(400).json({ error: 'title or a file is required' });
-    if (!req.file && !req.body?.body) {
-      return res.status(400).json({ error: 'Attach a file or write some text.' });
+    if (!req.file && !req.body?.body && !req.body?.fileRef) {
+      return res.status(400).json({ error: 'Attach a file, reference one, or write some text.' });
     }
     const kind = ARTIFACT_KINDS.has(req.body?.kind) ? req.body.kind : 'document';
     try {
@@ -381,6 +396,13 @@ router.post(
       if (!project) return res.status(404).json({ error: 'No such project' });
 
       let fileRef = null;
+      // An item already in OneDrive: imported by reference rather than
+      // re-uploaded, so a folder somebody built by hand becomes a project
+      // without copying a byte or duplicating storage. Super-admin only,
+      // because it will point an artifact at any item id on the drive.
+      if (!req.file && req.body?.fileRef && isSuperAdminEmail(req.user?.email)) {
+        fileRef = String(req.body.fileRef).slice(0, 300);
+      }
       if (req.file) {
         const stored = await uploadFile({
           buffer: req.file.buffer,
@@ -399,7 +421,8 @@ router.post(
           kind,
           title: String(title).slice(0, 300),
           fileRef,
-          filename: req.file?.originalname || null,
+          filename: req.file?.originalname || (req.body?.filename ? String(req.body.filename).slice(0, 300) : null),
+          ownerOnly: req.body?.ownerOnly === true || req.body?.ownerOnly === 'true',
           body: req.body?.body ? String(req.body.body).slice(0, 100_000) : null,
           note: req.body?.note ? String(req.body.note).slice(0, 1000) : null,
           uploadedById: req.user?.id ?? null,
