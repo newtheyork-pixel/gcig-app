@@ -26,8 +26,9 @@ enum FinderSync {
     /// the point is that a person opens it, and nobody browses to
     /// Application Support on purpose.
     static func root(project ticker: String?) -> URL {
-        var u = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Griffin Fund", isDirectory: true)
+        // The mounted volume, so everything lands inside the thing that
+        // shows up in Finder rather than in a lookalike folder beside it.
+        var u = GriffinVolume.mountPoint
         if let t = ticker, !t.isEmpty {
             u = u.appendingPathComponent(t, isDirectory: true)
         }

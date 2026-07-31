@@ -28,7 +28,7 @@ struct TerminalView: View {
             ws.refreshLayoutNames()
             // The arrangement you left is the arrangement you get back.
             ws.restoreCurrentIfEmpty()
-            GriffinVolume.shared.prepare()
+            GriffinVolume.shared.mountIfPrepared()
         }
         .background(BlockCaretInstaller().frame(width: 0, height: 0))
         .sheet(isPresented: $namingLayout) { LayoutNameSheet() }

@@ -56,6 +56,41 @@ final class GriffinDrive: ObservableObject {
 
     /// Begin watching one project. Idempotent: starting twice on the same
     /// project is a no-op rather than a second watcher racing the first.
+    /// Watch the whole volume and keep every project in it. One watcher
+    /// on the root rather than one per project: the first path component
+    /// is the ticker, so a single tree tells us which project a change
+    /// belongs to.
+    func startAll() {
+        guard !status.running else { return }
+        let base = GriffinVolume.mountPoint
+        guard FileManager.default.fileExists(atPath: base.path) else { return }
+        seedKnown(base)
+        startWatching(base)
+        poller = Task { [weak self] in
+            while !Task.isCancelled {
+                await self?.pullAll()
+                try? await Task.sleep(for: .seconds(45))
+            }
+        }
+        status.running = true
+    }
+
+    /// Ticker → project id, so a change under LISN/ knows where to go.
+    private var projectByTicker: [String: Int] = [:]
+
+    private func pullAll() async {
+        struct P: Decodable { let id: Int; let ticker: String? }
+        guard let data = try? await API.shared.get("/research/projects") else { return }
+        let list = (try? await API.shared.decode([P].self, from: data)) ?? []
+        for p in list {
+            guard let t = p.ticker, !t.isEmpty else { continue }
+            projectByTicker[t.uppercased()] = p.id
+            projectId = p.id
+            ticker = t
+            await pull()
+        }
+    }
+
     func start(projectId: Int, ticker: String?) {
         guard self.projectId != projectId || !status.running else { return }
         stop()
@@ -122,7 +157,10 @@ final class GriffinDrive: ObservableObject {
     }
 
     private func scanAndPush() {
-        guard !pushing, let base = root, let pid = projectId else { return }
+        guard !pushing else { return }
+        // The volume root, not one project's folder: a single watcher
+        // covers every project and the first path segment says which.
+        let base = GriffinVolume.mountPoint
         let current = Self.walk(base)
         let changed = current.filter { known[$0.key] != $0.value }
         guard !changed.isEmpty else { return }
@@ -137,8 +175,17 @@ final class GriffinDrive: ObservableObject {
                 // project that nobody could open.
                 let name = (path as NSString).lastPathComponent
                 if name.hasPrefix("~$") || name.hasPrefix(".") { known[path] = size; continue }
+                // Strip the ticker segment: the artifact's title is the
+                // path WITHIN its project, and storing LISN/model/x.xlsx
+                // would nest every project inside itself on the next pull.
+                let segs = path.split(separator: "/").map(String.init)
+                guard segs.count >= 2, let pid = projectByTicker[segs[0].uppercased()] else {
+                    known[path] = size
+                    continue
+                }
+                let inProject = segs.dropFirst().joined(separator: "/")
                 do {
-                    try await push(url: url, path: path, projectId: pid)
+                    try await push(url: url, path: inProject, projectId: pid)
                     known[path] = size
                     done += 1
                 } catch {
