@@ -185,7 +185,7 @@ async function fetchFacts(cik) {
 // Share-class symbols arrive dotted (BRK.B) but EDGAR's map is hyphen
 // (BRK-B); try the symbol then both punctuation variants, like the
 // filings service does.
-async function resolveCik(ticker) {
+export async function resolveCik(ticker) {
   const t = String(ticker || '').toUpperCase();
   for (const v of [t, t.replace(/\./g, '-'), t.replace(/-/g, '.')]) {
     const hit = await getCikForTicker(v);
