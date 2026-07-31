@@ -237,12 +237,12 @@ export async function getFundamentals(rawTicker, freq = 'annual') {
 // order here is the print order in the panel.
 
 const INCOME_DEFS = [
-  { key: 'revenue', label: 'Revenue', concepts: ['RevenueFromContractWithCustomerExcludingAssessedTax', 'Revenues', 'SalesRevenueNet'] },
+  { key: 'revenue', label: 'Revenue', concepts: ['RevenueFromContractWithCustomerExcludingAssessedTax', 'Revenues', 'SalesRevenueNet', 'RevenueFromContractWithCustomerIncludingAssessedTax', 'InterestAndDividendIncomeOperating'] },
   { key: 'cogs', label: 'COGS', concepts: ['CostOfGoodsAndServicesSold', 'CostOfRevenue', 'CostOfGoodsSold'] },
   { key: 'grossProfit', label: 'Gross Profit', concepts: ['GrossProfit'] },
   { key: 'sga', label: 'SG&A Expense', concepts: ['SellingGeneralAndAdministrativeExpense', 'GeneralAndAdministrativeExpense', 'OtherSellingGeneralAndAdministrativeExpense'] },
   { key: 'rnd', label: 'R&D Expense', concepts: ['ResearchAndDevelopmentExpense', 'ResearchAndDevelopmentExpenseExcludingAcquiredInProcessCost'] },
-  { key: 'opex', label: 'Operating Expenses', concepts: ['OperatingExpenses', 'CostsAndExpenses'] },
+  { key: 'opex', label: 'Operating Expenses', concepts: ['OperatingExpenses', 'CostsAndExpenses', 'BenefitsLossesAndExpenses', 'OperatingCostsAndExpenses'] },
   { key: 'operatingIncome', label: 'Operating Income', concepts: ['OperatingIncomeLoss'] },
   { key: 'otherIncome', label: 'Other Income/(Expense)', concepts: ['NonoperatingIncomeExpense', 'OtherNonoperatingIncomeExpense'] },
   { key: 'pretaxIncome', label: 'Pretax Income', concepts: ['IncomeLossFromContinuingOperationsBeforeIncomeTaxesExtraordinaryItemsNoncontrollingInterest', 'IncomeLossFromContinuingOperationsBeforeIncomeTaxesMinorityInterestAndIncomeLossFromEquityMethodInvestments'] },
@@ -383,8 +383,17 @@ export async function getStatements(rawTicker, freq = 'annual') {
       label: wantFreq === 'annual' ? `FY ${p.fy}` : `${p.fp} ${p.fy}`,
     }));
 
+  // Drop rows no period filled.
+  //
+  // Coca-Cola reports no R&D and Goldman Sachs has no inventory or
+  // current assets — an unclassified balance sheet is how a bank files,
+  // not a gap in ours. Rendering those as empty rows makes a correct
+  // statement look broken, which is exactly the complaint. A line that
+  // exists shows numbers; a line nobody reports is simply absent.
   const toRows = (grp) =>
-    grp.map((item) => ({
+    grp
+      .filter((item) => periods.some((per) => item.points.get(per.period)?.val != null))
+      .map((item) => ({
       key: item.key,
       label: item.label,
       unit: item.unit || 'USD',
