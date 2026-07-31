@@ -1,5 +1,6 @@
 import Foundation
 import AppKit
+import FileProvider
 
 // The Griffin Fund volume in Finder's Locations.
 //
@@ -82,6 +83,28 @@ final class GriffinVolume: ObservableObject {
         var isDir: ObjCBool = false
         let there = FileManager.default.fileExists(atPath: Self.mountPoint.path, isDirectory: &isDir)
         return there && isDir.boolValue
+    }
+
+    /// Try to register the File Provider domain, and say exactly what the
+    /// system answers.
+    ///
+    /// This has to run inside the app that CONTAINS the extension: the
+    /// system will not let an unrelated process register somebody else's
+    /// provider, and testing it from a standalone binary produced a -2001
+    /// that said nothing about whether the signing was right.
+    func tryFileProvider() {
+        let domain = NSFileProviderDomain(
+            identifier: NSFileProviderDomainIdentifier("org.thegriffinfund.terminal.FileProvider"),
+            displayName: "Griffin Fund")
+        NSFileProviderManager.add(domain) { error in
+            let line: String
+            if let e = error as NSError? {
+                line = "FILEPROVIDER: refused \(e.domain) \(e.code) — \(e.localizedDescription)"
+            } else {
+                line = "FILEPROVIDER: ACCEPTED — domain registered"
+            }
+            FileHandle.standardError.write((line + "\n").data(using: .utf8)!)
+        }
     }
 
     func reveal() {
