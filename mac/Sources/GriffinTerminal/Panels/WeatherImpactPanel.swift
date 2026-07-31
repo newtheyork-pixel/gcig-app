@@ -68,6 +68,27 @@ struct WeatherImpactPanel: View {
         let asOf: String?
         let activeStorms: [Storm]?
         let exposures: [ExposureRow]?
+        /// Our own plants inside a storm's reach. This is the join the
+        /// panel could not previously make: "there is an active storm"
+        /// and "we hold GD" were two facts a reader had to put together
+        /// themselves, and coordinates on the facilities made the third
+        /// one computable.
+        let stormExposure: [StormExposure]?
+    }
+
+    struct StormExposure: Decodable {
+        let storm: String?
+        let classification: String?
+        let checked: Int?
+        let sites: [Site]?
+
+        struct Site: Decodable {
+            let ticker: String?
+            let name: String?
+            let city: String?
+            let state: String?
+            let milesFromStorm: Int?
+        }
     }
 
     @State private var state: Loadable<Payload> = .loading
@@ -91,7 +112,7 @@ struct WeatherImpactPanel: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 10) {
                         verdict(storms, exposures)
-                        stormsCard(storms)
+                        stormsCard(storms, p.stormExposure ?? [])
                         ForEach(exposures) { e in exposureCard(e) }
                         footer(archiveN)
                     }
@@ -119,7 +140,7 @@ struct WeatherImpactPanel: View {
 
     // MARK: Active storms
 
-    private func stormsCard(_ storms: [Storm]) -> some View {
+    private func stormsCard(_ storms: [Storm], _ p_stormExposure: [StormExposure]) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("ACTIVE STORMS · NHC FEED")
                 .font(Term.mono(9, weight: .bold))
@@ -137,12 +158,58 @@ struct WeatherImpactPanel: View {
                 ForEach(Array(storms.enumerated()), id: \.offset) { _, s in
                     stormRow(s)
                 }
+                sitesInReach(p_stormExposure)
             }
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
         .frame(maxWidth: .infinity, alignment: .leading)
         .overlay(Rectangle().strokeBorder(Term.border, lineWidth: 1))
+    }
+
+    /// Which of OUR sites the storm is actually near.
+    ///
+    /// The distance is the whole point. "Active storm at 29.9N 90.1W" and
+    /// "we hold GD" are two facts; "the storm is 12 miles from General
+    /// Dynamics' yard in New Orleans" is the one somebody wanted. Sites
+    /// EPA never placed are excluded rather than guessed at, so a short
+    /// list is a real list.
+    @ViewBuilder
+    private func sitesInReach(_ rows: [StormExposure]) -> some View {
+        let withSites = rows.filter { !($0.sites ?? []).isEmpty }
+        if !withSites.isEmpty {
+            VStack(alignment: .leading, spacing: 5) {
+                Text("OUR SITES WITHIN 300 MILES")
+                    .font(Term.mono(9, weight: .bold)).tracking(0.5)
+                    .foregroundStyle(Term.amber)
+                ForEach(Array(withSites.enumerated()), id: \.offset) { _, r in
+                    ForEach(Array((r.sites ?? []).enumerated()), id: \.offset) { _, s in
+                        HStack(spacing: 8) {
+                            Text(s.ticker ?? "—")
+                                .font(Term.mono(10, weight: .bold)).foregroundStyle(Term.amber)
+                                .frame(width: 46, alignment: .leading)
+                            Text(s.name ?? "—")
+                                .font(Term.mono(10)).foregroundStyle(Term.white).lineLimit(1)
+                            Text([s.city, s.state].compactMap { $0 }.joined(separator: ", "))
+                                .font(Term.mono(9)).foregroundStyle(Term.fgMuted).lineLimit(1)
+                            Spacer()
+                            Text(s.milesFromStorm.map { "\($0) mi" } ?? "—")
+                                .font(Term.mono(10, weight: .medium))
+                                // Inside a hundred miles is close enough
+                                // to read as a warning rather than a fact.
+                                .foregroundStyle((s.milesFromStorm ?? 999) < 100 ? Term.negative : Term.fgDim)
+                        }
+                    }
+                }
+            }
+            .padding(.top, 4)
+        } else if !rows.isEmpty {
+            // Checked and found nothing is a result. A blank here would
+            // be indistinguishable from the check never running.
+            Text("No plants of ours within 300 miles — \(rows.first?.checked ?? 0) holdings checked against EPA's registry.")
+                .font(Term.mono(9)).foregroundStyle(Term.fgMuted)
+                .padding(.top, 4)
+        }
     }
 
     /// The answer first: does any of this touch what we own.

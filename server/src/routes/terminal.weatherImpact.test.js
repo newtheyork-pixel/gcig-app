@@ -163,3 +163,57 @@ test('weather-impact inherits the exact same global auth/limiter chain as /gover
     'sibling /governance/:ticker has exactly one handler — auth/limiter are global, not per-route'
   );
 });
+
+// A storm with a position, and the club's own plants inside its reach.
+//
+// This is the join the panel existed to make and could not: "there is an
+// active storm" and "we hold GD" are two facts a reader had to put
+// together themselves. Facilities carry coordinates now, so the answer
+// is computable.
+test('GET /weather-impact: a placed storm names the holdings sites inside its reach', async () => {
+  const res = fakeRes();
+  await weatherImpactHandler({}, res, {
+    getSheetPortfolio: async () => ({ holdings: [{ ticker: 'GD', isCash: false }] }),
+    getWeatherImpact: async () => ({
+      asOf: '2026-08-01T00:00:00.000Z',
+      activeStorms: [{ name: 'Genevieve', classification: 'TS', latitude: 29.9, longitude: -90.1 }],
+      exposures: [],
+    }),
+    resolveCik: async () => ({ cik: '0000040533', name: 'GENERAL DYNAMICS CORP' }),
+    getFacilities: async () => ({
+      term: 'GENERAL',
+      facilities: [
+        // New Orleans: inside the 300-mile ring.
+        { id: '1', name: 'Avondale Yard', city: 'New Orleans', state: 'LA', lat: 29.95, lon: -90.2 },
+        // Maine: far outside it.
+        { id: '2', name: 'Bath Iron Works', city: 'Bath', state: 'ME', lat: 43.9, lon: -69.8 },
+        // No coordinates: skipped rather than guessed at.
+        { id: '3', name: 'Unplaced Plant', city: 'Somewhere', state: 'LA', lat: null, lon: null },
+      ],
+    }),
+  });
+
+  const exp = res.body.stormExposure;
+  assert.equal(exp.length, 1);
+  assert.equal(exp[0].storm, 'Genevieve');
+  assert.deepEqual(exp[0].sites.map((s) => s.name), ['Avondale Yard']);
+  assert.equal(exp[0].sites[0].ticker, 'GD');
+  assert.ok(exp[0].sites[0].milesFromStorm < 300);
+});
+
+test('GET /weather-impact: a storm with no position places nothing', async () => {
+  const res = fakeRes();
+  await weatherImpactHandler({}, res, {
+    getSheetPortfolio: async () => ({ holdings: [{ ticker: 'GD', isCash: false }] }),
+    getWeatherImpact: async () => ({
+      asOf: '2026-08-01T00:00:00.000Z',
+      // The case the panel used to render as "active storm, location
+      // unknown" — there is nothing to compute against.
+      activeStorms: [{ name: 'Unknown', classification: 'TD' }],
+      exposures: [],
+    }),
+    resolveCik: async () => { throw new Error('must not be called'); },
+    getFacilities: async () => { throw new Error('must not be called'); },
+  });
+  assert.deepEqual(res.body.stormExposure, []);
+});

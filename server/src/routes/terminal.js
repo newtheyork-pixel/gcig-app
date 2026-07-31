@@ -6,7 +6,7 @@ import { getHistory, getIntraday } from '../services/priceHistory.js';
 import { getFundamentals, getStatements } from '../services/secFundamentals.js';
 import { getPortfolioMovers, getSheetPortfolio } from '../services/sheetPortfolio.js';
 import { getSupplyChain } from '../services/secSupplyChain.js';
-import { getFacilities } from '../services/facilities.js';
+import { getFacilities, sitesNearStorm } from '../services/facilities.js';
 import { resolveCik } from '../services/secFundamentals.js';
 import { getProxyStatement } from '../services/proxyStatement.js';
 import { getExecutiveBios } from '../services/executiveBios.js';
@@ -629,7 +629,11 @@ export async function weatherImpactHandler(req, res, deps = {}) {
       holdings = [];
     }
     const data = await fetchImpact(holdings);
-    res.json(data);
+    // "There is an active storm" and "we hold GD" are two facts a reader
+    // has to join by hand. The one they wanted is which of OUR plants
+    // the storm is actually near, and that is answerable now that
+    // facilities carry coordinates.
+    res.json({ ...data, stormExposure: await stormExposure(data.activeStorms, holdings, deps) });
   } catch (err) {
     console.warn('terminal/weather-impact degraded:', err.message);
     res.json({
@@ -647,6 +651,51 @@ export async function weatherImpactHandler(req, res, deps = {}) {
 // wxAlerts is contractually never-throws, but the route wraps it
 // anyway so an unexpected rejection still degrades to a 200
 // honest-empty FeatureCollection rather than a 5xx.
+
+/// Our own sites inside a storm's reach.
+///
+/// Bounded on purpose. This runs on a panel open, and resolving the
+/// estate of a dozen holdings is a dozen EPA reads — so only tickers we
+/// already hold are considered, only storms with a position, and a site
+/// with no coordinates is skipped rather than guessed at. An address is
+/// not a position, and a plant placed by assumption is worse than a
+/// plant left out.
+async function stormExposure(storms, holdings, deps = {}) {
+  const placed = (storms || []).filter(
+    (s) => Number.isFinite(Number(s?.latitude)) && Number.isFinite(Number(s?.longitude))
+  );
+  if (!placed.length || !holdings.length) return [];
+  const facilitiesFor = deps.getFacilities || getFacilities;
+  const cikFor = deps.resolveCik || resolveCik;
+  const out = [];
+  for (const storm of placed) {
+    const near = [];
+    for (const ticker of holdings.slice(0, 15)) {
+      try {
+        // The registered name, because EPA's parent field carries the
+        // legal entity rather than the ticker.
+        const info = await cikFor(ticker);
+        if (!info?.name) continue;
+        const { facilities } = await facilitiesFor(info.name);
+        const hits = sitesNearStorm(facilities, storm, 300);
+        for (const h of hits.slice(0, 6)) near.push({ ticker, ...h });
+      } catch {
+        // One unreachable estate must not empty the whole answer.
+      }
+    }
+    near.sort((a, b) => a.milesFromStorm - b.milesFromStorm);
+    out.push({
+      storm: storm.name || 'Unnamed',
+      classification: storm.classification || null,
+      sites: near.slice(0, 25),
+      // Said out loud, because "no sites near this storm" and "none of
+      // these companies report plants to EPA" are different findings.
+      checked: holdings.slice(0, 15).length,
+    });
+  }
+  return out;
+}
+
 export async function weatherAlertsHandler(req, res, deps = {}) {
   const fetchAlerts = deps.getActiveAlerts || getActiveAlerts;
   try {
