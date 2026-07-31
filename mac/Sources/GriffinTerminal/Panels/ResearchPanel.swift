@@ -3377,6 +3377,7 @@ private struct FilesTab: View {
     @State private var uploading: String?
     @State private var uploadError: String?
     @State private var openFolders: Set<String> = []
+    @State private var syncing: String?
 
     var body: some View {
         let artifacts = p.artifacts ?? []
@@ -3464,6 +3465,17 @@ private struct FilesTab: View {
                     }
                     .buttonStyle(.plain)
                     .onHover { $0 ? NSCursor.pointingHand.push() : NSCursor.pop() }
+                    .overlay(alignment: .trailing) {
+                        HStack(spacing: 6) {
+                            if syncing == name {
+                                Text("syncing…").font(Term.mono(9)).foregroundStyle(Term.amber)
+                            }
+                            Button("⤓ Finder") { syncToFinder(name, items) }
+                                .buttonStyle(TermButtonStyle())
+                                .disabled(busy || syncing != nil)
+                                .help("Download this folder to ~/Griffin Fund and open it in Finder")
+                        }
+                    }
                     if open {
                         // Basename only inside a folder. The header
                         // carries the path, so repeating it on every row
@@ -3570,6 +3582,31 @@ private struct FilesTab: View {
             }
         }
         .padding(8).termBorder()
+    }
+
+    /// Download a folder's files and show them in Finder. Only the ones
+    /// that are actually stored files: an inline note has no bytes to
+    /// write and would land as an empty document.
+    private func syncToFinder(_ folder: String, _ items: [ProjectFull.Artifact]) {
+        let files = items.compactMap { a -> FinderSync.Item? in
+            guard let id = DocumentViewer.itemId(from: a.fileRef) else { return nil }
+            return FinderSync.Item(itemId: id, path: a.title)
+        }
+        guard !files.isEmpty else { return }
+        syncing = folder
+        Task {
+            let r = await FinderSync.sync(files, project: p.ticker) { name in
+                syncing = "\(folder) · \(name)"
+            }
+            syncing = nil
+            if let dest = r.destination {
+                let sub = folder == "NOT IN A FOLDER" ? dest : dest.appendingPathComponent(folder)
+                FinderSync.reveal(sub)
+            }
+            if !r.failed.isEmpty {
+                uploadError = "\(r.written) written, \(r.skipped) already current, failed: \(r.failed.joined(separator: ", "))"
+            }
+        }
     }
 
     /// Folder name and basename, split on the last slash. No slash means
