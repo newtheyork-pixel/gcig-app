@@ -1118,7 +1118,9 @@ private struct ProjectDetail: View {
         HStack(spacing: 14) {
             Text("\(RTab.allCases.firstIndex(of: tab).map { $0 + 1 } ?? 1)) \(tab.rawValue.uppercased())")
                 .font(Term.mono(9, weight: .bold)).tracking(0.5).foregroundStyle(Term.amber)
-            Text("1-8 <GO> TAB")
+            // Derived, not typed. Eight tabs today; the hint and the
+            // registered numbers must never be able to disagree.
+            Text("1-\(RTab.allCases.count) <GO> TAB")
                 .font(Term.mono(9)).foregroundStyle(Term.fgMuted)
             Text("/ SEARCH")
                 .font(Term.mono(9)).foregroundStyle(Term.fgMuted)
@@ -1188,7 +1190,17 @@ private struct ProjectDetail: View {
         .padding(.horizontal, 10).padding(.vertical, 6)
     }
 
+    /// Eight tabs do not always fit.
+    ///
+    /// The bar scrolls, but it scrolls with no indicator, and the pane it
+    /// lives in opens at 900pt and can be dragged down to 320 — so at
+    /// full width COMPLIANCE sits near the right edge and at any narrower
+    /// width most of the bar is simply off screen with nothing to say so.
+    /// Trimming the labels does not fix that; it only moves the width at
+    /// which it starts. Keeping the SELECTED tab in view does fix it, at
+    /// every width, including the one somebody drags to.
     private func tabBar(_ p: ProjectFull) -> some View {
+        ScrollViewReader { proxy in
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 0) {
                 ForEach(Array(RTab.allCases.enumerated()), id: \.element) { i, t in
@@ -1224,8 +1236,16 @@ private struct ProjectDetail: View {
                     }
                     .buttonStyle(.plain)
                     .help("Type \(i + 1) and press GO")
+                    .id(t)
                 }
             }
+        }
+        // Jumping by number is the whole point of numbering them, and a
+        // jump that lands off screen is not a jump.
+        .onChange(of: tab) { _, t in
+            withAnimation(.easeOut(duration: 0.15)) { proxy.scrollTo(t, anchor: .center) }
+        }
+        .onAppear { proxy.scrollTo(tab, anchor: .center) }
         }
     }
 
