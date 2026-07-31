@@ -1500,3 +1500,41 @@ model WatchlistItem {
   @@index([source])
   @@index([userId])
 }
+
+// A company facility, kept rather than re-fetched.
+//
+// EPA is free and has no published rate limit, but re-pulling 270 rows
+// every time somebody opens FAC is slow and pointless — the estate does
+// not change between Tuesday and Wednesday. Rows persist, and the
+// coordinates we work out ourselves persist with them, which is the
+// larger win: geocoding is the expensive part and doing it once is the
+// whole point of having a table.
+model Facility {
+  // EPA's own facility id, so a re-pull updates a row rather than
+  // duplicating it.
+  id        String   @id
+  // The search term that found it, which is how a ticker gets back to
+  // its own sites without storing a company relation we would then have
+  // to keep in step.
+  term      String
+  name      String
+  parent    String?
+  address   String?
+  city      String?
+  county    String?
+  state     String?
+  zip       String?
+  lat       Float?
+  lon       Float?
+  // True when the coordinates came from geocoding the address rather
+  // than from EPA. Worth knowing: one is surveyed, the other inferred.
+  geocoded  Boolean  @default(false)
+  // Set once an address has been through the geocoder, successfully or
+  // not, so a place that cannot be resolved is not retried forever.
+  geoTried  Boolean  @default(false)
+  closed    Boolean  @default(false)
+  fetchedAt DateTime @default(now())
+
+  @@index([term])
+  @@index([term, state])
+}

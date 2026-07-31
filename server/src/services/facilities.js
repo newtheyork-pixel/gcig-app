@@ -15,7 +15,12 @@
 // almost none. Absence means "does not report to TRI", never "has no
 // operations", and the panel has to say so or it reads as a claim.
 
+import { PrismaClient } from '@prisma/client';
+
+const prisma = new PrismaClient();
 const BASE = 'https://data.epa.gov/efservice';
+// The estate does not change between Tuesday and Wednesday.
+const REFETCH_MS = 30 * 24 * 60 * 60 * 1000;
 const TTL_MS = 24 * 60 * 60 * 1000;
 const cache = new Map();
 
@@ -92,6 +97,18 @@ export async function getFacilities(companyName, deps = {}) {
   const hit = cache.get(term);
   if (hit && Date.now() - hit.at < TTL_MS) return hit.value;
 
+  // Stored rows first. Re-pulling 270 facilities because somebody opened
+  // a panel is work nobody asked for, and the coordinates we geocoded
+  // ourselves live here — losing those to a process restart was the
+  // expensive part.
+  const stored = await prisma.facility.findMany({ where: { term, closed: false } });
+  if (stored.length && Date.now() - new Date(stored[0].fetchedAt).getTime() < REFETCH_MS) {
+    const value = shape(term, stored, false);
+    cache.set(term, { at: Date.now(), value });
+    fillCoordinates(term).catch(() => {});
+    return value;
+  }
+
   const doFetch = deps.fetch || fetch;
   const url = `${BASE}/tri_facility/parent_co_name/CONTAINING/${encodeURIComponent(term)}/rows/0:999/JSON`;
   const res = await doFetch(url, { headers: { Accept: 'application/json' } });
@@ -109,16 +126,102 @@ export async function getFacilities(companyName, deps = {}) {
     // can find it, and states group together.
     .sort((a, b) => (a.state || '').localeCompare(b.state || '') || (a.name || '').localeCompare(b.name || ''));
 
-  const value = {
+  // Written once, read for a month. The upsert means a re-pull refreshes
+  // a row instead of duplicating it, and never clears coordinates we
+  // worked out ourselves — EPA's blank must not overwrite our answer.
+  for (const f of facilities) {
+    if (!f.id) continue;
+    const base = {
+      term, name: f.name, parent: f.parent, address: f.address, city: f.city,
+      county: f.county, state: f.state, zip: f.zip, closed: f.closed,
+      fetchedAt: new Date(),
+    };
+    await prisma.facility.upsert({
+      where: { id: f.id },
+      update: f.lat != null ? { ...base, lat: f.lat, lon: f.lon } : base,
+      create: { id: f.id, ...base, lat: f.lat, lon: f.lon },
+    });
+  }
+
+  const saved = await prisma.facility.findMany({ where: { term, closed: false } });
+  const value = shape(term, saved, list.length >= 1000);
+  cache.set(term, { at: Date.now(), value });
+  fillCoordinates(term).catch(() => {});
+  return value;
+}
+
+function shape(term, rows, truncated) {
+  const facilities = rows
+    .map((r) => ({
+      id: r.id, name: r.name, parent: r.parent, address: r.address, city: r.city,
+      county: r.county, state: r.state, zip: r.zip, lat: r.lat, lon: r.lon,
+      geocoded: r.geocoded, closed: r.closed,
+    }))
+    .sort((a, b) => (a.state || '').localeCompare(b.state || '') || (a.name || '').localeCompare(b.name || ''));
+  return {
     term,
     facilities,
-    // A thousand rows means the query hit the page limit and there are
-    // more. Saying so beats presenting a truncated list as the whole.
-    truncated: list.length >= 1000,
+    truncated,
     mapped: facilities.filter((f) => f.lat != null).length,
+    unplaced: facilities.filter((f) => f.lat == null).length,
   };
-  cache.set(term, { at: Date.now(), value });
-  return value;
+}
+
+/// Work out coordinates for the sites EPA never placed.
+///
+/// Half of Berkshire's estate arrives without a position but every row
+/// has a street address, and an address IS a position — the US Census
+/// geocoder resolves them free, with no key, and it is authoritative for
+/// exactly this data. Brittain Machine in Wichita went from a blank to
+/// 37.6496, -97.3798 on the first try.
+///
+/// Runs in the background and writes as it goes, so a panel opens on what
+/// is known and fills in rather than waiting on 135 lookups. Bounded per
+/// pass, and a row that fails is marked tried so a bad address is not
+/// retried forever.
+const geocoding = new Set();
+
+export async function fillCoordinates(term, { limit = 40, deps = {} } = {}) {
+  if (geocoding.has(term)) return 0;
+  geocoding.add(term);
+  const doFetch = deps.fetch || fetch;
+  let placed = 0;
+  try {
+    const todo = await prisma.facility.findMany({
+      where: { term, closed: false, lat: null, geoTried: false, address: { not: null } },
+      take: limit,
+    });
+    for (const f of todo) {
+      const line = [f.address, f.city, f.state, f.zip].filter(Boolean).join(', ');
+      let lat = null;
+      let lon = null;
+      try {
+        const url = 'https://geocoding.geo.census.gov/geocoder/locations/onelineaddress'
+          + `?address=${encodeURIComponent(line)}&benchmark=Public_AR_Current&format=json`;
+        const res = await doFetch(url);
+        if (res.ok) {
+          const body = await res.json();
+          const m = body?.result?.addressMatches?.[0]?.coordinates;
+          if (m && Number.isFinite(m.y) && Number.isFinite(m.x)) {
+            lat = m.y;
+            lon = m.x;
+          }
+        }
+      } catch {
+        /* leave it unplaced; geoTried still gets set below */
+      }
+      await prisma.facility.update({
+        where: { id: f.id },
+        data: lat != null ? { lat, lon, geocoded: true, geoTried: true } : { geoTried: true },
+      });
+      if (lat != null) placed += 1;
+    }
+    // The shaped cache is now stale for this term.
+    cache.delete(term);
+  } finally {
+    geocoding.delete(term);
+  }
+  return placed;
 }
 
 export function _resetFacilitiesCache() {

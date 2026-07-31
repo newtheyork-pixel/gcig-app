@@ -43,6 +43,10 @@ struct FacilitiesPanel: View {
         let zip: String?
         let lat: Double?
         let lon: Double?
+        /// True when we worked the position out from the street address
+        /// rather than EPA surveying it. Shown, because one is measured
+        /// and the other inferred.
+        let geocoded: Bool?
         var key: String { id ?? "\(name ?? "")-\(city ?? "")-\(state ?? "")" }
 
         /// Everything a person might type: the town, the state, the
@@ -163,11 +167,11 @@ struct FacilitiesPanel: View {
                     .background(Term.bgPanel)
                     .termBorder()
                 }
-                if placed.count < sites.count {
+                if placed.count < sites.count && placed.count > 0 {
                     // Never silently drop them. A site with no coordinates
                     // is a real plant EPA never geocoded, and the list
                     // view is where it can still be read.
-                    Text("\(sites.count - placed.count) of \(sites.count) have no coordinates and cannot be pinned — see the list")
+                    Text("\(sites.count - placed.count) of \(sites.count) not placed yet — their addresses are being geocoded, reopen shortly")
                         .font(Term.mono(9)).foregroundStyle(Term.fgMuted)
                         .padding(.horizontal, 6).padding(.vertical, 3)
                         .background(Term.bgHeader)
@@ -217,8 +221,10 @@ struct FacilitiesPanel: View {
     }
 
     private func coords(_ s: Site) -> String {
-        guard let la = s.lat, let lo = s.lon else { return "no coordinates" }
-        return String(format: "%.4f, %.4f", la, lo)
+        guard let la = s.lat, let lo = s.lon else { return "not placed yet" }
+        // A tilde marks a position we derived from the address rather
+        // than one EPA surveyed. Same map pin, different provenance.
+        return String(format: "%@%.4f, %.4f", s.geocoded == true ? "~" : "", la, lo)
     }
 
     private func mapsURL(_ s: Site) -> URL? {
