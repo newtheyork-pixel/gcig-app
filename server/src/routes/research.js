@@ -9,6 +9,7 @@ import { scanForAnswer } from '../services/answerScan.js';
 import { assessTopics, formatCitation } from '../services/corroboration.js';
 import { assessCoverage, funnel } from '../services/questionCoverage.js';
 import { assessOutreach } from '../services/followUp.js';
+import { extractForArtifact } from '../services/artifactText.js';
 import { synthesize } from '../services/synthesis.js';
 import { screenTranscript, RISK } from '../services/mnpiScreen.js';
 import { screenOutreach } from '../services/outreachScreen.js';
@@ -2466,3 +2467,86 @@ function rebuildTurns(words) {
 }
 
 export default router;
+
+// Read the uploaded documents and keep the words, a batch at a time.
+//
+// A batch endpoint rather than one long job, because the work is a
+// Microsoft Graph download plus a parse per file and Render will cut a
+// request off long before two hundred of those finish. Ten at a time
+// with the counts returned means the caller can drive it to completion
+// and watch it, and an interrupted run resumes exactly where it stopped
+// — `ok`, `empty` and `unsupported` are never selected again.
+//
+// Super admin only. It reads every artifact including owner-only
+// material, which is the whole point and also the reason nobody else
+// may run it.
+router.post('/artifacts/extract', async (req, res) => {
+  if (!isSuperAdminEmail(req.user?.email)) {
+    return res.status(403).json({ error: 'Super admin only.' });
+  }
+  const take = Math.min(Math.max(Number(req.body?.batch) || 10, 1), 25);
+  const retryUnsupported = req.body?.retryUnsupported === true;
+  try {
+    const cooldown = new Date(Date.now() - 6 * 60 * 60 * 1000);
+    const rows = await prisma.researchArtifact.findMany({
+      where: {
+        fileRef: { startsWith: 'onedrive:' },
+        OR: [
+          { extractStatus: 'never' },
+          {
+            extractStatus: 'failed',
+            extractAttempts: { lt: 4 },
+            OR: [{ extractAttemptedAt: null }, { extractAttemptedAt: { lt: cooldown } }],
+          },
+          ...(retryUnsupported ? [{ extractStatus: 'unsupported' }] : []),
+        ],
+      },
+      select: { id: true, title: true, filename: true, fileRef: true },
+      orderBy: { id: 'asc' },
+      take,
+    });
+
+    const results = [];
+    for (const row of rows) {
+      const update = await extractForArtifact(row);
+      delete update._retryAfterMs;
+      await prisma.researchArtifact.update({ where: { id: row.id }, data: update });
+      results.push({
+        id: row.id,
+        filename: row.filename || row.title,
+        status: update.extractStatus,
+        chars: update.extractChars ?? null,
+        error: update.extractError || null,
+      });
+    }
+
+    const remaining = await prisma.researchArtifact.count({
+      where: { fileRef: { startsWith: 'onedrive:' }, extractStatus: 'never' },
+    });
+    res.json({ processed: results.length, remaining, results });
+  } catch (err) {
+    console.error('research/artifacts/extract failed:', err.message);
+    res.status(500).json({ error: `Extraction batch failed: ${err.message}` });
+  }
+});
+
+// What has been read and what has not. The counts a person needs before
+// deciding whether the corpus is worth trusting yet.
+router.get('/artifacts/extract-status', async (req, res) => {
+  if (!isSuperAdminEmail(req.user?.email)) {
+    return res.status(403).json({ error: 'Super admin only.' });
+  }
+  try {
+    const grouped = await prisma.researchArtifact.groupBy({
+      by: ['extractStatus'],
+      where: { fileRef: { startsWith: 'onedrive:' } },
+      _count: { _all: true },
+    });
+    const counts = Object.fromEntries(grouped.map((g) => [g.extractStatus, g._count._all]));
+    const inline = await prisma.researchArtifact.count({ where: { fileRef: null } });
+    res.json({ counts, inlineOnly: inline });
+  } catch (err) {
+    console.error('research/artifacts/extract-status failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
