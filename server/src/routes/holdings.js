@@ -117,6 +117,7 @@ import { getSheetPortfolio, withResolvedDayChange } from '../services/sheetPortf
 import { getNewsForTicker, extractArticle } from '../services/news.js';
 import { getBusinessProfile } from '../services/secBusinessSummary.js';
 import { tickerWhere, groupByTicker } from '../services/tickerKey.js';
+import { buildScoreboard, summarize } from '../services/decisionRecord.js';
 import { computeTally } from './votes.js';
 import { getCompanyIdentity } from '../services/secFilings.js';
 import {
@@ -488,6 +489,53 @@ router.get('/news/:ticker', tickerDataLimiter, async (req, res) => {
  * Deliberately compact. This feeds a COLUMN, not a panel, so it carries
  * counts and the one most recent decision rather than every ballot.
  */
+/**
+ * TRK — the club's own report card.
+ *
+ * Every closed vote, what the room decided, and what the price did
+ * afterwards, scored against the index because the honest alternative to
+ * owning a name is owning SPY. This is the screen a bought terminal
+ * cannot sell us: Bloomberg knows everything about General Dynamics and
+ * nothing about the fact that we voted to buy it on 5 June with five
+ * ballots.
+ *
+ * It is expected to be uncomfortable. A report card that could only
+ * flatter would not be worth opening.
+ */
+router.get('/decisions/record', async (_req, res) => {
+  try {
+    const [sessions, allUsers] = await Promise.all([
+      prisma.votingSession.findMany({
+        where: { status: 'closed' },
+        orderBy: { closedAt: 'desc' },
+        include: { ballots: true },
+      }),
+      prisma.user.findMany({ select: { id: true, name: true, role: true, extraRoles: true } }),
+    ]);
+
+    const decisions = sessions
+      .filter((v) => v.ticker && v.closedAt)
+      .map((v) => {
+        const tally = computeTally(v.ballots, allUsers, v);
+        return {
+          id: v.id,
+          ticker: String(v.ticker).trim().toUpperCase(),
+          kind: v.kind,
+          closedAt: v.closedAt,
+          decision: tally.finalDecision,
+          ballots: v.ballots.length,
+          proposed: tally.buyAmountStats?.avg ?? null,
+        };
+      });
+
+    const board = await buildScoreboard(decisions);
+    res.json({ ...board, summary: summarize(board.rows) });
+  } catch (err) {
+    console.error('decisions/record failed:', err);
+    res.status(500).json({ error: 'Failed to build the decision record' });
+  }
+});
+
 router.get('/coverage', async (_req, res) => {
   try {
     // Four small tables read whole and grouped in memory. A groupBy in
