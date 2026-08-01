@@ -91,7 +91,11 @@ enum Registry {
         .init(id: "MGMT", label: "Management & Board", help: "CEO, board, comp from the latest DEF 14A.", requires: "ticker", width: 780, height: 620, native: true),
         .init(id: "WEI", label: "World Indices", help: "Global index snapshot.", width: 600, height: 560, native: true),
         .init(id: "SPLC", label: "Supply Chain", help: "Customers, suppliers & key inputs from the 10-K.", requires: "ticker", width: 660, height: 560, native: true),
-        .init(id: "ECO", label: "Economic Calendar", help: "Upcoming releases and central bank events.", native: true),
+        // Listed as native and built on neither client, so it sat in the
+        // menus and the function switcher looking like a working screen
+        // and opened onto "not built yet". `planned` is what the other
+        // six unbuilt functions already use, and it is what this is.
+        .init(id: "ECO", label: "Economic Calendar", help: "Upcoming releases and central bank events.", planned: true),
         .init(id: "WX", label: "Weather Impact", help: "Named-storm impact on Gulf O&G + insurer exposure.", width: 640, height: 640, native: true),
         .init(id: "RDR", label: "Weather Radar", help: "Live US NEXRAD radar + active NWS warnings.", width: 780, height: 640, native: true),
         .init(id: "ORG", label: "Organization", help: "The club org chart: leadership tiers, industry groups, profiles one click away. PM and above.", width: 720, height: 660, native: true),
