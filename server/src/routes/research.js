@@ -164,7 +164,19 @@ router.get('/projects/:id', async (req, res) => {
           // revised rarely, so pure recency buries them under every
           // screenshot taken since.
           orderBy: [{ keyDoc: 'desc' }, { createdAt: 'desc' }],
-          include: { uploadedBy: { select: { id: true, name: true } } },
+          // Explicit columns, for the same reason the interviews below
+          // list theirs: `include` returns every scalar, and one of
+          // these is now `extractedText` — up to 600KB of a court
+          // opinion per row, on a project holding two hundred of them.
+          // The extraction STATE ships (a reader needs to know a scan
+          // has no text layer); the text itself is read on demand.
+          select: {
+            id: true, ownerOnly: true, projectId: true, kind: true, title: true,
+            fileRef: true, filename: true, body: true, note: true, keyDoc: true,
+            createdAt: true, updatedAt: true,
+            extractStatus: true, extractChars: true,
+            uploadedBy: { select: { id: true, name: true } },
+          },
         },
         interviews: {
           orderBy: { conductedAt: 'desc' },

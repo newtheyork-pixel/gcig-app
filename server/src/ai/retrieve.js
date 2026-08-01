@@ -44,6 +44,15 @@ const KIND_HINTS = {
     'wacc', 'terminal', 'fair', 'intrinsic', 'price', 'cheap', 'expensive',
     'upside', 'downside', 'buy', 'level', 'watching', 'comps', 'peer', 'pe',
   ],
+  // A question about what a filing, memo or model SAYS has to reach the
+  // documents. None of the fieldwork vocabulary appears in a court
+  // opinion, so term overlap alone leaves them unreachable.
+  document: [
+    'document', 'documents', 'file', 'files', 'filing', 'filings', 'memo',
+    'report', 'reports', 'opinion', 'court', 'case', 'casebook', 'brief',
+    'model', 'deck', 'pdf', 'wrote', 'written', 'says', 'said', 'states',
+    'paper', 'note', 'notes', 'exhibit', 'transcript', 'record',
+  ],
   finding: [
     'found', 'finding', 'findings', 'research', 'interview', 'interviews',
     'source', 'sources', 'evidence', 'restock', 'shelf', 'sell', 'sells',

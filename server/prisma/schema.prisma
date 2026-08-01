@@ -1081,12 +1081,39 @@ model ResearchArtifact {
   // promoted everything called "model" would quietly demote the one
   // that mattered by drowning it.
   keyDoc       Boolean         @default(false)
+  // The words inside an uploaded file, pulled out and kept.
+  //
+  // Deliberately NOT `body`. A row can carry both: artifact 234 on the
+  // CHRW project is a OneDrive file AND 7,950 characters of typed
+  // introduction, so extraction writing into `body` would overwrite a
+  // member's own prose. Nineteen of that project's twenty-six documents
+  // currently hold no readable text anywhere in the app, which is why
+  // neither search nor the assistant can see a word of them.
+  extractedText      String?
+  // never | ok | empty | unsupported | failed.
+  //
+  // Five states rather than a nullable string, because the interesting
+  // ones are indistinguishable otherwise. `never` is nobody has tried;
+  // `empty` is a scanned PDF with no text layer, which SUCCEEDS and
+  // returns nothing and would otherwise render as a blank pane with no
+  // explanation; `unsupported` is a type we cannot parse; `failed` is a
+  // transport or parser error worth retrying.
+  extractStatus      String    @default("never")
+  // Length of the FULL extraction. extractedText is capped, so a stored
+  // text shorter than this is a truncated one and can say so.
+  extractChars       Int?
+  extractError       String?
+  // Stamped on every attempt, success or not, so a permanently broken
+  // file backs off instead of being retried forever.
+  extractAttemptedAt DateTime?
+  extractAttempts    Int       @default(0)
   uploadedById Int?
   uploadedBy   User?           @relation("ResearchArtifactUploader", fields: [uploadedById], references: [id], onDelete: SetNull)
   createdAt    DateTime        @default(now())
   updatedAt    DateTime        @updatedAt
 
   @@index([projectId, kind])
+  @@index([extractStatus])
 }
 
 // What the project set out to answer. The spine of the whole process.

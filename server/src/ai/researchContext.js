@@ -160,6 +160,13 @@ export async function buildResearchContext(user, topic = '') {
       '_played back. This is OUR work — cite it as ours, not as "reports_',
       '_suggest". Alias the source; never invent a real name for one._',
       '',
+      '**A document is not a claim.** Lines marked as a file in our',
+      'records are passages from our own memos, models and filings. They',
+      'are ours and worth citing as ours, but unlike the ledger below',
+      'they are NOT pinned to a recording and cannot be played back —',
+      'so never present one as something a source told us, and never',
+      'attach a timestamp to it.',
+      '',
       '**Weigh it honestly.** "1 source" means one person said it once and',
       '**nothing corroborates it** — say so when you use it. Two colleagues',
       'at the same employer are one line of evidence, not two.',
@@ -362,6 +369,40 @@ export async function buildResearchContext(user, topic = '') {
             `- ${vis.location || 'unnamed site'}` +
             (vis.visitedAt ? ` (${new Date(vis.visitedAt).toISOString().slice(0, 10)})` : '') +
             (obs.length ? `: ${obs.join('; ').slice(0, 220)}` : ''),
+        });
+      }
+
+      // Our own written work: the memos, models and filings on this
+      // project, as passages rather than titles.
+      //
+      // The assistant could see the claim ledger and the questions and
+      // not one word of the twenty-six documents underneath them, so
+      // asked what the casebook says it answered from general knowledge
+      // about freight brokerage. These are OUR files and it should say
+      // so — but they are NOT claims: a PDF has no tape, so nothing
+      // here can be played back the way a ledger quote can, and the
+      // wording below has to keep those two apart in the reader's head.
+      const docs = await prisma.researchArtifact.findMany({
+        where: {
+          projectId: p.id,
+          extractStatus: 'ok',
+          ...(isSuperAdminEmail(user?.email) ? {} : { ownerOnly: false }),
+        },
+        orderBy: [{ keyDoc: 'desc' }, { createdAt: 'desc' }],
+        take: 12,
+        select: { id: true, title: true, filename: true, kind: true, extractedText: true },
+      });
+      for (const d of docs) {
+        // A slice per document rather than one long dump: retrieve()
+        // scores each chunk on its own, and a whole court opinion in one
+        // chunk either takes the entire budget or is dropped whole.
+        const body = String(d.extractedText || '').replace(/\s+/g, ' ').trim();
+        if (!body) continue;
+        chunks.push({
+          id: `doc${d.id}`,
+          kind: 'document',
+          text: `- **${d.title}**${d.filename ? ` (${d.filename})` : ''}, a ${d.kind} in our files: `
+            + `"${body.slice(0, 700)}${body.length > 700 ? '…' : ''}"`,
         });
       }
 

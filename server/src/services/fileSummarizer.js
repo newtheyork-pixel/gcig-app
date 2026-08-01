@@ -76,9 +76,17 @@ async function fetchItemMetadata(itemId) {
 // catches ~99% of real documents — slightly-malformed or image-only
 // slides are silently skipped, which is the right behavior.
 
-// Unescape the handful of XML entities that show up in real text.
+// Unescape the XML entities that show up in real text.
+//
+// Numeric forms matter as much as the named ones and were missing:
+// Office writes an umlaut as &#252;, so "Lindt & Spr&#252;ngli" came
+// out of a real workbook with the escape sitting in the middle of the
+// company's name. Ampersand is unescaped LAST, so an escaped &amp;lt;
+// does not become a live tag on the way through.
 function decodeXmlEntities(s) {
-  return s
+  return String(s)
+    .replace(/&#x([0-9a-f]+);/gi, (_, h) => String.fromCodePoint(parseInt(h, 16)))
+    .replace(/&#(\d+);/g, (_, d) => String.fromCodePoint(Number(d)))
     .replace(/&lt;/g, '<')
     .replace(/&gt;/g, '>')
     .replace(/&quot;/g, '"')
@@ -146,6 +154,108 @@ async function extractDocxText(buffer) {
   return out.join('\n').trim();
 }
 
+
+/// A spreadsheet, read as text.
+///
+/// Two things a first draft got wrong against real workbooks from this
+/// user's own files, both caught by running it rather than reasoning
+/// about it:
+///
+///   Not every workbook has xl/sharedStrings.xml. The Lindt model has
+///   none at all and writes every label inline as `t="inlineStr"` with
+///   `<is><t>`, so a reader that only follows shared strings returns a
+///   sheet of numbers with no headings.
+///
+///   The relationship file does not fix its attribute order. One
+///   workbook writes Id before Target and another writes Type, Target,
+///   Id — so a single regex expecting a fixed order resolved zero
+///   sheets on half the corpus. Id and Target are read independently.
+///
+/// Number formats live in xl/styles.xml, which this does not read, so a
+/// date arrives as its serial number. That is acceptable for reading and
+/// searching prose; it is not a date index, and nothing should present
+/// it as one.
+async function extractXlsxText(buffer) {
+  const JSZipModule = await import('jszip');
+  const JSZip = JSZipModule.default || JSZipModule;
+  const zip = await JSZip.loadAsync(buffer);
+
+  const sharedFile = zip.file('xl/sharedStrings.xml');
+  const shared = [];
+  if (sharedFile) {
+    const xml = await sharedFile.async('string');
+    // One <si> is one string, and it may be split across several runs.
+    for (const m of xml.matchAll(/<si\b[^>]*>([\s\S]*?)<\/si>/g)) {
+      shared.push(extractTagText(m[1], 't').join(''));
+    }
+  }
+
+  // Sheet name -> file, via the workbook's relationships.
+  const names = new Map();
+  const wb = zip.file('xl/workbook.xml');
+  const rels = zip.file('xl/_rels/workbook.xml.rels');
+  if (wb && rels) {
+    const relXml = await rels.async('string');
+    const target = new Map();
+    for (const m of relXml.matchAll(/<Relationship\b([^>]*)\/>/g)) {
+      const id = (m[1].match(/\bId="([^"]+)"/) || [])[1];
+      const t = (m[1].match(/\bTarget="([^"]+)"/) || [])[1];
+      if (id && t) target.set(id, t.replace(/^\/?xl\//, ''));
+    }
+    const wbXml = await wb.async('string');
+    for (const m of wbXml.matchAll(/<sheet\b([^>]*)\/>/g)) {
+      const nm = (m[1].match(/\bname="([^"]+)"/) || [])[1];
+      const rid = (m[1].match(/r:id="([^"]+)"/) || [])[1];
+      if (nm && rid && target.has(rid)) names.set(`xl/${target.get(rid)}`, decodeXmlEntities(nm));
+    }
+  }
+
+  const sheetPaths = Object.keys(zip.files)
+    .filter((p) => /^xl\/worksheets\/sheet\d+\.xml$/.test(p))
+    .sort();
+
+  const out = [];
+  for (const path of sheetPaths) {
+    const xml = await zip.file(path).async('string');
+    const rows = [];
+    for (const rm of xml.matchAll(/<row\b[^>]*>([\s\S]*?)<\/row>/g)) {
+      const cells = [];
+      for (const cm of rm[1].matchAll(/<c\b([^>]*)>([\s\S]*?)<\/c>/g)) {
+        const type = (cm[1].match(/\bt="([^"]+)"/) || [])[1];
+        if (type === 's') {
+          const idx = Number(extractTagText(cm[2], 'v')[0]);
+          if (Number.isInteger(idx) && shared[idx]) cells.push(decodeXmlEntities(shared[idx]));
+        } else if (type === 'inlineStr') {
+          const t = extractTagText(cm[2], 't').join('');
+          if (t) cells.push(t);
+        } else {
+          const v = extractTagText(cm[2], 'v')[0];
+          if (v) cells.push(decodeXmlEntities(v));
+        }
+      }
+      if (cells.length) rows.push(cells.join('\t'));
+    }
+    if (rows.length) {
+      const title = names.get(path) || path.split('/').pop().replace('.xml', '');
+      out.push(`# ${title}\n${rows.join('\n')}`);
+    }
+  }
+  return out.join('\n\n').trim();
+}
+
+/// A CSV, flattened to tab-separated lines. csv-parse is already a
+/// dependency and handles the quoting rules a split on commas does not.
+async function extractCsvText(buffer) {
+  const { parse } = await import('csv-parse/sync');
+  const rows = parse(buffer.toString('utf8'), {
+    relax_column_count: true,
+    skip_empty_lines: true,
+    relax_quotes: true,
+    bom: true,
+  });
+  return rows.map((r) => r.join('\t')).join('\n').trim();
+}
+
 async function extractText(buffer, filename) {
   const lower = String(filename || '').toLowerCase();
   if (lower.endsWith('.pdf')) {
@@ -161,11 +271,18 @@ async function extractText(buffer, filename) {
   if (lower.endsWith('.docx')) {
     return extractDocxText(buffer);
   }
-  if (lower.endsWith('.txt') || lower.endsWith('.md')) {
+  if (lower.endsWith('.xlsx') || lower.endsWith('.xlsm')) {
+    return extractXlsxText(buffer);
+  }
+  if (lower.endsWith('.csv') || lower.endsWith('.tsv')) {
+    return extractCsvText(buffer);
+  }
+  if (lower.endsWith('.txt') || lower.endsWith('.md') || lower.endsWith('.json')) {
     return buffer.toString('utf8').trim();
   }
   const err = new Error(
-    `Summarization supports PDF / PPTX / DOCX / TXT / MD — got ${filename || 'an unknown type'}.`
+    'Readable types are PDF, DOCX, PPTX, XLSX, CSV, TXT, MD and JSON — '
+    + `got ${filename || 'an unknown type'}.`
   );
   err.code = 'UNSUPPORTED_TYPE';
   throw err;
@@ -283,4 +400,14 @@ export async function summarizeFile(itemId, { force = false } = {}) {
 export async function getCachedSummary(itemId) {
   const fileRef = `onedrive:${itemId}`;
   return prisma.fileSummary.findUnique({ where: { fileRef } });
+}
+
+/// Buffer-level entry point.
+///
+/// `extractFileText` asks Graph for the filename before it can pick a
+/// parser. A caller that already knows it — the backfill reads it off
+/// the artifact row — should not pay for that round trip, which halves
+/// the Graph calls per file from two to one.
+export async function extractTextFromBuffer(buffer, filename) {
+  return extractText(buffer, filename);
 }

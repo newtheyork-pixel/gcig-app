@@ -1739,12 +1739,33 @@ function Files({ project, onChanged, setFlash, onOpenDoc, focus, onFocused }) {
                 </td>
                 <td style={a.keyDoc ? { color: 'var(--term-amber, var(--term-white))', fontWeight: 600 } : undefined}>
                   {a.fileRef ? (
-                    <a
-                      href="#"
-                      onClick={(e) => { e.preventDefault(); onOpenDoc({ url: a.fileRef, title: a.title }); }}
-                    >
-                      {label}
-                    </a>
+                    <>
+                      <a
+                        href="#"
+                        onClick={(e) => { e.preventDefault(); onOpenDoc({ url: a.fileRef, title: a.title }); }}
+                      >
+                        {label}
+                      </a>
+                      {/* A row can carry a file AND typed prose — the
+                          CHRW read-me is a OneDrive document with 7,950
+                          characters of introduction on it. Branching on
+                          fileRef alone rendered the link and dropped the
+                          words on the floor. */}
+                      {a.body ? (
+                        <details style={{ marginTop: 2 }}>
+                          <summary style={{ cursor: 'pointer', fontSize: 10, color: 'var(--term-fg-muted)' }}>
+                            notes on this document
+                          </summary>
+                          <pre style={{
+                            whiteSpace: 'pre-wrap', fontFamily: 'inherit', fontSize: 11,
+                            color: 'var(--term-fg-dim)', margin: '4px 0 0',
+                          }}
+                          >
+                            {a.body}
+                          </pre>
+                        </details>
+                      ) : null}
+                    </>
                   ) : (
                     <details>
                       <summary style={{ cursor: 'pointer' }}>{label}</summary>

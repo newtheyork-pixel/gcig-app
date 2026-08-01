@@ -1537,15 +1537,28 @@ router.get('/research/:ref', async (req, res) => {
     let text = null;
     let chars = null;
     let unavailable = null;
-    try {
-      const extracted = await extractFileText(itemId);
-      chars = extracted.chars;
-      text = extracted.text.slice(0, RESEARCH_TEXT_MAX);
-    } catch (err) {
-      unavailable =
-        err.code === 'UNSUPPORTED_TYPE'
-          ? err.message
-          : 'Could not read the text of this document.';
+    // The stored extraction first. Re-downloading and re-parsing a
+    // multi-megabyte filing every time somebody scrolls back to it was
+    // the only reason this was ever slow, and the stored copy is the
+    // same bytes the search and the assistant are reading — so the
+    // reader showing something different from what the assistant quotes
+    // is now impossible rather than merely unlikely.
+    if (item.extractStatus === 'ok' && item.extractedText) {
+      chars = item.extractChars ?? item.extractedText.length;
+      text = item.extractedText.slice(0, RESEARCH_TEXT_MAX);
+    } else if (item.extractStatus === 'empty') {
+      unavailable = 'No text layer in this document — it is almost certainly a scan. Reading it would need OCR.';
+    } else {
+      try {
+        const extracted = await extractFileText(itemId);
+        chars = extracted.chars;
+        text = extracted.text.slice(0, RESEARCH_TEXT_MAX);
+      } catch (err) {
+        unavailable =
+          err.code === 'UNSUPPORTED_TYPE'
+            ? err.message
+            : 'Could not read the text of this document.';
+      }
     }
 
     res.json({
