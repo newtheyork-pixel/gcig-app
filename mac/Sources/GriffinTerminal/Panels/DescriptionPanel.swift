@@ -96,6 +96,29 @@ struct DescriptionPanel: View {
         struct Person: Decodable { let name: String?; let title: String?; let office: String? }
     }
 
+    /// The club's own record on this name. The reason this terminal
+    /// exists rather than a browser tab: whether we own it, who pitched
+    /// it, what the room decided, and what was written down afterwards.
+    struct Coverage: Decodable {
+        let holding: Position?
+        let decisions: [Decision]?
+        let pitches: [Pitch]?
+
+        struct Position: Decodable {
+            let shares: Double?; let costBasis: Double?; let addedAt: String?
+        }
+        struct Decision: Decodable {
+            let id: Int?; let kind: String?; let closedAt: String?
+            let decision: String?; let ballots: Int?
+            let synthesis: String?
+            let proposed: Proposed?
+            struct Proposed: Decodable { let avg: Double?; let min: Double?; let max: Double? }
+        }
+        struct Pitch: Decodable {
+            let date: String?; let presenters: [String]?; let slideshowUrl: String?
+        }
+    }
+
     struct Chart: Decodable {
         let points: [Point]?
         let range: String?
@@ -110,6 +133,7 @@ struct DescriptionPanel: View {
     @State private var estimates: Estimates?
     @State private var consensus: Consensus.Row?
     @State private var leadership: Leadership?
+    @State private var coverage: Coverage?
 
     private var changePct: Double? {
         guard case .loaded(let i) = state,
@@ -123,6 +147,7 @@ struct DescriptionPanel: View {
                 VStack(alignment: .leading, spacing: 12) {
                     quote(i)
                     sparkline(i)
+                    clubBlock()
                     Divider().overlay(Term.border)
                     // Two columns, because Bloomberg's DES is two
                     // columns and the reason is sound: the numbers and
@@ -240,6 +265,110 @@ struct DescriptionPanel: View {
         }
     }
 
+
+
+    // MARK: The club
+
+    /// What WE know about this name, above everything a browser could
+    /// tell you.
+    ///
+    /// Placed directly under the price on purpose. Of thirty-five panels
+    /// in this app only five touched club-owned data, and they were the
+    /// five nobody opens in a normal week — so the club's own record sat
+    /// in rooms members never walked into. This is the first screen
+    /// every ticker lookup lands on.
+    @ViewBuilder
+    private func clubBlock() -> some View {
+        if let c = coverage, hasAnything(c) {
+            VStack(alignment: .leading, spacing: 5) {
+                HStack(spacing: 8) {
+                    SectionLabel(text: "The club")
+                    if let h = c.holding, (h.shares ?? 0) > 0 {
+                        Text("HELD")
+                            .font(Term.mono(9, weight: .bold))
+                            .foregroundStyle(Term.positive)
+                    } else if (c.decisions ?? []).contains(where: { $0.decision == "Sell" }) {
+                        // Sold is not the same as never owned, and the
+                        // difference is the whole lesson of the position.
+                        Text("EXITED")
+                            .font(Term.mono(9, weight: .bold)).foregroundStyle(Term.fgMuted)
+                    }
+                    Spacer()
+                }
+
+                if let h = c.holding, (h.shares ?? 0) > 0 {
+                    StatRow(label: "Position",
+                            value: "\(Fmt.compact(h.shares)) sh at \(Fmt.money(h.costBasis)) blended")
+                }
+
+                if let p = (c.pitches ?? []).first {
+                    let who = (p.presenters ?? []).joined(separator: ", ")
+                    StatRow(label: "Pitched",
+                            value: [who.isEmpty ? nil : who, p.date.map { Fmt.date($0) }]
+                                .compactMap { $0 }.joined(separator: " · "))
+                }
+
+                // Newest decision first. A name can carry several — a buy
+                // and a later sell — and the pair is the record worth
+                // reading.
+                ForEach(Array((c.decisions ?? []).prefix(3).enumerated()), id: \.offset) { _, d in
+                    decisionRow(d)
+                }
+
+                if (c.decisions ?? []).isEmpty && (c.pitches ?? []).isEmpty {
+                    Text("Owned, but never pitched or voted on in the app.")
+                        .font(Term.mono(9)).foregroundStyle(Term.fgMuted)
+                }
+            }
+            .padding(.vertical, 6)
+            .padding(.horizontal, 8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Term.bgHeader)
+            .overlay(alignment: .leading) { Rectangle().fill(Term.amber).frame(width: 2) }
+        }
+    }
+
+    private func hasAnything(_ c: Coverage) -> Bool {
+        (c.holding != nil && (c.holding?.shares ?? 0) > 0)
+            || !(c.decisions ?? []).isEmpty
+            || !(c.pitches ?? []).isEmpty
+    }
+
+    @ViewBuilder
+    private func decisionRow(_ d: Coverage.Decision) -> some View {
+        VStack(alignment: .leading, spacing: 1) {
+            HStack(spacing: 6) {
+                Text(d.decision?.uppercased() ?? "—")
+                    .font(Term.mono(10, weight: .bold))
+                    .foregroundStyle(tone(d.decision))
+                Text([d.closedAt.map { Fmt.date($0) },
+                      d.ballots.map { "\($0) ballot\($0 == 1 ? "" : "s")" }]
+                        .compactMap { $0 }.joined(separator: " · "))
+                    .font(Term.mono(9)).foregroundStyle(Term.fgMuted)
+                // What the room wanted, beside what it got. A position
+                // the club proposed at $4,000 and sized at $9,000 is a
+                // fact nobody can currently see.
+                if let avg = d.proposed?.avg, avg > 0 {
+                    Text("proposed \(Fmt.money(avg)) avg")
+                        .font(Term.mono(9)).foregroundStyle(Term.fgDim)
+                }
+                Spacer()
+            }
+            if let syn = d.synthesis, !syn.isEmpty {
+                Text(syn)
+                    .font(Term.mono(9)).foregroundStyle(Term.fgDim)
+                    .lineLimit(3).fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    private func tone(_ decision: String?) -> Color {
+        switch decision {
+        case "Buy": return Term.positive
+        case "Sell": return Term.negative
+        default: return Term.fgDim
+        }
+    }
 
     // MARK: The blocks Bloomberg puts beside the description
 
@@ -468,6 +597,7 @@ struct DescriptionPanel: View {
         estimates = nil
         consensus = nil
         leadership = nil
+        coverage = nil
         do {
             let data = try await API.shared.get("/holdings/info/\(ticker)")
             state = .loaded(try await API.shared.decode(Info.self, from: data))
@@ -493,6 +623,9 @@ struct DescriptionPanel: View {
         }
         if let d = try? await API.shared.get("/terminal/governance/\(ticker)") {
             leadership = try? await API.shared.decode(Leadership.self, from: d)
+        }
+        if let d = try? await API.shared.get("/holdings/coverage/\(ticker)") {
+            coverage = try? await API.shared.decode(Coverage.self, from: d)
         }
     }
 }
