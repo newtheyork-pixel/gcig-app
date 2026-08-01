@@ -640,6 +640,36 @@ Hit-rate stats count `Approved` toward Voted Yes too.
 
 ## Recent fixes / playbook notes
 
+- **The LLM tunnel BUFFERS, so streaming does not stream (Jul '26,
+  open)**: `/api/ai-chat` now streams server-sent events and the web
+  chat renders them as they arrive, but the last hop defeats it.
+  Measured twice, reading bytes as curl writes them so no reader-side
+  buffering could confuse it: direct to `llm.thegriffinfund.org`, all
+  111 tokens of a generation land in the same 4.53-second instant;
+  through the deployed API, all 211 land at 39.79s. Ollama streams
+  newline-delimited JSON correctly, so the buffering is in
+  `C:\llm_router.py` on THOMAS_HOME_PC — almost certainly a
+  `requests.post(...)` read to completion before returning. The fix is
+  to pass `stream=True` and iterate `iter_lines()` through to the
+  caller. **The box was unreachable while this was written**: Tailscale
+  reports `thomas-home-pc` online and offering an exit node, but
+  `ssh thoma@100.82.48.3` times out on port 22, so sshd or the firewall
+  rule needs checking before the router can be edited.
+- **Chat's timeout was 25 seconds and a real answer takes longer**: the
+  default in `llmChat` is right for background summarisation and far too
+  short for a 14B writing prose. Measured on the real tunnel: a
+  3,400-token prompt with a 600-token answer takes 23 seconds from a
+  laptop, before Render's hop — so every chat request missed by a hair
+  and reported "AI provider unavailable" while the tunnel, both models
+  and the status probe were all healthy. `CHAT_TIMEOUT_MS` is 90s,
+  chosen against the person waiting rather than the machine.
+- **Streaming makes the guards run late, so they must be able to
+  retract**: the check for a figure no tool backed up can only read text
+  that exists, and under streaming that text has already been shown. The
+  stream emits a `retract` event and the client removes the draft and
+  says why. A broken stream saves nothing at all — a half-written answer
+  left standing reads as a complete short one.
+
 - **Every PDF in the system was unreadable, and it looked like the files'
   fault (Jul '26)**: `pdf-parse` 2.x stopped default-exporting a function
   and exports a `PDFParse` CLASS, so `(mod.default || mod)(buffer)`
