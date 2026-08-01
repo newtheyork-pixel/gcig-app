@@ -162,10 +162,18 @@ struct WorldIndicesPanel: View {
                           : (r.symbol ?? ""))
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            Text(Fmt.money(r.last))
+            // A proxy's LEVEL is not the index's level — SPY trades near
+            // 747 while the S&P is near 7,500 — so the number itself has
+            // to look different, not just the symbol beside it. Marking
+            // only the symbol is what let "S&P 500  747.03" sit on
+            // screen looking like a quote.
+            Text((r.approx == true ? "≈" : "") + Fmt.money(r.last))
                 .font(Term.mono(11))
-                .foregroundStyle(Term.white)
+                .foregroundStyle(r.approx == true ? Term.fgMuted : Term.white)
                 .frame(width: 84, alignment: .trailing)
+                .help(r.approx == true
+                      ? "This is the ETF's price, not the index level. The percentage tracks; the number does not."
+                      : "")
             // Both delta cells color off the sign of `change`, as the
             // web does — one row, one verdict, not two shades when
             // rounding disagrees. changePercent arrives already in
@@ -190,8 +198,9 @@ struct WorldIndicesPanel: View {
     // believed. The sentence ships verbatim.
     private var footer: some View {
         var s = "Indices refresh while this panel is open (~20s); "
-              + "data is delayed by the free source (Stooq · Finnhub "
-              + "ETF proxy), not true real-time."
+              + "data is delayed by the free source (Yahoo index level; "
+              + "an ETF proxy marked ≈ where the index itself is unreadable), "
+              + "not true real-time."
         if let d = lastUpdated {
             s += " Updated \(clock(d))."
         }
