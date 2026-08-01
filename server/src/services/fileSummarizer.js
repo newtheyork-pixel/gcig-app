@@ -175,6 +175,41 @@ async function extractDocxText(buffer) {
 /// date arrives as its serial number. That is acceptable for reading and
 /// searching prose; it is not a date index, and nothing should present
 /// it as one.
+
+/// PDF text, through whichever pdf-parse API is installed.
+///
+/// This was silently broken. pdf-parse 2.x stopped default-exporting a
+/// function and exports a `PDFParse` CLASS, so
+/// `(module.default || module)(buffer)` resolved to the module
+/// namespace object and every PDF threw "pdfParse is not a function".
+/// The throw was caught and rendered as "could not read the text of
+/// this document", so it looked like a property of the files rather
+/// than of our code — and it stayed that way through a dependency bump
+/// because nothing asserted a PDF could still be read. Thirty-five
+/// documents, including every court filing on the C.H. Robinson
+/// project, had no readable text for that reason alone.
+///
+/// Both shapes are handled: a downgrade should not break it a second
+/// time in the other direction.
+async function extractPdfText(buffer) {
+  const mod = await import('pdf-parse');
+  if (typeof mod.PDFParse === 'function') {
+    const parser = new mod.PDFParse({ data: buffer });
+    try {
+      const out = await parser.getText();
+      return String(out?.text || '').trim();
+    } finally {
+      if (typeof parser.destroy === 'function') await parser.destroy();
+    }
+  }
+  const legacy = mod.default || mod;
+  if (typeof legacy !== 'function') {
+    throw new Error('pdf-parse exposes neither PDFParse nor a callable default.');
+  }
+  const data = await legacy(buffer);
+  return String(data?.text || '').trim();
+}
+
 async function extractXlsxText(buffer) {
   const JSZipModule = await import('jszip');
   const JSZip = JSZipModule.default || JSZipModule;
@@ -259,11 +294,7 @@ async function extractCsvText(buffer) {
 async function extractText(buffer, filename) {
   const lower = String(filename || '').toLowerCase();
   if (lower.endsWith('.pdf')) {
-    // pdf-parse is CJS; dynamic import to avoid ESM interop pain.
-    const pdfParseModule = await import('pdf-parse');
-    const pdfParse = pdfParseModule.default || pdfParseModule;
-    const data = await pdfParse(buffer);
-    return (data.text || '').trim();
+    return extractPdfText(buffer);
   }
   if (lower.endsWith('.pptx')) {
     return extractPptxText(buffer);
