@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import prisma from '../db.js';
 import { ROLE_RANK, isSuperAdminEmail } from '../middleware/auth.js';
 import { formatStamp } from '../services/transcription.js';
@@ -382,21 +383,28 @@ export async function buildResearchContext(user, topic = '') {
       // so — but they are NOT claims: a PDF has no tape, so nothing
       // here can be played back the way a ledger quote can, and the
       // wording below has to keep those two apart in the reader's head.
-      const docs = await prisma.researchArtifact.findMany({
-        where: {
-          projectId: p.id,
-          extractStatus: 'ok',
-          ...(isSuperAdminEmail(user?.email) ? {} : { ownerOnly: false }),
-        },
-        orderBy: [{ keyDoc: 'desc' }, { createdAt: 'desc' }],
-        take: 12,
-        select: { id: true, title: true, filename: true, kind: true, extractedText: true },
-      });
+      //
+      // The slice happens in POSTGRES, not here. Selecting the column
+      // and slicing in JavaScript pulls the whole thing over the wire —
+      // up to 600KB a document, twelve documents a project, six
+      // projects — which is tens of megabytes read and thrown away on
+      // every single chat message. Prisma cannot express a partial
+      // column read, so this is raw SQL on purpose.
+      const docs = await prisma.$queryRaw`
+        SELECT id, title, filename, kind,
+               left("extractedText", 900) AS excerpt
+        FROM "ResearchArtifact"
+        WHERE "projectId" = ${p.id}
+          AND "extractStatus" = 'ok'
+          AND "extractedText" IS NOT NULL
+          ${isSuperAdminEmail(user?.email) ? Prisma.empty : Prisma.sql`AND "ownerOnly" = false`}
+        ORDER BY "keyDoc" DESC, "createdAt" DESC
+        LIMIT 12`;
       for (const d of docs) {
-        // A slice per document rather than one long dump: retrieve()
-        // scores each chunk on its own, and a whole court opinion in one
+        // One chunk per document rather than one long dump: retrieve()
+        // scores each on its own, and a whole court opinion in a single
         // chunk either takes the entire budget or is dropped whole.
-        const body = String(d.extractedText || '').replace(/\s+/g, ' ').trim();
+        const body = String(d.excerpt || '').replace(/\s+/g, ' ').trim();
         if (!body) continue;
         chunks.push({
           id: `doc${d.id}`,

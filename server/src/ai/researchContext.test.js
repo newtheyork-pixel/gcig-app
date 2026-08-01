@@ -1,3 +1,4 @@
+import { createRequire } from 'node:module';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { ROLE_RANK } from '../middleware/auth.js';
@@ -89,4 +90,27 @@ test('a named project is never displaced by a bulk import', async () => {
   const ctx = readFileSync(new URL('./researchContext.js', import.meta.url), 'utf8');
   assert.match(ctx, /const named = topic/, 'named projects are fetched separately');
   assert.match(ctx, /notIn: named\.map/, 'recency must not re-fetch a named project');
+});
+
+test('document text is sliced in the database, not pulled and trimmed', async () => {
+  // A regression that shipped and had to be walked back: selecting
+  // `extractedText` and slicing in JavaScript reads the whole column —
+  // up to 600KB a document, twelve documents a project, six projects —
+  // on every chat message, all of it discarded but four hundred bytes.
+  // Prisma cannot express a partial column read, so the guard is that
+  // the raw query stays.
+  const { readFileSync } = await import('node:fs');
+  const ctx = readFileSync(new URL('./researchContext.js', import.meta.url), 'utf8');
+  assert.match(ctx, /left\("extractedText", \d+\)/,
+    'the excerpt must be taken by Postgres');
+  assert.doesNotMatch(ctx, /select:\s*\{[^}]*extractedText:\s*true/s,
+    'never select the whole extractedText column into the prompt builder');
+});
+
+test('the document query keeps the owner-only gate', () => {
+  // Raw SQL bypasses Prisma's where-clause safety, so the gate has to be
+  // written out and checked.
+  const { readFileSync } = createRequire(import.meta.url)('node:fs');
+  const ctx = readFileSync(new URL('./researchContext.js', import.meta.url), 'utf8');
+  assert.match(ctx, /ownerOnly" = false/, 'the raw document query must gate owner-only');
 });
