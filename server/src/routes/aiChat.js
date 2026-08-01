@@ -138,9 +138,30 @@ async function runWithTools(messages, temperature) {
         'for market data you have just been handed.',
     });
   }
-  const text = await llmChat({ messages: convo, temperature, localModel: RESEARCH_LOCAL_MODEL });
+  const text = await llmChat({
+    messages: convo, temperature, localModel: RESEARCH_LOCAL_MODEL,
+    timeoutMs: CHAT_TIMEOUT_MS,
+  });
   return { text, fromTools, used };
 }
+
+
+/// How long a person will wait for a chat reply, versus how long a 14B
+/// on a shared box actually needs.
+///
+/// llmChat's default is 25 seconds, which is a sensible ceiling for a
+/// background summarisation and far too short for this. Measured on the
+/// real tunnel: a 3,400-token prompt with a 600-token answer takes 23
+/// seconds from a laptop, before Render's own hop. So every chat request
+/// timed out by a hair and the panel said "AI provider unavailable"
+/// while the tunnel, both models and the fallback probe were all
+/// provably healthy — the least informative possible sentence about a
+/// working system.
+///
+/// Ninety seconds is chosen against the human, not the machine: chat is
+/// the one surface where somebody is watching a cursor blink and will
+/// wait, and a slow answer beats a false report of an outage.
+const CHAT_TIMEOUT_MS = 90_000;
 
 // A price in a reply that came from nowhere.
 //
@@ -412,6 +433,7 @@ router.post('/', chatLimiter, async (req, res) => {
           messages: modelMessages,
           temperature: temp,
           localModel: RESEARCH_LOCAL_MODEL,
+          timeoutMs: CHAT_TIMEOUT_MS,
         }),
         fromTools: [],
         used: [],
@@ -445,6 +467,7 @@ router.post('/', chatLimiter, async (req, res) => {
       messages: modelMessages,
       temperature: temp,
       localModel: RESEARCH_LOCAL_MODEL,
+      timeoutMs: CHAT_TIMEOUT_MS,
     });
     if (looksLikeLeakedToolCall(reply)) reply = null;
   }
@@ -453,7 +476,8 @@ router.post('/', chatLimiter, async (req, res) => {
   if (!reply) {
     return res.status(503).json({
       error:
-        'AI provider unavailable. Check the local LLM tunnel and OpenAI fallback.',
+        'The assistant did not answer in time. The local model is slow under load — '
+        + 'try again, and if it keeps happening check the tunnel and the OpenAI fallback.',
       sessionId: session.id,
     });
   }
