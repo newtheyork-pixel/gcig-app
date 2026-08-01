@@ -1,5 +1,5 @@
 import prisma from '../db.js';
-import { ROLE_RANK } from '../middleware/auth.js';
+import { ROLE_RANK, isSuperAdminEmail } from '../middleware/auth.js';
 import { formatStamp } from '../services/transcription.js';
 import { retrieve } from './retrieve.js';
 
@@ -62,6 +62,13 @@ function canSeeResearch(user) {
   return Math.max(0, ...ranks) >= MIN_RANK;
 }
 
+/// One shape for both halves of the project query.
+const PROJECT_INCLUDE = {
+  questions: { orderBy: [{ rank: 'asc' }, { id: 'asc' }] },
+  valuations: { orderBy: { asOf: 'desc' }, take: 3 },
+  _count: { select: { interviews: true } },
+};
+
 /**
  * Returns a markdown block for the system prompt, or '' when the user is
  * not entitled to it or there is nothing to say. Never throws — the
@@ -97,16 +104,40 @@ export async function buildResearchContext(user, topic = '') {
   if (!canSeeResearch(user)) return '';
 
   try {
-    const projects = await prisma.researchProject.findMany({
-      where: { status: { not: 'Closed' } },
-      orderBy: { updatedAt: 'desc' },
-      take: 6,
-      include: {
-        questions: { orderBy: [{ rank: 'asc' }, { id: 'asc' }] },
-        valuations: { orderBy: { asOf: 'desc' }, take: 3 },
-        _count: { select: { interviews: true } },
+    // Owner-only projects are gated in four places in routes/research.js
+    // and were gated in none of them here, so the assistant was reading
+    // out projects the same member is refused over the API. A privacy
+    // rule enforced on one surface and not the other is not a rule.
+    const visibility = isSuperAdminEmail(user?.email) ? {} : { ownerOnly: false };
+
+    // Recency alone was the wrong window. Importing thirty-nine archive
+    // projects one afternoon stamped them all newer than the two we
+    // actually work, so `take: 6` filled with folders of PDFs and the
+    // assistant lost every claim it had — asked about Lindt it would
+    // have said we had no fieldwork, which was false and looked like a
+    // retrieval bug rather than an ordering one.
+    //
+    // So a project the conversation NAMES is fetched regardless of when
+    // it was last touched, and recency only fills what is left.
+    const named = topic
+      ? await prisma.researchProject.findMany({
+        where: { ...visibility, status: { not: 'Closed' } },
+        orderBy: { updatedAt: 'desc' },
+        include: PROJECT_INCLUDE,
+      }).then((all) => all.filter((p) => mentions(topic, p)).slice(0, 4))
+      : [];
+
+    const recent = await prisma.researchProject.findMany({
+      where: {
+        ...visibility,
+        status: { not: 'Closed' },
+        ...(named.length ? { id: { notIn: named.map((p) => p.id) } } : {}),
       },
+      orderBy: { updatedAt: 'desc' },
+      take: Math.max(0, 6 - named.length),
+      include: PROJECT_INCLUDE,
     });
+    const projects = [...named, ...recent];
     if (projects.length === 0) return '';
 
     // Everything we could say, as addressable pieces. What actually
