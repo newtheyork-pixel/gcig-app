@@ -2486,6 +2486,10 @@ router.post('/artifacts/extract', async (req, res) => {
   }
   const take = Math.min(Math.max(Number(req.body?.batch) || 10, 1), 25);
   const retryUnsupported = req.body?.retryUnsupported === true;
+  // The cooldown protects against retrying a file whose failure we do
+  // not understand. When the CAUSE has been fixed — as it was for every
+  // PDF in the system — waiting six hours is just waiting.
+  const retryFailedNow = req.body?.retryFailedNow === true;
   try {
     const cooldown = new Date(Date.now() - 6 * 60 * 60 * 1000);
     const rows = await prisma.researchArtifact.findMany({
@@ -2496,7 +2500,9 @@ router.post('/artifacts/extract', async (req, res) => {
           {
             extractStatus: 'failed',
             extractAttempts: { lt: 4 },
-            OR: [{ extractAttemptedAt: null }, { extractAttemptedAt: { lt: cooldown } }],
+            ...(retryFailedNow
+              ? {}
+              : { OR: [{ extractAttemptedAt: null }, { extractAttemptedAt: { lt: cooldown } }] }),
           },
           ...(retryUnsupported ? [{ extractStatus: 'unsupported' }] : []),
         ],
@@ -2521,7 +2527,13 @@ router.post('/artifacts/extract', async (req, res) => {
     }
 
     const remaining = await prisma.researchArtifact.count({
-      where: { fileRef: { startsWith: 'onedrive:' }, extractStatus: 'never' },
+      where: {
+        fileRef: { startsWith: 'onedrive:' },
+        OR: [
+          { extractStatus: 'never' },
+          ...(retryFailedNow ? [{ extractStatus: 'failed', extractAttempts: { lt: 4 } }] : []),
+        ],
+      },
     });
     res.json({ processed: results.length, remaining, results });
   } catch (err) {
