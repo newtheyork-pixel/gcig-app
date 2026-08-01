@@ -105,7 +105,31 @@ router.get('/projects', async (req, res) => {
       orderBy: { updatedAt: 'desc' },
       include: {
         createdBy: { select: { id: true, name: true } },
-        _count: { select: { interviews: true, artifacts: true } },
+        // Six counts on the same round trip, because calls and files
+        // were the wrong two to judge a project by. C.H. Robinson has
+        // twenty-two written questions and seventeen people in the
+        // outreach funnel and not one interview yet — on an interview
+        // count it reads as empty, which is the opposite of true.
+        //
+        // Artifacts are counted through the SAME owner-only filter the
+        // detail route applies. They were not, so a member saw "26
+        // files" in the list and opened the project to find 23.
+        //
+        // Claims are deliberately absent: ResearchClaim hangs off
+        // Interview rather than ResearchProject, so there is no _count
+        // for it here and inventing one would cost a second query.
+        _count: {
+          select: {
+            interviews: true,
+            questions: true,
+            targets: true,
+            visits: true,
+            valuations: true,
+            artifacts: isSuperAdminEmail(req.user?.email)
+              ? true
+              : { where: { ownerOnly: false } },
+          },
+        },
       },
     });
     res.json(projects);

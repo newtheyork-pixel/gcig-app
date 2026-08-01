@@ -40,6 +40,53 @@ struct ResearchPanel: View {
         .task(id: ticker) { await loadProjects() }
     }
 
+    /// A pile heading. Shown only when there are two piles to tell
+    /// apart — one heading above one list is furniture.
+    private func pileHeader(_ text: String, _ n: Int) -> some View {
+        HStack(spacing: 6) {
+            Text(text).font(Term.mono(9, weight: .bold)).tracking(0.6)
+                .foregroundStyle(Term.fgDim)
+            Text("\(n)").font(Term.mono(9)).foregroundStyle(Term.fgMuted)
+            Spacer()
+        }
+        .padding(.horizontal, 10).padding(.top, 8).padding(.bottom, 3)
+    }
+
+    private func projectRow(_ p: Project) -> some View {
+        Button { openID = p.id } label: {
+            HStack(spacing: 8) {
+                Text(p.ticker ?? "—")
+                    .font(Term.mono(11, weight: .bold))
+                    .foregroundStyle(Term.amber)
+                    .frame(width: 62, alignment: .leading)
+                Text(p.name)
+                    .font(Term.mono(11)).foregroundStyle(Term.white)
+                    .lineLimit(1)
+                Spacer(minLength: 6)
+                // Terse on purpose: the pane floor is 320pt, and these
+                // six counts spelled out in words left the project name
+                // no room. A zero stays visible rather than vanishing,
+                // so the columns line up down the list and a thin
+                // project reads as thin without reading a digit.
+                Text(p.countsLine)
+                    .font(Term.mono(9)).foregroundStyle(Term.fgMuted)
+                    .monospacedDigit()
+                    .help(p.countsHelp)
+                Text(p.status)
+                    .font(Term.mono(9)).foregroundStyle(Term.fgDim)
+                    .frame(width: 62, alignment: .trailing)
+                Text(Fmt.date(p.updatedAt))
+                    .font(Term.mono(9)).foregroundStyle(Term.fgMuted)
+                    .frame(width: 66, alignment: .trailing)
+            }
+            .padding(.horizontal, 10).padding(.vertical, 5)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { $0 ? NSCursor.pointingHand.push() : NSCursor.pop() }
+        .overlay(alignment: .bottom) { Rectangle().fill(Term.border).frame(height: 1) }
+    }
+
     private var list: some View {
         PanelState(state: projects,
                    emptyWhen: { $0.isEmpty },
@@ -62,39 +109,30 @@ struct ResearchPanel: View {
                 if shown.isEmpty {
                     PanelMessage(text: "No project for \(ticker ?? "that ticker"). Type RSCH for all of them.")
                 } else {
+                    // Two piles, because they are two different things.
+                    // Sorting by last-touched put both real projects at
+                    // the bottom of the list the moment a bulk import
+                    // stamped thirty-nine rows one minute newer, so the
+                    // work was buried under the reference material.
+                    let worked = shown.filter { !$0.isArchive }
+                    let archive = shown.filter { $0.isArchive }
                     ScrollView {
                         LazyVStack(spacing: 0) {
-                            ForEach(shown) { p in
-                                Button { openID = p.id } label: {
-                                    HStack(spacing: 8) {
-                                        Text(p.ticker ?? "—")
-                                            .font(Term.mono(11, weight: .bold))
-                                            .foregroundStyle(Term.amber)
-                                            .frame(width: 62, alignment: .leading)
-                                        Text(p.name)
-                                            .font(Term.mono(11)).foregroundStyle(Term.white)
-                                            .lineLimit(1)
-                                        Spacer(minLength: 6)
-                                        Text("\(p.counts?.interviews ?? 0) calls · \(p.counts?.artifacts ?? 0) files")
-                                            .font(Term.mono(9)).foregroundStyle(Term.fgMuted)
-                                        Text(p.status)
-                                            .font(Term.mono(9)).foregroundStyle(Term.fgDim)
-                                            .frame(width: 62, alignment: .trailing)
-                                        Text(Fmt.date(p.updatedAt))
-                                            .font(Term.mono(9)).foregroundStyle(Term.fgMuted)
-                                            .frame(width: 66, alignment: .trailing)
-                                    }
-                                    .padding(.horizontal, 10).padding(.vertical, 5)
-                                    .contentShape(Rectangle())
+                            if !worked.isEmpty && !archive.isEmpty {
+                                pileHeader("BEING RESEARCHED", worked.count)
+                            }
+                            ForEach(worked) { p in projectRow(p) }
+                            if !archive.isEmpty {
+                                if !worked.isEmpty {
+                                    pileHeader("IMPORTED ARCHIVE", archive.count)
                                 }
-                                .buttonStyle(.plain)
-                                .onHover { $0 ? NSCursor.pointingHand.push() : NSCursor.pop() }
-                                .overlay(alignment: .bottom) {
-                                    Rectangle().fill(Term.border).frame(height: 1)
-                                }
+                                ForEach(archive) { p in projectRow(p) }
                             }
                         }
                     }
+                    Text("Q questions · F files · T contacts · C calls. An imported archive is a folder of prior work with nothing asked of it yet.")
+                        .font(Term.mono(9)).foregroundStyle(Term.fgMuted)
+                        .padding(.horizontal, 10).padding(.vertical, 2)
                     Text("Projects are created on the web terminal.")
                         .font(Term.mono(9)).foregroundStyle(Term.fgMuted)
                         .padding(.horizontal, 10).padding(.vertical, 4)
@@ -139,6 +177,46 @@ struct Project: Decodable, Identifiable {
     struct Counts: Decodable {
         let interviews: Int?
         let artifacts: Int?
+        // The four that turn "how many calls" into "what is in here".
+        // Optional and read as UNKNOWN rather than zero: a client
+        // pointed at a server that predates them must not announce that
+        // a project has no questions on the strength of a field nobody
+        // sent.
+        let questions: Int?
+        let targets: Int?
+        let visits: Int?
+        let valuations: Int?
+    }
+
+    /// A project imported from OneDrive rather than worked in the app.
+    ///
+    /// Thirty-nine of forty-one are exactly that: a ticker, one or two
+    /// PDFs, no brief of our own, nothing asked and nobody contacted.
+    /// They are worth keeping and worth not scrolling through, and the
+    /// distinction is structural rather than a judgement — an import has
+    /// no questions and no outreach because nobody has done any yet.
+    /// What is in the project, in the width a list row has.
+    ///
+    /// A dash rather than a zero where the server sent no count at all:
+    /// "this server does not report questions" and "this project has no
+    /// questions" are different statements, and an old build talking to
+    /// a new one must not make the first sound like the second.
+    var countsLine: String {
+        func n(_ v: Int?) -> String { v.map(String.init) ?? "–" }
+        return "Q\(n(counts?.questions)) F\(n(counts?.artifacts)) T\(n(counts?.targets)) C\(n(counts?.interviews))"
+    }
+
+    var countsHelp: String {
+        func n(_ v: Int?) -> String { v.map(String.init) ?? "not reported" }
+        return "\(n(counts?.questions)) questions · \(n(counts?.artifacts)) files · "
+            + "\(n(counts?.targets)) outreach contacts · \(n(counts?.interviews)) interviews · "
+            + "\(n(counts?.visits)) site visits · \(n(counts?.valuations)) valuations"
+    }
+
+    var isArchive: Bool {
+        (counts?.questions ?? 0) == 0
+            && (counts?.targets ?? 0) == 0
+            && (counts?.interviews ?? 0) == 0
     }
 
     enum CodingKeys: String, CodingKey {

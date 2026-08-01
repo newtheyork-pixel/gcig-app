@@ -128,8 +128,14 @@ export default function FieldWork({ ticker }) {
             <tr>
               <th>Sym</th>
               <th>Project</th>
-              <th className="num">Calls</th>
+              {/* Questions and contacts, not just calls and files. C.H.
+                  Robinson has twenty-two questions and seventeen people
+                  in the funnel and no interviews yet — on a call count
+                  it reads as an empty project. */}
+              <th className="num">Qs</th>
               <th className="num">Files</th>
+              <th className="num">Contacts</th>
+              <th className="num">Calls</th>
               <th>Status</th>
               <th>Updated</th>
             </tr>
@@ -146,8 +152,12 @@ export default function FieldWork({ ticker }) {
                     {p.name}
                   </a>
                 </td>
-                <td className="num">{p._count?.interviews ?? 0}</td>
-                <td className="num">{p._count?.artifacts ?? 0}</td>
+                {/* A dash where the server sent no count: "not
+                    reported" and "none" are different answers. */}
+                <td className="num">{num(p._count?.questions)}</td>
+                <td className="num">{num(p._count?.artifacts)}</td>
+                <td className="num">{num(p._count?.targets)}</td>
+                <td className="num">{num(p._count?.interviews)}</td>
                 <td>{p.status}</td>
                 <td>{fmtDate(p.updatedAt)}</td>
               </tr>
@@ -173,6 +183,10 @@ const termInput = {
   fontSize: 12,
   outline: 'none',
 };
+
+// A count the server did not send is unknown, not zero. An older API
+// must not be made to announce that a project has no questions.
+const num = (v) => (typeof v === 'number' ? v : '–');
 
 function TermButton({ children, onClick, disabled, title, type = 'button' }) {
   return (
