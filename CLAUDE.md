@@ -640,6 +640,31 @@ Hit-rate stats count `Approved` toward Voted Yes too.
 
 ## Recent fixes / playbook notes
 
+- **Postgres text will not hold a NUL, and extraction produces them
+  (Jul '26)**: one document with an embedded 0x00 failed the INSERT with
+  `invalid byte sequence for encoding "UTF8": 0x00`, took the whole
+  extraction batch with it, and therefore blocked every file queued
+  behind it — permanently, surfacing as a 500 that named no file.
+  `storable()` in `services/artifactText.js` strips NULs, C0 controls
+  and lone surrogates (which are refused the same way and look
+  identical); tab, newline and carriage return stay, because those are
+  the shape of a document. Anything writing extracted or scraped text to
+  a `text` column needs this.
+- **Chat streams (Jul '26)**: both `/api/ai-chat` (web) and
+  `/api/terminal/chat` (Mac) emit server-sent events when the client
+  asks and the local path can; a client that gets ordinary JSON falls
+  back to the blocking call. Two things worth keeping in mind. The
+  guards run LATE — the check for a figure no tool backed up can only
+  read text that exists, and under streaming that text has been seen, so
+  the stream emits `retract` and the client takes the draft down. And a
+  broken stream saves NOTHING: a half-written answer left standing reads
+  as a complete short one.
+  On the Swift side `API.stream` returns an `AsyncThrowingStream` rather
+  than taking a callback — a callback must be `@Sendable` to cross the
+  concurrency boundary, and the natural caller is a SwiftUI view
+  mutating `@State`, which is exactly what a Sendable closure may not
+  capture.
+
 - **The LLM tunnel BUFFERS, so streaming does not stream (Jul '26,
   open)**: `/api/ai-chat` now streams server-sent events and the web
   chat renders them as they arrive, but the last hop defeats it.
