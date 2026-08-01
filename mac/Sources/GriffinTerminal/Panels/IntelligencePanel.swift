@@ -20,7 +20,13 @@ struct IntelligencePanel: View {
         enum Kind { case user, assistant, error }
         let id = UUID()
         let kind: Kind
-        let content: String
+        // Grows a token at a time while the answer is being written, so
+        // both of these are var rather than let.
+        var content: String
+        /// True while tokens are still arriving. An empty bubble and a
+        /// finished one look identical without it, and the first token
+        /// can be several seconds away.
+        var streaming: Bool = false
     }
 
     struct Reply: Decodable {
@@ -82,6 +88,12 @@ struct IntelligencePanel: View {
             .onChange(of: messages.count) {
                 proxy.scrollTo(Self.bottomID, anchor: .bottom)
             }
+            // A streaming answer grows without the count changing, so
+            // following only the count leaves the reader staring at the
+            // top of a note that is being written below the fold.
+            .onChange(of: messages.last?.content.count ?? 0) {
+                proxy.scrollTo(Self.bottomID, anchor: .bottom)
+            }
             .onChange(of: sending) {
                 proxy.scrollTo(Self.bottomID, anchor: .bottom)
             }
@@ -113,7 +125,11 @@ struct IntelligencePanel: View {
                 .foregroundStyle(m.kind == .user ? Term.amber
                                  : m.kind == .error ? Term.negative
                                  : Term.fgMuted)
-            Text(m.content)
+            // A block caret while the answer is still arriving, in the
+            // same amber the command line uses. Without it an empty
+            // bubble and a finished one are the same picture, and the
+            // first token can be several seconds away.
+            Text(m.content + (m.streaming ? "\u{2588}" : ""))
                 .font(Term.mono(11))
                 .foregroundStyle(m.kind == .user ? Term.amber
                                  : m.kind == .error ? Term.negative
@@ -186,13 +202,38 @@ struct IntelligencePanel: View {
         }
 
         do {
-            let data = try await API.shared.post("/terminal/chat", json: [
-                "messages": outbound,
-                "context": workspaceContext,
-            ])
-            let r = try await API.shared.decode(Reply.self, from: data)
-            let reply = (r.reply?.isEmpty == false) ? r.reply! : "(no reply)"
-            messages.append(Entry(kind: .assistant, content: reply))
+            // Stream first, so the note appears as it is written rather
+            // than a minute later all at once. A server that cannot
+            // stream answers with ordinary JSON and we fall back — the
+            // reader gets the same answer either way, just later.
+            let index = messages.count
+            messages.append(Entry(kind: .assistant, content: "", streaming: true))
+            do {
+                let tokens = try await API.shared.stream("/terminal/chat", json: [
+                    "messages": outbound,
+                    "context": workspaceContext,
+                    "stream": true,
+                ])
+                for try await piece in tokens {
+                    guard index < messages.count else { break }
+                    messages[index].content += piece
+                }
+                messages[index].streaming = false
+                if messages[index].content.isEmpty {
+                    messages[index].content = "(no reply)"
+                }
+            } catch {
+                // Drop the half-written bubble before retrying: a
+                // fragment left on screen reads as a short answer.
+                if index < messages.count { messages.remove(at: index) }
+                let data = try await API.shared.post("/terminal/chat", json: [
+                    "messages": outbound,
+                    "context": workspaceContext,
+                ])
+                let r = try await API.shared.decode(Reply.self, from: data)
+                let reply = (r.reply?.isEmpty == false) ? r.reply! : "(no reply)"
+                messages.append(Entry(kind: .assistant, content: reply))
+            }
         } catch {
             // The API layer already surfaces the server's own { error }
             // sentence; this row carries it into the conversation.

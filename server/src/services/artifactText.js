@@ -25,6 +25,30 @@ const GRAPH = 'https://graph.microsoft.com/v1.0';
 /// UI can say so rather than presenting a clipped opinion as complete.
 export const MAX_STORE_CHARS = 600_000;
 
+/// Text Postgres will actually accept.
+///
+/// A `text` column cannot hold a NUL byte, and extraction produces them:
+/// PDFs with embedded binary streams, logs written by a Windows tool,
+/// anything that was not really text to begin with. The insert fails
+/// with `invalid byte sequence for encoding "UTF8": 0x00` and takes the
+/// whole batch with it — so one bad document blocked every file queued
+/// behind it, permanently, surfacing as a 500 that said nothing about
+/// which file was at fault.
+///
+/// Lone surrogates go too. They survive a JavaScript string and are
+/// refused on the way into the database for the same reason, and the
+/// failure looks identical.
+export function storable(text) {
+  return String(text || '')
+    .replace(/\u0000/g, '')
+    // Other C0 controls are legal in Postgres but meaningless in prose
+    // and make an excerpt unreadable. Tab, newline and carriage return
+    // stay, because those are the shape of a document.
+    .replace(/[\u0001-\u0008\u000B\u000C\u000E-\u001F]/g, '')
+    .replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/g, '')
+    .replace(/(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, '');
+}
+
 export function itemIdFrom(fileRef) {
   const s = String(fileRef || '');
   return s.startsWith('onedrive:') ? s.slice('onedrive:'.length) : null;
@@ -60,7 +84,7 @@ export async function extractForArtifact(artifact, deps = {}) {
   try {
     const buffer = await fetchBytes(itemId, deps);
     const extract = deps.extractTextFromBuffer || extractTextFromBuffer;
-    const text = String((await extract(buffer, artifact.filename)) || '');
+    const text = storable(await extract(buffer, artifact.filename));
     if (!text.trim()) {
       // A PDF with no text layer is a scan. The extraction worked; there
       // is simply nothing in it to read, and saying so beats a blank pane.

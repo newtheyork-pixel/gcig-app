@@ -102,3 +102,28 @@ test('the OneDrive scheme is stripped, and nothing else is accepted', () => {
   assert.equal(itemIdFrom('s3:ABC123'), null);
   assert.equal(itemIdFrom(null), null);
 });
+
+test('text that Postgres would refuse is cleaned before it is stored', async () => {
+  // A NUL byte in an extraction kills the INSERT with "invalid byte
+  // sequence for encoding UTF8: 0x00" and takes the whole batch with
+  // it, so one bad document blocked every file queued behind it — and
+  // it surfaced as a 500 that named no file at all.
+  const { storable } = await import('./artifactText.js');
+  const NUL = String.fromCharCode(0);
+  assert.equal(storable(`before${NUL}after`), 'beforeafter');
+  // A lone surrogate is refused the same way and looks identical.
+  assert.equal(storable(`a${String.fromCharCode(0xD800)}b`), 'ab');
+  // The shape of a document survives.
+  assert.equal(storable('line one\nline two\tcol'), 'line one\nline two\tcol');
+  assert.equal(storable('clean prose'), 'clean prose');
+});
+
+test('a document carrying NULs still extracts to something storable', async () => {
+  const NUL = String.fromCharCode(0);
+  const u = await extractForArtifact(artifact, deps({
+    extractTextFromBuffer: async () => `Court${NUL} opinion${NUL} text`,
+  }));
+  assert.equal(u.extractStatus, 'ok');
+  assert.ok(!u.extractedText.includes(NUL));
+  assert.equal(u.extractedText, 'Court opinion text');
+});

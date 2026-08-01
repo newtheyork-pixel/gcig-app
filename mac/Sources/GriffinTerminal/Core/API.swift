@@ -315,3 +315,94 @@ enum TokenStore {
         try? FileManager.default.removeItem(at: url)
     }
 }
+
+extension API {
+    /// A server-sent event stream, delivered a token at a time.
+    ///
+    /// The model writes at roughly twenty tokens a second, so a research
+    /// note takes most of a minute — and holding all of it back until
+    /// the last token means the panel shows nothing for that whole time
+    /// and looks broken rather than busy.
+    ///
+    /// `URLSession.bytes(for:)` rather than `data(for:)`: the latter
+    /// waits for the body to complete, which is the exact thing being
+    /// avoided here.
+    ///
+    /// Throws on transport failure or on a server that answered with
+    /// something other than an event stream, so the caller can fall back
+    /// to the ordinary blocking post rather than showing an empty pane.
+    /// Returns the token sequence. An AsyncSequence rather than a
+    /// callback because a callback has to be `@Sendable` to cross the
+    /// concurrency boundary, and the natural caller is a SwiftUI view
+    /// mutating `@State` — which is MainActor-isolated and therefore
+    /// exactly what a Sendable closure may not capture. Iterating with
+    /// `for try await` keeps every mutation on the caller's actor.
+    func stream(_ path: String, json: [String: Any]) async throws -> AsyncThrowingStream<String, Error> {
+        guard let url = URL(string: base + path) else {
+            throw Failure.transport("Bad URL for \(path)")
+        }
+        var req = URLRequest(url: url)
+        req.httpMethod = "POST"
+        // Generous: the deadline that matters is silence, and URLSession
+        // resets this on each delivered byte.
+        req.timeoutInterval = 120
+        req.httpBody = try JSONSerialization.data(withJSONObject: json)
+        req.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        req.setValue("text/event-stream", forHTTPHeaderField: "Accept")
+        if let token { req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
+
+        let (bytes, response) = try await URLSession.shared.bytes(for: req)
+        guard let http = response as? HTTPURLResponse else {
+            throw Failure.transport("No HTTP response.")
+        }
+        let type = http.value(forHTTPHeaderField: "Content-Type") ?? ""
+        guard http.statusCode == 200, type.contains("text/event-stream") else {
+            throw Failure.transport("Server did not stream (\(http.statusCode)).")
+        }
+
+        // The wire format is `event: NAME` then `data: JSON`, blank line
+        // between. Reading by line rather than by chunk means the
+        // framing is handled for us and a token cannot be split.
+        return AsyncThrowingStream { continuation in
+            Task {
+                var event = ""
+                var sawToken = false
+                do {
+                    for try await line in bytes.lines {
+                        if line.hasPrefix("event:") {
+                            event = String(line.dropFirst(6)).trimmingCharacters(in: .whitespaces)
+                        } else if line.hasPrefix("data:") {
+                            let raw = String(line.dropFirst(5)).trimmingCharacters(in: .whitespaces)
+                            switch event {
+                            case "token":
+                                // Each token is a JSON string, so quoting
+                                // and escapes survive: a model writing a
+                                // quote or a newline must not arrive as
+                                // the literal characters.
+                                if let d = raw.data(using: .utf8),
+                                   let piece = try? JSONDecoder().decode(String.self, from: d) {
+                                    sawToken = true
+                                    continuation.yield(piece)
+                                }
+                            case "error":
+                                throw Failure.transport("The answer stopped part way through. Try again.")
+                            default:
+                                break
+                            }
+                        }
+                    }
+                    // A stream that opened and said nothing is a failure.
+                    // Finishing quietly would leave an empty bubble that
+                    // reads as an answer.
+                    if !sawToken {
+                        continuation.finish(throwing: Failure.transport("The stream produced no text."))
+                    } else {
+                        continuation.finish()
+                    }
+                } catch {
+                    continuation.finish(throwing: error)
+                }
+            }
+        }
+    }
+}

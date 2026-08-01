@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import rateLimit from 'express-rate-limit';
 import { verifyJwt, requireTerminalAccess } from '../middleware/auth.js';
-import { llmChat } from '../services/llm.js';
+import { llmChat, llmChatStreamLocal, canStreamLocally } from '../services/llm.js';
 import { getHistory, getIntraday } from '../services/priceHistory.js';
 import { getFundamentals, getStatements } from '../services/secFundamentals.js';
 import { getPortfolioMovers, getSheetPortfolio } from '../services/sheetPortfolio.js';
@@ -1455,10 +1455,40 @@ router.post('/chat', aiLimiter, async (req, res) => {
     ...trimmed,
   ];
 
+  // Stream when asked, for the same reason the web chat does: the model
+  // writes at roughly twenty tokens a second, and a research note is not
+  // a short answer. A client that does not ask, or a box that cannot
+  // stream, gets the blocking reply exactly as before.
+  if (req.body?.stream === true && canStreamLocally()) {
+    res.writeHead(200, {
+      'Content-Type': 'text/event-stream; charset=utf-8',
+      'Cache-Control': 'no-cache, no-transform',
+      Connection: 'keep-alive',
+      'X-Accel-Buffering': 'no',
+    });
+    const send = (event, data) => res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+    try {
+      await llmChatStreamLocal({
+        messages,
+        temperature: 0.3,
+        timeoutMs: 90_000,
+        onToken: (piece) => send('token', piece),
+      });
+      send('done', {});
+    } catch (err) {
+      console.warn('terminal/chat stream failed:', err.message);
+      // Nothing partial is kept or claimed. A stream that died halfway
+      // has produced a fragment, and a fragment presented as an answer
+      // is worse than an honest failure.
+      send('error', { error: 'The answer stopped part way through. Try again.' });
+    }
+    return res.end();
+  }
+
   const reply = await llmChat({
     messages,
     temperature: 0.3,
-    timeoutMs: 30_000,
+    timeoutMs: 90_000,
     preferQuality: true,
   });
   res.json({ reply: reply || 'AI is unavailable right now. Try again in a moment.' });
