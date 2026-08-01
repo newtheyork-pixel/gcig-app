@@ -606,3 +606,100 @@ export async function probeProviders({ timeoutMs = 6000, localTimeoutMs = LOCAL_
   status.active = status.local.ok ? 'local' : status.anthropic.ok ? 'anthropic' : status.openai.ok ? 'openai' : null;
   return status;
 }
+
+/// The same local call, delivered a token at a time.
+///
+/// A 14B on a shared box needs the better part of a minute to write a
+/// real answer, and until now the whole thing was withheld until the
+/// last token landed — so the surface where somebody is actually sitting
+/// and watching was the one that made them wait longest, with nothing on
+/// screen to show it was working. Raising the timeout stopped it failing
+/// and did nothing about that.
+///
+/// Deliberately local-only. Streaming a hosted fallback would mean two
+/// more wire formats to parse for a path that exists to catch outages,
+/// and a caller that cannot stream is better served by the ordinary
+/// blocking call than by a half-built one.
+export function canStreamLocally() {
+  return !!(process.env.LOCAL_LLM_URL && nativeChatURL());
+}
+
+/**
+ * Stream a local completion, calling `onToken` with each fragment.
+ *
+ * Resolves with the full text. Throws on transport failure so a caller
+ * can fall back to the blocking path — a stream that dies halfway is a
+ * failure even though bytes arrived, and treating it as success would
+ * publish a truncated answer as a complete one.
+ */
+export async function llmChatStreamLocal({
+  messages, temperature, localModel, timeoutMs = 120_000, onToken,
+}) {
+  const endpoint = nativeChatURL();
+  if (!endpoint) throw new Error('No local streaming endpoint configured.');
+
+  const controller = new AbortController();
+  // The deadline covers silence, not total duration: a model still
+  // emitting tokens is working, and cutting it off at a fixed wall-clock
+  // would truncate the long answers that most need streaming.
+  let idle = setTimeout(() => controller.abort(), timeoutMs);
+  const touch = () => {
+    clearTimeout(idle);
+    idle = setTimeout(() => controller.abort(), timeoutMs);
+  };
+
+  try {
+    const res = await fetch(endpoint, {
+      method: 'POST',
+      signal: controller.signal,
+      headers: {
+        'Content-Type': 'application/json',
+        ...(process.env.LOCAL_LLM_API_KEY
+          ? { Authorization: `Bearer ${process.env.LOCAL_LLM_API_KEY}` } : {}),
+      },
+      body: JSON.stringify({
+        model: localModel || process.env.LOCAL_LLM_MODEL || DEFAULT_LOCAL_MODEL,
+        messages,
+        stream: true,
+        options: {
+          num_ctx: contextFor(messages),
+          ...(temperature != null ? { temperature } : {}),
+        },
+      }),
+    });
+    if (!res.ok || !res.body) {
+      throw new Error(`local stream ${res.status}: ${(await res.text().catch(() => '')).slice(0, 200)}`);
+    }
+
+    // Ollama streams newline-delimited JSON, and a chunk boundary lands
+    // mid-object often enough that a naive per-chunk parse loses tokens.
+    // The tail is carried forward.
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let full = '';
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      touch();
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() ?? '';
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+        let obj;
+        try { obj = JSON.parse(trimmed); } catch { continue; }
+        const piece = obj?.message?.content;
+        if (piece) {
+          full += piece;
+          onToken?.(piece);
+        }
+      }
+    }
+    if (!full.trim()) throw new Error('local stream produced no text');
+    return full;
+  } finally {
+    clearTimeout(idle);
+  }
+}

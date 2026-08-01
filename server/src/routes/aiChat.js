@@ -2,7 +2,7 @@ import { Router } from 'express';
 import rateLimit from 'express-rate-limit';
 import prisma from '../db.js';
 import { verifyJwt } from '../middleware/auth.js';
-import { llmChat, llmChatTools, RESEARCH_LOCAL_MODEL } from '../services/llm.js';
+import { llmChat, llmChatTools, RESEARCH_LOCAL_MODEL, llmChatStreamLocal, canStreamLocally } from '../services/llm.js';
 import { TOOL_SPECS, runChatTool } from '../ai/chatTools.js';
 import { getClubSystemPrompt } from '../ai/clubBrief.js';
 
@@ -162,6 +162,86 @@ async function runWithTools(messages, temperature) {
 /// the one surface where somebody is watching a cursor blink and will
 /// wait, and a slow answer beats a false report of an outage.
 const CHAT_TIMEOUT_MS = 90_000;
+
+/// Send the answer as it is written.
+///
+/// Server-sent events rather than a socket: this is one direction, one
+/// response, and it survives a proxy that would drop a websocket. The
+/// client reads it with fetch + a reader rather than EventSource,
+/// because EventSource cannot carry the Authorization header and this
+/// route is authenticated.
+async function streamReply({ req, res, session, modelMessages, temp, startedAt, message }) {
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream; charset=utf-8',
+    'Cache-Control': 'no-cache, no-transform',
+    Connection: 'keep-alive',
+    // Nginx and friends buffer an event stream into uselessness unless
+    // told not to. Harmless where nothing is listening.
+    'X-Accel-Buffering': 'no',
+  });
+  const send = (event, data) => {
+    res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+  };
+  send('open', { sessionId: session.id });
+
+  let full = '';
+  try {
+    full = await llmChatStreamLocal({
+      messages: modelMessages,
+      temperature: temp,
+      localModel: RESEARCH_LOCAL_MODEL,
+      timeoutMs: CHAT_TIMEOUT_MS,
+      onToken: (piece) => send('token', piece),
+    });
+  } catch (err) {
+    console.warn('aiChat stream failed:', err.message);
+    // Nothing partial is kept. A half-written answer saved as an answer
+    // is worse than no answer, because it reads as complete.
+    send('error', {
+      error: 'The assistant stopped part way through. Nothing was saved — try again.',
+    });
+    return res.end();
+  }
+
+  // The same guards the blocking path applies, applied late because
+  // that is when the text exists. A tripped guard retracts.
+  let reply = full;
+  if (looksLikeLeakedToolCall(reply)) {
+    reply = null;
+  } else if (unbackedPrice(reply, [])) {
+    console.warn('aiChat stream: reply carried an unbacked figure; retracting');
+    reply = null;
+  }
+  if (!reply) {
+    send('retract', {
+      reason: 'That draft stated a figure nothing backed it up with, so it was withdrawn. '
+        + 'Ask again and it will answer from what it can actually cite.',
+    });
+    return res.end();
+  }
+
+  const latencyMs = Date.now() - startedAt;
+  await prisma.aiChatMessage.create({
+    data: {
+      sessionId: session.id,
+      role: 'assistant',
+      content: reply,
+      model: process.env.LOCAL_LLM_URL ? 'local?' : 'unknown',
+      latencyMs,
+    },
+  });
+
+  let title = session.title;
+  if (!title) {
+    title = truncateTitle(message, 80);
+    await prisma.aiChatSession.update({ where: { id: session.id }, data: { title, updatedAt: new Date() } });
+  } else {
+    await prisma.aiChatSession.update({ where: { id: session.id }, data: { updatedAt: new Date() } });
+  }
+
+  send('done', { sessionId: session.id, title, latencyMs });
+  res.end();
+}
 
 // A price in a reply that came from nowhere.
 //
@@ -426,6 +506,26 @@ router.post('/', chatLimiter, async (req, res) => {
   // original question from it. That is a different failure from prompt
   // size, and it did not move when the prompt shrank.
   const toolsEnabled = process.env.AI_CHAT_TOOLS === '1';
+
+  // Stream, when the client asked and the local path can.
+  //
+  // A 14B on a shared box takes the better part of a minute to write a
+  // real answer, and withholding all of it until the last token means
+  // the one surface with a person sitting in front of it is the one that
+  // shows nothing the longest. Raising the timeout stopped it failing
+  // and did nothing about the waiting.
+  //
+  // The guards below run AFTER the text has been shown, which is the
+  // honest cost of streaming: an invented price can reach the screen
+  // before anything checks it. So the stream can retract — the client is
+  // told to replace what it drew, rather than the server pretending it
+  // never sent it.
+  if (req.body?.stream === true && !toolsEnabled && canStreamLocally()) {
+    return streamReply({
+      req, res, session, modelMessages, temp, startedAt, message,
+    });
+  }
+
   const attempt = toolsEnabled
     ? await runWithTools(modelMessages, temp)
     : {

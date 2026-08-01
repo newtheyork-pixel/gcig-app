@@ -17,6 +17,7 @@ import {
   Wrench,
 } from 'lucide-react';
 import api from '../api/client.js';
+import { streamReply } from '../api/chatStream.js';
 import { useAuth } from '../context/AuthContext.jsx';
 import PageHeader from '../components/PageHeader.jsx';
 import Button from '../components/Button.jsx';
@@ -154,21 +155,66 @@ export default function AiChat() {
     setPending(true);
 
     try {
-      const res = await api.post('/ai-chat', {
-        sessionId: sessionId ?? undefined,
-        message: text,
-      });
-      const { sessionId: newId, title, reply, toolsUsed } = res.data;
-      setSessionId(newId);
-      setMessages((prev) => [
-        ...prev,
-        {
-          role: 'assistant',
-          content: reply,
-          toolsUsed: toolsUsed || [],
-          createdAt: new Date().toISOString(),
+      // Stream, and fall back to the blocking call if the server cannot.
+      //
+      // The model writes at about twenty tokens a second, so a real
+      // answer is the better part of a minute. Waiting for the last one
+      // before drawing the first is the difference between a product
+      // that looks broken and one that looks like it is thinking.
+      const streamed = await streamReply(text, {
+        sessionId,
+        onOpen: (id) => {
+          setSessionId(id);
+          setMessages((prev) => [
+            ...prev,
+            { role: 'assistant', content: '', streaming: true, createdAt: new Date().toISOString() },
+          ]);
         },
-      ]);
+        onToken: (piece) => {
+          setMessages((prev) => {
+            const next = [...prev];
+            const last = next[next.length - 1];
+            if (last?.role === 'assistant') {
+              next[next.length - 1] = { ...last, content: last.content + piece };
+            }
+            return next;
+          });
+        },
+        // The server checks for an invented figure only once the text
+        // exists, which with streaming is after it has been read. When
+        // that trips, the draft is taken back rather than left standing.
+        onRetract: (reason) => {
+          setMessages((prev) => prev.slice(0, -1));
+          setError(reason);
+        },
+      });
+
+      let newId = streamed?.sessionId ?? null;
+      let title = streamed?.title ?? null;
+      if (!streamed) {
+        const res = await api.post('/ai-chat', {
+          sessionId: sessionId ?? undefined,
+          message: text,
+        });
+        ({ sessionId: newId, title } = res.data);
+        setSessionId(newId);
+        setMessages((prev) => [
+          ...prev,
+          {
+            role: 'assistant',
+            content: res.data.reply,
+            toolsUsed: res.data.toolsUsed || [],
+            createdAt: new Date().toISOString(),
+          },
+        ]);
+      } else {
+        setMessages((prev) => {
+          const next = [...prev];
+          const last = next[next.length - 1];
+          if (last?.role === 'assistant') next[next.length - 1] = { ...last, streaming: false };
+          return next;
+        });
+      }
       // Refresh the sidebar ordering / titling. Cheap — a single GET.
       loadSessions();
       // If this was a brand-new session, also upsert it locally so the
@@ -190,8 +236,15 @@ export default function AiChat() {
         err.message ||
         'Something went wrong — try again.';
       setError(msg);
-      // Roll back the optimistic user turn so the composer makes sense.
-      setMessages((prev) => prev.slice(0, -1));
+      // Roll back the optimistic user turn — and the half-written
+      // assistant bubble if the stream had started one. A partial answer
+      // left on screen after a failure reads as a complete short one.
+      setMessages((prev) => {
+        const next = [...prev];
+        if (next[next.length - 1]?.role === 'assistant') next.pop();
+        if (next[next.length - 1]?.role === 'user') next.pop();
+        return next;
+      });
       setInput(text);
     } finally {
       setPending(false);
@@ -610,6 +663,12 @@ function MessageBubble({ message }) {
               <ReactMarkdown remarkPlugins={[remarkGfm]} components={MD_COMPONENTS}>
                 {message.content}
               </ReactMarkdown>
+              {/* Something on screen the whole time it is writing. An
+                  empty bubble and a finished one look identical, and the
+                  first token can be seconds away. */}
+              {message.streaming ? (
+                <span className="ml-0.5 inline-block h-4 w-[7px] translate-y-0.5 animate-pulse bg-navy-300 align-middle" />
+              ) : null}
             </div>
           )}
         </div>
