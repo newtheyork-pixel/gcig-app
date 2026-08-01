@@ -191,6 +191,9 @@ async function extractDocxText(buffer) {
 ///
 /// Both shapes are handled: a downgrade should not break it a second
 /// time in the other direction.
+/// Extensions whose bytes are already the text.
+const PLAIN_TEXT = /\.(txt|md|markdown|json|jsonl|ipynb|csv|tsv|py|js|mjs|cjs|ts|jsx|tsx|r|sql|sh|bash|zsh|ya?ml|toml|ini|cfg|conf|xml|html?|css|tex|bib|srt|vtt|rtf|log)$/;
+
 async function extractPdfText(buffer) {
   const mod = await import('pdf-parse');
   if (typeof mod.PDFParse === 'function') {
@@ -308,11 +311,25 @@ async function extractText(buffer, filename) {
   if (lower.endsWith('.csv') || lower.endsWith('.tsv')) {
     return extractCsvText(buffer);
   }
-  if (lower.endsWith('.txt') || lower.endsWith('.md') || lower.endsWith('.json')) {
-    return buffer.toString('utf8').trim();
+  // Anything that is already text is already readable. The analysis
+  // scripts are part of the work — fourteen Python files were being
+  // refused as an unreadable type while sitting there in plain UTF-8 —
+  // and so are the notebooks, the SQL and the saved HTML.
+  if (PLAIN_TEXT.test(lower)) {
+    const text = buffer.toString('utf8');
+    // A binary file with a text-ish extension shows up as replacement
+    // characters. Better to call it unsupported than to store mojibake
+    // and let the assistant read it as prose.
+    const junk = (text.match(/\uFFFD/g) || []).length;
+    if (junk > text.length * 0.01) {
+      const err = new Error(`${filename} does not appear to be text.`);
+      err.code = 'UNSUPPORTED_TYPE';
+      throw err;
+    }
+    return text.trim();
   }
   const err = new Error(
-    'Readable types are PDF, DOCX, PPTX, XLSX, CSV, TXT, MD and JSON — '
+    'Readable types are PDF, DOCX, PPTX, XLSX and anything already text — '
     + `got ${filename || 'an unknown type'}.`
   );
   err.code = 'UNSUPPORTED_TYPE';
