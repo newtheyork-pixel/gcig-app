@@ -640,6 +640,50 @@ Hit-rate stats count `Approved` toward Voted Yes too.
 
 ## Recent fixes / playbook notes
 
+- **Every PDF in the system was unreadable, and it looked like the files'
+  fault (Jul '26)**: `pdf-parse` 2.x stopped default-exporting a function
+  and exports a `PDFParse` CLASS, so `(mod.default || mod)(buffer)`
+  called the module namespace object and threw "pdfParse is not a
+  function". The throw was caught upstream and rendered as "could not
+  read the text of this document" — a sentence about the file rather
+  than about our code — so thirty-five documents went dark through a
+  dependency bump with nothing failing loudly. `pdfExtract.test.js`
+  builds a real one-page PDF by hand (not a fixture, which would go
+  stale) and asserts the installed library parses it.
+  **This only surfaced because extraction started recording WHY a file
+  could not be read.** A failure count with no reasons would have shown
+  thirty-five unreadable PDFs and read as scanned paper.
+- **Uploaded research text is persisted on the artifact
+  (`services/artifactText.js`, Jul '26)**: it used to be extracted on
+  demand into a process-local cache, so search could not find a phrase
+  in a court filing and the assistant had never seen one. Five states,
+  because the interesting ones are otherwise identical: `never` (nobody
+  tried — not a failure), `empty` (a scan; extraction SUCCEEDED and
+  returned nothing, which used to paint a blank pane), `unsupported`,
+  `failed`, `ok`. Backfill runs through a bounded super-admin endpoint
+  rather than a script, because DATABASE_URL and the OneDrive token live
+  on Render. Never widen the artifact payload back to `include`: one of
+  those scalars is now up to 600KB of extracted text, on a project
+  holding two hundred rows — the same trap the interviews list
+  documents about `transcriptWords`.
+- **The assistant was reading owner-only research (Jul '26)**:
+  `routes/research.js` gates `ownerOnly` in four places and
+  `ai/researchContext.js` gated it in none, so the chat box served
+  project names, questions and claims the same member is refused over
+  the API. Importing thirty-nine owner-only archives made that live for
+  every Analyst. The same import broke retrieval: `take: 6` by recency
+  filled with folders of PDFs and displaced both real projects, so the
+  assistant could reach zero claims. A project the conversation NAMES is
+  now fetched regardless of recency. Both rules are pinned by tests that
+  read the route file and assert the two surfaces say the same thing.
+  **A privacy rule enforced on one surface and not the other is not a
+  rule** — check every reader, not just the API.
+- **Documents are not claims**: artifact passages now reach the
+  assistant, and the prompt says explicitly that a file in our records
+  is ours to cite but is NOT pinned to a recording and can never be
+  played back. Same reasoning that keeps `SiteObservation` out of the
+  claim ledger: no tape, no timestamp, no ledger.
+
 - **companyfacts `fy` is the FILING's year, not the fact's (Jul '26,
   critical)**: FA and GF printed General Dynamics' calendar-2023 income
   statement under the heading FY2025 — a two-year shift on every annual
