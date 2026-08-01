@@ -128,8 +128,10 @@ test('scale is honoured, and a dash is not a number', () => {
 
 test('a filing that tags nothing says so, and says why', async () => {
   const out = await getCustomerConcentration('TEST', {
-    getLatestFilingByForm: async () => ({ form: '10-K', filingDate: '2026-02-01', url: 'https://example.test/x.htm' }),
-    secFetch: async () => ({ text: async () => '<html><body>no concentration tagged here</body></html>' }),
+    getFilingDocument: async () => ({
+      filing: { form: '10-K', filingDate: '2026-02-01', url: 'https://example.test/x.htm' },
+      html: '<html><body>no concentration tagged here</body></html>',
+    }),
   });
   assert.equal(out.available, false);
   assert.match(out.reason, /10% of revenue/);
@@ -139,8 +141,7 @@ test('a filing that tags nothing says so, and says why', async () => {
 
 test('a failed read is not the same as an empty one', async () => {
   const out = await getCustomerConcentration('TESTFAIL', {
-    getLatestFilingByForm: async () => ({ form: '10-K', filingDate: '2026-02-01', url: 'https://example.test/y.htm' }),
-    secFetch: async () => { throw new Error('SEC is rate-limiting us'); },
+    getFilingDocument: async () => { throw new Error('SEC is rate-limiting us'); },
   });
   assert.equal(out.available, false);
   assert.equal(out.failed, true);

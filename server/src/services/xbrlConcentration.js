@@ -30,8 +30,7 @@
 // outside knowledge is exactly the move that put three companies in this
 // project's notes that were never in the filing.
 
-import { getLatestFilingByForm, SEC_UA } from './secFilings.js';
-import { secFetch } from './secFetch.js';
+import { getFilingDocument } from './filingDocument.js';
 
 const TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const FAILURE_TTL_MS = 2 * 60 * 1000;
@@ -265,20 +264,17 @@ export async function getCustomerConcentration(ticker, deps = {}) {
   const hit = cache.get(key);
   if (hit && Date.now() - hit.at < TTL_MS) return hit.value;
 
-  const fetchFiling = deps.getLatestFilingByForm || getLatestFilingByForm;
-  const get = deps.secFetch || secFetch;
+  const loadDoc = deps.getFilingDocument || getFilingDocument;
 
   let value;
   try {
-    const tenK = await fetchFiling(key, /^10-K(405|SB)?$/i);
+    // The same document SPLC's prose read wants, fetched once.
+    const doc = await loadDoc(key, /^10-K(405|SB)?$/i);
+    const tenK = doc?.filing;
     if (!tenK?.url) {
       value = { available: false, reason: 'No US 10-K on file for this ticker.', rows: [] };
     } else {
-      const res = await get(tenK.url, {
-        headers: { 'User-Agent': SEC_UA, Accept: 'text/html' },
-        timeoutMs: 30_000,
-      });
-      const all = parseConcentration(await res.text());
+      const all = parseConcentration(doc.html);
       const latest = latestPeriod(all);
       value = latest.rows.length
         ? {

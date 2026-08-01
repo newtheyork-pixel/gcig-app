@@ -10,8 +10,7 @@
 // when it says nothing. Nothing here is invented; the panel is honest
 // about being a filing read, not a market-wide graph.
 
-import { getLatestFilingByForm, SEC_UA } from './secFilings.js';
-import { secFetch } from './secFetch.js';
+import { getFilingDocument } from './filingDocument.js';
 import { llmChat } from './llm.js';
 
 const BLOCK_TAG =
@@ -235,6 +234,29 @@ const TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const FAILURE_TTL_MS = 2 * 60 * 1000;
 const cache = new Map();
 
+/// A ceiling on the whole model step, not on one call to it.
+///
+/// `llmChat` walks its providers — local first, then the fallbacks — and
+/// each carries its own timeout, so a 60-second budget produced a
+/// 285-SECOND response for Mesa Labs when the local model was cold and
+/// the chain fell through. Nobody waits five minutes for a panel, and
+/// the client gives up long before the server does, which turns a slow
+/// answer into no answer plus a wasted round trip.
+///
+/// Resolving to null on the deadline rather than throwing is deliberate:
+/// null is already the "the model gave us nothing usable" path, so a
+/// timeout renders as EXTRACTION DID NOT RUN — never as a filing that
+/// names nobody.
+const LLM_DEADLINE_MS = 45_000;
+
+function withDeadline(promise, ms) {
+  let timer;
+  return Promise.race([
+    promise.finally(() => clearTimeout(timer)),
+    new Promise((resolve) => { timer = setTimeout(() => resolve(null), ms); }),
+  ]);
+}
+
 export async function getSupplyChain(ticker) {
   const key = String(ticker || '').trim().toUpperCase();
   if (!key) return null;
@@ -244,16 +266,14 @@ export async function getSupplyChain(ticker) {
 
   let value = null;
   try {
-    const tenK = await getLatestFilingByForm(key, /^10-K(405|SB)?$/i);
+    // Shared with the concentration read, which wants the same document
+    // for a different question. Two fetches of the same 3.5MB filing on
+    // every panel open was pure waste.
+    const doc = await getFilingDocument(key, /^10-K(405|SB)?$/i);
+    const tenK = doc?.filing;
     if (tenK?.url) {
-      // Through secFetch, so a throttled read is retried rather than
-      // becoming a week-long empty panel.
-      const r = await secFetch(tenK.url, {
-        headers: { 'User-Agent': SEC_UA, Accept: 'text/html' },
-        timeoutMs: 25_000,
-      });
-      if (r.ok) {
-        const passages = gatherPassages(htmlToText(await r.text()));
+      {
+        const passages = gatherPassages(htmlToText(doc.html));
         const base = {
           ticker: key,
           sourceForm: tenK.form,
@@ -267,14 +287,14 @@ export async function getSupplyChain(ticker) {
         // the first is the panel quietly lying about its own coverage.
         const blank = { summary: '', concentration: null, customers: [], suppliers: [], materials: [] };
         if (passages) {
-          const raw = await llmChat({ messages: [
+          // A cold model takes longer than a warm one on a
+          // twelve-thousand-character prompt, so the per-call budget is
+          // generous — but the whole step is capped, because llmChat
+          // walks its providers and each carries its own timeout.
+          const raw = await withDeadline(llmChat({ messages: [
             { role: 'system', content: SYSTEM },
             { role: 'user', content: `Company: ${key}\n\n10-K excerpts:\n${passages}` },
-            // A cold model takes longer than a warm one to answer a
-            // twelve-thousand-character prompt, and 25s sat under that
-            // line often enough that the first open of SPLC after a
-            // quiet spell reliably came back empty.
-          ], jsonMode: true, temperature: 0, timeoutMs: 60_000 });
+          ], jsonMode: true, temperature: 0, timeoutMs: 40_000 }), LLM_DEADLINE_MS);
           let parsed = null;
           try {
             // llmChat already runs extractJson on a jsonMode reply, so
