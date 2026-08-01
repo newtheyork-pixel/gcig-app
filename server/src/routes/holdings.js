@@ -116,6 +116,8 @@ import { verifyJwt, requireSuperAdmin, requireRole } from '../middleware/auth.js
 import { getSheetPortfolio, withResolvedDayChange } from '../services/sheetPortfolio.js';
 import { getNewsForTicker, extractArticle } from '../services/news.js';
 import { getBusinessProfile } from '../services/secBusinessSummary.js';
+import { tickerWhere } from '../services/tickerKey.js';
+import { computeTally } from './votes.js';
 import { getCompanyIdentity } from '../services/secFilings.js';
 import {
   generateRiskCommentary,
@@ -479,9 +481,15 @@ router.get('/coverage/:ticker', async (req, res) => {
     return res.status(400).json({ error: 'Invalid ticker' });
   }
   try {
-    const [pitches, reports] = await Promise.all([
+    // Matched through the shared resolver rather than one route's own
+    // rule. Six tables carry ticker as free text with no foreign key,
+    // and the codebase had three different opinions about matching them
+    // — a club block that shows two of three pitches teaches a member
+    // the club has no history on a name when it does.
+    const where = tickerWhere(raw);
+    const [pitches, reports, holding, sessions, allUsers] = await Promise.all([
       prisma.pitch.findMany({
-        where: { ticker: { equals: raw, mode: 'insensitive' } },
+        where,
         orderBy: { date: 'desc' },
         include: {
           industry: { select: { id: true, name: true } },
@@ -490,12 +498,50 @@ router.get('/coverage/:ticker', async (req, res) => {
           },
         },
       }),
-      prisma.report.findMany({
-        where: { ticker: { equals: raw, mode: 'insensitive' } },
-        orderBy: { date: 'desc' },
+      prisma.report.findMany({ where, orderBy: { date: 'desc' } }),
+      prisma.holding.findFirst({ where: { ...where, isCash: false } }),
+      prisma.votingSession.findMany({
+        where: { ...where, status: 'closed' },
+        orderBy: { closedAt: 'desc' },
+        include: { ballots: true },
       }),
+      prisma.user.findMany({ select: { id: true, name: true, role: true, extraRoles: true } }),
     ]);
+
+    // The decision is COMPUTED, never stored, so it has to be recomputed
+    // here from the same function the votes page uses. Reimplementing
+    // the weighting would be how the club block and the vote page start
+    // disagreeing about what the club decided.
+    const decisions = sessions.map((v) => {
+      const tally = computeTally(v.ballots, allUsers, v);
+      return {
+        id: v.id,
+        ticker: v.ticker,
+        kind: v.kind,
+        closedAt: v.closedAt,
+        decision: tally.finalDecision,
+        ballots: v.ballots.length,
+        // What the room proposed, against what was actually deployed —
+        // the gap is the thing a member cannot see anywhere today.
+        proposed: tally.buyAmountStats ?? null,
+        synthesis: v.synthesis || null,
+        pitchId: v.pitchId ?? null,
+      };
+    });
     res.json({
+      ticker: raw,
+      // Do we own it, and what did we pay. A dash here is a fact about
+      // the book, not a hole in the panel.
+      holding: holding
+        ? {
+          shares: holding.shares,
+          costBasis: holding.costBasis,
+          name: holding.name ?? null,
+          sector: holding.sector ?? null,
+          addedAt: holding.addedAt,
+        }
+        : null,
+      decisions,
       pitches: pitches.map((p) => ({
         id: p.id,
         date: p.date,
