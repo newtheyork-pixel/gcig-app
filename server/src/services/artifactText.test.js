@@ -33,7 +33,7 @@ test('a scan is "empty", which is not a failure', async () => {
   assert.equal(u.extractStatus, 'empty');
   assert.equal(u.extractedText, null);
   assert.equal(u.extractChars, 0);
-  assert.match(extractionNote({ extractStatus: 'empty' }), /scan/i);
+  assert.match(extractionNote({ fileRef: 'onedrive:X', extractStatus: 'empty' }), /scan/i);
 });
 
 test('a type we cannot parse is "unsupported", and is not retried as a failure', async () => {
@@ -81,14 +81,20 @@ test('a very long document is stored truncated and says so', async () => {
   // The stored length being short of the real one IS the truncation
   // flag — no extra column, and a clipped court opinion never presents
   // itself as complete.
-  const note = extractionNote({ extractStatus: 'ok', extractChars: u.extractChars, extractedText: u.extractedText });
+  const note = extractionNote({ fileRef: 'onedrive:X', extractStatus: 'ok', extractChars: u.extractChars, extractedText: u.extractedText });
   assert.match(note, /Showing the first/);
-  assert.equal(extractionNote({ extractStatus: 'ok', extractChars: 10, extractedText: 'a'.repeat(10) }), null);
+  assert.equal(extractionNote({ fileRef: 'onedrive:X', extractStatus: 'ok', extractChars: 10, extractedText: 'a'.repeat(10) }), null);
 });
 
 test('never-attempted reads as not-yet-read, never as an error', () => {
-  assert.match(extractionNote({ extractStatus: 'never' }), /Not read yet/);
-  assert.match(extractionNote({ extractStatus: 'failed' }), /retried/);
+  assert.match(extractionNote({ fileRef: 'onedrive:X', extractStatus: 'never' }), /Not read yet/);
+  assert.match(extractionNote({ fileRef: 'onedrive:X', extractStatus: 'failed' }), /retried/);
+});
+
+test('a memo typed into the app has nothing to say about extraction', () => {
+  // It has no file. "Not read yet" about prose somebody wrote in full
+  // is a sentence about nothing.
+  assert.equal(extractionNote({ fileRef: null, extractStatus: 'never', body: 'written here' }), null);
 });
 
 test('the OneDrive scheme is stripped, and nothing else is accepted', () => {

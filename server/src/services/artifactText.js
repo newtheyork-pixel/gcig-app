@@ -92,6 +92,10 @@ export async function extractForArtifact(artifact, deps = {}) {
 /// What a reader should be told, per state. Kept beside the states so a
 /// new one cannot be added without deciding what it says out loud.
 export function extractionNote(a) {
+  // An artifact typed into the app has no file to read, so it has no
+  // extraction state worth reporting. Saying "not read yet" about a memo
+  // somebody wrote in full is a sentence about nothing.
+  if (!a?.fileRef) return null;
   switch (a?.extractStatus) {
     case 'ok':
       return a.extractChars > (a.extractedText?.length ?? 0)
