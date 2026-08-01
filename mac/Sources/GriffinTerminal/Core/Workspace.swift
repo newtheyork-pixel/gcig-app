@@ -175,6 +175,61 @@ final class Workspace: ObservableObject {
         history.removeAll { $0 == e }
         history.insert(e, at: 0)
         history = Array(history.prefix(8))
+        pushNav(e)
+    }
+
+    // MARK: Back and forward
+    //
+    // `history` is the LAST list: deduplicated, capped at eight, ordered
+    // by recency. That is the right shape for "show me where I have
+    // been" and the wrong one for a back button, which needs to keep
+    // duplicates and needs an order that survives revisiting. So the
+    // navigation stack is its own thing.
+    //
+    // Going back must not itself be recorded as a move, or back becomes
+    // a loop between the last two screens — hence the guard flag.
+    @Published private(set) var navStack: [HistoryEntry] = []
+    @Published private(set) var navIndex: Int = -1
+    private var navigating = false
+
+    private func pushNav(_ e: HistoryEntry) {
+        guard !navigating else { return }
+        // A new move truncates anything ahead of the cursor, the way a
+        // browser does: the forward path is only meaningful until you
+        // choose a different one.
+        if navIndex >= 0 && navIndex < navStack.count - 1 {
+            navStack = Array(navStack.prefix(navIndex + 1))
+        }
+        if navStack.last != e { navStack.append(e) }
+        navStack = Array(navStack.suffix(40))
+        navIndex = navStack.count - 1
+    }
+
+    var canGoBack: Bool { navIndex > 0 }
+    var canGoForward: Bool { navIndex >= 0 && navIndex < navStack.count - 1 }
+
+    func goBack() {
+        guard canGoBack else { return }
+        navIndex -= 1
+        replay(navStack[navIndex])
+    }
+
+    func goForward() {
+        guard canGoForward else { return }
+        navIndex += 1
+        replay(navStack[navIndex])
+    }
+
+    /// Reuse the focused pane rather than spawning another. Back that
+    /// opens a new window is not back.
+    private func replay(_ e: HistoryEntry) {
+        navigating = true
+        defer { navigating = false }
+        if let id = focusedID, panes.contains(where: { $0.id == id }) {
+            retarget(id, fn: e.fn, ticker: .some(e.ticker))
+        } else {
+            open(Command(ticker: e.ticker, function: e.fn, args: nil))
+        }
     }
 
     // MARK: Retarget — same pane, new security or function

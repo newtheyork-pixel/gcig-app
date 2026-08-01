@@ -14,6 +14,10 @@ struct TerminalView: View {
     var body: some View {
         VStack(spacing: 0) {
             TopBar()
+            // What is open, and where you are — above the command line
+            // because it is the answer to a question you have before you
+            // type, not after.
+            TabStrip()
             CommandBarView().zIndex(100)
             BreakingStrip()
             HStack(spacing: 0) {
