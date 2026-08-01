@@ -116,7 +116,7 @@ import { verifyJwt, requireSuperAdmin, requireRole } from '../middleware/auth.js
 import { getSheetPortfolio, withResolvedDayChange } from '../services/sheetPortfolio.js';
 import { getNewsForTicker, extractArticle } from '../services/news.js';
 import { getBusinessProfile } from '../services/secBusinessSummary.js';
-import { tickerWhere } from '../services/tickerKey.js';
+import { tickerWhere, groupByTicker } from '../services/tickerKey.js';
 import { computeTally } from './votes.js';
 import { getCompanyIdentity } from '../services/secFilings.js';
 import {
@@ -475,6 +475,77 @@ router.get('/news/:ticker', tickerDataLimiter, async (req, res) => {
 
 // Research coverage for a ticker: pitches and reports the club has produced.
 // Returned alongside ticker info in the holding detail modal.
+/**
+ * The club's own record across the WHOLE book, one row per security.
+ *
+ * The per-ticker version answers "what do we know about this name".
+ * This answers the question nobody could ask before: which of our
+ * positions has any club work behind it at all. That is an audit of
+ * ourselves, and it is not flattering — a name we own with no pitch and
+ * no vote on file is money at risk that no one in the room ever argued
+ * for on the record.
+ *
+ * Deliberately compact. This feeds a COLUMN, not a panel, so it carries
+ * counts and the one most recent decision rather than every ballot.
+ */
+router.get('/coverage', async (_req, res) => {
+  try {
+    // Four small tables read whole and grouped in memory. A groupBy in
+    // Postgres cannot apply the dot/dash and case rules the resolver
+    // owns, and doing it per ticker would be twenty-five round trips to
+    // paint one column.
+    const [pitches, reports, sessions, allUsers] = await Promise.all([
+      prisma.pitch.findMany({
+        select: { id: true, ticker: true, date: true, slideshowUrl: true },
+      }),
+      prisma.report.findMany({ select: { id: true, ticker: true, date: true } }),
+      prisma.votingSession.findMany({
+        where: { status: 'closed' },
+        orderBy: { closedAt: 'desc' },
+        include: { ballots: true },
+      }),
+      prisma.user.findMany({ select: { id: true, name: true, role: true, extraRoles: true } }),
+    ]);
+
+    const byPitch = groupByTicker(pitches);
+    const byReport = groupByTicker(reports);
+    const bySession = groupByTicker(sessions);
+
+    const out = {};
+    const touch = (key) => {
+      if (!out[key]) out[key] = { pitches: 0, reports: 0, votes: 0, lastDecision: null, deck: false };
+      return out[key];
+    };
+
+    for (const [key, rows] of byPitch) {
+      const e = touch(key);
+      e.pitches = rows.length;
+      // A pitch with no deck attached is a pitch nobody can re-read.
+      e.deck = rows.some((r) => !!r.slideshowUrl);
+      e.lastPitch = rows.map((r) => r.date).filter(Boolean).sort().pop() ?? null;
+    }
+    for (const [key, rows] of byReport) touch(key).reports = rows.length;
+    for (const [key, rows] of bySession) {
+      const e = touch(key);
+      e.votes = rows.length;
+      // Sessions arrive newest first; the same computeTally the votes
+      // page uses, so one screen can never disagree with another.
+      const newest = rows[0];
+      const tally = computeTally(newest.ballots, allUsers, newest);
+      e.lastDecision = {
+        decision: tally.finalDecision,
+        kind: newest.kind,
+        closedAt: newest.closedAt,
+        ballots: newest.ballots.length,
+      };
+    }
+    res.json({ coverage: out, asOf: new Date().toISOString() });
+  } catch (err) {
+    console.error('coverage() failed:', err);
+    res.status(500).json({ error: 'Failed to load coverage' });
+  }
+});
+
 router.get('/coverage/:ticker', async (req, res) => {
   const raw = String(req.params.ticker || '').trim().toUpperCase();
   if (!raw || !/^[A-Z0-9.\-]{1,10}$/.test(raw)) {

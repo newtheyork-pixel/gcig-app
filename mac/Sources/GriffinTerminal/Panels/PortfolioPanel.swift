@@ -48,6 +48,22 @@ struct PortfolioPanel: View {
         }
     }
 
+    /// What the club itself has on a name: a pitch, a closed vote, a
+    /// written report. Counts rather than contents — this paints a
+    /// column, and the panel that wants the ballots is DES.
+    struct Cov: Decodable {
+        let pitches: Int?; let reports: Int?; let votes: Int?
+        let deck: Bool?; let lastPitch: String?
+        let lastDecision: Decision?
+        struct Decision: Decodable {
+            let decision: String?; let kind: String?
+            let closedAt: String?; let ballots: Int?
+        }
+        var isEmpty: Bool { (pitches ?? 0) == 0 && (votes ?? 0) == 0 && (reports ?? 0) == 0 }
+    }
+
+    struct CovPayload: Decodable { let coverage: [String: Cov]? }
+
     struct Totals: Decodable {
         let totalValue: Double?
         let totalCost: Double?
@@ -76,6 +92,7 @@ struct PortfolioPanel: View {
 
     @State private var state: Loadable<Payload> = .loading
     @State private var quotes: [String: Quote] = [:]
+    @State private var coverage: [String: Cov] = [:]
 
     var body: some View {
         PanelState(state: state,
@@ -246,12 +263,13 @@ struct PortfolioPanel: View {
     // added here will not compile until the position row, the cash line
     // and the totals have all said what they put in it.
     private enum Field: CaseIterable {
-        case ticker, name, shares, avgCost, last, cost, value, wt, day, sinceBuy, pct, ytd
+        case ticker, name, club, shares, avgCost, last, cost, value, wt, day, sinceBuy, pct, ytd
 
         var title: String {
             switch self {
             case .ticker:   return "TICKER"
             case .name:     return "NAME"
+            case .club:     return "CLUB"
             case .shares:   return "SHARES"
             case .avgCost:  return "AVG COST"
             case .last:     return "LAST"
@@ -270,6 +288,7 @@ struct PortfolioPanel: View {
             switch self {
             case .ticker:   return 58
             case .name:     return nil
+            case .club:     return 54
             case .shares:   return 60
             case .avgCost:  return 72
             case .last:     return 72
@@ -286,6 +305,7 @@ struct PortfolioPanel: View {
         var align: Alignment {
             switch self {
             case .ticker, .name: return .leading
+            case .club: return .leading
             default: return .trailing   // every other column is a number
             }
         }
@@ -336,6 +356,67 @@ struct PortfolioPanel: View {
         .padding(.horizontal, 10).padding(.vertical, 3)
     }
 
+
+    // MARK: The club column
+
+    /// Three lit letters: pitched, voted, written up.
+    ///
+    /// The alternative was a single word — FULL, PART, NONE — and it
+    /// hides the distinction that matters. A name we voted on but never
+    /// pitched (Applied Digital, 183 shares, six ballots, no deck) fails
+    /// differently from one somebody pitched and the club never put to a
+    /// vote, and a reader scanning twenty-five rows should be able to
+    /// see which is which without opening anything.
+    @ViewBuilder
+    private func clubCell(_ h: Holding) -> some View {
+        let c = coverage[Self.key(h.ticker)]
+        HStack(spacing: 3) {
+            mark("P", on: (c?.pitches ?? 0) > 0, help: pitchHelp(c))
+            mark("V", on: (c?.votes ?? 0) > 0, help: voteHelp(c))
+            mark("R", on: (c?.reports ?? 0) > 0,
+                 help: (c?.reports ?? 0) > 0 ? "\(c!.reports!) report(s) in the archive" : "No written report")
+        }
+    }
+
+    private func mark(_ letter: String, on: Bool, help: String) -> some View {
+        Text(letter)
+            .font(Term.mono(10, weight: on ? .bold : .regular))
+            // Off is drawn, not omitted. A blank cell reads as "not
+            // loaded"; a dim letter reads as "we checked, and no".
+            .foregroundStyle(on ? Term.amber : Term.fgMuted.opacity(0.45))
+            .help(help)
+    }
+
+    private func pitchHelp(_ c: Cov?) -> String {
+        guard let c, (c.pitches ?? 0) > 0 else { return "Never pitched to the club" }
+        let deck = (c.deck ?? false) ? "" : ", no deck attached"
+        return "\(c.pitches!) pitch(es)" + (c.lastPitch.map { ", last \(Fmt.date($0))" } ?? "") + deck
+    }
+
+    private func voteHelp(_ c: Cov?) -> String {
+        guard let c, let d = c.lastDecision else { return "No closed vote on file" }
+        return [d.decision, d.closedAt.map { Fmt.date($0) }, d.ballots.map { "\($0) ballots" }]
+            .compactMap { $0 }.joined(separator: " · ")
+    }
+
+    /// The server keys this map through its own ticker resolver, which
+    /// folds case and the dot/dash share-class convention. Matching it
+    /// here is four characters; getting it wrong would silently blank
+    /// the column for exactly the names most likely to be misfiled.
+    static func key(_ raw: String?) -> String {
+        (raw ?? "").trimmingCharacters(in: .whitespaces).uppercased()
+            .replacingOccurrences(of: ".", with: "-")
+    }
+
+    /// Positions we own with nothing on file. Cash excluded — nobody
+    /// pitches cash.
+    private var uncoveredCount: Int {
+        guard case .loaded(let p) = state else { return 0 }
+        guard !coverage.isEmpty else { return 0 }   // not loaded is not zero
+        return (p.holdings ?? []).filter { !($0.isCash ?? false) }
+            .filter { (coverage[Self.key($0.ticker)]?.isEmpty ?? true) }.count
+    }
+
     @ViewBuilder
     private func cell(_ f: Field, _ h: Holding, weight: Double?) -> some View {
         switch f {
@@ -356,6 +437,8 @@ struct PortfolioPanel: View {
             Text(h.name ?? "")
                 .font(Term.mono(10)).foregroundStyle(Term.fgMuted)
                 .lineLimit(1).truncationMode(.tail)
+        case .club:
+            clubCell(h)
         case .shares:
             Text(h.shares.map { Fmt.money($0, decimals: 0) } ?? "—")
         case .avgCost:
@@ -406,9 +489,10 @@ struct PortfolioPanel: View {
         case .wt:
             Text(weight.map { Fmt.pct($0, decimals: 1, signed: false) } ?? "—")
                 .foregroundStyle(Term.fgDim)
-        case .name, .shares, .avgCost, .last, .cost, .day, .sinceBuy, .pct, .ytd:
+        case .name, .club, .shares, .avgCost, .last, .cost, .day, .sinceBuy, .pct, .ytd:
             // Cash has no basis, no mark and no share count. These stay
             // empty rather than zero: a zero reads as a measured value.
+            // Nobody pitches cash either.
             Text("")
         }
     }
@@ -463,6 +547,15 @@ struct PortfolioPanel: View {
         case .name:
             Text("\(t.positions) positions" + (t.hasCash ? " plus cash" : ""))
                 .font(Term.mono(10)).foregroundStyle(Term.fgMuted)
+        case .club:
+            // The audit, in one cell. A book where a third of the
+            // positions carry no pitch, no vote and no report is not a
+            // book anyone can defend in a meeting, and until now there
+            // was no screen that would say so.
+            Text(uncoveredCount > 0 ? "\(uncoveredCount) BARE" : "")
+                .font(Term.mono(9, weight: .bold))
+                .foregroundStyle(uncoveredCount > 0 ? Term.negative : Term.fgMuted)
+                .help("Positions with no pitch, no closed vote and no report on file")
         case .cost:
             Text(Fmt.money(t.cost, decimals: 0))
         case .value:
@@ -493,6 +586,13 @@ struct PortfolioPanel: View {
             state = .loaded(try await API.shared.decode(Payload.self, from: data))
         } catch {
             state = .failed(error.localizedDescription)
+        }
+        // Separately, and deliberately not fatal. The book is the point
+        // of this panel; if our own record fails to load the column goes
+        // dim rather than the screen going red.
+        if let d = try? await API.shared.get("/holdings/coverage"),
+           let p = try? await API.shared.decode(CovPayload.self, from: d) {
+            coverage = p.coverage ?? [:]
         }
     }
 }
