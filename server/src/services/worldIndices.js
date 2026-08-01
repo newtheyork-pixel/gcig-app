@@ -19,9 +19,9 @@ const UA =
 // null where Stooq has no free feed). `proxy` is the Finnhub ETF stand-in
 // used only when Stooq misses. Array order is render order.
 export const WORLD_INDICES = [
-  { name: 'S&P 500', region: 'Americas', yahoo: '^GSPC', proxy: 'SPY' },
-  { name: 'Dow Jones Industrial', region: 'Americas', yahoo: '^DJI', proxy: 'DIA' },
-  { name: 'Nasdaq Composite', region: 'Americas', yahoo: '^IXIC', proxy: 'ONEQ' },
+  { name: 'S&P 500', region: 'Americas', yahoo: '^GSPC', fred: 'SP500', proxy: 'SPY' },
+  { name: 'Dow Jones Industrial', region: 'Americas', yahoo: '^DJI', fred: 'DJIA', proxy: 'DIA' },
+  { name: 'Nasdaq Composite', region: 'Americas', yahoo: '^IXIC', fred: 'NASDAQCOM', proxy: 'ONEQ' },
   { name: 'Russell 2000', region: 'Americas', yahoo: '^RUT', proxy: 'IWM' },
   { name: 'S&P/TSX Composite', region: 'Americas', yahoo: '^GSPTSE', proxy: 'EWC' },
   { name: 'Bovespa', region: 'Americas', yahoo: '^BVSP', proxy: 'EWZ' },
@@ -39,7 +39,7 @@ export const WORLD_INDICES = [
   { name: 'S&P/ASX 200', region: 'Asia-Pacific', yahoo: '^AXJO', proxy: 'EWA' },
   { name: 'Nifty 50', region: 'Asia-Pacific', yahoo: '^NSEI', proxy: 'INDA' },
   { name: 'KOSPI', region: 'Asia-Pacific', yahoo: '^KS11', proxy: 'EWY' },
-  { name: 'CBOE Volatility', region: 'Volatility', yahoo: '^VIX', proxy: 'VIXY' },
+  { name: 'CBOE Volatility', region: 'Volatility', yahoo: '^VIX', fred: 'VIXCLS', proxy: 'VIXY' },
 ];
 
 export const REGION_ORDER = ['Americas', 'EMEA', 'Asia-Pacific', 'Volatility'];
@@ -104,6 +104,49 @@ async function fetchIndexLevel(symbol, deps = {}) {
   return null;
 }
 
+
+/// The index level from FRED, where FRED publishes it.
+///
+/// Yahoo's chart endpoint gives every index we want and works from a
+/// laptop; it does not work from Render. Measured across three cache
+/// cycles in production: zero real levels, eighteen proxies. That is the
+/// same datacenter block the GSAM scraper and Yahoo's profile endpoint
+/// already hit, and no retry fixes an IP.
+///
+/// FRED does work from Render — the macro strip has used it for months —
+/// and publishes the US headline indices. It is a DAILY CLOSE, not a
+/// live tick, and that trade is the right way round: a correct level one
+/// close old beats a live number that belongs to a different instrument.
+/// The intraday percentage still comes from the proxy, which tracks the
+/// move faithfully even though its level does not.
+async function fetchFredLevel(seriesId, deps = {}) {
+  const key = process.env.FRED_API_KEY;
+  if (!key || !seriesId) return null;
+  const doFetch = deps.fetch || fetch;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 8000);
+  try {
+    const r = await doFetch(
+      `https://api.stlouisfed.org/fred/series/observations?series_id=${seriesId}`
+      + `&api_key=${key}&file_type=json&sort_order=desc&limit=6`,
+      { signal: controller.signal }
+    );
+    if (!r.ok) return null;
+    const obs = (await r.json())?.observations;
+    if (!Array.isArray(obs)) return null;
+    // FRED writes "." for a day the series did not publish.
+    const pts = obs
+      .map((o) => ({ date: o.date, val: Number(o.value) }))
+      .filter((o) => Number.isFinite(o.val));
+    if (!pts.length) return null;
+    return { last: pts[0].val, prev: pts[1]?.val ?? null, asOf: pts[0].date };
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /// A handful at a time. Twenty-one sequential requests is a slow panel
 /// and twenty-one at once is a rate limit.
 async function mapLimited(items, limit, fn) {
@@ -145,8 +188,14 @@ export async function getWorldIndices(deps = {}) {
   // The index level first, always. The ETF proxy is a fallback and is
   // marked as one — it tracks the percentage and not the level, so a
   // reader has to be able to tell which number they are looking at.
-  const levels = await mapLimited(WORLD_INDICES, 3, (idx) =>
-    idx.yahoo ? fetchIndexLevel(idx.yahoo, deps) : Promise.resolve(null));
+  // Yahoo first because it is live and covers everything; FRED second
+  // because it is authoritative and actually reachable from here.
+  const levels = await mapLimited(WORLD_INDICES, 3, async (idx) => {
+    const live = idx.yahoo ? await fetchIndexLevel(idx.yahoo, deps) : null;
+    if (live) return { ...live, via: 'yahoo' };
+    const fred = await (deps.fetchFred || fetchFredLevel)(idx.fred, deps);
+    return fred ? { ...fred, via: 'fred' } : null;
+  });
 
   const rows = await Promise.all(
     WORLD_INDICES.map(async (idx, n) => {
@@ -154,14 +203,30 @@ export async function getWorldIndices(deps = {}) {
       const hit = levels[n];
       if (hit) {
         const change = hit.prev != null ? hit.last - hit.prev : null;
+        // A FRED level is a close, so its own percentage is yesterday's
+        // move. The proxy's percentage is today's and tracks the index
+        // faithfully — so the row carries the right LEVEL from one
+        // source and the right MOVE from the other, and says so.
+        let pct = change != null && hit.prev ? (change / hit.prev) * 100 : null;
+        let moveFrom = hit.via;
+        if (hit.via === 'fred' && idx.proxy) {
+          const live = await (deps.fetchProxy || fetchFinnhubProxy)(idx.proxy);
+          if (live?.changePercent != null) {
+            pct = live.changePercent;
+            moveFrom = `finnhub:${idx.proxy}`;
+          }
+        }
         return {
           ...base,
-          symbol: idx.yahoo,
+          symbol: idx.yahoo || idx.fred,
           last: hit.last,
           change,
-          changePercent: change != null && hit.prev ? (change / hit.prev) * 100 : null,
-          currency: hit.currency,
-          source: 'yahoo',
+          changePercent: pct,
+          currency: hit.currency ?? null,
+          asOf: hit.asOf ?? null,
+          source: hit.via,
+          moveSource: moveFrom,
+          // The level is the index's own. Nothing here is a fund price.
           approx: false,
         };
       }
