@@ -208,7 +208,7 @@ struct TabStrip: View {
     /// menu groupings are about where a function FILES, which is a
     /// different question from where a reader GOES.
     private static let PATHS: [String: [String]] = [
-        "DES":   ["FA", "GF", "GP", "CN", "MGMT", "PEER"],
+        "DES":   ["FA", "GF", "GP", "CN", "MGMT", "PEER", "TRK"],
         "GP":    ["GIP", "DES", "FA", "CN"],
         "GIP":   ["GP", "DES", "CN"],
         "FA":    ["GF", "DES", "PEER", "CMP", "FIL"],
@@ -227,11 +227,15 @@ struct TabStrip: View {
         "FAC":   ["SPLC", "WX", "DES"],
         "WX":    ["RDR", "FAC", "PM"],
         "RDR":   ["WX", "FAC"],
-        "PM":    ["MOVR", "MACRO", "WEI"],
+        "PM":    ["TRK", "MOVR", "MACRO", "WEI"],
+        // The report card belongs beside the book and beside the
+        // archive, because the question it answers ("was that call
+        // right") is the one a reader has just after either.
+        "TRK":   ["PM", "RSCH", "DES", "ARCH"],
         "MOVR":  ["PM", "TOP", "WEI"],
         "MACRO": ["PM", "WEI"],
         "WEI":   ["TOP", "MOVR", "MACRO"],
-        "RSCH":  ["ARCH", "NOTE", "DES"],
+        "RSCH":  ["ARCH", "NOTE", "TRK", "DES"],
         "ARCH":  ["RSCH", "NOTE"],
         "NOTE":  ["RSCH", "DES"],
         "WL":    ["DES", "PM", "MOVR"],

@@ -37,6 +37,9 @@ enum Registry {
               // Sized to the table's own minimum, so a freshly opened PM
               // shows all twelve columns without scrolling sideways.
               width: 1040, height: 600, native: true),
+        .init(id: "TRK", label: "Decision Record",
+              help: "Every closed vote scored against SPY: what the club decided and what happened next.",
+              width: 900, height: 560, native: true),
         .init(id: "MOVR", label: "Movers",
               help: "Day's biggest gainers and losers.",
               width: 560, height: 520, native: true),

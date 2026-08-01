@@ -359,6 +359,7 @@ struct PanelRouter: View {
         switch functionID {
         case "DES":  DescriptionPanel(ticker: ticker ?? "")
         case "PM":   PortfolioPanel()
+        case "TRK":  DecisionRecordPanel()
         case "MOVR": MoversPanel()
         case "TOP":  TopNewsPanel()
         case "RSCH", "FLD": ResearchPanel(ticker: ticker, paneID: paneID)

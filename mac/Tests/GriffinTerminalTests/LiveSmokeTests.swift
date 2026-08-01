@@ -58,6 +58,28 @@ final class LiveSmokeTests: XCTestCase {
         XCTAssertFalse((p.holdings ?? []).isEmpty, "the book should not be empty")
     }
 
+    /// The club's own record, across the book and per decision. These
+    /// are joins over free-text tickers in six tables, which is exactly
+    /// the shape that decays quietly: a renamed column or a changed
+    /// match rule returns 200 with an empty object and every panel drawn
+    /// from it goes blank while looking like a company with no history.
+    func testClubRecord() async throws {
+        try requireToken()
+        let cov = try await dec(PortfolioPanel.CovPayload.self, "/holdings/coverage")
+        XCTAssertFalse((cov.coverage ?? [:]).isEmpty, "the club has voted on names; coverage should not be empty")
+
+        let rec = try await dec(DecisionRecordPanel.Payload.self, "/holdings/decisions/record")
+        XCTAssertFalse((rec.rows ?? []).isEmpty, "there are closed votes to score")
+        XCTAssertNil(rec.benchError, "SPY history should be reachable")
+        // Every row is either scored or carries a reason it is not. A
+        // row that is neither is the silent failure this whole panel
+        // exists to avoid.
+        for r in rec.rows ?? [] {
+            XCTAssertTrue((r.scored ?? false) || (r.reason?.isEmpty == false),
+                          "\(r.ticker ?? "?") is neither scored nor explained")
+        }
+    }
+
     func testDescription() async throws {
         try requireToken()
         _ = try await dec(DescriptionPanel.Info.self, "/holdings/info/\(T)")
