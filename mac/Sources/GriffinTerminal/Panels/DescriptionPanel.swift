@@ -63,6 +63,39 @@ struct DescriptionPanel: View {
         }
     }
 
+    /// The blocks Bloomberg's DES carries beside the description, each
+    /// from an endpoint we already serve. All optional and all fetched
+    /// after the snapshot: a missing analyst count must never be the
+    /// reason the company's name does not appear.
+    struct Estimates: Decodable {
+        let upcoming: Upcoming?
+        let history: [Past]?
+        struct Upcoming: Decodable { let date: String?; let epsEstimate: Double? }
+        struct Past: Decodable {
+            let period: String?; let date: String?
+            let epsEstimate: Double?; let epsActual: Double?; let surprisePct: Double?
+        }
+    }
+
+    struct Consensus: Decodable {
+        let latest: Row?
+        struct Row: Decodable {
+            let strongBuy: Int?; let buy: Int?; let hold: Int?
+            let sell: Int?; let strongSell: Int?
+            var total: Int {
+                (strongBuy ?? 0) + (buy ?? 0) + (hold ?? 0) + (sell ?? 0) + (strongSell ?? 0)
+            }
+            var bullish: Int { (strongBuy ?? 0) + (buy ?? 0) }
+            var bearish: Int { (sell ?? 0) + (strongSell ?? 0) }
+        }
+    }
+
+    struct Leadership: Decodable {
+        let ceo: Person?
+        let execs: [Person]?
+        struct Person: Decodable { let name: String?; let title: String?; let office: String? }
+    }
+
     struct Chart: Decodable {
         let points: [Point]?
         let range: String?
@@ -74,6 +107,9 @@ struct DescriptionPanel: View {
     /// missing sparkline is a missing sparkline, not a failed DES.
     @State private var chart: [Double] = []
     @State private var chartRange: String?
+    @State private var estimates: Estimates?
+    @State private var consensus: Consensus.Row?
+    @State private var leadership: Leadership?
 
     private var changePct: Double? {
         guard case .loaded(let i) = state,
@@ -95,8 +131,16 @@ struct DescriptionPanel: View {
                     HStack(alignment: .top, spacing: 18) {
                         VStack(alignment: .leading, spacing: 10) { stats(i) }
                             .frame(maxWidth: .infinity, alignment: .leading)
-                        VStack(alignment: .leading, spacing: 10) { corporate(i) }
-                            .frame(maxWidth: .infinity, alignment: .leading)
+                        VStack(alignment: .leading, spacing: 10) {
+                            estimatesBlock()
+                            ratingsBlock()
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        VStack(alignment: .leading, spacing: 10) {
+                            corporate(i)
+                            managementBlock()
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
                     }
                     Divider().overlay(Term.border)
                     business(i)
@@ -191,6 +235,105 @@ struct DescriptionPanel: View {
                     Spacer()
                     Text("\(Fmt.money(lo)) – \(Fmt.money(hi))")
                         .font(Term.mono(8)).foregroundStyle(Term.fgMuted)
+                }
+            }
+        }
+    }
+
+
+    // MARK: The blocks Bloomberg puts beside the description
+
+    /// What the street expects next, and how the last one went.
+    @ViewBuilder
+    private func estimatesBlock() -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            SectionLabel(text: "Estimates")
+            if let e = estimates, e.upcoming != nil || !(e.history ?? []).isEmpty {
+                StatRow(label: "Next report", value: e.upcoming?.date ?? "—")
+                StatRow(label: "EPS estimate",
+                        value: e.upcoming?.epsEstimate.map { String(format: "%.2f", $0) } ?? "—")
+                if let last = (e.history ?? []).first {
+                    StatRow(label: "Last \(last.period ?? "quarter")",
+                            value: last.epsActual.map { String(format: "%.2f", $0) } ?? "—")
+                    // The surprise is the part that carries information:
+                    // a beat and a miss are the same number until you
+                    // know what was expected.
+                    if let s = last.surprisePct {
+                        HStack {
+                            Text("Surprise").font(Term.mono(10)).foregroundStyle(Term.fgMuted)
+                            Spacer()
+                            Text(Fmt.pct(s))
+                                .font(Term.mono(10, weight: .medium))
+                                .foregroundStyle(Term.delta(s))
+                        }
+                    }
+                }
+            } else {
+                Text("No estimates on file.")
+                    .font(Term.mono(10)).foregroundStyle(Term.fgMuted)
+            }
+        }
+    }
+
+    /// The analyst split, as a bar rather than five numbers.
+    ///
+    /// "7 strong buy, 14 buy, 11 hold, 1 sell" is four facts nobody
+    /// holds in their head; the shape of the bar is the one they wanted.
+    @ViewBuilder
+    private func ratingsBlock() -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            SectionLabel(text: "Analysts")
+            if let c = consensus, c.total > 0 {
+                GeometryReader { geo in
+                    HStack(spacing: 1) {
+                        let w = geo.size.width
+                        let unit = w / CGFloat(c.total)
+                        Rectangle().fill(Term.positive)
+                            .frame(width: unit * CGFloat(c.bullish))
+                        Rectangle().fill(Term.fgMuted)
+                            .frame(width: unit * CGFloat(c.hold ?? 0))
+                        Rectangle().fill(Term.negative)
+                            .frame(width: unit * CGFloat(c.bearish))
+                    }
+                }
+                .frame(height: 8)
+                HStack(spacing: 8) {
+                    Text("\(c.bullish) buy").font(Term.mono(9)).foregroundStyle(Term.positive)
+                    Text("\(c.hold ?? 0) hold").font(Term.mono(9)).foregroundStyle(Term.fgMuted)
+                    Text("\(c.bearish) sell").font(Term.mono(9)).foregroundStyle(Term.negative)
+                    Spacer()
+                    Text("\(c.total)").font(Term.mono(9)).foregroundStyle(Term.fgDim)
+                }
+            } else {
+                Text("No analyst coverage on file.")
+                    .font(Term.mono(10)).foregroundStyle(Term.fgMuted)
+            }
+        }
+    }
+
+    /// Who runs it. Read from ownership filings rather than the proxy,
+    /// so a chief executive who started this year is the one named.
+    @ViewBuilder
+    private func managementBlock() -> some View {
+        let people = ([leadership?.ceo].compactMap { $0 } + (leadership?.execs ?? []))
+            .reduce(into: [Leadership.Person]()) { acc, p in
+                if !acc.contains(where: { $0.name == p.name }) { acc.append(p) }
+            }
+            .prefix(4)
+        VStack(alignment: .leading, spacing: 4) {
+            SectionLabel(text: "Management")
+            if people.isEmpty {
+                Text("No officers on file.")
+                    .font(Term.mono(10)).foregroundStyle(Term.fgMuted)
+            } else {
+                ForEach(Array(people.enumerated()), id: \.offset) { _, p in
+                    VStack(alignment: .leading, spacing: 0) {
+                        Text(p.name ?? "—")
+                            .font(Term.mono(10, weight: .medium)).foregroundStyle(Term.white)
+                            .lineLimit(1)
+                        Text(p.title ?? "—")
+                            .font(Term.mono(9)).foregroundStyle(Term.fgMuted).lineLimit(1)
+                    }
                 }
             }
         }
@@ -322,6 +465,9 @@ struct DescriptionPanel: View {
         state = .loading
         chart = []
         chartRange = nil
+        estimates = nil
+        consensus = nil
+        leadership = nil
         do {
             let data = try await API.shared.get("/holdings/info/\(ticker)")
             state = .loaded(try await API.shared.decode(Info.self, from: data))
@@ -329,12 +475,24 @@ struct DescriptionPanel: View {
             state = .failed(error.localizedDescription)
             return
         }
-        // Separate and deliberately after: the snapshot is the panel and
-        // the chart is decoration on it.
+        // Separate and deliberately after: the snapshot IS the panel and
+        // everything below is decoration on it. Each is optional and
+        // each failure is silent by design — a missing analyst count
+        // must never be the reason the company's name does not appear.
         if let d = try? await API.shared.get("/terminal/chart/\(ticker)"),
            let c = try? await API.shared.decode(Chart.self, from: d) {
             chart = (c.points ?? []).compactMap { $0.close }
             chartRange = c.range
+        }
+        if let d = try? await API.shared.get("/terminal/earnings/\(ticker)") {
+            estimates = try? await API.shared.decode(Estimates.self, from: d)
+        }
+        if let d = try? await API.shared.get("/terminal/consensus/\(ticker)"),
+           let c = try? await API.shared.decode(Consensus.self, from: d) {
+            consensus = c.latest
+        }
+        if let d = try? await API.shared.get("/terminal/governance/\(ticker)") {
+            leadership = try? await API.shared.decode(Leadership.self, from: d)
         }
     }
 }
