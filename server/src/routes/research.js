@@ -2544,7 +2544,24 @@ router.get('/artifacts/extract-status', async (req, res) => {
     });
     const counts = Object.fromEntries(grouped.map((g) => [g.extractStatus, g._count._all]));
     const inline = await prisma.researchArtifact.count({ where: { fileRef: null } });
-    res.json({ counts, inlineOnly: inline });
+
+    // What could not be read, and why. A count of failures with no
+    // reasons is a number nobody can act on — the whole point of
+    // recording extractError was to be able to answer "which types are
+    // we missing" without opening the database.
+    const problems = await prisma.researchArtifact.findMany({
+      where: { extractStatus: { in: ['unsupported', 'failed'] } },
+      select: { filename: true, extractStatus: true, extractError: true },
+      take: 400,
+    });
+    const byExt = {};
+    for (const p of problems) {
+      const ext = (String(p.filename || '').match(/\.([a-z0-9]+)$/i) || [, 'none'])[1].toLowerCase();
+      byExt[ext] = byExt[ext] || { unsupported: 0, failed: 0, example: null };
+      byExt[ext][p.extractStatus] += 1;
+      if (!byExt[ext].example && p.extractError) byExt[ext].example = p.extractError.slice(0, 140);
+    }
+    res.json({ counts, inlineOnly: inline, byExtension: byExt });
   } catch (err) {
     console.error('research/artifacts/extract-status failed:', err.message);
     res.status(500).json({ error: err.message });
