@@ -408,6 +408,21 @@ struct PortfolioPanel: View {
             .replacingOccurrences(of: ".", with: "-")
     }
 
+    /// What those positions are, and what fraction of the book they
+    /// are, because two names is a footnote and 44% of equity is not.
+    private var uncoveredHelp: String {
+        guard case .loaded(let p) = state, !coverage.isEmpty else {
+            return "Our own record has not loaded"
+        }
+        let eq = (p.holdings ?? []).filter { !($0.isCash ?? false) }
+        let bare = eq.filter { (coverage[Self.key($0.ticker)]?.isEmpty ?? true) }
+        let total = eq.reduce(0.0) { $0 + ($1.marketValue ?? 0) }
+        let share = bare.reduce(0.0) { $0 + ($1.marketValue ?? 0) }
+        let names = bare.compactMap { $0.ticker }.joined(separator: ", ")
+        let pct = total > 0 ? Fmt.pct(share / total * 100, decimals: 0, signed: false) : "—"
+        return "No pitch, no closed vote, no report on file: \(names) — \(pct) of equity"
+    }
+
     /// Positions we own with nothing on file. Cash excluded — nobody
     /// pitches cash.
     private var uncoveredCount: Int {
@@ -548,14 +563,18 @@ struct PortfolioPanel: View {
             Text("\(t.positions) positions" + (t.hasCash ? " plus cash" : ""))
                 .font(Term.mono(10)).foregroundStyle(Term.fgMuted)
         case .club:
-            // The audit, in one cell. A book where a third of the
-            // positions carry no pitch, no vote and no report is not a
-            // book anyone can defend in a meeting, and until now there
-            // was no screen that would say so.
-            Text(uncoveredCount > 0 ? "\(uncoveredCount) BARE" : "")
+            // The audit, in one cell. Stated, not judged: on the real
+            // book the two names with no record are VOO and QQQ, which
+            // is 44% of equity and is probably a deliberate decision to
+            // park in the index rather than an oversight. Amber, not
+            // red — the screen's job is to make sure nobody has to
+            // remember this, not to call it a failure. The club does
+            // pitch ETFs, so these two do stand apart, and the members
+            // can decide what that is worth.
+            Text(uncoveredCount > 0 ? "\(uncoveredCount) UNPITCHED" : "")
                 .font(Term.mono(9, weight: .bold))
-                .foregroundStyle(uncoveredCount > 0 ? Term.negative : Term.fgMuted)
-                .help("Positions with no pitch, no closed vote and no report on file")
+                .foregroundStyle(uncoveredCount > 0 ? Term.amber : Term.fgMuted)
+                .help(uncoveredHelp)
         case .cost:
             Text(Fmt.money(t.cost, decimals: 0))
         case .value:
