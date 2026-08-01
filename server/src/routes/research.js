@@ -2499,10 +2499,18 @@ router.post('/artifacts/extract', async (req, res) => {
           { extractStatus: 'never' },
           {
             extractStatus: 'failed',
-            extractAttempts: { lt: 4 },
+            // The attempt ceiling exists to stop a file whose failure we
+            // do not understand from burning the Graph quota forever. It
+            // has no business standing between a fixed cause and its
+            // fix — nine PDFs sat unreadable behind it after the parser
+            // was repaired, purely because they had already been tried
+            // four times with the broken one.
             ...(retryFailedNow
               ? {}
-              : { OR: [{ extractAttemptedAt: null }, { extractAttemptedAt: { lt: cooldown } }] }),
+              : {
+                extractAttempts: { lt: 4 },
+                OR: [{ extractAttemptedAt: null }, { extractAttemptedAt: { lt: cooldown } }],
+              }),
           },
           ...(retryUnsupported ? [{ extractStatus: 'unsupported' }] : []),
         ],
@@ -2531,7 +2539,8 @@ router.post('/artifacts/extract', async (req, res) => {
         fileRef: { startsWith: 'onedrive:' },
         OR: [
           { extractStatus: 'never' },
-          ...(retryFailedNow ? [{ extractStatus: 'failed', extractAttempts: { lt: 4 } }] : []),
+          ...(retryFailedNow ? [{ extractStatus: 'failed' }] : []),
+          ...(retryUnsupported ? [{ extractStatus: 'unsupported' }] : []),
         ],
       },
     });
