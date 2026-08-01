@@ -2516,7 +2516,15 @@ router.post('/artifacts/extract', async (req, res) => {
         ],
       },
       select: { id: true, title: true, filename: true, fileRef: true },
-      orderBy: { id: 'asc' },
+      // Least-recently-attempted first, NOT by id.
+      //
+      // Ordering by id meant a retry pass re-picked the same eight
+      // permanently-unreadable JPEGs on every call and never advanced —
+      // a caller draining the queue in a loop would run forever
+      // reporting eight unsupported each time. Ordering by attempt time
+      // means every candidate is tried once before any is tried twice,
+      // so the queue drains even when part of it can never succeed.
+      orderBy: [{ extractAttemptedAt: { sort: 'asc', nulls: 'first' } }, { id: 'asc' }],
       take,
     });
 
