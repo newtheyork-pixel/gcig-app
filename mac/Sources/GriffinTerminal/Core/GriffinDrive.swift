@@ -69,7 +69,7 @@ final class GriffinDrive: ObservableObject {
         poller = Task { [weak self] in
             while !Task.isCancelled {
                 await self?.pullAll()
-                try? await Task.sleep(for: .seconds(45))
+                try? await Task.sleep(for: .seconds(12))
             }
         }
         status.running = true
@@ -78,16 +78,33 @@ final class GriffinDrive: ObservableObject {
     /// Ticker → project id, so a change under LISN/ knows where to go.
     private var projectByTicker: [String: Int] = [:]
 
+    /// Fingerprint per project, as last pulled. A project whose count
+    /// and high-water mark both match is a project with nothing to
+    /// fetch, and skipping it is the whole reason this can run often.
+    private var seen: [Int: String] = [:]
+
     private func pullAll() async {
-        struct P: Decodable { let id: Int; let ticker: String? }
-        guard let data = try? await API.shared.get("/research/projects") else { return }
+        struct P: Decodable {
+            let id: Int; let ticker: String?
+            let artifacts: Int?; let stamp: String?
+            /// Count AND timestamp. The timestamp alone misses a
+            /// removal; the count alone misses an edit in place.
+            var fingerprint: String { "\(artifacts ?? -1)@\(stamp ?? "")" }
+        }
+        guard let data = try? await API.shared.get("/research/projects/manifest") else { return }
         let list = (try? await API.shared.decode([P].self, from: data)) ?? []
         for p in list {
             guard let t = p.ticker, !t.isEmpty else { continue }
             projectByTicker[t.uppercased()] = p.id
+            // Unchanged since the last cycle: do not spend a request, and
+            // more importantly do not spend the 300KB.
+            if seen[p.id] == p.fingerprint { continue }
             projectId = p.id
             ticker = t
             await pull()
+            // Recorded after the pull, so a failed fetch is retried next
+            // cycle rather than being marked done.
+            seen[p.id] = p.fingerprint
         }
         // Once the index exists, and not only when a file happens to
         // change. Something dragged to the Trash while the app was shut
@@ -109,7 +126,7 @@ final class GriffinDrive: ObservableObject {
         poller = Task { [weak self] in
             while !Task.isCancelled {
                 await self?.pull()
-                try? await Task.sleep(for: .seconds(45))
+                try? await Task.sleep(for: .seconds(12))
             }
         }
         status.running = true

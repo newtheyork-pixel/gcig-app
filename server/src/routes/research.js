@@ -143,6 +143,67 @@ router.get('/projects', async (req, res) => {
   }
 });
 
+/**
+ * A fingerprint per project, cheap enough to ask for constantly.
+ *
+ * The Griffin Fund volume used to find out what had changed by
+ * downloading everything: one GET /projects/:id per project, all 41, on
+ * a 45-second timer. Measured against production that is 11.8 MB and 41
+ * requests every cycle — 55 requests a minute, better than half the
+ * terminal's entire rate limit, close to a gigabyte an hour, and almost
+ * all of it re-reading files nobody touched.
+ *
+ * It also made the volume feel dead. 45 seconds was not a preference, it
+ * was the fastest interval that weight could afford, so an artifact
+ * added on the web took the best part of a minute to appear on disk.
+ *
+ * A count and a high-water mark answer "did anything change" in about
+ * 2KB for the whole club. Both are needed: the timestamp alone misses a
+ * removal, and the count alone misses an edit in place.
+ */
+router.get('/projects/manifest', async (req, res) => {
+  try {
+    // The same visibility rules the real payload uses. A fingerprint
+    // computed over rows the caller cannot see would report a change
+    // they can never fetch, and the drive would spin on it forever.
+    const visible = isSuperAdminEmail(req.user?.email)
+      ? { trashedAt: null }
+      : { trashedAt: null, ownerOnly: false };
+
+    const [projects, agg] = await Promise.all([
+      prisma.researchProject.findMany({
+        select: { id: true, name: true, ticker: true, updatedAt: true },
+      }),
+      prisma.researchArtifact.groupBy({
+        by: ['projectId'],
+        where: visible,
+        _count: { _all: true },
+        _max: { updatedAt: true },
+      }),
+    ]);
+
+    const byProject = new Map(agg.map((a) => [a.projectId, a]));
+    res.json(projects.map((p) => {
+      const a = byProject.get(p.id);
+      const artifactStamp = a?._max?.updatedAt ?? null;
+      return {
+        id: p.id,
+        name: p.name,
+        ticker: p.ticker,
+        artifacts: a?._count?._all ?? 0,
+        // The later of the project's own edit and its newest visible
+        // artifact, so renaming a project is a change too.
+        stamp: [p.updatedAt, artifactStamp]
+          .filter(Boolean)
+          .sort((x, y) => new Date(y) - new Date(x))[0] ?? null,
+      };
+    }));
+  } catch (err) {
+    console.error('research/projects manifest failed:', err.message);
+    res.status(500).json({ error: 'Could not load the manifest' });
+  }
+});
+
 // One project, fully assembled: artifacts, interviews, and the claim
 // ledger with triangulation. This is what the terminal panel opens, and
 // it is deliberately one request — a research surface that makes you
