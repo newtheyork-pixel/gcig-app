@@ -397,6 +397,11 @@ export async function buildResearchContext(user, topic = '') {
         WHERE "projectId" = ${p.id}
           AND "extractStatus" = 'ok'
           AND "extractedText" IS NOT NULL
+          -- A document somebody removed must stop being quoted back at
+          -- them. The assistant is a read path like any other, and a
+          -- privacy or removal rule enforced on one surface and not this
+          -- one is not a rule — the same lesson ownerOnly taught here.
+          AND "trashedAt" IS NULL
           ${isSuperAdminEmail(user?.email) ? Prisma.empty : Prisma.sql`AND "ownerOnly" = false`}
         ORDER BY "keyDoc" DESC, "createdAt" DESC
         LIMIT 12`;

@@ -124,7 +124,9 @@ async function artifactsFor(ticker) {
   });
   if (!p) return null;
   const rows = await prisma.researchArtifact.findMany({
-    where: { projectId: p.id, fileRef: { not: null } },
+    // Trashed files leave the volume too, or the next pull downloads
+    // straight back the thing somebody just dragged to the Trash.
+    where: { projectId: p.id, fileRef: { not: null }, trashedAt: null },
     select: { id: true, title: true, filename: true, fileRef: true, updatedAt: true },
   });
   return { projectId: p.id, rows };

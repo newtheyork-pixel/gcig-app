@@ -106,6 +106,7 @@ model User {
   researchProjectsCreated   ResearchProject[]     @relation("ResearchProjectCreator")
   researchValuations        ResearchValuation[]   @relation("ResearchValuationAuthor")
   researchArtifacts         ResearchArtifact[]    @relation("ResearchArtifactUploader")
+  trashedArtifacts          ResearchArtifact[]    @relation("ResearchArtifactTrasher")
   researchTargets           ResearchTarget[]      @relation("ResearchTargetCreator")
   outreachDraftsWritten     OutreachDraft[]       @relation("OutreachDraftAuthor")
   outreachDraftsRejected    OutreachDraft[]       @relation("OutreachDraftRejecter")
@@ -1109,11 +1110,26 @@ model ResearchArtifact {
   extractAttempts    Int       @default(0)
   uploadedById Int?
   uploadedBy   User?           @relation("ResearchArtifactUploader", fields: [uploadedById], references: [id], onDelete: SetNull)
+  // Dragged to the Trash on the Griffin Fund volume, or removed in the
+  // app. SOFT, and the softness is the point: the sync engine's founding
+  // rule was that nothing is ever deleted, because a file vanishing from
+  // a watched folder is far more often a move or a Finder accident than
+  // an instruction. Honouring a real trash gesture without a way back
+  // would mean one careless drag destroys a project's evidence.
+  //
+  // Trashed artifacts leave every read path — the project payload, the
+  // counts, the volume's own file list, the assistant's retrieval — so
+  // to a member the file is gone. It is still on disk and still in
+  // OneDrive, and /restore brings it back whole.
+  trashedAt    DateTime?
+  trashedById  Int?
+  trashedBy    User?           @relation("ResearchArtifactTrasher", fields: [trashedById], references: [id], onDelete: SetNull)
   createdAt    DateTime        @default(now())
   updatedAt    DateTime        @updatedAt
 
   @@index([projectId, kind])
   @@index([extractStatus])
+  @@index([trashedAt])
 }
 
 // What the project set out to answer. The spine of the whole process.

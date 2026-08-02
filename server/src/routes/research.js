@@ -126,9 +126,12 @@ router.get('/projects', async (req, res) => {
             targets: true,
             visits: true,
             valuations: true,
+            // Trashed artifacts are gone from the count as well as from
+            // the list. A project reading "24 documents" that opens on
+            // 23 is a project somebody re-uploads a file into.
             artifacts: isSuperAdminEmail(req.user?.email)
-              ? true
-              : { where: { ownerOnly: false } },
+              ? { where: { trashedAt: null } }
+              : { where: { ownerOnly: false, trashedAt: null } },
           },
         },
       },
@@ -158,7 +161,9 @@ router.get('/projects/:id', async (req, res) => {
           // all. Filtering in the query rather than the response is the
           // difference between not sending it and hoping the client
           // does not render it.
-          where: isSuperAdminEmail(req.user?.email) ? {} : { ownerOnly: false },
+          where: isSuperAdminEmail(req.user?.email)
+            ? { trashedAt: null }
+            : { ownerOnly: false, trashedAt: null },
           // Key documents first, then newest. Recency is the right
           // default for everything else and exactly wrong for the three
           // files that carry the argument: they are written early and
@@ -569,6 +574,90 @@ router.put(
     }
   }
 );
+
+/**
+ * Trash an artifact, reversibly.
+ *
+ * This is what a drag to the Trash on the Griffin Fund volume calls, and
+ * what the app's own remove button should call. It is deliberately not
+ * the DELETE below: the sync engine's founding rule is that a file
+ * vanishing from a watched folder is usually a move or an accident, and
+ * the only reason we can now honour a real trash gesture at all is that
+ * this one is reversible.
+ *
+ * The bytes stay in OneDrive and the row stays in the table. What
+ * changes is that every read path stops returning it, which is what
+ * "removed from the page" means to the person who dragged it.
+ */
+router.post('/artifacts/:id/trash', canResearch, async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) return res.status(400).json({ error: 'Bad id' });
+  try {
+    const existing = await prisma.researchArtifact.findUnique({
+      where: { id },
+      select: { id: true, title: true, trashedAt: true, projectId: true },
+    });
+    if (!existing) return res.status(404).json({ error: 'Not found' });
+    // Already trashed is a success, not an error. The volume can send
+    // the same gesture twice — a sweep runs on every filesystem event —
+    // and a 500 on the second one would light up an error banner over a
+    // no-op.
+    if (existing.trashedAt) return res.json({ ok: true, alreadyTrashed: true, id });
+
+    const row = await prisma.researchArtifact.update({
+      where: { id },
+      data: { trashedAt: new Date(), trashedById: req.user?.id ?? null },
+      select: { id: true, title: true, projectId: true, trashedAt: true },
+    });
+    console.log(`artifact ${id} trashed by ${req.user?.email || '?'}: ${row.title}`);
+    res.json({ ok: true, ...row });
+  } catch (err) {
+    console.error('research/artifact trash failed:', err.message);
+    res.status(500).json({ error: 'Could not trash artifact' });
+  }
+});
+
+/// Undo. The whole justification for honouring a Finder trash gesture.
+router.post('/artifacts/:id/restore', canResearch, async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) return res.status(400).json({ error: 'Bad id' });
+  try {
+    const row = await prisma.researchArtifact.update({
+      where: { id },
+      data: { trashedAt: null, trashedById: null },
+      select: { id: true, title: true, projectId: true },
+    });
+    res.json({ ok: true, ...row });
+  } catch (err) {
+    console.error('research/artifact restore failed:', err.message);
+    res.status(500).json({ error: 'Could not restore artifact' });
+  }
+});
+
+/// What is in the bin, so a mistaken drag is findable rather than
+/// folklore. Newest first — somebody looking here just did it.
+router.get('/artifacts/trashed', canResearch, async (req, res) => {
+  try {
+    const rows = await prisma.researchArtifact.findMany({
+      where: {
+        trashedAt: { not: null },
+        ...(isSuperAdminEmail(req.user?.email) ? {} : { ownerOnly: false }),
+      },
+      orderBy: { trashedAt: 'desc' },
+      take: 200,
+      select: {
+        id: true, title: true, filename: true, kind: true, projectId: true,
+        trashedAt: true,
+        trashedBy: { select: { id: true, name: true } },
+        project: { select: { id: true, name: true, ticker: true } },
+      },
+    });
+    res.json(rows);
+  } catch (err) {
+    console.error('research/artifacts trashed failed:', err.message);
+    res.status(500).json({ error: 'Could not load the bin' });
+  }
+});
 
 router.delete('/artifacts/:id', canResearch, async (req, res) => {
   const id = Number(req.params.id);
@@ -2495,6 +2584,8 @@ router.post('/artifacts/extract', async (req, res) => {
     const rows = await prisma.researchArtifact.findMany({
       where: {
         fileRef: { startsWith: 'onedrive:' },
+        // No point spending Graph quota reading a file nobody can see.
+        trashedAt: null,
         OR: [
           { extractStatus: 'never' },
           {
@@ -2545,6 +2636,9 @@ router.post('/artifacts/extract', async (req, res) => {
     const remaining = await prisma.researchArtifact.count({
       where: {
         fileRef: { startsWith: 'onedrive:' },
+        // Must match the selection query above exactly, or the backfill
+        // reports work remaining that it will never pick up.
+        trashedAt: null,
         OR: [
           { extractStatus: 'never' },
           ...(retryFailedNow ? [{ extractStatus: 'failed' }] : []),
@@ -2568,18 +2662,18 @@ router.get('/artifacts/extract-status', async (req, res) => {
   try {
     const grouped = await prisma.researchArtifact.groupBy({
       by: ['extractStatus'],
-      where: { fileRef: { startsWith: 'onedrive:' } },
+      where: { fileRef: { startsWith: 'onedrive:' }, trashedAt: null },
       _count: { _all: true },
     });
     const counts = Object.fromEntries(grouped.map((g) => [g.extractStatus, g._count._all]));
-    const inline = await prisma.researchArtifact.count({ where: { fileRef: null } });
+    const inline = await prisma.researchArtifact.count({ where: { fileRef: null, trashedAt: null } });
 
     // What could not be read, and why. A count of failures with no
     // reasons is a number nobody can act on — the whole point of
     // recording extractError was to be able to answer "which types are
     // we missing" without opening the database.
     const problems = await prisma.researchArtifact.findMany({
-      where: { extractStatus: { in: ['unsupported', 'failed'] } },
+      where: { extractStatus: { in: ['unsupported', 'failed'] }, trashedAt: null },
       select: { filename: true, extractStatus: true, extractError: true },
       take: 400,
     });

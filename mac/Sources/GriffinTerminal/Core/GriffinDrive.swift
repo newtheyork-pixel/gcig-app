@@ -161,6 +161,11 @@ final class GriffinDrive: ObservableObject {
         // The volume root, not one project's folder: a single watcher
         // covers every project and the first path segment says which.
         let base = GriffinVolume.mountPoint
+        // Before the early return. A trash is a REMOVAL from the tree, so
+        // nothing about it shows up as a changed file — checking it after
+        // the "nothing changed" guard would mean the sweep only ever ran
+        // when something else happened to be saved at the same moment.
+        sweepTrash()
         let current = Self.walk(base)
         let changed = current.filter { known[$0.key] != $0.value }
         guard !changed.isEmpty else { return }
@@ -219,6 +224,22 @@ final class GriffinDrive: ObservableObject {
 
     private var remoteIdByPath: [String: Int] = [:]
 
+    /// Artifact id keyed by the path AS IT SITS ON THE VOLUME —
+    /// "LISN/filings/complaint.pdf", ticker folder included.
+    ///
+    /// `remoteIdByPath` cannot serve this. It is keyed by the artifact
+    /// title, which is the path WITHIN a project, so two projects each
+    /// holding a "model.xlsx" collide and the last pull silently wins.
+    /// Guessing wrong here does not render a stale row, it trashes
+    /// somebody else's document.
+    private var artifactIdByVolumePath: [String: Int] = [:]
+
+    /// Trash entries already acted on, so a sweep that runs on every
+    /// filesystem event does not re-post the same deletion. Keyed by the
+    /// trashed path, because the file stays in the Trash until the user
+    /// empties it and would otherwise be seen forever.
+    private var trashHandled: Set<String> = []
+
     private func pull() async {
         guard let pid = projectId, let base = root else { return }
         struct Wrap: Decodable {
@@ -239,6 +260,7 @@ final class GriffinDrive: ObservableObject {
         for row in w.artifacts ?? [] {
             guard let item = DocumentViewer.itemId(from: row.fileRef) else { continue }
             remoteIdByPath[row.title] = row.id
+            artifactIdByVolumePath["\(base.lastPathComponent)/\(row.title)"] = row.id
             let dest = base.appendingPathComponent(row.title)
             try? FileManager.default.createDirectory(
                 at: dest.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -328,6 +350,110 @@ final class GriffinDrive: ObservableObject {
                     try? FileManager.default.removeItem(at: dir)
                 }
             }
+        }
+    }
+
+
+    // MARK: The Trash
+
+    /// A file dragged to the Trash is the one deletion we believe.
+    ///
+    /// The engine's founding rule is that nothing is ever deleted,
+    /// because a file vanishing from a watched folder is usually a move,
+    /// a rename, or a Finder accident. That rule is right, and it made
+    /// the volume feel broken: dragging a document to the Trash left it
+    /// sitting on the page in the terminal, and the next pull downloaded
+    /// it straight back.
+    ///
+    /// Trashing is different from vanishing, and macOS tells us which is
+    /// which. A file removed from a mounted volume goes to
+    /// `.Trashes/<uid>/` ON THAT VOLUME, so its presence there is an
+    /// explicit gesture and not an inference from absence. Nothing is
+    /// guessed from a diff — which matters, because `known` is keyed
+    /// inconsistently between push and pull and a diff would read half
+    /// the project as deleted.
+    ///
+    /// Everything here fails toward keeping the file. An ambiguous match
+    /// does nothing, an unreadable Trash does nothing, and the removal
+    /// is soft on the server anyway.
+    private func sweepTrash() {
+        let vol = GriffinVolume.mountPoint
+        let bin = vol.appendingPathComponent(".Trashes/\(getuid())", isDirectory: true)
+        guard FileManager.default.fileExists(atPath: bin.path) else { return }
+
+        // Every path inside the Trash, relative to it. A trashed FOLDER
+        // arrives as one entry with its contents intact, so the tree is
+        // walked rather than listed: dragging a folder of filings should
+        // remove the filings.
+        var suffixes: [String] = []
+        let fm = FileManager.default
+        for entry in (try? fm.contentsOfDirectory(atPath: bin.path)) ?? [] {
+            if entry.hasPrefix(".") { continue }
+            let url = bin.appendingPathComponent(entry)
+            var isDir: ObjCBool = false
+            fm.fileExists(atPath: url.path, isDirectory: &isDir)
+            if isDir.boolValue {
+                for (rel, _) in Self.walk(url) { suffixes.append("\(entry)/\(rel)") }
+            } else {
+                suffixes.append(entry)
+            }
+        }
+        guard !suffixes.isEmpty else { return }
+
+        for suffix in suffixes {
+            guard !trashHandled.contains(suffix) else { continue }
+            // Match on the tail of the volume path. The Trash is flat at
+            // its top level, so "complaint.pdf" has lost the project
+            // folder that would have identified it.
+            let hits = Self.candidates(for: suffix, in: artifactIdByVolumePath)
+            // Exactly one, or nothing. Two projects holding a file of the
+            // same name is the case this guard exists for: removing the
+            // wrong club's evidence is far worse than leaving a row on a
+            // page, and the person can always remove it in the app.
+            guard hits.count == 1, let (path, id) = hits.first else {
+                if hits.count > 1 {
+                    status.error = "\(suffix) matches \(hits.count) documents; remove it in the app instead"
+                }
+                continue
+            }
+            trashHandled.insert(suffix)
+            Task { await self.trashRemotely(id: id, volumePath: path, suffix: suffix) }
+        }
+    }
+
+    /// Which artifacts could this trashed path be?
+    ///
+    /// Split out and made static because it is the one piece here whose
+    /// bugs are destructive rather than cosmetic, and because the whole
+    /// safety of the feature rests on it returning MORE than one result
+    /// when it is not sure.
+    nonisolated static func candidates(for suffix: String, in index: [String: Int]) -> [(String, Int)] {
+        let s = suffix.trimmingCharacters(in: .whitespaces)
+        guard !s.isEmpty else { return [] }
+        return index
+            // A path component boundary, never a bare string match:
+            // "notes.pdf" must not match "meeting-notes.pdf", and
+            // "model.xlsx" must not match "old/model.xlsx.bak".
+            .filter { $0.key == s || $0.key.hasSuffix("/" + s) }
+            .map { ($0.key, $0.value) }
+    }
+
+    private func trashRemotely(id: Int, volumePath: String, suffix: String) async {
+        do {
+            _ = try await API.shared.post("/research/artifacts/\(id)/trash", json: [:])
+            artifactIdByVolumePath[volumePath] = nil
+            // The title is the path within the project, which is the
+            // volume path minus its ticker folder.
+            let title = volumePath.split(separator: "/").dropFirst().joined(separator: "/")
+            remoteIdByPath[title] = nil
+            known[volumePath] = nil
+            status.lastPush = "removed \((suffix as NSString).lastPathComponent) at \(Fmt.localStamp())"
+        } catch {
+            // Let it be retried on the next event rather than pretending
+            // it worked — the file is still in the Trash, so the gesture
+            // is still there to read.
+            trashHandled.remove(suffix)
+            status.error = "could not remove \(suffix): \(error.localizedDescription)"
         }
     }
 
