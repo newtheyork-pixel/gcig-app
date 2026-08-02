@@ -93,6 +93,14 @@ struct PortfolioPanel: View {
     @State private var state: Loadable<Payload> = .loading
     @State private var quotes: [String: Quote] = [:]
     @State private var coverage: [String: Cov] = [:]
+    /// The cash-yield estimate the WEB adds on top of the sheet total.
+    ///
+    /// Not used to change PM's own number — it is used to explain why
+    /// the two screens disagree, which is the actual problem. The web
+    /// headline reads $137,070 and this panel reads $135,464, and until
+    /// now nothing anywhere said the gap was a single simulated interest
+    /// figure rather than one of them being broken.
+    @State private var cashInterest: Double?
 
     var body: some View {
         PanelState(state: state,
@@ -245,10 +253,26 @@ struct PortfolioPanel: View {
             // narrower than its heading.
             Text("YTD IS PRICE ONLY")
                 .font(Term.mono(9)).foregroundStyle(Term.fgDim)
-            Text(Fmt.money(total))
-                .font(Term.mono(13, weight: .bold))
-                .foregroundStyle(Term.white)
-                .tickFlash(total)
+            VStack(alignment: .trailing, spacing: 0) {
+                Text(Fmt.money(total))
+                    .font(Term.mono(13, weight: .bold))
+                    .foregroundStyle(Term.white)
+                    .tickFlash(total)
+                // The reconciliation, in the one place somebody
+                // comparing the two screens is looking. MARKED is what
+                // the sheet prices; the website's headline adds an
+                // estimate of interest the cash sleeves threw off, which
+                // its own source calls deliberately optimistic because
+                // the sheet already carries most of it. Both numbers are
+                // real and they answer different questions; the failure
+                // was showing one of them with no way to reach the other.
+                if let ci = cashInterest, ci > 0 {
+                    Text("marked · web shows \(Fmt.money(total + ci)) with cash interest")
+                        .font(Term.mono(8))
+                        .foregroundStyle(Term.fgMuted)
+                        .help("The website adds an estimated \(Fmt.money(ci)) of interest earned on the BDA and FGTXX cash sleeves since inception. It is a simulation, not a credited balance, and the sheet already reflects some of it.")
+                }
+            }
         }
         .padding(.horizontal, 10).padding(.vertical, 6)
     }
@@ -612,6 +636,11 @@ struct PortfolioPanel: View {
         if let d = try? await API.shared.get("/holdings/coverage"),
            let p = try? await API.shared.decode(CovPayload.self, from: d) {
             coverage = p.coverage ?? [:]
+        }
+        struct Yield: Decodable { let estimatedInterestEarned: Double? }
+        if let d = try? await API.shared.get("/holdings/cash-yield"),
+           let y = try? await API.shared.decode(Yield.self, from: d) {
+            cashInterest = y.estimatedInterestEarned
         }
     }
 }

@@ -205,3 +205,19 @@ test('quarterly comparatives are separated the same way', () => {
   assert.equal(m.get('2025 Q3').val, 12);
   assert.equal(m.get('2024 Q3').val, 11);
 });
+
+test('the raw companyfacts cache stays small', async () => {
+  // Not a style point. General Dynamics' companyfacts is 3.4MB of JSON
+  // and roughly 9.3MB parsed, and this cache used to hold every filer
+  // anyone opened for a full day with no eviction — 120MB for the book
+  // and over a gigabyte for the watchlist, on a 512MB dyno.
+  //
+  // The symptom is not an out-of-memory page. The dyno restarts, the
+  // cache comes back cold, every panel re-fetches megabytes, and SEC
+  // begins refusing companyfacts specifically while submissions and the
+  // Archives keep answering — which is precisely what production was
+  // doing when this test was written.
+  const { rawCacheSize } = await import('./secFundamentals.js');
+  assert.ok(rawCacheSize() <= 3,
+    `raw companyfacts cache holds ${rawCacheSize()} documents; the cap is 3`);
+});

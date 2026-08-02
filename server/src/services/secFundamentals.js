@@ -22,6 +22,10 @@ const FACTS_URL = (cik) =>
   `https://data.sec.gov/api/xbrl/companyfacts/CIK${cik}.json`;
 
 const TTL_MS = 24 * 60 * 60 * 1000; // 24h — fundamentals move quarterly
+// The extracted statements: a few KB each, so this can hold the whole
+// watchlist for its full day. Capped anyway, because "small times
+// unbounded" is how the other one got here.
+const MAX_ENTRIES = 300;
 const cache = new Map(); // CIK → { at, value: { annual, quarterly } }
 
 // Metric → ordered concept candidates. The first one the filer reports
@@ -295,6 +299,7 @@ export async function getFundamentals(rawTicker, freq = 'annual') {
     quarterly: extractFundamentals(facts, 'quarterly'),
   };
   cache.set(info.cik, { at: Date.now(), value });
+  while (cache.size > MAX_ENTRIES) cache.delete(cache.keys().next().value);
   return shape(ticker, info, wantFreq, value);
 }
 
@@ -365,13 +370,47 @@ const CASHFLOW_DEFS = [
 
 // companyfacts is a megabyte-plus per filer; cache the raw document so FA
 // and a later GF call on the same name share one fetch.
+//
+// BOUNDED, and it has to be. General Dynamics' companyfacts is 3.4MB of
+// JSON and about 9.3MB once parsed — 522 tags and 23,800 fact rows — and
+// this used to hold every filer anyone looked at for a full day with no
+// eviction. Twelve holdings is ~120MB on a 512MB Render dyno, and the
+// 162-name watchlist would be over a gigabyte.
+//
+// The failure that follows is not an out-of-memory page anyone sees. The
+// dyno restarts, the cache comes back cold, every panel re-fetches
+// 3.4MB, and SEC starts refusing THIS endpoint specifically while
+// submissions and the Archives keep answering — which is exactly what
+// production was doing when this was written: statements 502 on every
+// ticker, filings and governance 200 on the same server.
+//
+// A short life is also enough. The raw document exists only so that FA
+// and a GF call moments later share one fetch; the EXTRACTED result is
+// what deserves the 24 hours, and it is a few kilobytes.
+const RAW_MAX = 3;
+const RAW_TTL_MS = 10 * 60 * 1000;
 const factsCache = new Map(); // CIK → { at, facts }
 async function loadFacts(cik) {
   const hit = factsCache.get(cik);
-  if (hit && Date.now() - hit.at < TTL_MS) return hit.facts;
+  if (hit && Date.now() - hit.at < RAW_TTL_MS) {
+    // Touch: re-inserting moves it to the end, so the entry evicted is
+    // the least recently USED rather than the oldest fetched.
+    factsCache.delete(cik);
+    factsCache.set(cik, hit);
+    return hit.facts;
+  }
   const facts = await fetchFacts(cik);
   factsCache.set(cik, { at: Date.now(), facts });
+  while (factsCache.size > RAW_MAX) {
+    factsCache.delete(factsCache.keys().next().value);
+  }
   return facts;
+}
+
+/// Visible for tests: the raw-document cache must stay small, and the
+/// only way to know it has is to be able to count it.
+export function rawCacheSize() {
+  return factsCache.size;
 }
 
 // Most filers tag Q1–Q3 and only the full year, never Q4. For an

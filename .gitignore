@@ -20,3 +20,22 @@ sandbox/.venv/
 sandbox/.env
 sandbox/*.egg-info/
 sandbox/**/__pycache__/
+
+# quant — vendor price data is licensed and enormous; the cache is
+# rebuildable from a key and must never be committed.
+quant/.venv/
+quant/data/
+quant/.env
+quant/*.egg-info/
+quant/**/__pycache__/
+quant/.pytest_cache/
+
+# Two things under quant/ are deliberately NOT ignored. Audit and
+# backtest reports are the deliverable, so they belong in history where
+# a result can be diffed against the run that produced it. And
+# quant/trials.jsonl is the append-only count of every configuration
+# ever tested — it feeds the Deflated Sharpe, so a version of this
+# project where it can be quietly reset is a version where the headline
+# number is unfalsifiable.
+!quant/reports/
+!quant/trials.jsonl

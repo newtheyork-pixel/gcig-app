@@ -1,0 +1,64 @@
+[project]
+name = "griffinquant"
+version = "0.1.0"
+description = "Point-in-time equity research harness for The Griffin Fund: audit the data before anything trades on it."
+requires-python = ">=3.11"
+dependencies = [
+    # The panel itself. pyarrow is not optional — the parquet cache is
+    # what lets a reviewer rerun an audit from the saved pull without
+    # credentials, and pandas 3 leans on arrow for the native string
+    # dtype the schemas validate against.
+    "pandas>=2.2",
+    "pyarrow>=16",
+    "numpy>=1.26",
+    # The vendor pull and the CLI that grades it.
+    "requests>=2.32",
+    "typer>=0.12",
+    "rich>=13",
+    # Real NYSE sessions, so a Good Friday is a holiday rather than a
+    # hole in the data. Without a genuine calendar the quality checks
+    # cry wolf on every long weekend until nobody reads them.
+    "exchange-calendars>=4.5",
+]
+
+# Deliberately absent: yfinance, and every other free price API.
+#
+# This is not a cost decision and it is not snobbery about data
+# vendors. The audit in this repository asks four questions a free
+# endpoint cannot answer at all. It has no permanent entity id, so a
+# recycled symbol splices Wachovia onto Weibo and nothing can tell.
+# It has no delisted names — a scraped quote endpoint only serves
+# symbols that still resolve today, which is survivorship bias in its
+# original form, built into the transport. It has no as-reported
+# fundamentals and no filing dates, so nothing it returns is
+# point-in-time. And its adjusted series is offered without an
+# as-traded one, so every price and liquidity screen silently reads
+# back-adjusted numbers and imports the future.
+#
+# The failure mode that makes this worth writing down: a panel pulled
+# through one of these does not FAIL the audit, it comes back
+# UNPROVABLE on nearly every check, because the source cannot feed
+# them. That reads like a configuration problem and it is not. Adding
+# the dependency would not make the numbers better, it would make the
+# report stop meaning anything.
+[project.optional-dependencies]
+dev = ["pytest>=8", "pytest-mock>=3.12"]
+
+[project.scripts]
+griffin-audit = "data_audit:app"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["griffinquant"]
+# The Stage 1 deliverable lives at the repo root rather than inside the
+# package, because it is the thing a person runs, not a thing the
+# library imports. force-include carries it into the wheel so the
+# console script above has something to resolve.
+force-include = { "data_audit.py" = "data_audit.py" }
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
