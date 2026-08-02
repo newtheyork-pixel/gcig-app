@@ -130,7 +130,7 @@ struct DecisionRecordPanel: View {
                     stat("SETTLED", "\(s.wins ?? 0)W / \(s.losses ?? 0)L")
                     Spacer()
                 }
-                if (s.mature ?? 0) < 5 {
+                if (s.mature ?? 0) < 10 {
                     // Say it in words rather than trusting a reader to
                     // notice the denominator. One win out of one is not
                     // a hundred per cent, it is one win.
