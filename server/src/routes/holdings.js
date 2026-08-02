@@ -116,7 +116,7 @@ import { verifyJwt, requireSuperAdmin, requireRole } from '../middleware/auth.js
 import { getSheetPortfolio, withResolvedDayChange } from '../services/sheetPortfolio.js';
 import { getNewsForTicker, extractArticle } from '../services/news.js';
 import { getBusinessProfile } from '../services/secBusinessSummary.js';
-import { tickerWhere, groupByTicker } from '../services/tickerKey.js';
+import { tickerWhere, groupByTicker, tickerKey } from '../services/tickerKey.js';
 import { buildScoreboard, summarize } from '../services/decisionRecord.js';
 import { computeTally } from './votes.js';
 import { getCompanyIdentity } from '../services/secFilings.js';
@@ -504,16 +504,31 @@ router.get('/news/:ticker', tickerDataLimiter, async (req, res) => {
  */
 router.get('/decisions/record', async (_req, res) => {
   try {
-    const [sessions, allUsers] = await Promise.all([
+    const [sessions, rejected, allUsers] = await Promise.all([
       prisma.votingSession.findMany({
         where: { status: 'closed' },
         orderBy: { closedAt: 'desc' },
         include: { ballots: true },
       }),
+      // The club's rejections live somewhere else.
+      //
+      // Five names — ARMCO, INTU, KSA, AXON and CRM — were pitched,
+      // argued about and turned down before the app recorded ballots, so
+      // they exist as Pitch.votedOutcome with no VotingSession behind
+      // them. Reading only VotingSession silently dropped five of the
+      // club's sixteen decisions, and they were ALL the rejections —
+      // which is the half of a record where the judgment actually shows.
+      // A report card that grades only the trades you made is the
+      // flattering half by construction.
+      prisma.pitch.findMany({
+        where: { votedOutcome: { not: null }, ticker: { not: '' } },
+        select: { id: true, ticker: true, date: true, votedOutcome: true },
+        orderBy: { date: 'desc' },
+      }),
       prisma.user.findMany({ select: { id: true, name: true, role: true, extraRoles: true } }),
     ]);
 
-    const decisions = sessions
+    const fromSessions = sessions
       .filter((v) => v.ticker && v.closedAt)
       .map((v) => {
         const tally = computeTally(v.ballots, allUsers, v);
@@ -525,8 +540,30 @@ router.get('/decisions/record', async (_req, res) => {
           decision: tally.finalDecision,
           ballots: v.ballots.length,
           proposed: tally.buyAmountStats?.avg ?? null,
+          source: 'vote',
         };
       });
+
+    // A session always wins over a pitch outcome for the same name and
+    // period: the session has the ballots. These fill the gap before the
+    // app was recording them, and say so — `ballots: null` renders as a
+    // dash rather than a zero, because nobody cast zero ballots.
+    const covered = new Set(fromSessions.map((d) => tickerKey(d.ticker)));
+    const fromPitches = rejected
+      .filter((p) => !covered.has(tickerKey(p.ticker)))
+      .map((p) => ({
+        id: -p.id,
+        ticker: String(p.ticker).trim().toUpperCase(),
+        kind: 'buy',
+        closedAt: p.date,
+        decision: p.votedOutcome,
+        ballots: null,
+        proposed: null,
+        source: 'pitch',
+      }));
+
+    const decisions = [...fromSessions, ...fromPitches]
+      .sort((a, b) => new Date(b.closedAt) - new Date(a.closedAt));
 
     const board = await buildScoreboard(decisions);
     res.json({ ...board, summary: summarize(board.rows) });

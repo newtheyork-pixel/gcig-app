@@ -24,6 +24,9 @@ struct DecisionRecordPanel: View {
 
         let scored: Bool?
         let reason: String?
+        /// "vote" when ballots back it, "pitch" for the five names the
+        /// club turned down before the app recorded ballots.
+        let source: String?
         let ret: Double?
         let bench: Double?
         let excess: Double?
@@ -47,6 +50,7 @@ struct DecisionRecordPanel: View {
         let summary: Summary?
         let benchmark: String?
         let benchError: String?
+        let basis: String?
         let maturityDays: Int?
     }
 
@@ -96,6 +100,16 @@ struct DecisionRecordPanel: View {
                     .font(Term.mono(11, weight: .bold)).foregroundStyle(Term.amber)
                 Text("vs \(p.benchmark ?? "SPY")")
                     .font(Term.mono(9)).foregroundStyle(Term.fgMuted)
+                // Said on the screen, not just in the source. Our price
+                // history carries no dividend-adjusted series, so these
+                // are price returns — and the gap runs against the club,
+                // since SPY yields less than SCHD, JNJ or GD.
+                if (p.basis ?? "price") == "price" {
+                    Text("PRICE ONLY")
+                        .font(Term.mono(8, weight: .bold))
+                        .foregroundStyle(Term.fgMuted)
+                        .help("Returns exclude dividends on both sides. Dividend payers are understated against SPY.")
+                }
                 Spacer()
                 Toggle(isOn: $showEarly) {
                     Text("include recent").font(Term.mono(9))
@@ -228,7 +242,11 @@ struct DecisionRecordPanel: View {
         case .when:
             Text(r.closedAt.map { Fmt.date($0) } ?? "—").foregroundStyle(Term.fgDim)
         case .ballots:
-            Text(r.ballots.map(String.init) ?? "—").foregroundStyle(Term.fgDim)
+            // A dash, never a zero. Nobody cast zero ballots on these —
+            // they were decided before the app recorded them.
+            Text(r.ballots.map(String.init) ?? "—")
+                .foregroundStyle(r.ballots == nil ? Term.fgMuted : Term.fgDim)
+                .help(r.source == "pitch" ? "Decided before the app recorded ballots" : "")
         case .ret:
             signed(r.ret)
         case .bench:

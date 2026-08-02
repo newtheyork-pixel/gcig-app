@@ -59,11 +59,22 @@ export function closeOnOrBefore(bars, when) {
     if (!Number.isFinite(bt) || bt > t) continue;
     if (!best || bt > new Date(best.date).getTime()) best = b;
   }
-  // adjClose where the source gives it: a decision measured across a
-  // dividend or a split has to be measured on the same basis the
-  // benchmark is, or the club gets charged for a stock split.
+  // PRICE, and it is worth being exact about that.
+  //
+  // `adjClose` looks like the right field and is not: priceHistory.js
+  // writes `adjClose: close` because the NASDAQ CSV carries no adjusted
+  // series, so the two columns are identical and neither is adjusted for
+  // dividends. Reading `adjClose` here would look like total return
+  // while being price return, which is worse than plainly being price
+  // return — so it reads `close` and the panel says PRICE ONLY.
+  //
+  // The bias is not symmetric and it runs against the club: SPY yields
+  // roughly 1.2% while SCHD, JNJ and GD all yield more, so every
+  // dividend payer is understated against the benchmark. Real total
+  // return needs a dividend-adjusted series rebuilt from the
+  // CommonStockDividendsPerShareDeclared facts we already cache.
   if (!best) return null;
-  const px = Number(best.adjClose ?? best.close);
+  const px = Number(best.close);
   return Number.isFinite(px) && px > 0 ? { date: best.date, close: px } : null;
 }
 
@@ -74,7 +85,10 @@ export function lastClose(bars) {
     if (!best || new Date(b.date).getTime() > new Date(best.date).getTime()) best = b;
   }
   if (!best) return null;
-  const px = Number(best.adjClose ?? best.close);
+  // Same basis as the entry, for the same reason. Mixing the two fields
+  // would be harmless today (they are equal) and would silently become a
+  // bug the day priceHistory learns to adjust one of them.
+  const px = Number(best.close);
   return Number.isFinite(px) && px > 0 ? { date: best.date, close: px } : null;
 }
 
@@ -131,6 +145,9 @@ export function scoreDecision({ decision, closedAt, bars, benchBars, now = null 
     // A verdict needs a window. Below the floor the number is real and
     // the ranking would not be.
     mature: days >= MATURITY_DAYS,
+    // Travels with every row so no consumer can present this as total
+    // return by forgetting to read the docs.
+    basis: 'price',
   };
 }
 
@@ -156,6 +173,8 @@ function signFor(decision) {
  * decided.
  */
 export async function buildScoreboard(decisions, deps = {}) {
+  // Stated once, at the top level, so the panel can label itself.
+  const basis = 'price';
   const history = deps.getHistory || getHistory;
   const range = deps.range || '5y';
 
@@ -189,7 +208,7 @@ export async function buildScoreboard(decisions, deps = {}) {
     }),
   }));
 
-  return { rows, benchmark: BENCHMARK, benchError, maturityDays: MATURITY_DAYS };
+  return { rows, benchmark: BENCHMARK, benchError, maturityDays: MATURITY_DAYS, basis };
 }
 
 /**
