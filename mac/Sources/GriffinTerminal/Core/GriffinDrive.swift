@@ -89,6 +89,12 @@ final class GriffinDrive: ObservableObject {
             ticker = t
             await pull()
         }
+        // Once the index exists, and not only when a file happens to
+        // change. Something dragged to the Trash while the app was shut
+        // fires no filesystem event on the next launch, so without this
+        // the gesture is simply lost — which is the bug this feature was
+        // written to fix, reappearing one restart later.
+        sweepTrash()
     }
 
     func start(projectId: Int, ticker: String?) {
