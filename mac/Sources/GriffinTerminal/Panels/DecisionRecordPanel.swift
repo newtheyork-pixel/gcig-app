@@ -214,7 +214,18 @@ struct DecisionRecordPanel: View {
 
     private var columnHeads: some View {
         HStack(spacing: Self.gap) {
-            ForEach(Field.allCases, id: \.self) { f in sized(f) { Text(f.title) } }
+            ForEach(Field.allCases, id: \.self) { f in
+                sized(f) {
+                    Text(f.title)
+                        // Stated where somebody checking the arithmetic
+                        // will look. SINCE minus SPY equals EXCESS on
+                        // every row, on purpose, so any member can verify
+                        // a row without being told to trust it.
+                        .help(f == .excess
+                              ? "SINCE minus SPY. Arithmetic difference: every row subtracts on screen."
+                              : "")
+                }
+            }
         }
         .font(Term.mono(9, weight: .bold)).foregroundStyle(Term.blue)
         .padding(.horizontal, 10).padding(.vertical, 4)

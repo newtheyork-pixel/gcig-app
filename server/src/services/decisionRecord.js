@@ -150,6 +150,21 @@ export function scoreDecision({ decision, closedAt, bars, benchBars, now = null,
     ret,
     bench,
     // The number that matters. Everything else on the row is working.
+    //
+    // ARITHMETIC, and deliberately so. The geometric form,
+    // (1+r)/(1+b)-1, is the truer statement of how much better off the
+    // club ended up and it reads LOWER on every large move: INTU is
+    // +48.7 here and +45.4 geometrically, CRM +34.5 against +31.6, and
+    // the average over the settled decisions is +23.2 against +21.4.
+    // Every row where the choice moves the number by more than a point
+    // is a NoBuy, which is to say simple subtraction flatters exactly
+    // the calls the club is proudest of.
+    //
+    // Chosen anyway, by the club, for legibility: SINCE minus SPY equals
+    // EXCESS on screen, so a member can check any row in their head. A
+    // number people can verify beats a number that is 1.8 points more
+    // correct and has to be taken on faith. If this is ever revisited,
+    // revisit it knowing which direction it moves.
     excess: (ret - bench) * sign,
     // Which way the club was pointed, kept so a reader can tell a Sell
     // that avoided a fall from a Buy that caught a rise.
