@@ -788,6 +788,34 @@ Hit-rate stats count `Approved` toward Voted Yes too.
   one place: the sub-bar used to print 6-9 while `publishTabs` registered
   only 1-5, so those digits were addresses that went nowhere.
 
+- **An unbounded cache of a big document reads as a THIRD-PARTY outage
+  (Aug '26)**: FA and GF returned 502 on every ticker while filings,
+  governance and the 10-K text returned 200 from the same server — SEC
+  throttling one endpoint, not blocking our IP, which is a distinction
+  worth testing for before believing a vendor is down. The endpoint was
+  companyfacts, the one that ships megabytes: General Dynamics' is 3.4MB
+  of JSON and ~9.3MB parsed, and `secFundamentals.js` held every filer
+  anyone opened for a full day with no eviction. Twelve holdings is
+  ~120MB and the 162-name watchlist over a gigabyte, on a 512MB dyno.
+  Nobody ever sees an out-of-memory page: the dyno restarts, the cache
+  comes back cold, every panel re-fetches megabytes, and SEC starts
+  refusing. The raw document is now an LRU of 3 with a 10-minute life
+  (all it was ever for — sharing one fetch between FA and a GF call
+  moments later); the extracted result keeps 24h and is capped at 300.
+  **Diagnostic that settled it in one command**: hit several endpoints
+  backed by the same host and see whether they fail together. If one
+  fails and the rest answer, the problem is the size or rate of what WE
+  ask for, not their availability.
+- **The website and PM disagree on the fund's value on purpose (Aug
+  '26)**: the site shows $137,070 and PM $135,464, and the difference is
+  exactly `estimatedInterestEarned` from `/holdings/cash-yield` —
+  simulated interest on the BDA and FGTXX sleeves since inception, added
+  per the treasurer's instruction. `Portfolio.jsx` is candid that it
+  leans optimistic because the sheet already carries most of it, and the
+  payload carries `isEstimate: true`. PM shows the MARKED total and
+  prints the reconciliation beneath it. Do not "fix" either number into
+  the other without the treasurer: they answer different questions, and
+  the only real defect was that neither screen mentioned the other.
 - **EDGAR rate-limits, and we used to call that broken data (Jul '26)**:
   SEC publishes a cap of ten requests a second and answers a burst above
   it with 403 or 429. Every ticker panel reads from EDGAR, so opening
