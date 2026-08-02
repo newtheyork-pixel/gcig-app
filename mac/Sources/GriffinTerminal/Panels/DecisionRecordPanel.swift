@@ -32,6 +32,10 @@ struct DecisionRecordPanel: View {
         let excess: Double?
         let days: Int?
         let mature: Bool?
+        /// "reversed" when the club undid this decision and the window
+        /// closed there; "open" when it still runs to the last print.
+        let closedBy: String?
+        let exitDate: String?
         let entryPrice: Double?
         let lastPrice: Double?
 
@@ -264,8 +268,19 @@ struct DecisionRecordPanel: View {
                     .font(Term.mono(9)).foregroundStyle(Term.fgMuted).lineLimit(1)
             }
         case .age:
-            Text(r.days.map { "\($0)d" } ?? "—")
-                .foregroundStyle((r.mature ?? false) ? Term.fgDim : Term.amber.opacity(0.8))
+            HStack(spacing: 3) {
+                Text(r.days.map { "\($0)d" } ?? "—")
+                    .foregroundStyle((r.mature ?? false) ? Term.fgDim : Term.amber.opacity(0.8))
+                // A closed window is short by fact, not by accident, and
+                // a reader comparing a 30-day row against a 260-day one
+                // has to be able to tell which.
+                if r.closedBy == "reversed" {
+                    Text("◼")
+                        .font(Term.mono(7)).foregroundStyle(Term.cyan)
+                        .help("Window closed: the club reversed this decision"
+                              + (r.exitDate.map { " on \(Fmt.date($0))" } ?? ""))
+                }
+            }
         }
     }
 
@@ -290,6 +305,10 @@ struct DecisionRecordPanel: View {
         if let p = r.proposed, p > 0 { bits.append("proposed \(Fmt.money(p)) average") }
         if let e = r.entryPrice, let l = r.lastPrice {
             bits.append("\(Fmt.money(e)) at the vote, \(Fmt.money(l)) now")
+        }
+        if r.closedBy == "reversed" {
+            bits.append("measured only while the club held it"
+                        + (r.exitDate.map { ", to \(Fmt.date($0))" } ?? ""))
         }
         if r.mature == false, let d = r.days {
             bits.append("\(d) days old — the number is real, the verdict is not")

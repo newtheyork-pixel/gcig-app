@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
-  closeOnOrBefore, lastClose, scoreDecision, summarize, buildScoreboard, MATURITY_DAYS,
+  closeOnOrBefore, lastClose, scoreDecision, summarize, buildScoreboard,
+  reversalIndex, MATURITY_DAYS,
 } from './decisionRecord.js';
 
 /// A series of daily closes starting at `from`, one per day, so a test
@@ -206,4 +207,92 @@ test('a dead benchmark is said once, not thirty times', async () => {
   );
   assert.match(out.benchError, /rate limited/);
   assert.equal(out.rows[0].scored, false);
+});
+
+
+test('a decision stops being measured when the club reverses it', async () => {
+  // IBRX is the real case: bought 6 May, voted out 5 June. Measuring
+  // both to today means the buy keeps earning and losing on a position
+  // that no longer exists, and the two windows double-count the same
+  // month of the same money.
+  const bars = [
+    ...series('2025-01-01', [100, 100, 100]),   // held: flat
+    ...series('2025-01-04', [200, 200, 200]),   // after the exit: doubled
+  ];
+  const withExit = scoreDecision({
+    decision: 'Buy',
+    closedAt: '2025-01-01',
+    until: '2025-01-03',
+    bars,
+    benchBars: flat('2025-01-01', 6),
+  });
+  assert.ok(Math.abs(withExit.ret) < 0.001, 'the buy is judged on what it did while we held it');
+  assert.equal(withExit.closedBy, 'reversed');
+
+  // Without the rule the same buy claims a double it never saw.
+  const openEnded = scoreDecision({
+    decision: 'Buy', closedAt: '2025-01-01', bars, benchBars: flat('2025-01-01', 6),
+  });
+  assert.ok(openEnded.ret > 90);
+  assert.equal(openEnded.closedBy, 'open');
+});
+
+test('only an OPPOSITE decision closes a window', () => {
+  // Two buys in a row are adding to a position, not undoing one. If a
+  // second buy closed the first, every add would truncate the original
+  // thesis at an arbitrary date.
+  const idx = reversalIndex([
+    { id: 1, ticker: 'GD', decision: 'Buy', closedAt: '2025-01-01' },
+    { id: 2, ticker: 'GD', decision: 'Buy', closedAt: '2025-02-01' },
+    { id: 3, ticker: 'GD', decision: 'Sell', closedAt: '2025-03-01' },
+  ]);
+  assert.equal(idx.get('GD|1'), '2025-03-01', 'the first buy closes at the sell');
+  assert.equal(idx.get('GD|2'), '2025-03-01', 'so does the second');
+  assert.equal(idx.get('GD|3'), undefined, 'the sell is still open');
+});
+
+test('a sell is closed by a buy-back, and other tickers never interfere', () => {
+  const idx = reversalIndex([
+    { id: 1, ticker: 'IBRX', decision: 'Buy', closedAt: '2026-05-06' },
+    { id: 2, ticker: 'IBRX', decision: 'Sell', closedAt: '2026-06-05' },
+    { id: 3, ticker: 'IBRX', decision: 'Buy', closedAt: '2026-07-01' },
+    { id: 4, ticker: 'JNJ', decision: 'Sell', closedAt: '2026-06-10' },
+  ]);
+  assert.equal(idx.get('IBRX|1'), '2026-06-05');
+  assert.equal(idx.get('IBRX|2'), '2026-07-01', 'the sell closes when we buy back');
+  assert.equal(idx.get('IBRX|3'), undefined);
+  // A sell of one name must not close a buy of another.
+  assert.equal(idx.get('JNJ|4'), undefined);
+});
+
+test('a Hold neither closes a window nor gets one', () => {
+  const idx = reversalIndex([
+    { id: 1, ticker: 'AIT', decision: 'Buy', closedAt: '2025-01-01' },
+    { id: 2, ticker: 'AIT', decision: 'Hold', closedAt: '2025-02-01' },
+  ]);
+  assert.equal(idx.get('AIT|1'), undefined, 'a Hold says nothing about direction');
+  assert.equal(idx.get('AIT|2'), undefined);
+});
+
+test('the reversal pair partitions the timeline instead of overlapping it', async () => {
+  // Buy flat, then the stock falls after the exit. The buy should be
+  // flat and the sell should be a win, and neither should carry the
+  // other's period.
+  const bars = [
+    ...series('2025-01-01', [100, 100, 100]),
+    ...series('2025-01-04', [50, 50, 50]),
+  ];
+  const out = await buildScoreboard(
+    [
+      { id: 1, ticker: 'X', decision: 'Buy', closedAt: '2025-01-01' },
+      { id: 2, ticker: 'X', decision: 'Sell', closedAt: '2025-01-03' },
+    ],
+    { getHistory: async (t) => (t === 'SPY' ? flat('2025-01-01', 6) : bars) },
+  );
+  const buy = out.rows.find((r) => r.id === 1);
+  const sell = out.rows.find((r) => r.id === 2);
+  assert.ok(Math.abs(buy.ret) < 0.001, 'the buy is judged only on the period we held');
+  assert.ok(sell.excess > 0, 'the sell gets the credit for the fall it avoided');
+  assert.equal(buy.closedBy, 'reversed');
+  assert.equal(sell.closedBy, 'open');
 });

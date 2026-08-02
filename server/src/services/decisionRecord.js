@@ -101,11 +101,24 @@ export function lastClose(bars) {
  * so the same excess is negated: avoiding a fall is a win, and missing
  * a rise is a loss.
  */
-export function scoreDecision({ decision, closedAt, bars, benchBars, now = null }) {
+export function scoreDecision({ decision, closedAt, bars, benchBars, now = null, until = null }) {
   const entry = closeOnOrBefore(bars, closedAt);
   const benchEntry = closeOnOrBefore(benchBars, closedAt);
-  const exit = lastClose(bars);
-  const benchExit = lastClose(benchBars);
+  // A decision stops mattering when the club reverses it.
+  //
+  // IBRX is the case that forced this. The club bought it on 6 May and
+  // voted it out on 5 June, and both decisions were being measured from
+  // their own date to TODAY — so the buy kept accruing gains and losses
+  // on a position that no longer existed, and the two windows
+  // double-counted the same month of the same money. Left alone, a stock
+  // that trebles in 2029 would retroactively make a 2026 purchase look
+  // brilliant on a holding the club has not owned for three years.
+  //
+  // Closing the window at the reversal makes the pair partition the
+  // timeline instead of overlapping it: the buy is judged on what it did
+  // while we held it, the sell on what we avoided after.
+  const exit = until ? closeOnOrBefore(bars, until) : lastClose(bars);
+  const benchExit = until ? closeOnOrBefore(benchBars, until) : lastClose(benchBars);
 
   // Four distinct reasons there is no score, and they are not the same
   // fact. "We have no prices for this ticker" is our gap; "the vote
@@ -145,6 +158,12 @@ export function scoreDecision({ decision, closedAt, bars, benchBars, now = null 
     // A verdict needs a window. Below the floor the number is real and
     // the ranking would not be.
     mature: days >= MATURITY_DAYS,
+    // Where the measurement stopped, and why. An open decision runs to
+    // the last print; a reversed one stops at the reversal and says so,
+    // because a reader comparing a 30-day window against a 260-day one
+    // needs to know the short one is short by fact and not by accident.
+    closedBy: until ? 'reversed' : 'open',
+    exitDate: exit.date,
     // Travels with every row so no consumer can present this as total
     // return by forgetting to read the docs.
     basis: 'price',
@@ -198,6 +217,7 @@ export async function buildScoreboard(decisions, deps = {}) {
     }
   }
 
+  const reversals = reversalIndex(decisions);
   const rows = decisions.map((d) => ({
     ...d,
     ...scoreDecision({
@@ -205,10 +225,43 @@ export async function buildScoreboard(decisions, deps = {}) {
       closedAt: d.closedAt,
       bars: bars.get(d.ticker) || [],
       benchBars,
+      until: reversals.get(keyOf(d)) ?? null,
     }),
   }));
 
   return { rows, benchmark: BENCHMARK, benchError, maturityDays: MATURITY_DAYS, basis };
+}
+
+const keyOf = (d) => `${d.ticker}|${d.id}`;
+
+/**
+ * When each decision was reversed, if it was.
+ *
+ * A Buy is closed by the next Sell on the same name; a Sell is closed by
+ * the next Buy. Same-direction decisions do not close each other — two
+ * buys in a row are adding to a position, not undoing one.
+ */
+export function reversalIndex(decisions) {
+  const out = new Map();
+  const byTicker = new Map();
+  for (const d of decisions || []) {
+    if (!d.ticker) continue;
+    if (!byTicker.has(d.ticker)) byTicker.set(d.ticker, []);
+    byTicker.get(d.ticker).push(d);
+  }
+  for (const [, list] of byTicker) {
+    const ordered = [...list].sort((a, b) => new Date(a.closedAt) - new Date(b.closedAt));
+    for (let i = 0; i < ordered.length; i += 1) {
+      const dir = signFor(ordered[i].decision);
+      if (dir === 0) continue;
+      const later = ordered.slice(i + 1).find((x) => {
+        const s2 = signFor(x.decision);
+        return s2 !== 0 && s2 !== dir;
+      });
+      if (later) out.set(keyOf(ordered[i]), later.closedAt);
+    }
+  }
+  return out;
 }
 
 /**
