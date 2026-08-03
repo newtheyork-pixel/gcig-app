@@ -29,6 +29,20 @@ const DEFAULT_TIMEOUT_MS = 8_000; // matches marketData.js finnhubFetch
 // the documented lever if real usage ever proves tight.
 export const QUOTE_TTL_MS = 20_000;
 
+// A MISS expires far sooner than a hit, which is the same rule the SEC
+// services learned the hard way: never cache a failure under a success's
+// TTL. Finnhub occasionally drops a single quote — a timeout, a rate
+// limit, one bad response — and storing that null for the full twenty
+// seconds turns a blink into a fact. It surfaced when a paper order was
+// refused for having "no live quote for AAPL" while AAPL was trading
+// perfectly well; a second attempt read the cached null and refused
+// again.
+//
+// Three seconds still coalesces a burst of panels mounting at once,
+// which is what the miss cache was for, without pretending we know a
+// symbol is dead because one request failed.
+export const MISS_TTL_MS = 3_000;
+
 // ticker → { at, value } where value is { last, changePct, prevClose }
 // or null (an honest miss is cached too, so a dead symbol is not
 // hammered every poll). `at` is stamped from the injected clock so TTL
@@ -89,7 +103,7 @@ function mapQuote(raw) {
 // Never throws — a rejecting fetch resolves the ticker to null.
 async function resolveTicker(sym, quoteFetch, now) {
   const hit = cache.get(sym);
-  if (hit && now() - hit.at < QUOTE_TTL_MS) return hit.value;
+  if (hit && now() - hit.at < (hit.value ? QUOTE_TTL_MS : MISS_TTL_MS)) return hit.value;
 
   const pending = inflight.get(sym);
   if (pending) return pending;

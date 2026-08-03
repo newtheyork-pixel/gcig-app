@@ -4,6 +4,7 @@ import {
   getLiveQuotes,
   _resetLiveQuotes,
   QUOTE_TTL_MS,
+  MISS_TTL_MS,
 } from './liveQuotes.js';
 
 // A canned Finnhub /quote payload — the shape fetchFinnhub reads:
@@ -113,7 +114,16 @@ test('miss: empty / {c:0} / null payload → that ticker is null', async () => {
   assert.deepEqual(out, { AAA: null, BBB: null, CCC: null });
 });
 
-test('a null result is cached for the TTL (a bad symbol is not hammered)', async () => {
+test('a miss is cached briefly, a hit for the full TTL', async () => {
+  // Both halves matter and they pull against each other.
+  //
+  // A miss must be cached for a moment so a burst of panels mounting on
+  // one dead symbol costs one upstream call rather than eight. But it
+  // must NOT be cached as long as a real price: Finnhub drops the odd
+  // quote to a timeout or a rate limit, and holding that null for twenty
+  // seconds turns a blink into a fact. It surfaced when a paper order was
+  // refused for having "no live quote for AAPL" while AAPL was trading
+  // fine, and the retry read the cached null and refused again.
   _resetLiveQuotes();
   let calls = 0;
   let t = 0;
@@ -123,10 +133,16 @@ test('a null result is cached for the TTL (a bad symbol is not hammered)', async
     return { c: 0 };
   };
   await getLiveQuotes(['DEAD'], { quoteFetch, now });
-  t += QUOTE_TTL_MS - 1;
-  const again = await getLiveQuotes(['DEAD'], { quoteFetch, now });
-  assert.equal(again.DEAD, null);
-  assert.equal(calls, 1); // served the cached null, no second upstream hit
+  t += MISS_TTL_MS - 1;
+  assert.equal((await getLiveQuotes(['DEAD'], { quoteFetch, now })).DEAD, null);
+  assert.equal(calls, 1, 'inside the miss window, served from cache');
+
+  // Past the miss window it asks again, well before a real quote would
+  // have expired.
+  t += 2;
+  await getLiveQuotes(['DEAD'], { quoteFetch, now });
+  assert.equal(calls, 2, 'a miss is retried long before the hit TTL');
+  assert.ok(MISS_TTL_MS < QUOTE_TTL_MS, 'a failure must never outlive a success');
 });
 
 test('never throws: a throwing quoteFetch yields null, not a rejection', async () => {
