@@ -11,6 +11,7 @@ import userRoutes from './routes/users.js';
 import pitchRoutes from './routes/pitches.js';
 import eventRoutes from './routes/events.js';
 import holdingRoutes from './routes/holdings.js';
+import paperRoutes, { runTick as paperTick } from './routes/paper.js';
 import reportRoutes from './routes/reports.js';
 import attendanceRoutes from './routes/attendance.js';
 import dashboardRoutes from './routes/dashboard.js';
@@ -116,6 +117,7 @@ app.use('/api/users', userRoutes);
 app.use('/api/pitches', pitchRoutes);
 app.use('/api/events', eventRoutes);
 app.use('/api/holdings', holdingRoutes);
+app.use('/api/paper', paperRoutes);
 app.use('/api/reports', reportRoutes);
 app.use('/api/attendance', attendanceRoutes);
 app.use('/api/dashboard', dashboardRoutes);
@@ -172,6 +174,27 @@ app.use((err, req, res, _next) => {
 //
 // Requires the API service to run continuously (Render Starter+ tier).
 // On the free spin-down tier this still works while the service is
+// Paper orders rest for ten minutes, so a minute is the coarsest tick
+// that can resolve them at all — and it is deliberately coarse. A touch
+// of the limit lasting twenty seconds is invisible at this cadence and
+// the order records as unfilled, which biases the measured fill rate
+// DOWNWARD. That is the direction an honest forward test should fail in:
+// a rule that still looks good under a handicap is a rule worth having.
+//
+// Weekdays only, inside the session, so it is idle overnight rather than
+// waking a dyno 1,440 times to find an empty table.
+cron.schedule(
+  '* 13-21 * * 1-5',
+  () => {
+    paperTick()
+      .then((r) => {
+        if (r.updated) console.log(`[cron] paper: ${r.updated}/${r.checked} orders advanced`);
+      })
+      .catch((e) => console.warn('[cron] paper tick failed:', e.message));
+  },
+  { timezone: 'UTC' }
+);
+
 // awake, just doesn't fire if nobody's pinged the API for 15+ min.
 // The lazy /day-in-review endpoint is the safety net either way.
 cron.schedule(

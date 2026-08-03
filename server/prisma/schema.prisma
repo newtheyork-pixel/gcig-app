@@ -107,6 +107,7 @@ model User {
   researchValuations        ResearchValuation[]   @relation("ResearchValuationAuthor")
   researchArtifacts         ResearchArtifact[]    @relation("ResearchArtifactUploader")
   trashedArtifacts          ResearchArtifact[]    @relation("ResearchArtifactTrasher")
+  paperOrders               PaperOrder[]          @relation("PaperOrderPlacer")
   researchTargets           ResearchTarget[]      @relation("ResearchTargetCreator")
   outreachDraftsWritten     OutreachDraft[]       @relation("OutreachDraftAuthor")
   outreachDraftsRejected    OutreachDraft[]       @relation("OutreachDraftRejecter")
@@ -1580,4 +1581,61 @@ model Facility {
 
   @@index([term])
   @@index([term, state])
+}
+
+// A trade nobody placed.
+//
+// The execution study said two things are worth doing when you buy: stay
+// out of the first thirty minutes, and rest at the bid rather than
+// crossing. Both were measured on history, and history is where a rule
+// looks its best. This is the forward test.
+//
+// DELIBERATELY ISOLATED FROM THE REAL BOOK. No relation to Holding,
+// HoldingLot, Transaction or VotingSession, and nothing here can reach
+// them. A paper blotter that shares a table with the real one is how a
+// simulated fill ends up in the endowment's cost basis, and the club is
+// managing actual money.
+//
+// What it can and cannot prove is worth stating in the schema, because
+// somebody will read the numbers later without the context. It CAN test
+// whether the market traded through the price the rule asked for, which
+// is a real fact about the rule. It CANNOT test whether OUR order would
+// have been filled at that price — a resting limit sits in a queue, and
+// a broker routing to a wholesaler may never post it at all. That
+// question is answered by a broker's Rule 605 report, not by this.
+model PaperOrder {
+  id           Int       @id @default(autoincrement())
+  ticker       String
+  // buy | sell. Sells mirror the logic: rest at the offer, not the bid.
+  side         String    @default("buy")
+  shares       Float
+  // The benchmark, frozen at the moment of the decision. Every cost here
+  // is measured against this and nothing else — a strategy graded on the
+  // price it happened to get is graded on nothing.
+  arrivalPrice Float
+  limitPrice   Float
+  // What the rule said at the time, kept so a later reader can tell a
+  // good outcome from a good decision.
+  rationale    String?
+  // open | filled | crossed | abandoned
+  status       String    @default("open")
+  placedAt     DateTime  @default(now())
+  // When the watcher gives up resting and crosses. Ten minutes in the
+  // study; stored per order so the horizon can be changed without
+  // rewriting history.
+  expiresAt    DateTime
+  filledAt     DateTime?
+  fillPrice    Float?
+  // Every quote the watcher actually saw, so a fill can be audited and a
+  // missed one explained. Polling is ~60s and a touch between polls is
+  // invisible, which biases toward NOT filling — conservative, and the
+  // direction an honest test should fail in.
+  polls        Int       @default(0)
+  bestSeen     Float?
+  placedById   Int?
+  placedBy     User?     @relation("PaperOrderPlacer", fields: [placedById], references: [id], onDelete: SetNull)
+  note         String?
+
+  @@index([status])
+  @@index([ticker, placedAt])
 }
