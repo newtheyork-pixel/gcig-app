@@ -231,7 +231,8 @@ struct TabStrip: View {
         // The report card belongs beside the book and beside the
         // archive, because the question it answers ("was that call
         // right") is the one a reader has just after either.
-        "TRK":   ["PM", "RSCH", "DES", "ARCH"],
+        "TRK":   ["PM", "PAPER", "RSCH", "DES"],
+        "PAPER": ["TRK", "PM", "DES"],
         "MOVR":  ["PM", "TOP", "WEI"],
         "MACRO": ["PM", "WEI"],
         "WEI":   ["TOP", "MOVR", "MACRO"],

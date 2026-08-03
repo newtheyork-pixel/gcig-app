@@ -206,12 +206,29 @@ enum Fmt {
 
     static func date(_ iso: String?) -> String {
         guard let iso else { return "—" }
-        let f = ISO8601DateFormatter()
-        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        let d = f.date(from: iso) ?? ISO8601DateFormatter().date(from: iso)
-        guard let d else { return iso.prefix(10).description }
+        guard let d = parseISO(iso) else { return iso.prefix(10).description }
         let out = DateFormatter()
         out.dateFormat = "dd MMM yy"
         return out.string(from: d)
+    }
+
+    /// Date AND clock time, for anything whose lifetime is measured in
+    /// minutes. A paper order rests for ten of them, so a blotter showing
+    /// only the day cannot tell you which order came first.
+    static func shortDateTime(_ iso: String?) -> String {
+        guard let iso else { return "—" }
+        guard let d = parseISO(iso) else { return iso.prefix(16).description }
+        let out = DateFormatter()
+        out.dateFormat = Calendar.current.isDateInToday(d) ? "HH:mm:ss" : "dd MMM HH:mm"
+        return out.string(from: d)
+    }
+
+    /// The server sends fractional seconds on some rows and not others,
+    /// and ISO8601DateFormatter refuses whichever it was not configured
+    /// for. Both are tried in one place so no caller has to remember.
+    private static func parseISO(_ iso: String) -> Date? {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return f.date(from: iso) ?? ISO8601DateFormatter().date(from: iso)
     }
 }
