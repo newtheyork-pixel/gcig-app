@@ -97,114 +97,158 @@ struct PaperPanel: View {
 
     @ViewBuilder
     private func header(_ p: Payload) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 10) {
-                Text("PAPER").font(Term.mono(11, weight: .bold)).foregroundStyle(Term.amber)
-                Text("SIMULATED — NOT THE BOOK")
-                    .font(Term.mono(8, weight: .bold))
-                    .foregroundStyle(Term.bg)
-                    .padding(.horizontal, 5).padding(.vertical, 1)
-                    .background(Term.amber)
-                Spacer()
-                if let s = session {
-                    Text(s.reason ?? "")
-                        .font(Term.mono(9))
-                        .foregroundStyle((s.ok ?? false) ? Term.positive : Term.amber)
+        VStack(alignment: .leading, spacing: 6) {
+            // What this panel is, in one sentence. The pane titlebar
+            // already says PAPER twice; repeating it a third time told
+            // nobody anything, and the question a reader actually
+            // arrives with is "what am I looking at".
+            Text("Testing one idea: does resting a limit at the bid beat "
+                 + "crossing the spread? Simulated — never touches the book.")
+                .font(Term.mono(10)).foregroundStyle(Term.fgDim)
+                .fixedSize(horizontal: false, vertical: true)
+
+            verdict(p)
+        }
+        .padding(.horizontal, 10).padding(.vertical, 8)
+    }
+
+    /// The answer, in English, or an honest statement that there is not
+    /// one yet.
+    ///
+    /// The first version showed SETTLED / FILL RATE / AVG COST /
+    /// CROSSING and left the reader to work out which way was good. Four
+    /// numbers and a formula is the measurement apparatus; a member wants
+    /// the result and whether to believe it.
+    @ViewBuilder
+    private func verdict(_ p: Payload) -> some View {
+        let s = p.score
+        let n = s?.n ?? 0
+        let cost = s?.avgShortfall
+        let cross = s?.vsCrossing ?? 0.0097
+        let saved = cost.map { cross - $0 }
+
+        VStack(alignment: .leading, spacing: 3) {
+            if n == 0 {
+                Text("Nothing settled yet.")
+                    .font(Term.mono(12, weight: .bold)).foregroundStyle(Term.fgDim)
+                Text("Place an order below. It rests for ten minutes, then fills "
+                     + "or crosses, and the result appears here.")
+                    .font(Term.mono(9)).foregroundStyle(Term.fgMuted)
+            } else if let saved, let cost {
+                HStack(spacing: 6) {
+                    Text(saved > 0 ? "Resting is winning" : "Resting is losing")
+                        .font(Term.mono(13, weight: .bold))
+                        .foregroundStyle(saved > 0 ? Term.positive : Term.negative)
+                    Text("by \(String(format: "%.3f", abs(saved)))% per order")
+                        .font(Term.mono(11)).foregroundStyle(Term.fgDim)
+                }
+                Text("Paid \(String(format: "%+.4f", cost))% against the price at the "
+                     + "moment you decided. Crossing would have cost "
+                     + "\(String(format: "%.4f", cross))%. "
+                     + "\(s?.filled ?? 0) of \(n) filled without crossing.")
+                    .font(Term.mono(9)).foregroundStyle(Term.fgMuted)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                // The sample-size caveat, sized to the sample. It is the
+                // difference between a result and a rumour, and at n=1
+                // it is the only honest thing on the screen.
+                if n < 30 {
+                    Text("\(n) order\(n == 1 ? "" : "s") is too few to conclude anything. "
+                         + "Around 30 before this means much.")
+                        .font(Term.mono(9, weight: .bold)).foregroundStyle(Term.amber)
                 }
             }
-            if let sc = p.score, (sc.n ?? 0) > 0 {
-                HStack(spacing: 16) {
-                    stat("SETTLED", "\(sc.n ?? 0)")
-                    stat("FILL RATE", sc.fillRate.map { Fmt.pct($0, decimals: 0, signed: false) } ?? "—",
-                         tone: (sc.fillRate ?? 0) >= 69 ? Term.positive : Term.negative)
-                    stat("AVG COST", sc.avgShortfall.map { Fmt.pct($0, decimals: 4) } ?? "—",
-                         tone: (sc.avgShortfall ?? 0) <= 0 ? Term.positive : Term.negative)
-                    stat("CROSSING", sc.vsCrossing.map { Fmt.pct($0, decimals: 4, signed: false) } ?? "—")
-                    Spacer()
+        }
+        .padding(.horizontal, 9).padding(.vertical, 7)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Term.bgHeader)
+        .overlay(alignment: .leading) { Rectangle().fill(Term.amber).frame(width: 2) }
+    }
+
+    private var ticketRow: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("PLACE A TEST ORDER")
+                .font(Term.mono(9, weight: .bold)).foregroundStyle(Term.blue)
+            HStack(spacing: 10) {
+                Picker("", selection: $side) {
+                    Text("BUY").tag("buy")
+                    Text("SELL").tag("sell")
                 }
-                // The two numbers that decide whether the rule survives,
-                // stated rather than left for a reader to infer.
-                Text("Beats crossing if AVG COST is below CROSSING. The study's "
-                     + "break-even fill rate was 69%.")
-                    .font(Term.mono(8)).foregroundStyle(Term.fgMuted)
-            } else {
-                Text("Nothing has settled yet. Numbers appear once an order fills or expires.")
-                    .font(Term.mono(9)).foregroundStyle(Term.fgMuted)
+                .pickerStyle(.segmented).frame(width: 120).labelsHidden()
+
+                field("ticker", $ticker, width: 90, placeholder: "AAPL")
+                field("shares", $shares, width: 70, placeholder: "10")
+
+                Button(busy ? "PLACING…" : "PLACE") { Task { await place() } }
+                    .disabled(busy || ticker.trimmingCharacters(in: .whitespaces).isEmpty)
+                    .font(Term.mono(10, weight: .bold))
+
+                // Why the button will not do what you expect, beside the
+                // button. It used to live in the far top-right corner,
+                // which is nowhere near where anybody looks after
+                // pressing something and having nothing happen.
+                if let s = session, !(s.ok ?? true) {
+                    Text(s.reason ?? "")
+                        .font(Term.mono(9)).foregroundStyle(Term.amber)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                if let e = error {
+                    Text(e).font(Term.mono(9)).foregroundStyle(Term.negative).lineLimit(2)
+                }
+                Spacer()
+                Button("CHECK NOW") { Task { await tick() } }
+                    .font(Term.mono(9))
+                    .help("Advance resting orders now instead of waiting for the next minute")
             }
         }
         .padding(.horizontal, 10).padding(.vertical, 7)
     }
 
-    private func stat(_ l: String, _ v: String, tone: Color = Term.white) -> some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Text(l).font(Term.mono(8, weight: .bold)).foregroundStyle(Term.blue)
-            Text(v).font(Term.mono(12, weight: .bold)).foregroundStyle(tone)
+    /// A labelled input. The first version showed a bare field whose
+    /// placeholder read TICKER, which looks exactly like a column
+    /// heading and not at all like somewhere to type.
+    private func field(_ label: String, _ text: Binding<String>,
+                       width: CGFloat, placeholder: String) -> some View {
+        VStack(alignment: .leading, spacing: 1) {
+            Text(label.uppercased())
+                .font(Term.mono(7, weight: .bold)).foregroundStyle(Term.fgMuted)
+            TextField(placeholder, text: text)
+                .textFieldStyle(.roundedBorder)
+                .font(Term.mono(11))
+                .frame(width: width)
+                .onSubmit { Task { await place() } }
         }
     }
 
-    private var ticketRow: some View {
-        HStack(spacing: 8) {
-            Picker("", selection: $side) {
-                Text("BUY").tag("buy")
-                Text("SELL").tag("sell")
-            }
-            .pickerStyle(.segmented).frame(width: 110).labelsHidden()
-
-            TextField("TICKER", text: $ticker)
-                .textFieldStyle(.plain).font(Term.mono(11))
-                .frame(width: 80)
-                .onSubmit { Task { await place() } }
-            TextField("SHARES", text: $shares)
-                .textFieldStyle(.plain).font(Term.mono(11))
-                .frame(width: 70)
-                .onSubmit { Task { await place() } }
-
-            Button(busy ? "..." : "PLACE") { Task { await place() } }
-                .disabled(busy || ticker.trimmingCharacters(in: .whitespaces).isEmpty)
-                .font(Term.mono(10, weight: .bold))
-
-            if let e = error {
-                Text(e).font(Term.mono(9)).foregroundStyle(Term.negative).lineLimit(1)
-            }
-            Spacer()
-            Button("CHECK NOW") { Task { await tick() } }
-                .font(Term.mono(9))
-                .help("Advance open orders immediately instead of waiting for the minute")
-        }
-        .padding(.horizontal, 10).padding(.vertical, 6)
-    }
-
+    // Five columns, not nine.
+    //
+    // The first version showed PLACED / SIDE / TICKER / QTY / ARRIVAL /
+    // LIMIT / FILL / COST / STATUS, which is every field the row has and
+    // no help at all: a reader had to hold four prices in their head to
+    // work out whether the thing worked. RESULT states it.
     private enum Field: CaseIterable {
-        case placed, side, ticker, qty, arrival, limit, fill, cost, status
+        case when, order, rested, got, result
         var title: String {
             switch self {
-            case .placed: return "PLACED"
-            case .side: return "SIDE"
-            case .ticker: return "TICKER"
-            case .qty: return "QTY"
-            case .arrival: return "ARRIVAL"
-            case .limit: return "LIMIT"
-            case .fill: return "FILL"
-            case .cost: return "COST"
-            case .status: return "STATUS"
+            case .when: return "TIME"
+            case .order: return "ORDER"
+            case .rested: return "RESTED AT"
+            case .got: return "GOT"
+            case .result: return "RESULT"
             }
         }
         var width: CGFloat? {
             switch self {
-            case .placed: return 92
-            case .side: return 44
-            case .ticker: return 62
-            case .qty: return 50
-            case .arrival: return 78
-            case .limit: return 78
-            case .fill: return 78
-            case .cost: return 80
-            case .status: return nil
+            case .when: return 76
+            case .order: return 150
+            case .rested: return 88
+            case .got: return 88
+            case .result: return nil
             }
         }
         var align: Alignment {
             switch self {
-            case .placed, .side, .ticker, .status: return .leading
+            case .when, .order, .result: return .leading
             default: return .trailing
             }
         }
@@ -213,7 +257,7 @@ struct PaperPanel: View {
     private func sized<V: View>(_ f: Field, @ViewBuilder _ c: () -> V) -> some View {
         Group {
             if let w = f.width { c().frame(width: w, alignment: f.align) }
-            else { c().frame(minWidth: 80, maxWidth: .infinity, alignment: f.align) }
+            else { c().frame(minWidth: 200, maxWidth: .infinity, alignment: f.align) }
         }
     }
 
@@ -231,54 +275,69 @@ struct PaperPanel: View {
         }
         .font(Term.mono(11)).foregroundStyle(Term.white)
         .padding(.horizontal, 10).padding(.vertical, 3)
-        .opacity(o.status == "open" ? 1 : 0.85)
         .help(o.rationale ?? "")
     }
 
     @ViewBuilder
     private func cell(_ f: Field, _ o: Order) -> some View {
         switch f {
-        case .placed:
+        case .when:
             Text(o.placedAt.map { Fmt.shortDateTime($0) } ?? "—").foregroundStyle(Term.fgDim)
-        case .side:
-            Text((o.side ?? "").uppercased())
-                .font(Term.mono(10, weight: .bold))
-                .foregroundStyle(o.side == "sell" ? Term.negative : Term.positive)
-        case .ticker:
-            Text(o.ticker ?? "—").font(Term.mono(11, weight: .bold)).foregroundStyle(Term.amber)
-        case .qty:
-            Text(Fmt.compact(o.shares))
-        case .arrival:
-            Text(Fmt.money(o.arrivalPrice)).foregroundStyle(Term.fgDim)
-        case .limit:
+        case .order:
+            HStack(spacing: 5) {
+                Text((o.side ?? "").uppercased())
+                    .font(Term.mono(10, weight: .bold))
+                    .foregroundStyle(o.side == "sell" ? Term.negative : Term.positive)
+                Text(Fmt.compact(o.shares))
+                Text(o.ticker ?? "—")
+                    .font(Term.mono(11, weight: .bold)).foregroundStyle(Term.amber)
+            }
+        case .rested:
             Text(Fmt.money(o.limitPrice))
-        case .fill:
-            // A dash while it is still resting. An unfilled order has no
-            // price, and printing the arrival there would read as a fill.
+        case .got:
             Text(o.fillPrice.map { Fmt.money($0) } ?? "—")
                 .foregroundStyle(o.fillPrice == nil ? Term.fgMuted : Term.white)
-        case .cost:
-            if let s = o.shortfall {
-                Text(Fmt.pct(s, decimals: 4))
-                    .foregroundStyle(s <= 0 ? Term.positive : Term.negative)
-            } else {
-                Text("—").foregroundStyle(Term.fgMuted)
+        case .result:
+            // One sentence per row. Whether the thing worked is the only
+            // question the table is asked, and it used to be spread
+            // across four numeric columns.
+            Text(resultText(o))
+                .font(Term.mono(10))
+                .foregroundStyle(resultTone(o))
+                .lineLimit(1)
+        }
+    }
+
+    private func resultText(_ o: Order) -> String {
+        guard let s = o.status else { return "—" }
+        switch s {
+        case "open":
+            let n = o.polls ?? 0
+            return "resting… checked \(n) time\(n == 1 ? "" : "s")"
+                + (o.bestSeen.map { ", closest \(Fmt.money($0))" } ?? "")
+        case "filled":
+            guard let sf = o.shortfall, let a = o.arrivalPrice, let sh = o.shares else {
+                return "filled"
             }
-        case .status:
-            HStack(spacing: 5) {
-                Text((o.status ?? "").uppercased())
-                    .font(Term.mono(9, weight: .bold))
-                    .foregroundStyle(tone(o.status))
-                if o.status == "open", let n = o.polls {
-                    Text("\(n) checks").font(Term.mono(8)).foregroundStyle(Term.fgMuted)
-                }
-                if let b = o.bestSeen, o.status != "filled" {
-                    Text("best \(Fmt.money(b))").font(Term.mono(8)).foregroundStyle(Term.fgMuted)
-                }
-                if let n = o.note {
-                    Text(n).font(Term.mono(8)).foregroundStyle(Term.amber).lineLimit(1)
-                }
-            }
+            let dollars = abs(sf / 100 * a * sh)
+            return sf <= 0
+                ? String(format: "filled — beat the mid, saved $%.2f", dollars)
+                : String(format: "filled — worse than the mid by $%.2f", dollars)
+        case "crossed":
+            return "never came to us — crossed and paid up"
+        case "abandoned":
+            return "abandoned, no price seen"
+        default:
+            return s
+        }
+    }
+
+    private func resultTone(_ o: Order) -> Color {
+        switch o.status {
+        case "filled": return (o.shortfall ?? 0) <= 0 ? Term.positive : Term.negative
+        case "crossed": return Term.amber
+        case "abandoned": return Term.negative
+        default: return Term.cyan
         }
     }
 
