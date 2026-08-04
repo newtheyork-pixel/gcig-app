@@ -13,6 +13,12 @@ import eventRoutes from './routes/events.js';
 import holdingRoutes from './routes/holdings.js';
 import paperRoutes, { runTick as paperTick } from './routes/paper.js';
 import appRoutes from './routes/app.js';
+import { PrismaClient } from '@prisma/client';
+import { fetchOneQuote } from './services/quotes.js';
+import { getSheetPortfolio } from './services/sheetPortfolio.js';
+import * as quoteScheduler from './services/quoteScheduler.js';
+
+const quotePrisma = new PrismaClient();
 import reportRoutes from './routes/reports.js';
 import attendanceRoutes from './routes/attendance.js';
 import dashboardRoutes from './routes/dashboard.js';
@@ -196,6 +202,34 @@ cron.schedule(
   },
   { timezone: 'UTC' }
 );
+
+// Keep the watchlist warm, one name at a time.
+//
+// 162 tickers fetched together rate-limited Yahoo, fell through to the
+// crumb endpoint, and returned 429 for every row — a red "Failed to get
+// crumb" screen over a watchlist with zero prices on it. Spread across
+// fifteen minutes that is one request every five seconds, which nothing
+// objects to.
+//
+// The list is refreshed every ten minutes so a name added to the
+// watchlist starts being priced without a redeploy. Failures are
+// swallowed: this is a background warmer, and a warmer that can take the
+// process down is worse than a cold cache.
+async function refreshTrackedTickers() {
+  try {
+    const rows = await quotePrisma.watchlistItem.findMany({ select: { ticker: true } });
+    const sheet = await getSheetPortfolio().catch(() => ({ holdings: [] }));
+    const held = (sheet.holdings || []).filter((h) => !h.isCash && h.ticker).map((h) => h.ticker);
+    const all = [...held, ...rows.map((r) => r.ticker)];
+    const out = quoteScheduler.track(all);
+    console.log(`[quotes] tracking ${out.tracked} tickers, one every ${quoteScheduler.gapMs()}ms`);
+  } catch (err) {
+    console.warn('[quotes] could not refresh the tracked list:', err.message);
+  }
+}
+refreshTrackedTickers();
+setInterval(refreshTrackedTickers, 10 * 60 * 1000);
+quoteScheduler.start(fetchOneQuote);
 
 // awake, just doesn't fire if nobody's pinged the API for 15+ min.
 // The lazy /day-in-review endpoint is the safety net either way.

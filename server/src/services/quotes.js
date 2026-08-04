@@ -87,9 +87,20 @@ async function fetchChartQuote(ticker) {
 // Render), yahoo-finance2's quote() only as a backstop for the rare
 // symbol the chart feed misses. Never throws — a bad symbol resolves to
 // null and the caller stubs it, so it can't poison the batch.
-async function resolveQuote(t) {
+async function resolveQuote(t, { allowCrumb = false } = {}) {
   const chart = await fetchChartQuote(t);
   if (chart && chart.price != null) return chart;
+  // The crumb path is OFF unless a caller asks for it, and no batch
+  // caller does.
+  //
+  // It is the source of the red screen members kept hitting. With 162
+  // watchlist names the chart endpoint rate-limits, every one of them
+  // falls through to here, and yahoo-finance2's quote() answers 429 on
+  // the crumb handshake — "Failed to get crumb, status 429" — which then
+  // propagates as a panel-wide failure instead of a few missing rows.
+  // One symbol without a price is a gap; a batch that throws is an
+  // outage, and this turned the first into the second.
+  if (!allowCrumb) return null;
   try {
     const n = normalize(await yahooFinance.quote(t, {}, { validateResult: false }));
     if (n && n.price != null) return n;
@@ -97,6 +108,30 @@ async function resolveQuote(t) {
     console.error(`quotes: ${t} chart+quote both failed:`, err?.message || err);
   }
   return null;
+}
+
+/// The scheduler's per-ticker fetch: one name, chart only, never throws.
+export async function fetchOneQuote(t) {
+  return resolveQuote(t);
+}
+
+/// Run `fn` over `items` with at most `limit` in flight, settling rather
+/// than rejecting so one bad symbol cannot take the batch down.
+async function mapLimit(items, limit, fn) {
+  const out = new Array(items.length);
+  let i = 0;
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (i < items.length) {
+      const idx = i;
+      i += 1;
+      try {
+        out[idx] = { status: 'fulfilled', value: await fn(items[idx]) };
+      } catch (err) {
+        out[idx] = { status: 'rejected', reason: err };
+      }
+    }
+  }));
+  return out;
 }
 
 /**
@@ -116,7 +151,11 @@ export async function getQuotes(tickers) {
   }
 
   if (missing.length > 0) {
-    const settled = await Promise.allSettled(missing.map((t) => resolveQuote(t)));
+    // Bounded, not all at once. `Promise.allSettled` over the whole list
+    // is what fired 162 simultaneous requests and rate-limited us out of
+    // our own data; four in flight keeps a cold start responsive without
+    // tripping anything.
+    const settled = await mapLimit(missing, 4, (t) => resolveQuote(t));
     settled.forEach((s, i) => {
       const t = missing[i];
       const q = s.status === 'fulfilled' ? s.value : null;
