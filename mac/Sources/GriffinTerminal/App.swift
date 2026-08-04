@@ -64,6 +64,22 @@ struct GriffinTerminalApp: App {
             }
         }
 
+        // The second display: a WHOLE terminal, not a floating panel.
+        //
+        // The first attempt sent one pane to the other monitor, which is
+        // not a two-screen desk — it is a desk with a sticky note beside
+        // it. This is the same shell, command bar and all, drawing the
+        // panes that belong to screen 1, sharing one Workspace and one
+        // Session so the focus ticker, recents and history stay a single
+        // truth across both.
+        WindowGroup("Griffin Terminal — Screen 2", id: "screen2") {
+            TerminalView(surface: 1)
+                .environmentObject(session)
+                .environmentObject(ws)
+                .frame(minWidth: 900, minHeight: 600)
+        }
+        .defaultSize(width: 1400, height: 900)
+
         // Panes promoted to real windows. Same Workspace and Session
         // objects as the shell, so focus ticker and auth stay one truth
         // across every window.

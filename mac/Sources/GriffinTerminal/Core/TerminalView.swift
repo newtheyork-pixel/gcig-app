@@ -10,6 +10,10 @@ struct TerminalView: View {
     @EnvironmentObject var session: Session
     @Environment(\.openWindow) private var openWindow
     @State private var namingLayout = false
+    /// Which display this instance draws. 0 is the main window; a second
+    /// terminal opened on another screen passes 1 and renders only the
+    /// panes that belong to it.
+    var surface: Int = 0
 
     var body: some View {
         VStack(spacing: 0) {
@@ -27,6 +31,12 @@ struct TerminalView: View {
             StatusBar()
         }
         .background(Term.bg)
+        // Whichever terminal you are looking at is the one a command
+        // opens into. Without this, typing on the second screen would
+        // put the panel on the first, which is the behaviour that made
+        // the earlier popout version useless.
+        .onTapGesture { ws.activeSurface = surface }
+        .onAppear { ws.activeSurface = surface }
         .onAppear {
             ws.loadPrefs()
             ws.refreshLayoutNames()
@@ -61,8 +71,8 @@ struct TerminalView: View {
         GeometryReader { geo in
             ZStack(alignment: .topLeading) {
                 Term.bg
-                if ws.panes.isEmpty { EmptyWorkspaceHint() }
-                ForEach(ws.panes) { pane in
+                if ws.panes(on: surface).isEmpty { EmptyWorkspaceHint() }
+                ForEach(ws.panes(on: surface)) { pane in
                     PaneWindow(pane: pane, bounds: geo.size) { seed in
                         openWindow(value: seed)
                     }
@@ -71,17 +81,22 @@ struct TerminalView: View {
             .coordinateSpace(name: "workspace")
             .clipped()
             .onAppear {
-                ws.canvasSize = geo.size
+                // Only the main window owns canvasSize; the second screen
+                // has its own geometry and would otherwise overwrite the
+                // value every other placement calculation reads.
+                if surface == 0 { ws.canvasSize = geo.size }
                 // A layout saved on a larger display restores with panes
                 // outside a smaller one, so this runs at launch too.
-                ws.clampAll(to: geo.size)
+                ws.clampAll(to: geo.size, surface: surface)
             }
             .onChange(of: geo.size) { _, s in
-                ws.canvasSize = s
-                ws.clampAll(to: s)
+                if surface == 0 { ws.canvasSize = s }
+                ws.clampAll(to: s, surface: surface)
             }
             .onReceive(NotificationCenter.default.publisher(for: .tilePanes)) { _ in
-                ws.tile(in: geo.size)
+                // Tile only what this window shows, and only when it is
+                // the window being looked at.
+                if ws.activeSurface == surface { ws.tile(in: geo.size, surface: surface) }
             }
         }
     }
@@ -182,16 +197,13 @@ private struct TopBar: View {
             // button that loses your panels somewhere off-canvas.
             if ws.hasSecondScreen {
                 Button {
-                    if let seed = ws.focusedSeed {
-                        openWindow(value: seed)
-                        ws.placeNewestOnSecondScreen()
-                    }
+                    openWindow(id: "screen2")
+                    ws.placeNewestOnSecondScreen()
                 } label: {
                     Text("◫◫").font(Term.mono(12))
                 }
                 .buttonStyle(TermButtonStyle())
-                .disabled(ws.focusedSeed == nil)
-                .help("Send the focused panel to your other display")
+                .help("Open a second full terminal on your other display")
             }
 
             HStack(spacing: 8) {

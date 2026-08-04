@@ -26,6 +26,10 @@ final class Workspace: ObservableObject {
     // frame.
     @Published var panes: [Pane] = [] { didSet { autosaveCurrent() } }
     @Published var focusedID: UUID?
+    /// The window a new command belongs to. Set by whichever terminal
+    /// window last became key, so typing GD DES on the right-hand screen
+    /// opens it on the right-hand screen.
+    @Published var activeSurface: Int = 0
     /// The ticker the command bar last resolved. `AIT DES` then a bare
     /// `GP` should stay on AIT, the same as the web.
     @Published var focusTicker: String?
@@ -45,6 +49,14 @@ final class Workspace: ObservableObject {
         var frame: CGRect
         var z: Int
         var minimized = false
+        /// Which display this pane lives on. 0 is the main window.
+        ///
+        /// A screen rather than a separate Workspace, deliberately: two
+        /// Workspaces would mean two focus tickers, two recents rails and
+        /// two histories, and the whole point of a second monitor is one
+        /// desk that happens to be wider. Panes carry the screen; every
+        /// other piece of state stays shared.
+        var surface: Int = 0
 
         var title: String {
             let code = ticker.map { "\($0) " } ?? ""
@@ -150,7 +162,8 @@ final class Workspace: ObservableObject {
             ticker: fn.requires == "ticker" ? ticker : cmd.ticker,
             args: cmd.args,
             frame: nextFrame(w: fn.width, h: fn.height, in: bounds),
-            z: topZ
+            z: topZ,
+            surface: activeSurface
         )
         panes.append(pane)
         focusedID = pane.id
@@ -376,9 +389,15 @@ final class Workspace: ObservableObject {
     /// make every window resize destructive, and a pane wider than the
     /// canvas is readable by scrolling. Only the origin moves, and only
     /// when it has to.
-    func clampAll(to bounds: CGSize) {
+    /// Keep panes inside the window that draws them.
+    ///
+    /// Scoped to one surface, which it was not at first and which broke
+    /// the second display immediately: both windows call this with their
+    /// own size, so an unscoped clamp let the smaller screen drag every
+    /// pane on the larger one into its own bounds.
+    func clampAll(to bounds: CGSize, surface: Int = 0) {
         guard bounds.width > 0, bounds.height > 0 else { return }
-        for i in panes.indices {
+        for i in panes.indices where panes[i].surface == surface {
             panes[i].frame.origin = Self.clampOrigin(panes[i].frame.origin,
                                                      paneWidth: panes[i].frame.width,
                                                      in: bounds)
@@ -600,8 +619,10 @@ final class Workspace: ObservableObject {
 
     /// Tile everything visible. Not the default arrangement, but the
     /// escape hatch when a workspace has got away from you.
-    func tile(in bounds: CGSize) {
-        let visible = panes.indices.filter { !panes[$0].minimized }
+    func tile(in bounds: CGSize, surface: Int = 0) {
+        // Only this screen's panes. Tiling everything would sweep the
+        // other monitor's arrangement into a grid sized for this one.
+        let visible = panes.indices.filter { !panes[$0].minimized && panes[$0].surface == surface }
         guard !visible.isEmpty else { return }
         let cols = Int(ceil(sqrt(Double(visible.count))))
         let rows = Int(ceil(Double(visible.count) / Double(cols)))
@@ -617,6 +638,22 @@ final class Workspace: ObservableObject {
         }
     }
     // MARK: Second display
+
+    /// The panes belonging to one screen.
+    func panes(on surface: Int) -> [Pane] {
+        panes.filter { $0.surface == surface }
+    }
+
+    /// Move a pane between screens, so an arrangement can be rebalanced
+    /// without closing and reopening anything.
+    func moveToScreen(_ id: UUID, _ surface: Int) {
+        guard let i = panes.firstIndex(where: { $0.id == id }) else { return }
+        panes[i].surface = surface
+        topZ += 1
+        panes[i].z = topZ
+        focusedID = id
+        activeSurface = surface
+    }
 
     /// Is there anywhere to send a window?
     ///
