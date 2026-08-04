@@ -144,6 +144,7 @@ import {
 import { importFromSheet, PortfolioImportError } from '../services/portfolioImport.js';
 import { enrichHoldingsMeta } from '../services/holdingMeta.js';
 import { getHistory } from '../services/priceHistory.js';
+import { readableDescription } from '../services/companyDescription.js';
 import {
   computeSnapshotCorrections,
   computeSnapshotRebuild,
@@ -257,6 +258,16 @@ async function describeCompany(ticker, data) {
   if (profile?.summary) {
     // Where the words came from, so a reader can go and check them.
     out.summarySource = { form: '10-K', filedAt: profile.filedAt, url: profile.url };
+    // And a readable version of the same words. Item 1 is the company
+    // writing about itself in the first person at length — General
+    // Dynamics arrives as 3,438 characters opening "We offer a broad
+    // portfolio" — which beside a vendor's tight paragraph reads like
+    // the brochure it is. `summary` stays exactly as filed because it is
+    // the primary source; `description` is what a panel should lead
+    // with. Null when the rewrite fails, so a panel can tell "no
+    // description" from "a bad one".
+    const readable = await readableDescription(ticker, profile.summary).catch(() => null);
+    out.description = readable?.text ?? null;
   }
   // A vendor headcount, where one exists, beats our extraction; ours
   // fills the gap rather than overwriting anybody.
