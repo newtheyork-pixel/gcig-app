@@ -220,6 +220,7 @@ struct TabStrip: View {
         "ICLUSTER": ["INSDR", "MGMT"],
         "MGMT":  ["INSDR", "FIL", "DES", "ORG"],
         "EARN":  ["CON", "FA", "GF", "CN"],
+        "EVTS":  ["EARN", "CON", "PM"],
         "CON":   ["EARN", "FA", "PEER"],
         "CN":    ["TOP", "DES", "GP"],
         "TOP":   ["CN", "MOVR", "WEI"],

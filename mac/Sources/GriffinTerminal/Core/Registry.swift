@@ -111,7 +111,9 @@ enum Registry {
         // command line can say so.
         .init(id: "MON", aliases: ["W"], label: "Club Monitor", help: "The shared coverage watchlist.", planned: true),
         .init(id: "ALRT", label: "Alerts", help: "Price and news alerts to your inbox.", planned: true),
-        .init(id: "EVTS", aliases: ["ERN"], label: "Earnings Calendar", help: "Earnings keyed to the book and watchlist.", planned: true),
+        .init(id: "EVTS", aliases: ["ERN"], label: "Earnings Calendar",
+              help: "When the companies we own report, grouped by week.",
+              width: 860, height: 520, native: true),
         .init(id: "HDS", label: "Holders", help: "13F holders and insider filings.", planned: true),
         .init(id: "EQS", label: "Equity Screener", help: "Screen the universe, funnel-style.", planned: true),
         .init(id: "DAYB", label: "Morning Page", help: "The auto-composed pre-meeting brief.", planned: true),
