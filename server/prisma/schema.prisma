@@ -1639,3 +1639,38 @@ model PaperOrder {
   @@index([status])
   @@index([ticker, placedAt])
 }
+
+// A build of the Mac terminal that members can download.
+//
+// The app checks this on launch, compares the published version against
+// its own, and offers to update. Kept in the database rather than an env
+// var so publishing a build is an API call rather than a redeploy — the
+// point of an auto-updater is that shipping stops being an event.
+//
+// The BINARY is not here. A row is a pointer: a version, a URL, and the
+// hash the download must match. Where the zip actually lives is a
+// deployment decision and deliberately not baked into the schema.
+model AppRelease {
+  id        Int      @id @default(autoincrement())
+  // Semantic, and compared numerically rather than as a string, because
+  // "0.10.0" sorts before "0.9.0" as text and the updater would refuse
+  // to see the newer build.
+  version   String   @unique
+  url       String
+  // Verified after download and before anything is replaced. Without it
+  // the updater is a remote-code-execution hole wearing a friendly
+  // button: whoever can answer that URL can replace the app.
+  sha256    String
+  bytes     Int?
+  notes     String?
+  // A build can be published and then withdrawn without deleting the
+  // row, which keeps the history of what was ever offered.
+  live      Boolean  @default(true)
+  // Below this, updating is not optional. Reserved for the case where an
+  // old client is actively wrong — talking to a removed endpoint, or
+  // showing numbers that were since found to be false.
+  mandatory Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([live, createdAt])
+}

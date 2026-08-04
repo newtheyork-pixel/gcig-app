@@ -34,6 +34,7 @@ struct TerminalView: View {
             ws.restoreCurrentIfEmpty()
             GriffinVolume.shared.mountIfPrepared()
             GriffinVolume.shared.clearFileProviderDomains()
+            Updater.shared.start()
         }
         .background(BlockCaretInstaller().frame(width: 0, height: 0))
         .sheet(isPresented: $namingLayout) { LayoutNameSheet() }
@@ -92,10 +93,57 @@ struct TerminalView: View {
 // clock ticks in New York time because that is the timezone the desk
 // and the custodian both run on — an open terminal should feel alive
 // even when no panel is refreshing.
+
+// The update affordance: one chip that says what it is doing.
+//
+// Never installs on its own. An app that replaces itself underneath a
+// half-typed order is worse than an app one version behind, so the swap
+// waits for a press — and the press is the same button throughout, which
+// is why the label carries the state rather than a separate indicator.
+private struct UpdateChip: View {
+    @ObservedObject private var updater = Updater.shared
+
+    var body: some View {
+        switch updater.phase {
+        case .idle, .checking:
+            EmptyView()
+        case .available(let r):
+            Button {
+                Task { await updater.download() }
+            } label: {
+                Text("UPDATE \(r.version)").font(Term.mono(9, weight: .bold))
+            }
+            .buttonStyle(TermButtonStyle())
+            .foregroundStyle(r.mandatory ? Term.negative : Term.amber)
+            .help(r.notes ?? "A newer build is available. Downloads now, installs when you say so.")
+        case .downloading:
+            Text("DOWNLOADING…").font(Term.mono(9)).foregroundStyle(Term.fgDim)
+        case .ready(_, let v):
+            Button {
+                updater.installAndRestart()
+            } label: {
+                Text("RESTART FOR \(v)").font(Term.mono(9, weight: .bold))
+            }
+            .buttonStyle(TermButtonStyle())
+            .foregroundStyle(Term.positive)
+            .help("Verified and staged. Restarts the app to finish.")
+        case .failed(let why):
+            Button { updater.dismiss() } label: {
+                Text("UPDATE FAILED").font(Term.mono(9, weight: .bold))
+            }
+            .buttonStyle(TermButtonStyle())
+            .foregroundStyle(Term.negative)
+            .help(why)
+        }
+    }
+}
+
 private struct TopBar: View {
     @ObservedObject private var volume = GriffinVolume.shared
-
+    @ObservedObject private var updater = Updater.shared
+    @EnvironmentObject var ws: Workspace
     @EnvironmentObject var session: Session
+    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         HStack(spacing: 12) {
@@ -107,7 +155,8 @@ private struct TopBar: View {
             // nothing may be inserted between them.
             (Text("TERMINAL")
                 .font(Term.mono(10)).tracking(1.6).foregroundStyle(Term.fgDim)
-             + Text(" v1").font(Term.mono(10)).foregroundStyle(Term.fgMuted))
+             + Text(" v\(Updater.shared.installed)")
+                .font(Term.mono(10)).foregroundStyle(Term.fgMuted))
             // One button, for everybody. The app already holds the
             // session token, so nobody types a credential and there is no
             // setup to write down.
@@ -125,6 +174,25 @@ private struct TopBar: View {
             Spacer()
 
             FocusQuote()
+
+            UpdateChip()
+
+            // Second monitor. Only offered when there IS one — a button
+            // that opens a window onto a screen you do not have is a
+            // button that loses your panels somewhere off-canvas.
+            if ws.hasSecondScreen {
+                Button {
+                    if let seed = ws.focusedSeed {
+                        openWindow(value: seed)
+                        ws.placeNewestOnSecondScreen()
+                    }
+                } label: {
+                    Text("◫◫").font(Term.mono(12))
+                }
+                .buttonStyle(TermButtonStyle())
+                .disabled(ws.focusedSeed == nil)
+                .help("Send the focused panel to your other display")
+            }
 
             HStack(spacing: 8) {
                 HStack(spacing: 4) {

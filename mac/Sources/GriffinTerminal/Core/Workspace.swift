@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 
 /// What crosses from the in-shell workspace to a real macOS window when
 /// a pane is popped out. Codable because WindowGroup(for:) requires it;
@@ -615,4 +616,42 @@ final class Workspace: ObservableObject {
             )
         }
     }
+    // MARK: Second display
+
+    /// Is there anywhere to send a window?
+    ///
+    /// The button is hidden when there is not. A control that opens a
+    /// window onto a display you do not have is a control that loses
+    /// your panel somewhere off-canvas.
+    var hasSecondScreen: Bool { NSScreen.screens.count > 1 }
+
+    /// The seed for whatever is focused, so the second monitor opens
+    /// with the thing you were looking at rather than a blank frame.
+    var focusedSeed: PaneSeed? {
+        guard let p = panes.first(where: { $0.id == focusedID }) ?? panes.last else { return nil }
+        return PaneSeed(function: p.function.id, ticker: p.ticker, args: p.args)
+    }
+
+    /// Move the newest popped-out window to the other display.
+    ///
+    /// SwiftUI's openWindow gives no handle on what it created, so the
+    /// window is found afterwards: the frontmost one that is not the
+    /// main shell. Deferred a beat because it does not exist yet at the
+    /// moment openWindow returns.
+    func placeNewestOnSecondScreen() {
+        guard hasSecondScreen else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
+            let main = NSApp.mainWindow
+            let target = NSApp.windows.first {
+                $0 !== main && $0.isVisible && $0.contentView != nil
+                    && $0.frame.width > 200 && $0.level == .normal
+            }
+            guard let w = target else { return }
+            let here = main?.screen ?? NSScreen.screens.first
+            guard let other = NSScreen.screens.first(where: { $0 !== here }) else { return }
+            w.setFrame(other.visibleFrame.insetBy(dx: 60, dy: 60), display: true)
+            w.makeKeyAndOrderFront(nil)
+        }
+    }
+
 }

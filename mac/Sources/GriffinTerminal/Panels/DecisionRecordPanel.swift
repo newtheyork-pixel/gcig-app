@@ -146,6 +146,8 @@ struct DecisionRecordPanel: View {
                     .font(Term.mono(9)).foregroundStyle(Term.amber)
             }
 
+            bestAndWorst(p)
+
             if let s {
                 Text("\(s.decisions ?? 0) closed votes · \(s.tooEarly ?? 0) still recent"
                      + ((s.unscored ?? 0) > 0 ? " · \(s.unscored!) unscorable" : ""))
@@ -157,6 +159,44 @@ struct DecisionRecordPanel: View {
             }
         }
         .padding(.horizontal, 10).padding(.vertical, 7)
+    }
+
+    /// The club's best and worst call, named.
+    ///
+    /// A table sorted worst-first already contains this, and nobody reads
+    /// a table to find out how they are doing — they read the top line.
+    /// Settled decisions only: the biggest number on the screen is
+    /// usually a fortnight old and putting that forward as "our best
+    /// call" would teach exactly the wrong lesson.
+    @ViewBuilder
+    private func bestAndWorst(_ p: Payload) -> some View {
+        let settled = (p.rows ?? []).filter { ($0.scored ?? false) && ($0.mature ?? false) }
+        if settled.count >= 2,
+           let best = settled.max(by: { ($0.excess ?? 0) < ($1.excess ?? 0) }),
+           let worst = settled.min(by: { ($0.excess ?? 0) < ($1.excess ?? 0) }) {
+            HStack(spacing: 18) {
+                call("BEST CALL", best, Term.positive)
+                call("WORST CALL", worst, Term.negative)
+                Spacer()
+            }
+        }
+    }
+
+    private func call(_ label: String, _ r: Row, _ tone: Color) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text(label).font(Term.mono(8, weight: .bold)).foregroundStyle(Term.blue)
+            HStack(spacing: 5) {
+                Text(r.ticker ?? "—")
+                    .font(Term.mono(11, weight: .bold)).foregroundStyle(Term.amber)
+                Text((r.decision ?? "").uppercased())
+                    .font(Term.mono(9)).foregroundStyle(Term.fgDim)
+                Text(Fmt.pct(r.excess ?? 0, decimals: 1))
+                    .font(Term.mono(11, weight: .bold)).foregroundStyle(tone)
+            }
+            Text([r.closedAt.map { Fmt.date($0) }, r.days.map { "\($0)d" }]
+                    .compactMap { $0 }.joined(separator: " · "))
+                .font(Term.mono(8)).foregroundStyle(Term.fgMuted)
+        }
     }
 
     private func stat(_ label: String, _ value: String, tone: Color = Term.white) -> some View {
