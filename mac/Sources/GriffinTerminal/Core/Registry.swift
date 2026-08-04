@@ -110,7 +110,9 @@ enum Registry {
         // Phase 2 — reserved, not built. The grammar knows them so the
         // command line can say so.
         .init(id: "MON", aliases: ["W"], label: "Club Monitor", help: "The shared coverage watchlist.", planned: true),
-        .init(id: "ALRT", label: "Alerts", help: "Price and news alerts to your inbox.", planned: true),
+        .init(id: "ALRT", label: "Alerts",
+              help: "Where the book breaches the club's own investment policy.",
+              width: 780, height: 560, native: true),
         .init(id: "EVTS", aliases: ["ERN"], label: "Earnings Calendar",
               help: "When the companies we own report, grouped by week.",
               width: 860, height: 520, native: true),
