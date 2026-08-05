@@ -360,7 +360,7 @@ struct PanelRouter: View {
         case "DES":  DescriptionPanel(ticker: ticker ?? "")
         case "PM":   PortfolioPanel()
         case "TRK":  DecisionRecordPanel()
-        case "PAPER": PaperPanel()
+        case "EXEC", "PAPER": PaperPanel()
         case "EVTS": EarningsCalendarPanel()
         case "ALRT": AlertsPanel()
         case "MOVR": MoversPanel()

@@ -13,11 +13,26 @@ import { getLiveQuotes } from '../services/liveQuotes.js';
 import {
   REST_MINUTES, planOrder, score, sessionAdvice, tick,
 } from '../services/paperTrading.js';
+import { estimate, ledger } from '../services/executionSaving.js';
 
 const prisma = new PrismaClient();
 const router = express.Router();
 
 const TICKER = /^[A-Z0-9.\-]{1,10}$/;
+
+/**
+ * What following the rules is worth on an order of this size, right now.
+ *
+ * The question the club actually has: we are buying $100,000 of
+ * something on Thursday, what does doing it properly save us? Everything
+ * scales linearly with the notional, so the answer is a fraction of the
+ * order and the effort is the same at any size.
+ */
+router.get('/estimate', (req, res) => {
+  const out = estimate({ notional: Number(req.query.notional) });
+  if (!out) return res.status(400).json({ error: 'notional must be a positive number' });
+  res.json(out);
+});
 
 /// Whether the rules would place an order right now, and why not if not.
 router.get('/session', (_req, res) => {
@@ -86,8 +101,18 @@ router.get('/orders', async (req, res) => {
       take: Math.min(200, Number(req.query.limit) || 100),
       include: { placedBy: { select: { id: true, name: true } } },
     });
+    // The running record: what following the rules has been worth across
+    // orders actually taken. A saving nobody executed is a model output;
+    // this is the part that turns a claim into proof.
+    const withSaving = rows.map((r) => {
+      const notional = (r.shares || 0) * (r.arrivalPrice || 0);
+      const e = estimate({ notional });
+      return { ...r, notional, estimatedSaving: e ? e.total : 0,
+               executedAt: r.status === 'filled' || r.status === 'crossed' ? r.filledAt : null };
+    });
     res.json({
-      orders: rows,
+      orders: withSaving,
+      ledger: ledger(withSaving),
       score: score(rows),
       restMinutes: REST_MINUTES,
       // Said with the numbers, every time, because the blotter will

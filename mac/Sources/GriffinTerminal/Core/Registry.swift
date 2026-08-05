@@ -37,9 +37,9 @@ enum Registry {
               // Sized to the table's own minimum, so a freshly opened PM
               // shows all twelve columns without scrolling sideways.
               width: 1040, height: 600, native: true),
-        .init(id: "PAPER", label: "Paper Orders",
-              help: "Forward test of the execution rules on simulated orders. Never touches the book.",
-              width: 940, height: 560, native: true),
+        .init(id: "EXEC", aliases: ["PAPER"], label: "Execution Saving",
+              help: "What doing a trade properly saves, in dollars, plus the running record.",
+              width: 900, height: 560, native: true),
         .init(id: "TRK", label: "Decision Record",
               help: "Every closed vote scored against SPY: what the club decided and what happened next.",
               width: 900, height: 560, native: true),

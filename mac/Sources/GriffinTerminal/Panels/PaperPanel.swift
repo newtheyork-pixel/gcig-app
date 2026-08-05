@@ -1,385 +1,249 @@
 import SwiftUI
 
-// PAPER — trades nobody places.
+// EXEC — what doing a trade properly is worth, in dollars.
 //
-// The execution study said stay out of the first thirty minutes and rest
-// at the bid rather than crossing. Both were measured on history, which
-// is where a rule always looks its best. This is the forward test.
+// This started life as a paper blotter that simulated resting orders and
+// scored them, and it answered a question nobody had. The question the
+// club actually has is the one Thomas asked: we are buying $100,000 of
+// something on Thursday, how much do we save by doing it properly?
 //
-// Everything on this screen is simulated and says so in three places,
-// which is two more than feels necessary and exactly as many as it takes
-// for nobody to ever mistake this blotter for the book. The club manages
-// real endowment money; a member who confuses the two costs more than
-// this panel could ever save.
+// So it is a calculator with a ledger behind it, not a simulator. Type
+// the size, get the number, and the record of what following the rules
+// has been worth over the trades actually taken.
+//
+// The two rules and their evidence live in services/executionSaving.js.
+// The short version: do not trade in the first thirty minutes, and post
+// at the bid rather than crossing it. Both were measured across 17 names
+// and 60 days rather than assumed, and both survive because they are
+// structural. The open is violent because the overnight order book
+// clears into it, every day, whatever anybody believes.
+//
+// THE NUMBERS ARE SMALL AND THE PANEL SAYS SO. About $5.40 on $10,000
+// and $54 on $100,000. Everything larger that was tested lost money:
+// multi-day limit ladders, eight chart entry signals, trend following.
+// A panel that dressed 0.05% up as an edge would be teaching the wrong
+// lesson to the people it is built for.
 struct PaperPanel: View {
-    struct Order: Decodable, Identifiable {
-        let id: Int
-        let ticker: String?
-        let side: String?
-        let shares: Double?
-        let arrivalPrice: Double?
-        let limitPrice: Double?
-        let status: String?
-        let placedAt: String?
-        let filledAt: String?
-        let fillPrice: Double?
-        let polls: Int?
-        let bestSeen: Double?
-        let note: String?
-        let rationale: String?
+    struct Estimate: Decodable {
+        let notional: Double?
+        let total: Double?
+        let timing: Double?
+        let posting: Double?
+        let timingVsRandom: Double?
+        let pct: Double?
+        let basis: String?
+        let session: Session?
 
-        /// Signed so NEGATIVE IS GOOD on both sides: a buy filled below
-        /// arrival and a sell filled above it are both wins. The raw
-        /// percentage would file every good sell as a loss.
-        var shortfall: Double? {
-            guard let a = arrivalPrice, let f = fillPrice, a > 0 else { return nil }
-            let raw = (f / a - 1) * 100
-            return side == "sell" ? -raw : raw
+        struct Session: Decodable {
+            let open: Bool?; let weekend: Bool?
+            let minutes: Int?; let spreadMultiple: Double?
+            let inCalm: Bool?; let phase: String?; let minutesUntilCalm: Int?
         }
     }
 
-    struct Score: Decodable {
-        let n: Int?; let filled: Int?
-        let fillRate: Double?; let avgShortfall: Double?; let vsCrossing: Double?
+    struct Ledger: Decodable {
+        let trades: Int?; let notional: Double?; let saved: Double?; let pending: Int?
     }
 
-    struct Payload: Decodable {
-        let orders: [Order]?
-        let score: Score?
-        let restMinutes: Int?
-        let caveat: String?
+    struct Order: Decodable, Identifiable {
+        let id: Int
+        let ticker: String?; let side: String?; let shares: Double?
+        let arrivalPrice: Double?; let fillPrice: Double?; let status: String?
+        let placedAt: String?; let notional: Double?; let estimatedSaving: Double?
     }
 
-    struct Session: Decodable {
-        let ok: Bool?; let phase: String?; let reason: String?; let restMinutes: Int?
-    }
+    struct Payload: Decodable { let orders: [Order]?; let ledger: Ledger? }
 
+    @State private var amount = "100000"
+    @State private var est: Estimate?
     @State private var state: Loadable<Payload> = .loading
-    @State private var session: Session?
-    @State private var ticker = ""
-    @State private var shares = "10"
-    @State private var side = "buy"
-    @State private var busy = false
-    @State private var error: String?
 
     var body: some View {
         PanelState(state: state, retry: { Task { await load() } }) { p in
             VStack(alignment: .leading, spacing: 0) {
-                header(p)
+                calculator
                 Divider().overlay(Term.border)
-                ticketRow
-                Divider().overlay(Term.border)
-                columnHeads
-                Divider().overlay(Term.border)
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 0) {
-                        if (p.orders ?? []).isEmpty {
-                            Text("No paper orders yet. Place one above.")
-                                .font(Term.mono(10)).foregroundStyle(Term.fgMuted).padding(10)
-                        }
-                        ForEach(p.orders ?? []) { o in
-                            row(o)
-                            Divider().overlay(Term.border.opacity(0.35))
-                        }
-                    }
-                }
-                if let c = p.caveat {
-                    Divider().overlay(Term.border)
-                    Text(c)
-                        .font(Term.mono(8)).foregroundStyle(Term.fgMuted)
-                        .padding(.horizontal, 10).padding(.vertical, 5)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
+                record(p)
             }
         }
-        .task { await load() }
+        .task { await load(); await recompute() }
     }
 
-    @ViewBuilder
-    private func header(_ p: Payload) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            // What this panel is, in one sentence. The pane titlebar
-            // already says PAPER twice; repeating it a third time told
-            // nobody anything, and the question a reader actually
-            // arrives with is "what am I looking at".
-            Text("Testing one idea: does resting a limit at the bid beat "
-                 + "crossing the spread? Simulated — never touches the book.")
-                .font(Term.mono(10)).foregroundStyle(Term.fgDim)
-                .fixedSize(horizontal: false, vertical: true)
+    // MARK: The calculator
 
-            verdict(p)
+    private var calculator: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("What does doing this trade properly save us?")
+                .font(Term.mono(11, weight: .bold)).foregroundStyle(Term.amber)
+
+            HStack(spacing: 8) {
+                Text("ORDER SIZE  $").font(Term.mono(10)).foregroundStyle(Term.fgDim)
+                TextField("100000", text: $amount)
+                    .textFieldStyle(.roundedBorder).font(Term.mono(12))
+                    .frame(width: 120)
+                    .onSubmit { Task { await recompute() } }
+                Button("CALCULATE") { Task { await recompute() } }
+                    .font(Term.mono(10, weight: .bold))
+                Spacer()
+            }
+
+            if let e = est, let total = e.total {
+                VStack(alignment: .leading, spacing: 5) {
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        Text(Fmt.money(total))
+                            .font(Term.mono(26, weight: .bold)).foregroundStyle(Term.positive)
+                        Text("saved on this trade")
+                            .font(Term.mono(10)).foregroundStyle(Term.fgDim)
+                        Text(String(format: "%.3f%% of the order", e.pct ?? 0))
+                            .font(Term.mono(9)).foregroundStyle(Term.fgMuted)
+                    }
+
+                    line("Not trading in the first 30 minutes", e.timing)
+                    line("Posting at the bid instead of crossing", e.posting)
+
+                    // The honest comparison, always beside the headline.
+                    // The timing rule only beats a market order at the
+                    // bell; against trading at a sensible hour anyway it
+                    // is worth almost nothing, and quoting the big number
+                    // alone would be a lie of omission.
+                    if let vr = e.timingVsRandom {
+                        Text("The timing half assumes the alternative was a market order at the "
+                             + "opening bell. Against trading at some sensible hour anyway it is "
+                             + "worth \(Fmt.money(vr)), not \(Fmt.money(e.timing ?? 0)). "
+                             + "Posting is the durable half.")
+                            .font(Term.mono(9)).foregroundStyle(Term.fgMuted)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                .padding(9)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Term.bgHeader)
+                .overlay(alignment: .leading) { Rectangle().fill(Term.positive).frame(width: 2) }
+
+                rightNow(e.session)
+
+                if let b = e.basis {
+                    Text("Estimate. \(b).")
+                        .font(Term.mono(8)).foregroundStyle(Term.fgMuted)
+                }
+            }
         }
         .padding(.horizontal, 10).padding(.vertical, 8)
     }
 
-    /// The answer, in English, or an honest statement that there is not
-    /// one yet.
-    ///
-    /// The first version showed SETTLED / FILL RATE / AVG COST /
-    /// CROSSING and left the reader to work out which way was good. Four
-    /// numbers and a formula is the measurement apparatus; a member wants
-    /// the result and whether to believe it.
-    @ViewBuilder
-    private func verdict(_ p: Payload) -> some View {
-        let s = p.score
-        let n = s?.n ?? 0
-        let cost = s?.avgShortfall
-        let cross = s?.vsCrossing ?? 0.0097
-        let saved = cost.map { cross - $0 }
-
-        VStack(alignment: .leading, spacing: 3) {
-            if n == 0 {
-                Text("Nothing settled yet.")
-                    .font(Term.mono(12, weight: .bold)).foregroundStyle(Term.fgDim)
-                Text("Place an order below. It rests for ten minutes, then fills "
-                     + "or crosses, and the result appears here.")
-                    .font(Term.mono(9)).foregroundStyle(Term.fgMuted)
-            } else if let saved, let cost {
-                HStack(spacing: 6) {
-                    Text(saved > 0 ? "Resting is winning" : "Resting is losing")
-                        .font(Term.mono(13, weight: .bold))
-                        .foregroundStyle(saved > 0 ? Term.positive : Term.negative)
-                    Text("by \(String(format: "%.3f", abs(saved)))% per order")
-                        .font(Term.mono(11)).foregroundStyle(Term.fgDim)
-                }
-                Text("Paid \(String(format: "%+.4f", cost))% against the price at the "
-                     + "moment you decided. Crossing would have cost "
-                     + "\(String(format: "%.4f", cross))%. "
-                     + "\(s?.filled ?? 0) of \(n) filled without crossing.")
-                    .font(Term.mono(9)).foregroundStyle(Term.fgMuted)
-                    .fixedSize(horizontal: false, vertical: true)
-
-                // The sample-size caveat, sized to the sample. It is the
-                // difference between a result and a rumour, and at n=1
-                // it is the only honest thing on the screen.
-                if n < 30 {
-                    Text("\(n) order\(n == 1 ? "" : "s") is too few to conclude anything. "
-                         + "Around 30 before this means much.")
-                        .font(Term.mono(9, weight: .bold)).foregroundStyle(Term.amber)
-                }
-            }
+    private func line(_ label: String, _ v: Double?) -> some View {
+        HStack(spacing: 6) {
+            Text("+" + Fmt.money(v ?? 0))
+                .font(Term.mono(11, weight: .bold)).foregroundStyle(Term.positive)
+                .frame(width: 78, alignment: .trailing)
+            Text(label).font(Term.mono(10)).foregroundStyle(Term.fgDim)
+            Spacer()
         }
-        .padding(.horizontal, 9).padding(.vertical, 7)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Term.bgHeader)
-        .overlay(alignment: .leading) { Rectangle().fill(Term.amber).frame(width: 2) }
     }
 
-    private var ticketRow: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text("PLACE A TEST ORDER")
-                .font(Term.mono(9, weight: .bold)).foregroundStyle(Term.blue)
-            HStack(spacing: 10) {
-                Picker("", selection: $side) {
-                    Text("BUY").tag("buy")
-                    Text("SELL").tag("sell")
-                }
-                .pickerStyle(.segmented).frame(width: 120).labelsHidden()
-
-                field("ticker", $ticker, width: 90, placeholder: "AAPL")
-                field("shares", $shares, width: 70, placeholder: "10")
-
-                Button(busy ? "PLACING…" : "PLACE") { Task { await place() } }
-                    .disabled(busy || ticker.trimmingCharacters(in: .whitespaces).isEmpty)
-                    .font(Term.mono(10, weight: .bold))
-
-                // Why the button will not do what you expect, beside the
-                // button. It used to live in the far top-right corner,
-                // which is nowhere near where anybody looks after
-                // pressing something and having nothing happen.
-                if let s = session, !(s.ok ?? true) {
-                    Text(s.reason ?? "")
-                        .font(Term.mono(9)).foregroundStyle(Term.amber)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                if let e = error {
-                    Text(e).font(Term.mono(9)).foregroundStyle(Term.negative).lineLimit(2)
+    /// What to do about it in the next few minutes, which is the only
+    /// part that is actionable today.
+    @ViewBuilder
+    private func rightNow(_ s: Estimate.Session?) -> some View {
+        if let s {
+            HStack(spacing: 7) {
+                Text("RIGHT NOW").font(Term.mono(8, weight: .bold)).foregroundStyle(Term.blue)
+                switch s.phase {
+                case "opening":
+                    Text("The expensive half hour. Spread is about \(String(format: "%.1fx", s.spreadMultiple ?? 0)) "
+                         + "midday. Wait \(s.minutesUntilCalm ?? 0) minutes.")
+                        .foregroundStyle(Term.negative)
+                case "calm":
+                    Text("Good window. Post at the bid and give it ten minutes.")
+                        .foregroundStyle(Term.positive)
+                case "closing":
+                    Text("Closing imbalance. Either go now with a tight limit or wait for tomorrow.")
+                        .foregroundStyle(Term.amber)
+                case "weekend", "closed":
+                    Text("Market shut. Best window is 11:30 to 15:00 ET.")
+                        .foregroundStyle(Term.fgDim)
+                case "premarket":
+                    Text("Not open yet. Do not queue a market order for the bell.")
+                        .foregroundStyle(Term.amber)
+                default:
+                    Text("Acceptable. The calm window is 11:30 to 15:00 ET.")
+                        .foregroundStyle(Term.fgDim)
                 }
                 Spacer()
-                Button("CHECK NOW") { Task { await tick() } }
-                    .font(Term.mono(9))
-                    .help("Advance resting orders now instead of waiting for the next minute")
             }
-        }
-        .padding(.horizontal, 10).padding(.vertical, 7)
-    }
-
-    /// A labelled input. The first version showed a bare field whose
-    /// placeholder read TICKER, which looks exactly like a column
-    /// heading and not at all like somewhere to type.
-    private func field(_ label: String, _ text: Binding<String>,
-                       width: CGFloat, placeholder: String) -> some View {
-        VStack(alignment: .leading, spacing: 1) {
-            Text(label.uppercased())
-                .font(Term.mono(7, weight: .bold)).foregroundStyle(Term.fgMuted)
-            TextField(placeholder, text: text)
-                .textFieldStyle(.roundedBorder)
-                .font(Term.mono(11))
-                .frame(width: width)
-                .onSubmit { Task { await place() } }
+            .font(Term.mono(10))
         }
     }
 
-    // Five columns, not nine.
-    //
-    // The first version showed PLACED / SIDE / TICKER / QTY / ARRIVAL /
-    // LIMIT / FILL / COST / STATUS, which is every field the row has and
-    // no help at all: a reader had to hold four prices in their head to
-    // work out whether the thing worked. RESULT states it.
-    private enum Field: CaseIterable {
-        case when, order, rested, got, result
-        var title: String {
-            switch self {
-            case .when: return "TIME"
-            case .order: return "ORDER"
-            case .rested: return "RESTED AT"
-            case .got: return "GOT"
-            case .result: return "RESULT"
-            }
-        }
-        var width: CGFloat? {
-            switch self {
-            case .when: return 76
-            case .order: return 150
-            case .rested: return 88
-            case .got: return 88
-            case .result: return nil
-            }
-        }
-        var align: Alignment {
-            switch self {
-            case .when, .order, .result: return .leading
-            default: return .trailing
-            }
-        }
-    }
-
-    private func sized<V: View>(_ f: Field, @ViewBuilder _ c: () -> V) -> some View {
-        Group {
-            if let w = f.width { c().frame(width: w, alignment: f.align) }
-            else { c().frame(minWidth: 200, maxWidth: .infinity, alignment: f.align) }
-        }
-    }
-
-    private var columnHeads: some View {
-        HStack(spacing: 8) {
-            ForEach(Field.allCases, id: \.self) { f in sized(f) { Text(f.title) } }
-        }
-        .font(Term.mono(9, weight: .bold)).foregroundStyle(Term.blue)
-        .padding(.horizontal, 10).padding(.vertical, 4)
-    }
-
-    private func row(_ o: Order) -> some View {
-        HStack(spacing: 8) {
-            ForEach(Field.allCases, id: \.self) { f in sized(f) { cell(f, o) } }
-        }
-        .font(Term.mono(11)).foregroundStyle(Term.white)
-        .padding(.horizontal, 10).padding(.vertical, 3)
-        .help(o.rationale ?? "")
-    }
+    // MARK: The record
 
     @ViewBuilder
-    private func cell(_ f: Field, _ o: Order) -> some View {
-        switch f {
-        case .when:
-            Text(o.placedAt.map { Fmt.shortDateTime($0) } ?? "—").foregroundStyle(Term.fgDim)
-        case .order:
-            HStack(spacing: 5) {
-                Text((o.side ?? "").uppercased())
-                    .font(Term.mono(10, weight: .bold))
-                    .foregroundStyle(o.side == "sell" ? Term.negative : Term.positive)
-                Text(Fmt.compact(o.shares))
-                Text(o.ticker ?? "—")
-                    .font(Term.mono(11, weight: .bold)).foregroundStyle(Term.amber)
+    private func record(_ p: Payload) -> some View {
+        let l = p.ledger
+        VStack(alignment: .leading, spacing: 5) {
+            HStack(spacing: 14) {
+                Text("THE RECORD").font(Term.mono(9, weight: .bold)).foregroundStyle(Term.blue)
+                Text("what this has actually saved, on trades taken")
+                    .font(Term.mono(9)).foregroundStyle(Term.fgMuted)
+                Spacer()
             }
-        case .rested:
-            Text(Fmt.money(o.limitPrice))
-        case .got:
-            Text(o.fillPrice.map { Fmt.money($0) } ?? "—")
-                .foregroundStyle(o.fillPrice == nil ? Term.fgMuted : Term.white)
-        case .result:
-            // One sentence per row. Whether the thing worked is the only
-            // question the table is asked, and it used to be spread
-            // across four numeric columns.
-            Text(resultText(o))
+            if (l?.trades ?? 0) == 0 {
+                // Never a zero. Nothing logged is not the same as a rule
+                // that has saved nothing, and the two must not render
+                // alike on a screen whose whole job is a running total.
+                Text("No trades logged yet. The total appears here once orders are recorded.")
+                    .font(Term.mono(10)).foregroundStyle(Term.fgMuted)
+            } else {
+                HStack(spacing: 20) {
+                    stat("TRADES", "\(l?.trades ?? 0)")
+                    stat("TRADED", Fmt.money(l?.notional ?? 0, decimals: 0))
+                    stat("SAVED", Fmt.money(l?.saved ?? 0), tone: Term.positive)
+                    Spacer()
+                }
+            }
+            ForEach((p.orders ?? []).prefix(8)) { o in
+                HStack(spacing: 8) {
+                    Text(o.placedAt.map { Fmt.shortDateTime($0) } ?? "—")
+                        .foregroundStyle(Term.fgDim).frame(width: 76, alignment: .leading)
+                    Text((o.side ?? "").uppercased())
+                        .foregroundStyle(o.side == "sell" ? Term.negative : Term.positive)
+                        .frame(width: 36, alignment: .leading)
+                    Text(o.ticker ?? "—")
+                        .font(Term.mono(10, weight: .bold)).foregroundStyle(Term.amber)
+                        .frame(width: 56, alignment: .leading)
+                    Text(Fmt.money(o.notional ?? 0, decimals: 0))
+                        .frame(width: 84, alignment: .trailing)
+                    Text("+" + Fmt.money(o.estimatedSaving ?? 0))
+                        .foregroundStyle(Term.positive).frame(width: 66, alignment: .trailing)
+                    Text(o.status ?? "").foregroundStyle(Term.fgMuted)
+                    Spacer()
+                }
                 .font(Term.mono(10))
-                .foregroundStyle(resultTone(o))
-                .lineLimit(1)
-        }
-    }
-
-    private func resultText(_ o: Order) -> String {
-        guard let s = o.status else { return "—" }
-        switch s {
-        case "open":
-            let n = o.polls ?? 0
-            return "resting… checked \(n) time\(n == 1 ? "" : "s")"
-                + (o.bestSeen.map { ", closest \(Fmt.money($0))" } ?? "")
-        case "filled":
-            guard let sf = o.shortfall, let a = o.arrivalPrice, let sh = o.shares else {
-                return "filled"
             }
-            let dollars = abs(sf / 100 * a * sh)
-            return sf <= 0
-                ? String(format: "filled — beat the mid, saved $%.2f", dollars)
-                : String(format: "filled — worse than the mid by $%.2f", dollars)
-        case "crossed":
-            return "never came to us — crossed and paid up"
-        case "abandoned":
-            return "abandoned, no price seen"
-        default:
-            return s
         }
+        .padding(.horizontal, 10).padding(.vertical, 8)
     }
 
-    private func resultTone(_ o: Order) -> Color {
-        switch o.status {
-        case "filled": return (o.shortfall ?? 0) <= 0 ? Term.positive : Term.negative
-        case "crossed": return Term.amber
-        case "abandoned": return Term.negative
-        default: return Term.cyan
-        }
-    }
-
-    private func tone(_ s: String?) -> Color {
-        switch s {
-        case "filled": return Term.positive
-        case "crossed": return Term.amber
-        case "abandoned": return Term.negative
-        default: return Term.cyan
+    private func stat(_ l: String, _ v: String, tone: Color = Term.white) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text(l).font(Term.mono(8, weight: .bold)).foregroundStyle(Term.blue)
+            Text(v).font(Term.mono(14, weight: .bold)).foregroundStyle(tone)
         }
     }
 
     // MARK: Data
 
-    private func place() async {
-        error = nil
-        let t = ticker.trimmingCharacters(in: .whitespaces).uppercased()
-        guard !t.isEmpty, let q = Double(shares), q > 0 else {
-            error = "ticker and share count"
-            return
+    private func recompute() async {
+        let n = Double(amount.replacingOccurrences(of: ",", with: "")
+                        .replacingOccurrences(of: "$", with: "")) ?? 0
+        guard n > 0 else { est = nil; return }
+        if let d = try? await API.shared.get("/paper/estimate", query: ["notional": String(n)]) {
+            est = try? await API.shared.decode(Estimate.self, from: d)
         }
-        busy = true
-        defer { busy = false }
-        do {
-            _ = try await API.shared.post("/paper/orders",
-                                          json: ["ticker": t, "side": side, "shares": q])
-            ticker = ""
-            await load()
-        } catch {
-            self.error = error.localizedDescription
-        }
-    }
-
-    private func tick() async {
-        _ = try? await API.shared.post("/paper/tick", json: [:])
-        await load()
     }
 
     private func load() async {
-        if let d = try? await API.shared.get("/paper/session") {
-            session = try? await API.shared.decode(Session.self, from: d)
-        }
+        state = .loading
         do {
             let d = try await API.shared.get("/paper/orders")
             state = .loaded(try await API.shared.decode(Payload.self, from: d))
