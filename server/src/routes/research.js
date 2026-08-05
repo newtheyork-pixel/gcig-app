@@ -34,6 +34,8 @@ router.use(verifyJwt);
 
 // Field research is a PM-and-above activity — the same bar that governs
 // pitching and editing reports.
+import { canPurge, canTrash, capabilities } from '../services/artifactPermissions.js';
+
 const canResearch = requireRole('Analyst');
 
 const upload = multer({
@@ -656,9 +658,20 @@ router.post('/artifacts/:id/trash', canResearch, async (req, res) => {
   try {
     const existing = await prisma.researchArtifact.findUnique({
       where: { id },
-      select: { id: true, title: true, trashedAt: true, projectId: true },
+      // uploadedById is what makes 'you may remove your own' work. Omit
+      // it and every member fails the ownership check and is refused,
+      // which is safe and wrong.
+      select: { id: true, title: true, trashedAt: true, projectId: true, uploadedById: true },
     });
     if (!existing) return res.status(404).json({ error: 'Not found' });
+
+    // Analyst was the only gate here, which meant any of twenty members
+    // could remove any file in any project. Survivable while it took a
+    // deliberate API call; not survivable once the Griffin Fund volume
+    // began honouring a Finder trash gesture, because the same power
+    // became a drag of a folder by somebody tidying a sidebar.
+    const may = canTrash(req.user, existing);
+    if (!may.ok) return res.status(403).json({ error: may.reason });
     // Already trashed is a success, not an error. The volume can send
     // the same gesture twice — a sweep runs on every filesystem event —
     // and a 500 on the second one would light up an error banner over a
@@ -695,6 +708,12 @@ router.post('/artifacts/:id/restore', canResearch, async (req, res) => {
   }
 });
 
+/// What this member may do to research files. Lets a panel hide a
+/// control instead of offering one that answers 403.
+router.get('/artifacts/permissions', canResearch, (req, res) => {
+  res.json(capabilities(req.user));
+});
+
 /// What is in the bin, so a mistaken drag is findable rather than
 /// folklore. Newest first — somebody looking here just did it.
 router.get('/artifacts/trashed', canResearch, async (req, res) => {
@@ -723,6 +742,11 @@ router.get('/artifacts/trashed', canResearch, async (req, res) => {
 router.delete('/artifacts/:id', canResearch, async (req, res) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id)) return res.status(400).json({ error: 'Bad id' });
+  // Narrower than trashing, deliberately. A soft delete leaves the row
+  // and the bytes and anybody can undo it; this cannot be undone by
+  // anyone, and the club has exactly one person whose job includes that.
+  const may = canPurge(req.user);
+  if (!may.ok) return res.status(403).json({ error: may.reason });
   try {
     await prisma.researchArtifact.delete({ where: { id } });
     res.json({ ok: true });

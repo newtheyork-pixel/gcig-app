@@ -295,8 +295,19 @@ final class GriffinDrive: ObservableObject {
         // file already exists under its new name and nothing needs
         // fetching — skipped the cleanup entirely, which is why the old
         // copies survived the CHRW filing.
+        //
+        // Which means the sweep runs while the downloads are still
+        // queued, and it has to be told which directories are about to
+        // be filled. Told nothing, it deletes the folders created a few
+        // lines above as empty, the writes below land in a parent that
+        // no longer exists, and the failure is swallowed — so the folder
+        // does not come back on the next pull either. It is recreated,
+        // swept and failed again, identically, forever. That is how the
+        // CHRW project lost "3 Regulatory" and "4 Company filings", and
+        // why they stayed lost.
         let titles = Set((w.artifacts ?? []).map(\.title))
-        reconcile(base: base, against: titles)
+        let awaiting = Self.awaitingDirectories(for: wanted.map { $0.dest }, under: base)
+        reconcile(base: base, against: titles, awaiting: awaiting)
         guard !wanted.isEmpty else { return }
 
         status.pending = wanted.count
@@ -313,6 +324,13 @@ final class GriffinDrive: ObservableObject {
                 group.addTask {
                     guard let bytes = try? await API.shared.get("/files/\(Self.escape(job.item))") else { return nil }
                     do {
+                        // Remade rather than assumed. The directory was
+                        // created before the sweep ran, and one syscall
+                        // is a cheap price for never writing into a
+                        // parent that went away in between.
+                        try FileManager.default.createDirectory(
+                            at: job.dest.deletingLastPathComponent(),
+                            withIntermediateDirectories: true)
                         try bytes.write(to: job.dest, options: .atomic)
                         return (job.row.title, bytes.count)
                     } catch { return nil }
@@ -333,6 +351,13 @@ final class GriffinDrive: ObservableObject {
         }
         status.pending = 0
         if pulled > 0 { status.lastPull = "\(pulled) file\(pulled == 1 ? "" : "s") at \(Fmt.localStamp())" }
+        // Downloads that fail say so. Silence here is what let two
+        // missing folders read as a filing decision for a day rather
+        // than as the bug they were.
+        let missed = wanted.count - pulled
+        if missed > 0 {
+            status.error = "\(missed) file\(missed == 1 ? "" : "s") did not download; the next sync retries"
+        }
     }
 
     /// Remove local files the project no longer has.
@@ -349,7 +374,12 @@ final class GriffinDrive: ObservableObject {
     /// minutes is left alone, because a file somebody has just dropped in
     /// has not been uploaded yet and is not in the artifact list either —
     /// deleting it would eat their work between the drop and the push.
-    private func reconcile(base: URL, against titles: Set<String>) {
+    ///
+    /// `awaiting` is the directories with a download still queued into
+    /// them. They are on disk and hold nothing, which is indistinguishable
+    /// from abandoned unless the caller says otherwise — and getting it
+    /// wrong does not cost a redundant folder, it costs the files.
+    private func reconcile(base: URL, against titles: Set<String>, awaiting: Set<String> = []) {
         let cutoff = Date().addingTimeInterval(-120)
         for (path, _) in Self.walk(base) where !titles.contains(path) {
             let url = base.appendingPathComponent(path)
@@ -369,7 +399,8 @@ final class GriffinDrive: ObservableObject {
             }
             for dir in dirs.sorted(by: { $0.pathComponents.count > $1.pathComponents.count }) {
                 let kids = (try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? []
-                if kids.filter({ !$0.hasPrefix(".") }).isEmpty {
+                if Self.isSweepable(dir: dir.standardizedFileURL.path,
+                                    children: kids, awaiting: awaiting) {
                     try? FileManager.default.removeItem(at: dir)
                 }
             }
@@ -472,15 +503,59 @@ final class GriffinDrive: ObservableObject {
             known[volumePath] = nil
             status.lastPush = "removed \((suffix as NSString).lastPathComponent) at \(Fmt.localStamp())"
         } catch {
-            // Let it be retried on the next event rather than pretending
-            // it worked — the file is still in the Trash, so the gesture
-            // is still there to read.
+            let text = error.localizedDescription
+            // A REFUSAL IS NOT A FAILURE, and retrying it is worse than
+            // useless. The server now allows a member to remove only
+            // what they uploaded; anything else needs a Portfolio
+            // Manager. That answer will not change on the next
+            // filesystem event, so retrying every few seconds would
+            // hammer the API forever and bury the one message that
+            // explains why the file came back.
+            if text.contains("403") || text.localizedCaseInsensitiveContains("Portfolio Manager")
+                || text.localizedCaseInsensitiveContains("super admin") {
+                status.error = "\((suffix as NSString).lastPathComponent): \(text)"
+                return    // stays in trashHandled, so it is not tried again
+            }
             trashHandled.remove(suffix)
-            status.error = "could not remove \(suffix): \(error.localizedDescription)"
+            status.error = "could not remove \(suffix): \(text)"
         }
     }
 
     // MARK: Helpers
+
+    /// Whether the sweep may remove a directory.
+    ///
+    /// Two ways to survive: hold something visible, or have something on
+    /// its way in. The second is the one that was missing, and its
+    /// absence is not a cosmetic bug — an emptied folder can never refill
+    /// itself, because the pull that would refill it sweeps it first.
+    nonisolated static func isSweepable(dir: String, children: [String],
+                                        awaiting: Set<String>) -> Bool {
+        guard !awaiting.contains(dir) else { return false }
+        return children.filter { !$0.hasPrefix(".") }.isEmpty
+    }
+
+    /// Every directory on the way down to a queued download, so the sweep
+    /// can tell "empty" from "not filled yet".
+    ///
+    /// Walks up to the project root rather than taking the immediate
+    /// parent alone: an artifact titled "3 Regulatory/pocket guide"
+    /// arriving into a project with nothing else in that folder leaves
+    /// both the file's directory and every directory above it empty at
+    /// the moment the sweep looks.
+    nonisolated static func awaitingDirectories(for destinations: [URL],
+                                                under base: URL) -> Set<String> {
+        let root = base.standardizedFileURL.path
+        var out: Set<String> = []
+        for dest in destinations {
+            var dir = dest.standardizedFileURL.deletingLastPathComponent()
+            while dir.path != root, dir.path.hasPrefix(root + "/") {
+                out.insert(dir.path)
+                dir = dir.deletingLastPathComponent()
+            }
+        }
+        return out
+    }
 
     nonisolated static func escape(_ s: String) -> String {
         s.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? s
