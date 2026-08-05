@@ -1657,6 +1657,10 @@ model AppRelease {
   // to see the newer build.
   version   String   @unique
   url       String
+  // "onedrive:ITEM_ID" once the bytes are uploaded. Null on a row that
+  // only points somewhere external, which is why `url` stays the thing
+  // clients read and this is only how the server finds the file.
+  fileRef   String?
   // Verified after download and before anything is replaced. Without it
   // the updater is a remote-code-execution hole wearing a friendly
   // button: whoever can answer that URL can replace the app.

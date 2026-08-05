@@ -100,7 +100,17 @@ final class Updater: ObservableObject {
               let want = r.sha256?.lowercased() else { return }
         phase = .downloading(0)
         do {
-            let (tmp, response) = try await URLSession.shared.download(from: url)
+            // Carries the session token, because the build is served
+            // members-only from our own API rather than from a public
+            // bucket. An anonymous download would 401, and the updater
+            // would report a broken release rather than a missing login.
+            var req = URLRequest(url: url)
+            let origin = await API.shared.origin
+            if urlStr.hasPrefix(origin),
+               let authed = await API.shared.authorizedRequest(String(urlStr.dropFirst(origin.count))) {
+                req = authed
+            }
+            let (tmp, response) = try await URLSession.shared.download(for: req)
             if let http = response as? HTTPURLResponse, http.statusCode != 200 {
                 throw NSError(domain: "update", code: http.statusCode,
                               userInfo: [NSLocalizedDescriptionKey: "download returned \(http.statusCode)"])

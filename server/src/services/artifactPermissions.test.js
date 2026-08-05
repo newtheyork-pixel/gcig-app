@@ -23,37 +23,48 @@ test('you can remove what you contributed', () => {
 });
 
 test('you cannot remove somebody else\'s, and are told who can', () => {
-  // The whole point of the change: an Analyst could previously delete
-  // all 205 documents on a project they had never opened, and after the
-  // Finder volume started honouring a trash gesture that became a drag.
   const r = canTrash(analyst, theirs);
   assert.equal(r.ok, false);
-  assert.match(r.reason, /Portfolio Manager or above/);
+  assert.match(r.reason, /super admin/);
 });
 
-test('seniority can remove anybody\'s', () => {
-  assert.equal(canTrash(pm, theirs).ok, true);
-  assert.equal(canTrash(admin, theirs).ok, true, 'super admin bypasses');
+test('seniority does NOT buy the right to delete other members\' work', () => {
+  // Deliberately not Portfolio Manager. Reviewing a member's pitch and
+  // being able to delete the evidence behind it are different powers,
+  // the club has several people at that tier, and on the volume the
+  // action is a drag of a folder rather than a considered API call.
+  assert.equal(canTrash(pm, theirs).ok, false);
+  assert.equal(canTrash({ id: 6, role: 'President', email: 'pres@x.org' }, theirs).ok, false);
+  assert.equal(canTrash({ id: 7, role: 'CIO', email: 'cio@x.org' }, theirs).ok, false);
+  assert.equal(canTrash(admin, theirs).ok, true, 'the super admin, and only the super admin');
 });
 
-test('an unowned file needs seniority, not nobody', () => {
+test('an unowned file belongs to the super admin, not to nobody', () => {
   // uploadedById is null on everything imported in bulk. Treating null
   // as "yours" would hand every member the entire legacy archive.
   assert.equal(canTrash(analyst, orphan).ok, false);
-  assert.equal(canTrash(pm, orphan).ok, true);
+  assert.equal(canTrash(pm, orphan).ok, false);
+  assert.equal(canTrash(admin, orphan).ok, true);
 });
 
-test('extraRoles count toward seniority', () => {
-  const dual = { id: 5, role: 'Analyst', extraRoles: ['PortfolioManager'], email: 'd@x.org' };
-  assert.equal(canTrash(dual, theirs).ok, true);
+test('extraRoles cannot smuggle in delete rights either', () => {
+  const dual = { id: 5, role: 'Analyst', extraRoles: ['PortfolioManager', 'President'], email: 'd@x.org' };
+  assert.equal(canTrash(dual, theirs).ok, false);
+  assert.equal(canTrash(dual, { id: 20, uploadedById: 5 }).ok, true, 'still owns their own');
 });
 
-test('permanent deletion is narrower than trashing', () => {
-  // Trash is reversible and several people hold it. Purge is not
-  // reversible by anybody, so exactly one person holds it.
+test('trash and purge are both super admin, and still different acts', () => {
+  // Same holder, different consequences. Trashing leaves the row and the
+  // bytes and /restore brings it back; purging deletes the row and
+  // nothing brings it back for anybody. So the reversible one stays the
+  // default even though one person holds both.
   assert.equal(canPurge(pm).ok, false);
+  assert.equal(canPurge({ id: 8, role: 'President', email: 'p2@x.org' }).ok, false);
   assert.match(canPurge(pm).reason, /reversible/);
   assert.equal(canPurge(admin).ok, true);
+  // A member always keeps the reversible route to their own upload.
+  assert.equal(canTrash(analyst, mine).ok, true);
+  assert.equal(canPurge(analyst).ok, false);
 });
 
 test('uploading stays open, because contributing is the point', () => {
@@ -68,8 +79,10 @@ test('uploading stays open, because contributing is the point', () => {
 test('capabilities lets a client hide a button instead of refusing a press', () => {
   const a = capabilities(analyst);
   assert.equal(a.upload, true);
+  assert.equal(a.trashOwn, true);
   assert.equal(a.trashAny, false);
   assert.equal(a.purge, false);
+  assert.equal(capabilities(pm).trashAny, false, 'seniority buys nothing here');
   const s = capabilities(admin);
   assert.equal(s.trashAny, true);
   assert.equal(s.purge, true);

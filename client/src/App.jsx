@@ -3,6 +3,7 @@ import { useAuth } from './context/AuthContext.jsx';
 import Layout from './components/Layout.jsx';
 import ProtectedRoute from './components/ProtectedRoute.jsx';
 import Login from './pages/Login.jsx';
+import DownloadTerminal from './pages/DownloadTerminal.jsx';
 import AcceptInvite from './pages/AcceptInvite.jsx';
 import ForgotPassword from './pages/ForgotPassword.jsx';
 import ResetPassword from './pages/ResetPassword.jsx';
@@ -75,6 +76,7 @@ export default function App() {
         }
       >
         <Route path="/dashboard" element={<Dashboard />} />
+        <Route path="/download" element={<DownloadTerminal />} />
         <Route path="/calendar" element={<Calendar />} />
         <Route path="/pitch-requests" element={<PitchRequests />} />
         {/* Legacy routes — keep so old bookmarks/links still work */}

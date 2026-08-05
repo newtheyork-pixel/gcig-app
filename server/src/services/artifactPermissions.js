@@ -12,20 +12,19 @@
 // action can be taken is the same thing as widening who can take it, and
 // this file is the half that did not get written at the time.
 //
-// THE RULE. You may remove what you contributed. Removing somebody
-// else's work needs seniority. Destroying anything irreversibly is the
-// super admin alone.
+// THE RULE. You may remove what you contributed, and nothing else.
+// Touching anybody else's work, by either route, is the super admin
+// alone.
 //
-// It is the ordinary rule for shared drives and it is the right one
-// here: a member who uploads the wrong file must be able to fix it
-// without asking, and a member who has never touched a project should
-// not be able to empty it.
+// The first cut let Portfolio Managers remove other members' files, on
+// the reasoning that seniority already reviews their work. That was the
+// wrong instinct for a research archive. Reviewing a pitch and being
+// able to delete the evidence behind it are different powers, the club
+// has several people at that tier, and the volume turns the action into
+// a drag of a folder. The tier that can destroy a project's record
+// should be as small as it can be, and one is as small as it gets.
 
 import { ROLE_RANK, isSuperAdminEmail } from '../middleware/auth.js';
-
-/// Deleting another member's upload. PortfolioManager and above, which
-/// is the tier that already runs industries and reviews pitches.
-export const DELETE_OTHERS_RANK = ROLE_RANK.PortfolioManager;
 
 function rank(user) {
   const own = ROLE_RANK[user?.role] || 0;
@@ -49,25 +48,29 @@ export function canTrash(user, artifact) {
   const mine = artifact?.uploadedById != null && artifact.uploadedById === user.id;
   if (mine) return { ok: true };
 
-  if (rank(user) >= DELETE_OTHERS_RANK) return { ok: true };
-
   // Named precisely. "Permission denied" sends somebody to ask an
-  // engineer; this sends them to the right person.
+  // engineer; this sends them to the one person who can actually do it.
   return {
     ok: false,
     reason: artifact?.uploadedById == null
-      ? 'This file has no recorded uploader, so only a Portfolio Manager or above can remove it.'
-      : 'You can remove files you uploaded. Removing somebody else\'s needs a Portfolio Manager or above.',
+      ? 'This file has no recorded uploader, so only the super admin can remove it.'
+      : 'You can remove files you uploaded. Anything else is the super admin.',
   };
 }
 
 /**
  * May this user destroy it outright, past recovery?
  *
- * Super admin only, and deliberately narrower than trashing. A soft
- * delete leaves the row and the bytes and can be undone by anybody; this
- * cannot be undone by anybody, and the club has exactly one person whose
- * job includes that.
+ * Super admin only, same as removing somebody else's file, but the two
+ * are not the same act and the distinction is worth keeping.
+ *
+ * Trashing is the Mac's Trash: the file leaves every read path while the
+ * row and the bytes remain, and /restore brings it back whole. A member
+ * who trashes their own upload by accident loses nothing. Purging
+ * deletes the row, and nothing brings it back for anybody.
+ *
+ * So the reversible one is the default and the destructive one is a
+ * separate deliberate act, even though the same person holds both.
  */
 export function canPurge(user) {
   if (isSuperAdminEmail(user?.email)) return { ok: true };
@@ -94,7 +97,7 @@ export function capabilities(user) {
   return {
     upload: canUpload(user).ok,
     trashOwn: !!user,
-    trashAny: isSuperAdminEmail(user?.email) || rank(user) >= DELETE_OTHERS_RANK,
+    trashAny: isSuperAdminEmail(user?.email),
     purge: canPurge(user).ok,
     rank: rank(user),
   };

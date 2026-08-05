@@ -24,6 +24,22 @@ actor API {
     private let base = ProcessInfo.processInfo.environment["GRIFFIN_API"]
         ?? "https://gcig-api.onrender.com/api"
 
+    /// The API root, so a caller can tell one of our own URLs from a
+    /// third party's and only attach a token to ours.
+    var origin: String { base }
+
+    /// A request carrying the session token, for callers that cannot go
+    /// through `get`/`post` because they need the response streamed to
+    /// disk rather than held in memory. The updater is the only one: a
+    /// 4MB app bundle should not become a Data in RAM, and the download
+    /// endpoint is members-only so it cannot be fetched anonymously.
+    func authorizedRequest(_ path: String) -> URLRequest? {
+        guard let url = URL(string: base + path) else { return nil }
+        var req = URLRequest(url: url)
+        if let token { req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
+        return req
+    }
+
     private var token: String? {
         get { TokenStore.read("jwt") }
     }

@@ -21,6 +21,7 @@ import {
   Ship,
   ClipboardList,
   Network,
+  Monitor,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext.jsx';
 import RoleBadge from './RoleBadge.jsx';
@@ -47,6 +48,7 @@ const NAV_SECTIONS = [
     header: 'Investing',
     items: [
       { to: '/portfolio', label: 'Portfolio', icon: LineChart },
+      { to: '/download', label: 'Get the Terminal', icon: Monitor },
       { to: '/outcomes', label: 'Coverage Outcomes', icon: Trophy },
       { to: '/votes', label: 'Voting', icon: Vote },
       { to: '/industries', label: 'Industries', icon: Building2 },
