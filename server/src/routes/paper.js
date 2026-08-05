@@ -8,6 +8,7 @@
 // explain.
 
 import express from 'express';
+import { verifyJwt } from '../middleware/auth.js';
 import { PrismaClient } from '@prisma/client';
 import { getLiveQuotes } from '../services/liveQuotes.js';
 import {
@@ -20,6 +21,18 @@ const router = express.Router();
 
 const TICKER = /^[A-Z0-9.\-]{1,10}$/;
 
+
+// Everything below needs a signed-in member.
+//
+// This router shipped without it. `req.user` was therefore always
+// undefined, which had two consequences: every super-admin check
+// silently failed closed, and — the real problem — the members-only
+// routes were not members-only at all. Confirmed against production
+// with no token: /api/paper/orders answered 200.
+//
+// A gate that is missing looks exactly like a gate that is passing, from
+// the outside, right up until somebody checks.
+router.use(verifyJwt);
 /**
  * What following the rules is worth on an order of this size, right now.
  *

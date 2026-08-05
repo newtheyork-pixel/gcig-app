@@ -5,6 +5,7 @@
 // network, and this file only decides what to feed it.
 
 import express from 'express';
+import { verifyJwt } from '../middleware/auth.js';
 import { getSheetPortfolio } from '../services/sheetPortfolio.js';
 import { getCashBalance } from '../services/tradeExecution.js';
 import { getUpcomingEarningsBatch } from '../services/marketData.js';
@@ -12,6 +13,18 @@ import { evaluate, summarize, IPS } from '../services/alerts.js';
 
 const router = express.Router();
 
+
+// Everything below needs a signed-in member.
+//
+// This router shipped without it. `req.user` was therefore always
+// undefined, which had two consequences: every super-admin check
+// silently failed closed, and — the real problem — the members-only
+// routes were not members-only at all. Confirmed against production
+// with no token: /api/alerts answered 200.
+//
+// A gate that is missing looks exactly like a gate that is passing, from
+// the outside, right up until somebody checks.
+router.use(verifyJwt);
 router.get('/', async (_req, res) => {
   try {
     // Each input is optional and each failure is visible downstream: a
