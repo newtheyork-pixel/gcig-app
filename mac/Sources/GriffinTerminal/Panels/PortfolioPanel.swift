@@ -302,7 +302,7 @@ struct PortfolioPanel: View {
             case .wt:       return "WT"
             case .day:      return "DAY"
             case .sinceBuy: return "SINCE BUY"
-            case .pct:      return "%"
+            case .pct:      return "SINCE %"
             case .ytd:      return "YTD"
             }
         }
@@ -321,7 +321,7 @@ struct PortfolioPanel: View {
             case .wt:       return 50
             case .day:      return 70
             case .sinceBuy: return 88
-            case .pct:      return 62
+            case .pct:      return 74
             case .ytd:      return 62
             }
         }
@@ -493,8 +493,13 @@ struct PortfolioPanel: View {
         case .wt:
             Text(weight.map { Fmt.pct($0, decimals: 1, signed: false) } ?? "—")
         case .day:
-            Text(h.dayChange.map { Fmt.money($0, decimals: 0) } ?? "—")
-                .foregroundStyle(Term.delta(h.dayChange)).tickFlash(h.dayChange)
+            // A percent, not dollars. On a book where one position is
+            // 33% and another 2.9%, a dollar move says more about
+            // position size than about the day: VOO up $818 and SHLD up
+            // $195 look like a rout and a shrug, and they were +1.8%
+            // and +5.0%. The percent is the comparable number.
+            Text(dayPct(h).map { Fmt.pct($0, decimals: 2) } ?? "—")
+                .foregroundStyle(Term.delta(dayPct(h))).tickFlash(dayPct(h))
         case .sinceBuy:
             Text(h.dollarReturn.map { Fmt.money($0, decimals: 0) } ?? "—")
                 .foregroundStyle(Term.delta(h.dollarReturn))
@@ -539,6 +544,26 @@ struct PortfolioPanel: View {
     /// The book's own line, summed from the MARKED rows rather than read
     /// off the payload, so it agrees with the header total and with
     /// every row above it the moment a live print lands.
+    /// Today's move as a percent of what the position was worth at
+    /// yesterday's close.
+    ///
+    /// Derived rather than carried as its own field. `dayChange` is a
+    /// POSITION dollar amount, so if the row is worth `marketValue` now
+    /// and moved `dayChange` today it closed yesterday at the
+    /// difference, and the percent falls straight out. Threading a
+    /// second field through the quote overlay, the cash line and the
+    /// totals would be three more places to forget.
+    ///
+    /// Null rather than zero when the base is missing or non-positive: a
+    /// dash says we could not work it out, and 0.00% says the position
+    /// did not move.
+    private func dayPct(_ h: Holding) -> Double? {
+        guard let d = h.dayChange, let mv = h.marketValue else { return nil }
+        let base = mv - d
+        guard base > 0 else { return nil }
+        return d / base * 100
+    }
+
     private struct BookTotals {
         let positions: Int
         let hasCash: Bool
@@ -548,6 +573,8 @@ struct PortfolioPanel: View {
         let value: Double
         let wt: Double?
         let day: Double
+        /// The book's own day move, on the same basis as each row.
+        let dayPct: Double?
         let upl: Double?
         let uplPct: Double?
     }
@@ -565,6 +592,14 @@ struct PortfolioPanel: View {
             value: total,
             wt: total > 0 ? invested / total * 100 : nil,
             day: positions.compactMap(\.dayChange).reduce(0, +),
+            // Measured against the INVESTED base, not the total: cash
+            // did not move today, and dividing by a book that is 7%
+            // cash would quietly understate every day by 7%.
+            dayPct: {
+                let d = positions.compactMap(\.dayChange).reduce(0, +)
+                let base = invested - d
+                return base > 0 ? d / base * 100 : nil
+            }(),
             upl: cost.map { invested - $0 },
             uplPct: (cost.map { $0 > 0 } ?? false) ? (invested - cost!) / cost! * 100 : nil)
         return HStack(spacing: Self.gap) {
@@ -607,7 +642,10 @@ struct PortfolioPanel: View {
             Text(t.wt.map { Fmt.pct($0, decimals: 1, signed: false) } ?? "—")
                 .foregroundStyle(Term.fgDim)
         case .day:
-            Text(Fmt.money(t.day, decimals: 0)).foregroundStyle(Term.delta(t.day))
+            // Same basis as the rows: today's move over what the book
+            // was worth at yesterday's close.
+            Text(t.dayPct.map { Fmt.pct($0, decimals: 2) } ?? "—")
+                .foregroundStyle(Term.delta(t.dayPct))
         case .sinceBuy:
             Text(t.upl.map { Fmt.money($0, decimals: 0) } ?? "—")
                 .foregroundStyle(Term.delta(t.upl))
