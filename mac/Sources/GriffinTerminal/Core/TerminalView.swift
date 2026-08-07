@@ -264,7 +264,10 @@ private struct CommandBarView: View {
     @State private var parsing = false
     @State private var interpretation: String?
     @State private var symMatches: [API.SymbolMatch] = []
-    @FocusState private var focused: Bool
+    /// Focus is requested by counter and reported by AppKit. See
+    /// CommandField for why a Bool cannot do this job.
+    @State private var focusTick = 1
+    @State private var fieldFocused = false
 
     /// One flat list for the arrow keys: functions first, securities
     /// after, exactly like the web menu.
@@ -354,7 +357,7 @@ private struct CommandBarView: View {
                 CommandField(
                     text: $value,
                     placeholder: "TICKER FUNCTION — e.g. AAPL DES · or ask in plain English",
-                    isFocused: focused,
+                    focusTick: focusTick,
                     onSubmit: { submit() },
                     onEscape: {
                         // The field owns focus almost permanently, so if
@@ -368,7 +371,8 @@ private struct CommandBarView: View {
                         NotificationCenter.default.post(name: .escapeGesture, object: nil)
                     },
                     onMove: { d in _ = move(d) },
-                    onTab: { _ = fill() })
+                    onTab: { _ = fill() },
+                    onFocusChange: { fieldFocused = $0 })
                     .frame(height: 17)
                     .onChange(of: value) { _, _ in active = 0; menuOpen = true }
                 if parsing {
@@ -382,8 +386,13 @@ private struct CommandBarView: View {
             .padding(.horizontal, 12)
             .frame(height: 34)
             .background(Term.bg)
+            // The whole 34pt row is the click target, not the 17pt text
+            // line inside it. A command line you have to hit within a few
+            // pixels is a command line that reads as gone.
+            .contentShape(Rectangle())
+            .onTapGesture { focusTick &+= 1 }
             .overlay(alignment: .bottom) {
-                Rectangle().fill(focused ? Term.borderFocus : Term.border).frame(height: 1)
+                Rectangle().fill(fieldFocused ? Term.borderFocus : Term.border).frame(height: 1)
             }
             .overlay(alignment: .bottomLeading) {
                 if showMenu { menu.offset(y: suggestionsHeight) }
@@ -408,7 +417,7 @@ private struct CommandBarView: View {
             }
         }
         .onAppear {
-            focused = true
+            focusTick &+= 1
             installSlashShortcut()
         }
         .task(id: symQuery) {
@@ -424,7 +433,7 @@ private struct CommandBarView: View {
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .focusCommand)) { _ in
-            focused = true
+            focusTick &+= 1
         }
     }
 

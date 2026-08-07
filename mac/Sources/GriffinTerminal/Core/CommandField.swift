@@ -22,16 +22,29 @@ import AppKit
 struct CommandField: NSViewRepresentable {
     @Binding var text: String
     var placeholder: String
-    var isFocused: Bool
+    /// A focus REQUEST, not a focus state. Incremented by the owner every
+    /// time the field should take the caret; consumed exactly once per
+    /// change. The previous shape passed a Bool that was never unset, so
+    /// every SwiftUI render re-asserted first responder — and the moment
+    /// the SwiftUI focus engine disagreed, the two fought and the caret
+    /// went to neither. A counter cannot fight: it fires once and stops.
+    var focusTick: Int
     var onSubmit: () -> Void
     var onEscape: () -> Void
     var onMove: (Int) -> Void
     var onTab: () -> Void
+    /// The truth about first responder, reported by AppKit rather than
+    /// guessed by SwiftUI, so the bar's border can reflect the caret the
+    /// user actually sees.
+    var onFocusChange: (Bool) -> Void = { _ in }
 
     func makeNSView(context: Context) -> BlockCaretTextView {
         let v = BlockCaretTextView()
         v.delegate = context.coordinator
         v.owner = context.coordinator
+        v.onFocusChange = { [weak coordinator = context.coordinator] has in
+            coordinator?.parent.onFocusChange(has)
+        }
         v.placeholderText = placeholder
         v.string = text
         v.isRichText = false
@@ -64,8 +77,9 @@ struct CommandField: NSViewRepresentable {
         // of a command becomes impossible.
         if v.string != text { v.string = text }
         v.placeholderText = placeholder
-        if isFocused, v.window?.firstResponder !== v {
-            v.window?.makeFirstResponder(v)
+        if context.coordinator.lastFocusTick != focusTick {
+            context.coordinator.lastFocusTick = focusTick
+            v.grabFocus()
         }
     }
 
@@ -73,6 +87,7 @@ struct CommandField: NSViewRepresentable {
 
     final class Coordinator: NSObject, NSTextViewDelegate {
         var parent: CommandField
+        var lastFocusTick = 0
         init(_ p: CommandField) { parent = p }
 
         func textDidChange(_ notification: Notification) {
@@ -114,6 +129,35 @@ struct CommandField: NSViewRepresentable {
 final class BlockCaretTextView: NSTextView {
     weak var owner: AnyObject?
     var placeholderText: String = ""
+    var onFocusChange: ((Bool) -> Void)?
+    /// A focus request that arrived before the view was in a window has
+    /// nowhere to go; park it and honour it on attach. Without this the
+    /// very first request of a session — fired from onAppear while the
+    /// hierarchy is still assembling — was simply lost, and the command
+    /// line opened dead until someone found the "/" shortcut.
+    private var wantsFocusOnAttach = false
+
+    func grabFocus() {
+        if let w = window { w.makeFirstResponder(self) }
+        else { wantsFocusOnAttach = true }
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if wantsFocusOnAttach, let w = window {
+            wantsFocusOnAttach = false
+            w.makeFirstResponder(self)
+        }
+    }
+
+    /// Clicking the command line always wins the caret back, no matter
+    /// which pane, popout or SwiftUI field held it. This is nominally
+    /// what AppKit does anyway; stating it here makes the field's one
+    /// contract explicit — it can always be clicked back to life.
+    override func mouseDown(with event: NSEvent) {
+        if window?.firstResponder !== self { window?.makeFirstResponder(self) }
+        super.mouseDown(with: event)
+    }
 
     /// Not solid. A real terminal repaints the glyph in the background
     /// colour on top of the block; there is no hook for that here, so an
@@ -193,12 +237,14 @@ final class BlockCaretTextView: NSTextView {
         // The hint shifts when the caret appears, so both transitions
         // have to repaint or it stays offset with no cursor beside it.
         needsDisplay = true
+        if ok { onFocusChange?(true) }
         return ok
     }
 
     override func resignFirstResponder() -> Bool {
         let ok = super.resignFirstResponder()
         needsDisplay = true
+        if ok { onFocusChange?(false) }
         return ok
     }
 }
