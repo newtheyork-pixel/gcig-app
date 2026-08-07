@@ -673,7 +673,7 @@ router.get('/coverage/:ticker', async (req, res) => {
     // — a club block that shows two of three pitches teaches a member
     // the club has no history on a name when it does.
     const where = tickerWhere(raw);
-    const [pitches, reports, holding, sessions, allUsers] = await Promise.all([
+    const [pitches, reports, holding, sessions, allUsers, projects] = await Promise.all([
       prisma.pitch.findMany({
         where,
         orderBy: { date: 'desc' },
@@ -692,6 +692,23 @@ router.get('/coverage/:ticker', async (req, res) => {
         include: { ballots: true },
       }),
       prisma.user.findMany({ select: { id: true, name: true, role: true, extraRoles: true } }),
+      // The research desk's own coverage: who opened the project, when
+      // the work was INITIATED (createdAt — the updatedAt stamp moves
+      // every time anyone relabels a row, which is how thirty-nine
+      // projects came to read "August 6"), and the price the valuation
+      // says we would want to buy at.
+      prisma.researchProject.findMany({
+        where: tickerWhere(raw),
+        orderBy: { createdAt: 'desc' },
+        include: {
+          createdBy: { select: { name: true } },
+          valuations: {
+            where: { buyBelow: { not: null } },
+            orderBy: { updatedAt: 'desc' },
+            take: 1,
+          },
+        },
+      }).catch(() => []),
     ]);
 
     // The decision is COMPUTED, never stored, so it has to be recomputed
@@ -714,8 +731,27 @@ router.get('/coverage/:ticker', async (req, res) => {
         pitchId: v.pitchId ?? null,
       };
     });
+    // Ownership-desk coverage, shaped for the DES club block: the
+    // analyst, the true initiation date, and the buy level if a
+    // valuation carries one.
+    const research = (projects || [])
+      .filter((p) => !p.ownerOnly)
+      .map((p) => {
+        const v = p.valuations?.[0] || null;
+        return {
+          id: p.id,
+          name: p.name,
+          status: p.status,
+          initiatedAt: p.createdAt,
+          analyst: p.createdBy?.name || null,
+          buyBelow: v?.buyBelow ?? null,
+          currency: v?.currency || 'USD',
+        };
+      });
+
     res.json({
       ticker: raw,
+      research,
       // Do we own it, and what did we pay. A dash here is a fact about
       // the book, not a hole in the panel.
       holding: holding

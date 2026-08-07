@@ -739,6 +739,27 @@ router.get('/artifacts/trashed', canResearch, async (req, res) => {
   }
 });
 
+// Hard-delete a whole project. The philosophy here has always been
+// soft-delete — a Closed status, never a vanished row — and it stands.
+// This exists for the one exception: a row created by mistake that was
+// never real work (INDCO, made in error and emptied the same week).
+// Same purge gate as artifact deletion: exactly one person may do
+// this, and interviews survive by schema (SetNull) because evidence
+// gathered under a project must outlive the container.
+router.delete('/projects/:id', canResearch, async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) return res.status(400).json({ error: 'Bad id' });
+  const may = canPurge(req.user);
+  if (!may.ok) return res.status(403).json({ error: may.reason });
+  try {
+    await prisma.researchProject.delete({ where: { id } });
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('research/project delete failed:', err.message);
+    res.status(500).json({ error: 'Could not delete the project' });
+  }
+});
+
 router.delete('/artifacts/:id', canResearch, async (req, res) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id)) return res.status(400).json({ error: 'Bad id' });

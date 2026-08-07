@@ -72,6 +72,7 @@ const fmtDate = (d) => {
 export default function FieldWork({ ticker }) {
   const [projects, setProjects] = useState(null);
   const [openId, setOpenId] = useState(null);
+  const [query, setQuery] = useState('');
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState(null);
 
@@ -118,53 +119,91 @@ export default function FieldWork({ ticker }) {
 
       <NewProject ticker={ticker} onDone={loadList} />
 
+      <input
+        className="term-input"
+        placeholder="Search ticker or project name"
+        value={query}
+        onChange={(e) => setQuery(e.target.value)}
+        style={{ margin: '6px 0', width: '100%' }}
+      />
+
       {!projects || projects.length === 0 ? (
         <div className="term-loading">
           No projects{ticker ? ` for ${ticker.toUpperCase()}` : ''} yet.
         </div>
-      ) : (
-        <table className="term-table">
-          <thead>
-            <tr>
-              <th>Sym</th>
-              <th>Project</th>
-              {/* Questions and contacts, not just calls and files. C.H.
-                  Robinson has twenty-two questions and seventeen people
-                  in the funnel and no interviews yet — on a call count
-                  it reads as an empty project. */}
-              <th className="num">Qs</th>
-              <th className="num">Files</th>
-              <th className="num">Contacts</th>
-              <th className="num">Calls</th>
-              <th>Status</th>
-              <th>Updated</th>
+      ) : (() => {
+        const q = query.trim().toUpperCase();
+        const shown = q
+          ? projects.filter(
+              (p) =>
+                (p.ticker || '').toUpperCase().includes(q) ||
+                (p.name || '').toUpperCase().includes(q)
+            )
+          : projects;
+        // Live work above, everything Closed below as the historic
+        // record — the finished Lindt project belongs with the archive
+        // shelf, not among the two names being worked.
+        const worked = shown.filter((p) => p.status !== 'Closed');
+        const historic = shown.filter((p) => p.status === 'Closed');
+        const rows = (list) =>
+          list.map((p) => (
+            <tr key={p.id}>
+              <td className="sym">{p.ticker || '—'}</td>
+              <td>
+                <a
+                  href="#"
+                  onClick={(e) => { e.preventDefault(); setOpenId(p.id); }}
+                >
+                  {p.name}
+                </a>
+              </td>
+              {/* A dash where the server sent no count: "not
+                  reported" and "none" are different answers. */}
+              <td className="num">{num(p._count?.questions)}</td>
+              <td className="num">{num(p._count?.artifacts)}</td>
+              <td className="num">{num(p._count?.targets)}</td>
+              <td className="num">{num(p._count?.interviews)}</td>
+              <td>{p.status}</td>
+              {/* Initiated, not last-touched: the updated stamp moves
+                  whenever a row is relabelled, which had every project
+                  reading the same bulk-edit date. */}
+              <td>{fmtDate(p.createdAt || p.updatedAt)}</td>
             </tr>
-          </thead>
-          <tbody>
-            {projects.map((p) => (
-              <tr key={p.id}>
-                <td className="sym">{p.ticker || '—'}</td>
-                <td>
-                  <a
-                    href="#"
-                    onClick={(e) => { e.preventDefault(); setOpenId(p.id); }}
-                  >
-                    {p.name}
-                  </a>
-                </td>
-                {/* A dash where the server sent no count: "not
-                    reported" and "none" are different answers. */}
-                <td className="num">{num(p._count?.questions)}</td>
-                <td className="num">{num(p._count?.artifacts)}</td>
-                <td className="num">{num(p._count?.targets)}</td>
-                <td className="num">{num(p._count?.interviews)}</td>
-                <td>{p.status}</td>
-                <td>{fmtDate(p.updatedAt)}</td>
+          ));
+        if (shown.length === 0) {
+          return <div className="term-loading">Nothing matches “{query}”.</div>;
+        }
+        return (
+          <table className="term-table">
+            <thead>
+              <tr>
+                <th>Sym</th>
+                <th>Project</th>
+                {/* Questions and contacts, not just calls and files. C.H.
+                    Robinson has twenty-two questions and seventeen people
+                    in the funnel and no interviews yet — on a call count
+                    it reads as an empty project. */}
+                <th className="num">Qs</th>
+                <th className="num">Files</th>
+                <th className="num">Contacts</th>
+                <th className="num">Calls</th>
+                <th>Status</th>
+                <th>Initiated</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
-      )}
+            </thead>
+            <tbody>
+              {worked.length > 0 && historic.length > 0 && (
+                <tr><td colSpan={8} style={{ color: 'var(--term-fg-muted)', fontWeight: 700, fontSize: 10 }}>BEING RESEARCHED ({worked.length})</td></tr>
+              )}
+              {rows(worked)}
+              {historic.length > 0 && (
+                <tr><td colSpan={8} style={{ color: 'var(--term-fg-muted)', fontWeight: 700, fontSize: 10 }}>HISTORIC WORK · CLOSED ({historic.length})</td></tr>
+              )}
+              {rows(historic)}
+            </tbody>
+          </table>
+        );
+      })()}
 
       <div style={{ color: 'var(--term-fg-muted)', fontSize: 11 }}>
         A project holds the brief, guides, recordings, files and the claim

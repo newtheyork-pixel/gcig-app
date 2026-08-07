@@ -28,6 +28,7 @@ struct ResearchPanel: View {
 
     @State private var projects: Loadable<[Project]> = .loading
     @State private var openID: Int?
+    @State private var query = ""
 
     var body: some View {
         Group {
@@ -75,7 +76,11 @@ struct ResearchPanel: View {
                 Text(p.status)
                     .font(Term.mono(9)).foregroundStyle(Term.fgDim)
                     .frame(width: 62, alignment: .trailing)
-                Text(Fmt.date(p.updatedAt))
+                // When the research was INITIATED. The updated stamp
+                // moves whenever anyone relabels a row — one bulk pass
+                // made thirty-nine projects read "Aug 6" — and the date
+                // a reader wants is the one the work began.
+                Text(Fmt.date(p.createdAt ?? p.updatedAt))
                     .font(Term.mono(9)).foregroundStyle(Term.fgMuted)
                     .frame(width: 66, alignment: .trailing)
             }
@@ -92,9 +97,17 @@ struct ResearchPanel: View {
                    emptyWhen: { $0.isEmpty },
                    emptyText: "No research projects yet.",
                    retry: { Task { await loadProjects() } }) { ps in
-            let shown = ticker.map { t in
+            let scoped = ticker.map { t in
                 ps.filter { $0.ticker?.uppercased() == t.uppercased() }
             } ?? ps
+            // The search reads ticker and name, case-blind. With
+            // forty-plus projects the scroll stopped being a way to
+            // find anything.
+            let q = query.trimmingCharacters(in: .whitespaces).uppercased()
+            let shown = q.isEmpty ? scoped : scoped.filter {
+                ($0.ticker?.uppercased().contains(q) ?? false)
+                    || $0.name.uppercased().contains(q)
+            }
             VStack(alignment: .leading, spacing: 0) {
                 HStack {
                     SectionLabel(text: "Research projects")
@@ -106,31 +119,41 @@ struct ResearchPanel: View {
                 .padding(.horizontal, 10).padding(.vertical, 6)
                 Divider().overlay(Term.border)
 
+                TextField("Search ticker or name", text: $query)
+                    .textFieldStyle(.plain)
+                    .font(Term.mono(11))
+                    .foregroundStyle(Term.white)
+                    .padding(.horizontal, 10).padding(.vertical, 5)
+                    .background(Term.bgPanel)
+                Divider().overlay(Term.border)
+
                 if shown.isEmpty {
-                    PanelMessage(text: "No project for \(ticker ?? "that ticker"). Type RSCH for all of them.")
+                    PanelMessage(text: q.isEmpty
+                        ? "No project for \(ticker ?? "that ticker"). Type RSCH for all of them."
+                        : "Nothing matches \"\(query)\".")
                 } else {
-                    // Two piles, because they are two different things.
-                    // Sorting by last-touched put both real projects at
-                    // the bottom of the list the moment a bulk import
-                    // stamped thirty-nine rows one minute newer, so the
-                    // work was buried under the reference material.
-                    let worked = shown.filter { !$0.isArchive }
-                    let archive = shown.filter { $0.isArchive }
+                    // Two piles, split by STATUS: live work above,
+                    // everything Closed below as the historic record.
+                    // The old split keyed on emptiness, which filed the
+                    // finished Lindt project with the live work and the
+                    // imports under a heading of their own.
+                    let worked = shown.filter { $0.status != "Closed" }
+                    let historic = shown.filter { $0.status == "Closed" }
                     ScrollView {
                         LazyVStack(spacing: 0) {
-                            if !worked.isEmpty && !archive.isEmpty {
+                            if !worked.isEmpty && !historic.isEmpty {
                                 pileHeader("BEING RESEARCHED", worked.count)
                             }
                             ForEach(worked) { p in projectRow(p) }
-                            if !archive.isEmpty {
+                            if !historic.isEmpty {
                                 if !worked.isEmpty {
-                                    pileHeader("IMPORTED ARCHIVE", archive.count)
+                                    pileHeader("HISTORIC WORK · CLOSED", historic.count)
                                 }
-                                ForEach(archive) { p in projectRow(p) }
+                                ForEach(historic) { p in projectRow(p) }
                             }
                         }
                     }
-                    Text("Q questions · F files · T contacts · C calls. An imported archive is a folder of prior work with nothing asked of it yet.")
+                    Text("Q questions · F files · T contacts · C calls. Historic work is closed research kept for the record.")
                         .font(Term.mono(9)).foregroundStyle(Term.fgMuted)
                         .padding(.horizontal, 10).padding(.vertical, 2)
                     Text("Projects are created on the web terminal.")
@@ -172,6 +195,7 @@ struct Project: Decodable, Identifiable {
     let status: String
     let brief: String?
     let updatedAt: String?
+    let createdAt: String?
     let counts: Counts?
 
     struct Counts: Decodable {
@@ -220,7 +244,7 @@ struct Project: Decodable, Identifiable {
     }
 
     enum CodingKeys: String, CodingKey {
-        case id, name, ticker, status, brief, updatedAt
+        case id, name, ticker, status, brief, updatedAt, createdAt
         case counts = "_count"
     }
 }

@@ -107,6 +107,16 @@ struct DescriptionPanel: View {
         let holding: Position?
         let decisions: [Decision]?
         let pitches: [Pitch]?
+        let research: [Research]?
+
+        struct Research: Decodable {
+            let name: String?
+            let status: String?
+            let initiatedAt: String?
+            let analyst: String?
+            let buyBelow: Double?
+            let currency: String?
+        }
 
         struct Position: Decodable {
             let shares: Double?; let costBasis: Double?; let addedAt: String?
@@ -305,6 +315,25 @@ struct DescriptionPanel: View {
                             value: "\(Fmt.compact(h.shares)) sh at \(Fmt.money(h.costBasis)) blended")
                 }
 
+                // The research desk's coverage: who opened the work,
+                // when it was initiated, and the price the valuation
+                // says we would want. The initiation date is createdAt
+                // on purpose — the updated stamp moves whenever a row
+                // is relabelled and had every project reading "Aug 6".
+                ForEach(Array((c.research ?? []).prefix(2).enumerated()), id: \.offset) { _, r in
+                    VStack(alignment: .leading, spacing: 2) {
+                        StatRow(label: "Coverage",
+                                value: [r.analyst,
+                                        r.initiatedAt.map { "initiated \(Fmt.date($0))" },
+                                        r.status?.lowercased()]
+                                    .compactMap { $0 }.joined(separator: " · "))
+                        if let b = r.buyBelow {
+                            StatRow(label: "Buy below",
+                                    value: "\(r.currency ?? "USD") \(Fmt.money(b))")
+                        }
+                    }
+                }
+
                 if let p = (c.pitches ?? []).first {
                     let who = (p.presenters ?? []).joined(separator: ", ")
                     StatRow(label: "Pitched",
@@ -336,6 +365,7 @@ struct DescriptionPanel: View {
         (c.holding != nil && (c.holding?.shares ?? 0) > 0)
             || !(c.decisions ?? []).isEmpty
             || !(c.pitches ?? []).isEmpty
+            || !(c.research ?? []).isEmpty
     }
 
     @ViewBuilder
