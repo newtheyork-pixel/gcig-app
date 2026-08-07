@@ -564,8 +564,14 @@ struct ChartPanel: View {
             let v = closes.first ?? 0
             return (v - 1)...(v + 1)
         }
-        let pad = (hi - lo) * 0.04
-        return (lo - pad)...(hi + pad)
+        // Asymmetric on purpose, the way Bloomberg ranges GP: the
+        // stats legend floats in the plot's top-left corner, so the
+        // scale leaves real headroom above the series and the legend
+        // only ever covers empty sky. Symmetric 4% put the recent peak
+        // underneath the legend and flush against the panel edge,
+        // where it read as covered and clipped.
+        let range = hi - lo
+        return (lo - range * 0.04)...(hi + range * 0.18)
     }
 
     private func xDomain(_ pts: [Point]) -> ClosedRange<Date> {
