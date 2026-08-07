@@ -215,8 +215,14 @@ router.post('/releases/:version/upload', async (req, res) => {
       });
       res.status(201).json(row);
     } catch (err) {
-      console.error('app upload failed:', err.message);
-      res.status(502).json({ error: err.message });
+      console.error('app upload failed:', err.message, err.cause?.message || '');
+      // "fetch failed" is undici's wrapper; the actual reason (DNS,
+      // TLS, reset, size) rides in err.cause. Super-admin-only route,
+      // so surfacing it costs nothing and saves a blind debug session.
+      res.status(502).json({
+        error: err.message,
+        cause: err.cause?.message || err.cause?.code || null,
+      });
     }
   });
 });
