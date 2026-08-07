@@ -15,19 +15,25 @@ struct Command: Equatable {
 }
 
 enum Parser {
-    /// Matches the JS `/^[A-Z][A-Z0-9.\-]{0,11}$/`.
+    /// Matches the JS `/^[A-Z][A-Z0-9.\-]{0,11}$/` — ASCII, exactly.
+    /// Swift's isUppercase/isNumber are Unicode-wide, which let CAFÉ and
+    /// Arabic digits through a gate the web closes.
     static func looksLikeTicker(_ s: String) -> Bool {
-        guard let first = s.first, first.isLetter, first.isUppercase else { return false }
+        guard let first = s.unicodeScalars.first,
+              ("A"..."Z").contains(Character(first)) else { return false }
         guard s.count <= 12 else { return false }
-        return s.dropFirst().allSatisfy { c in
-            c.isUppercase || c.isNumber || c == "." || c == "-"
+        return s.unicodeScalars.dropFirst().allSatisfy { u in
+            let c = Character(u)
+            return ("A"..."Z").contains(c) || ("0"..."9").contains(c) || c == "." || c == "-"
         }
     }
 
     static func parse(_ input: String) -> Command? {
+        // The JS collapses \s+ — tabs and newlines included, which is
+        // what pasted commands actually carry.
         let cleaned = input
             .trimmingCharacters(in: .whitespacesAndNewlines)
-            .split(separator: " ", omittingEmptySubsequences: true)
+            .split(omittingEmptySubsequences: true, whereSeparator: { $0.isWhitespace })
             .joined(separator: " ")
             .uppercased()
         if cleaned.isEmpty { return nil }
@@ -56,8 +62,11 @@ enum Parser {
         }
 
         if Registry.ids.contains(t) {
-            let joined = ([f] + rest).joined(separator: " ")
-            return Command(ticker: nil, function: t, args: String(joined.prefix(80)))
+            // Faithful to the JS quirk: a single trailing token is NOT
+            // truncated (`: f`), only a multi-token tail is. WEB with one
+            // long URL keeps the whole URL on the web, so it must here.
+            let args = rest.isEmpty ? f : String(([f] + rest).joined(separator: " ").prefix(80))
+            return Command(ticker: nil, function: t, args: args)
         }
 
         return nil

@@ -221,12 +221,22 @@ final class BlockCaretTextView: NSTextView {
     /// mid-insertion and the selection looks after itself.
     override func insertText(_ string: Any, replacementRange: NSRange) {
         if let s = string as? String {
-            super.insertText(s.uppercased(), replacementRange: replacementRange)
+            super.insertText(Self.upcase(s), replacementRange: replacementRange)
         } else if let a = string as? NSAttributedString {
-            super.insertText(a.string.uppercased(), replacementRange: replacementRange)
+            super.insertText(Self.upcase(a.string), replacementRange: replacementRange)
         } else {
             super.insertText(string, replacementRange: replacementRange)
         }
+    }
+
+    /// Single keystrokes uppercase; multi-character insertions — paste,
+    /// autocomplete, dictation — keep their case. The parser uppercases
+    /// mnemonics itself, so the terminal look survives, but a pasted URL
+    /// stays a working URL (case-sensitive paths 404'd in SCREAMING
+    /// CASE) and plain-English questions reach the LLM as typed, the
+    /// same as they do from the web.
+    private static func upcase(_ s: String) -> String {
+        s.count <= 1 ? s.uppercased() : s
     }
 
     /// The caret only blinks while the view is first responder, and a

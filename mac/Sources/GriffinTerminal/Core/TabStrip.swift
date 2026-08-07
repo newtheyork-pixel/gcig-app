@@ -247,6 +247,12 @@ struct TabStrip: View {
     static func related(to code: String?) -> [TerminalFunction] {
         guard let code else { return [] }
         let ids = PATHS[code.uppercased()] ?? []
-        return ids.compactMap { id in Registry.all.first { $0.id == id && $0.native } }
+        // Resolve through the registry so aliases count: "PAPER" is an
+        // alias of EXEC, and the id-only lookup silently dropped it from
+        // TRK's menu.
+        return ids.compactMap { id in
+            guard let f = Registry.function(id), f.native else { return nil }
+            return f
+        }
     }
 }

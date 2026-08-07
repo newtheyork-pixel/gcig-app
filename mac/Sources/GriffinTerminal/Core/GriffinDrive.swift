@@ -101,10 +101,13 @@ final class GriffinDrive: ObservableObject {
             if seen[p.id] == p.fingerprint { continue }
             projectId = p.id
             ticker = t
-            await pull()
-            // Recorded after the pull, so a failed fetch is retried next
-            // cycle rather than being marked done.
-            seen[p.id] = p.fingerprint
+            // Recorded only on a complete pull. The comment used to say
+            // "a failed fetch is retried next cycle" while the code
+            // stamped the fingerprint unconditionally — a transient
+            // failure skipped the project until the server changed again.
+            if await pull() {
+                seen[p.id] = p.fingerprint
+            }
         }
         // Once the index exists, and not only when a file happens to
         // change. Something dragged to the Trash while the app was shut
@@ -263,14 +266,18 @@ final class GriffinDrive: ObservableObject {
     /// empties it and would otherwise be seen forever.
     private var trashHandled: Set<String> = []
 
-    private func pull() async {
-        guard let pid = projectId, let base = root else { return }
+    /// True when the project is fully mirrored; false when the fetch
+    /// failed or any download was missed, so the caller retries next
+    /// cycle instead of recording the fingerprint as done.
+    @discardableResult
+    private func pull() async -> Bool {
+        guard let pid = projectId, let base = root else { return false }
         struct Wrap: Decodable {
             let artifacts: [Row]?
             struct Row: Decodable { let id: Int; let title: String; let fileRef: String? }
         }
         guard let data = try? await API.shared.get("/research/projects/\(pid)"),
-              let w = try? await API.shared.decode(Wrap.self, from: data) else { return }
+              let w = try? await API.shared.decode(Wrap.self, from: data) else { return false }
 
         // The shape first, the bytes after.
         //
@@ -308,7 +315,7 @@ final class GriffinDrive: ObservableObject {
         let titles = Set((w.artifacts ?? []).map(\.title))
         let awaiting = Self.awaitingDirectories(for: wanted.map { $0.dest }, under: base)
         reconcile(base: base, against: titles, awaiting: awaiting)
-        guard !wanted.isEmpty else { return }
+        guard !wanted.isEmpty else { return true }
 
         status.pending = wanted.count
         // Six at a time. Each fetch is our API waking OneDrive, so serial
@@ -341,8 +348,11 @@ final class GriffinDrive: ObservableObject {
                 if let (title, size) = done {
                     // Recorded before the watcher can see it, or our own
                     // download is read back as a local edit and pushed
-                    // straight up again.
-                    known[title] = size
+                    // straight up again. Volume-relative, matching what
+                    // the watcher's walk produces — the bare title never
+                    // matched, so every pull re-uploaded its own
+                    // downloads and churned the whole club's sync.
+                    known["\(base.lastPathComponent)/\(title)"] = size
                     pulled += 1
                     status.pending = max(0, wanted.count - pulled)
                 }
@@ -358,6 +368,7 @@ final class GriffinDrive: ObservableObject {
         if missed > 0 {
             status.error = "\(missed) file\(missed == 1 ? "" : "s") did not download; the next sync retries"
         }
+        return missed == 0
     }
 
     /// Remove local files the project no longer has.
@@ -370,10 +381,19 @@ final class GriffinDrive: ObservableObject {
     /// behind — filing twenty-three CHRW artifacts into folders produced
     /// twenty-three duplicates sitting loose beside them.
     ///
-    /// The safety is the age check. Anything touched in the last two
-    /// minutes is left alone, because a file somebody has just dropped in
-    /// has not been uploaded yet and is not in the artifact list either —
-    /// deleting it would eat their work between the drop and the push.
+    /// Three safeties, because the cost of getting this wrong is a
+    /// member's only copy:
+    ///
+    /// 1. Only files the server has seen. `known` holds exactly the
+    ///    paths that completed a push or arrived by pull, so a file
+    ///    whose upload FAILED — over-limit, role-refused, a 500 — is not
+    ///    in it and is never touched. The old age check keyed off mtime,
+    ///    which a Finder drag-copy preserves, so a 2023 PDF dropped in
+    ///    yesterday looked two years old and had no protection at all.
+    /// 2. The age check stays, for the window between a drop and the
+    ///    push recording it.
+    /// 3. The Trash, never removeItem. A wrong call here must cost a
+    ///    trip to the Trash, not the file.
     ///
     /// `awaiting` is the directories with a download still queued into
     /// them. They are on disk and hold nothing, which is indistinguishable
@@ -381,23 +401,36 @@ final class GriffinDrive: ObservableObject {
     /// wrong does not cost a redundant folder, it costs the files.
     private func reconcile(base: URL, against titles: Set<String>, awaiting: Set<String> = []) {
         let cutoff = Date().addingTimeInterval(-120)
+        let project = base.lastPathComponent
         for (path, _) in Self.walk(base) where !titles.contains(path) {
             let url = base.appendingPathComponent(path)
             let name = (path as NSString).lastPathComponent
             if name.hasPrefix(".") || name.hasPrefix("~$") { continue }
+            // walk(base) is project-relative here but known is keyed on
+            // volume-relative paths; the unprefixed lookup matched
+            // nothing, which is how the sync-state check was silently
+            // absent from this path.
+            let volKey = "\(project)/\(path)"
+            guard known[volKey] != nil else { continue }
             let modified = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?
                 .contentModificationDate ?? Date()
             guard modified < cutoff else { continue }
-            try? FileManager.default.removeItem(at: url)
-            known[path] = nil
+            if (try? FileManager.default.trashItem(at: url, resultingItemURL: nil)) != nil {
+                known[volKey] = nil
+            }
         }
-        // Directories a rename emptied. Only empty ones, and only inside
-        // this project, so nothing a person made by hand is swept up.
+        // Directories a rename emptied. Only empty ones, only inside this
+        // project, and only when they have stood empty past the same
+        // two-minute window — a "New Folder" someone just made in Finder
+        // must survive until they find the files to drag into it.
         if let e = FileManager.default.enumerator(at: base, includingPropertiesForKeys: [.isDirectoryKey]) {
             let dirs = (e.allObjects as? [URL] ?? []).filter {
                 (try? $0.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true
             }
             for dir in dirs.sorted(by: { $0.pathComponents.count > $1.pathComponents.count }) {
+                let created = (try? dir.resourceValues(forKeys: [.creationDateKey]))?.creationDate
+                    ?? Date()
+                guard created < cutoff else { continue }
                 let kids = (try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? []
                 if Self.isSweepable(dir: dir.standardizedFileURL.path,
                                     children: kids, awaiting: awaiting) {
@@ -511,6 +544,14 @@ final class GriffinDrive: ObservableObject {
             // filesystem event, so retrying every few seconds would
             // hammer the API forever and bury the one message that
             // explains why the file came back.
+            // Now that API.send lets 403 through as .http rather than
+            // masking it as an expired session, the status code is the
+            // reliable signal; the phrase matches stay as a belt for
+            // refusals worded by older server builds.
+            if case API.Failure.http(403, _) = error {
+                status.error = "\((suffix as NSString).lastPathComponent): \(text)"
+                return    // stays in trashHandled, so it is not tried again
+            }
             if text.contains("403") || text.localizedCaseInsensitiveContains("Portfolio Manager")
                 || text.localizedCaseInsensitiveContains("super admin") {
                 status.error = "\((suffix as NSString).lastPathComponent): \(text)"

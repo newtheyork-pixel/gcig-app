@@ -13,7 +13,9 @@ struct TopNewsPanel: View {
         let url: String
         let source: String?
         let publishedAt: String?
-        let summary: String?
+        /// Held-name badge: set when the headline mentions a portfolio
+        /// company, so the club's own names stand out on the wire.
+        let heldTicker: String?
         var id: String { url }
     }
 
@@ -34,7 +36,17 @@ struct TopNewsPanel: View {
                 }
             }
         }
-        .task { await load() }
+        .task {
+            // Load, then keep loading. A wire that renders once and
+            // freezes is not a wire — the web polls every 60s and the
+            // native panel showed whatever was true when it opened.
+            await load()
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(60))
+                guard !Task.isCancelled else { break }
+                await load(quietly: true)
+            }
+        }
     }
 
     private func item(_ a: Article) -> some View {
@@ -48,6 +60,13 @@ struct TopNewsPanel: View {
                     .multilineTextAlignment(.leading)
                     .fixedSize(horizontal: false, vertical: true)
                 HStack(spacing: 6) {
+                    if let h = a.heldTicker {
+                        Text(h)
+                            .font(Term.mono(9, weight: .bold))
+                            .foregroundStyle(Term.bg)
+                            .padding(.horizontal, 4)
+                            .background(Term.amber)
+                    }
                     if let s = a.source {
                         Text(s.uppercased())
                             .font(Term.mono(9, weight: .bold))
@@ -68,8 +87,10 @@ struct TopNewsPanel: View {
         .overlay(alignment: .bottom) { Rectangle().fill(Term.border).frame(height: 1) }
     }
 
-    private func load() async {
-        state = .loading
+    private func load(quietly: Bool = false) async {
+        // A refresh keeps the list on screen; only the first load and a
+        // manual retry may blank the panel into a spinner.
+        if !quietly { state = .loading }
         do {
             let data = try await API.shared.get("/terminal/top-news", query: ["all": "1"])
             // The endpoint has returned both a bare array and { articles }
@@ -80,7 +101,9 @@ struct TopNewsPanel: View {
                 state = .loaded(try await API.shared.decode([Article].self, from: data))
             }
         } catch {
-            state = .failed(error.localizedDescription)
+            // A blip mid-poll keeps the last good headlines up; only a
+            // load the user asked for reports failure.
+            if !quietly { state = .failed(error.localizedDescription) }
         }
     }
 }

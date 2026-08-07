@@ -62,6 +62,13 @@ final class Updater: ObservableObject {
     /// minutes because a build lands once a week at most, and a request
     /// nobody needs is still a request somebody's laptop made on a train.
     func start() {
+        // A swap that failed after the app quit had no one left to report
+        // it — the member pressed RESTART, the app closed, and the old
+        // version came back with no explanation. The install script
+        // leaves a note on failure; deliver it now.
+        if let note = Self.consumeFailureMarker() {
+            phase = .failed(note)
+        }
         timer?.cancel()
         timer = Task { [weak self] in
             while !Task.isCancelled {
@@ -74,6 +81,10 @@ final class Updater: ObservableObject {
     func check() async {
         if case .downloading = phase { return }
         if case .ready = phase { return }
+        // A failure notice stays up until the member dismisses it —
+        // being replaced by the same UPDATE chip that just failed would
+        // erase the only explanation they get.
+        if case .failed = phase { return }
         phase = .checking
         do {
             let data = try await API.shared.get("/app/latest", query: ["current": installed])
@@ -125,6 +136,18 @@ final class Updater: ObservableObject {
                 return
             }
             let staged = try Self.unzip(tmp)
+            // The bundle we are about to offer must BE the release we
+            // announced. A wrong artifact behind the right URL should
+            // fail here, with both numbers, not after the swap.
+            let plist = staged.appendingPathComponent("Contents/Info.plist")
+            let stagedVersion =
+                NSDictionary(contentsOf: plist)?["CFBundleShortVersionString"] as? String
+            guard stagedVersion == r.version else {
+                try? FileManager.default.removeItem(at: staged)
+                phase = .failed(
+                    "The download reports version \(stagedVersion ?? "unknown"), not \(r.version ?? "?"). Nothing was installed.")
+                return
+            }
             phase = .ready(staged, r.version ?? "")
         } catch {
             phase = .failed(error.localizedDescription)
@@ -140,27 +163,96 @@ final class Updater: ObservableObject {
     /// halfway leaves a working app rather than a hole.
     func installAndRestart() {
         guard case .ready(let staged, _) = phase else { return }
-        let current = Bundle.main.bundleURL
+        // Swap the app where it actually LIVES, not where Gatekeeper ran
+        // it from. A quarantined app opened straight from Downloads runs
+        // as a read-only translocated copy under $TMPDIR/AppTranslocation
+        // — every mv against that mount fails, the app quits, and the
+        // member reopens the untouched old version wondering why RESTART
+        // did nothing. That was 0.2.1's launch day.
+        let current = Self.originalBundleURL()
+        if current.path.contains("/AppTranslocation/") {
+            // The resolver could not find the real bundle. Say what to
+            // do rather than pretend a doomed swap might work.
+            phase = .failed(
+                "macOS is running this copy from a protected location. Drag Griffin Terminal into your Applications folder, reopen it, and update again.")
+            return
+        }
         let backup = current.deletingLastPathComponent()
             .appendingPathComponent(".GriffinTerminal.previous")
 
+        // Paths travel as argv, never spliced into the script text — a
+        // quote in a folder name must not become shell syntax. On any
+        // failure the script writes one line to the marker file, which
+        // the next launch reports (see start()).
         let script = """
-        while kill -0 \(getpid()) 2>/dev/null; do sleep 0.2; done
-        rm -rf '\(backup.path)'
-        mv '\(current.path)' '\(backup.path)' || exit 1
-        if ! mv '\(staged.path)' '\(current.path)'; then
-          mv '\(backup.path)' '\(current.path)'
+        rm -f "$5"
+        while kill -0 "$1" 2>/dev/null; do sleep 0.2; done
+        rm -rf "$3"
+        if ! mv "$2" "$3"; then
+          echo "the old app could not be moved aside ($2)" > "$5"
           exit 1
         fi
-        rm -rf '\(backup.path)'
-        xattr -dr com.apple.quarantine '\(current.path)' 2>/dev/null
-        open '\(current.path)'
+        if ! mv "$4" "$2"; then
+          rm -rf "$2"
+          if ! mv "$3" "$2"; then
+            echo "the update failed and the previous version is at $3 — drag it back by hand" > "$5"
+            exit 1
+          fi
+          echo "the new app could not be put in place; the previous version was restored" > "$5"
+          exit 1
+        fi
+        rm -rf "$3"
+        xattr -dr com.apple.quarantine "$2" 2>/dev/null
+        open "$2"
         """
         let p = Process()
         p.executableURL = URL(fileURLWithPath: "/bin/sh")
-        p.arguments = ["-c", script]
+        p.arguments = [
+            "-c", script, "sh",
+            String(getpid()), current.path, backup.path, staged.path,
+            Self.failureMarkerURL.path,
+        ]
         try? p.run()
         NSApp.terminate(nil)
+    }
+
+    /// The bundle's real on-disk location. When the running copy is a
+    /// Gatekeeper translocation, the original path comes back from the
+    /// Security framework's resolver; the two symbols are SPI, so they
+    /// are looked up at runtime and a miss degrades to the translocated
+    /// URL, which installAndRestart refuses with instructions instead of
+    /// failing silently.
+    private static func originalBundleURL() -> URL {
+        let url = Bundle.main.bundleURL
+        guard url.path.contains("/AppTranslocation/") else { return url }
+        typealias CreateOriginal = @convention(c) (
+            CFURL, UnsafeMutablePointer<Unmanaged<CFError>?>?
+        ) -> Unmanaged<CFURL>?
+        guard
+            let handle = dlopen(
+                "/System/Library/Frameworks/Security.framework/Security", RTLD_LAZY),
+            let sym = dlsym(handle, "SecTranslocateCreateOriginalPathForURL")
+        else { return url }
+        let fn = unsafeBitCast(sym, to: CreateOriginal.self)
+        guard let orig = fn(url as CFURL, nil)?.takeRetainedValue() else { return url }
+        return orig as URL
+    }
+
+    /// Where the install script leaves its one-line failure note.
+    private static var failureMarkerURL: URL {
+        let base = FileManager.default.urls(for: .applicationSupportDirectory,
+                                            in: .userDomainMask)[0]
+            .appendingPathComponent("Griffin Terminal", isDirectory: true)
+        try? FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
+        return base.appendingPathComponent("update-failed.note")
+    }
+
+    private static func consumeFailureMarker() -> String? {
+        let url = failureMarkerURL
+        guard let raw = try? String(contentsOf: url, encoding: .utf8) else { return nil }
+        try? FileManager.default.removeItem(at: url)
+        let note = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        return note.isEmpty ? nil : "The last update did not install: \(note)."
     }
 
     func dismiss() { phase = .idle }

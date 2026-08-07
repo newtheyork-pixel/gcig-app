@@ -48,22 +48,30 @@ struct TerminalView: View {
         }
         .background(BlockCaretInstaller().frame(width: 0, height: 0))
         .sheet(isPresented: $namingLayout) { LayoutNameSheet() }
+        // Workspace-wide notifications are handled by the primary
+        // instance ONLY. Screen 2 is a second TerminalView over the same
+        // Workspace, and with both subscribed every post ran twice: two
+        // panes per ticker click, two reader windows per headline, and —
+        // the nasty one — one Escape press arming AND firing the
+        // two-stroke close, so a single Escape shut the pane outright.
         .onReceive(NotificationCenter.default.publisher(for: .saveLayoutPrompt)) { _ in
-            namingLayout = true
+            if surface == 0 { namingLayout = true }
         }
         .onReceive(NotificationCenter.default.publisher(for: .runCommand)) { note in
+            guard surface == 0 else { return }
             if let cmd = note.object as? String { ws.run(cmd) }
         }
         // A headline opens in the terminal, not in Safari. Panels post
         // the URL and the workspace decides where it lands, which keeps
         // every news list ignorant of how reading works.
         .onReceive(NotificationCenter.default.publisher(for: .openInReader)) { note in
+            guard surface == 0 else { return }
             if let u = note.object as? String {
                 ws.open(Command(ticker: nil, function: "WEB", args: u))
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .escapeGesture)) { _ in
-            ws.escapePressed()
+            if surface == 0 { ws.escapePressed() }
         }
     }
 
@@ -558,6 +566,17 @@ private struct CommandBarView: View {
             return
         }
 
+        // A bare ticker opens the security menu, not DES. Workspace.run
+        // has owned that rule since SMENU shipped, but this submit path
+        // went straight to Parser.parse — so the one feature written for
+        // discoverability was unreachable from the command line itself.
+        if !raw.contains(" "), Parser.looksLikeTicker(raw.uppercased()),
+           !Registry.ids.contains(raw.uppercased()) {
+            ws.open(Command(ticker: raw.uppercased(), function: "SMENU", args: nil))
+            value = ""
+            return
+        }
+
         // Priority order, same as the web: an exactly-parseable line
         // runs as typed; a partial match takes the highlighted
         // suggestion; anything else goes to the LLM.
@@ -596,7 +615,14 @@ private struct CommandBarView: View {
     /// "/" refocuses the command line; Escape is the web shell's
     /// two-stroke close (select the top pane, then shut it). Both stand
     /// down whenever the user is typing in a real text field.
+    /// One monitor for the app's lifetime. This is called from a view's
+    /// onAppear, which fires again for every screen-2 open — each call
+    /// used to stack another monitor that was never removed, so the same
+    /// keystroke was handled once per historical window.
+    private static var slashMonitorInstalled = false
     private func installSlashShortcut() {
+        guard !Self.slashMonitorInstalled else { return }
+        Self.slashMonitorInstalled = true
         NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
             // Only the shell window. A popped-out pane is a real macOS
             // window with its own focus; keys pressed there must not

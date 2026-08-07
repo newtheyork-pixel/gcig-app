@@ -174,7 +174,12 @@ actor API {
             TokenStore.write("jwt", fresh)
         }
 
-        if http.statusCode == 401 || http.statusCode == 403 {
+        // 401 is a dead session; 403 is a live session being told no.
+        // Folding them together made every role refusal read "Session
+        // expired. Sign in again." to somebody visibly signed in, and it
+        // discarded the server's explanatory sentence — which the drive's
+        // trash logic needed to recognize a refusal and stop retrying.
+        if http.statusCode == 401 {
             throw Failure.unauthorized
         }
         guard (200..<300).contains(http.statusCode) else {
@@ -380,7 +385,7 @@ extension API {
         // between. Reading by line rather than by chunk means the
         // framing is handled for us and a token cannot be split.
         return AsyncThrowingStream { continuation in
-            Task {
+            let reader = Task {
                 var event = ""
                 var sawToken = false
                 do {
@@ -419,6 +424,10 @@ extension API {
                     continuation.finish(throwing: error)
                 }
             }
+            // A consumer that stops listening — the pane closed mid-
+            // answer — must stop the HTTP read with it, or the reader
+            // drains the whole stream into a buffer nobody will collect.
+            continuation.onTermination = { _ in reader.cancel() }
         }
     }
 }
