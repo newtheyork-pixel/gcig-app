@@ -39,7 +39,9 @@ import seaRoutes from './routes/sea.js';
 import docusignRoutes from './routes/docusign.js';
 import tradeRequestRoutes from './routes/tradeRequests.js';
 import presidentReviewRoutes from './routes/presidentReview.js';
-import terminalRoutes from './routes/terminal.js';
+import terminalRoutes, { execBiosHandler } from './routes/terminal.js';
+import { getBusinessProfile } from './services/secBusinessSummary.js';
+import { readableDescription } from './services/companyDescription.js';
 import watchlistRoutes from './routes/watchlist.js';
 import davRoutes from './routes/dav.js';
 import subscriptionRoutes from './routes/subscriptions.js';
@@ -245,6 +247,40 @@ setTimeout(() => {
     .then((r) => console.log(`[boot] price-cache: ${r.ok}/${r.tickers} ok, ${r.failed} failed`))
     .catch((err) => console.warn('[boot] price-cache failed:', err.message));
 }, 90_000);
+
+// Pre-earn the people and descriptions for the book, so MGMT and DES
+// open warm on every holding and the PersonProfile/CompanyProfile
+// tables stay current without anyone opening a panel first. The
+// exec-bios handler does the whole ladder (10-K, roster, filing
+// search, Wikipedia) and persists as it goes; driving it with a
+// throwaway response object reuses one code path instead of keeping a
+// warmer's copy honest by hand. Sequential with a pause per name —
+// this is SEC traffic and the club is a polite guest.
+async function warmPeopleAndDescriptions() {
+  const sink = { status() { return this; }, json() {} };
+  try {
+    const sheet = await getSheetPortfolio().catch(() => ({ holdings: [] }));
+    const held = (sheet.holdings || []).filter((h) => !h.isCash && h.ticker).map((h) => h.ticker);
+    let ok = 0;
+    for (const t of held) {
+      try {
+        await execBiosHandler({ params: { ticker: t } }, sink);
+        const profile = await getBusinessProfile(t).catch(() => null);
+        if (profile?.summary) await readableDescription(t, profile.summary).catch(() => {});
+        ok += 1;
+      } catch (err) {
+        console.warn(`[warm] ${t}:`, err.message);
+      }
+      await new Promise((r) => setTimeout(r, 3_000));
+    }
+    console.log(`[warm] people+descriptions: ${ok}/${held.length} tickers`);
+  } catch (err) {
+    console.warn('[warm] people pass failed:', err.message);
+  }
+}
+setTimeout(() => { warmPeopleAndDescriptions(); }, 4 * 60_000);
+cron.schedule('15 22 * * *', () => { warmPeopleAndDescriptions(); },
+  { timezone: 'America/New_York' });
 
 // awake, just doesn't fire if nobody's pinged the API for 15+ min.
 // The lazy /day-in-review endpoint is the safety net either way.

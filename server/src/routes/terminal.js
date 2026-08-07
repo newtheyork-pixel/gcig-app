@@ -253,6 +253,39 @@ router.get('/insiders/:ticker', async (req, res) => {
 // MGMT — leadership, board, comp and interlocking-board network for a
 // ticker, all from its latest DEF 14A. Every section is best-effort
 // and independently nullable; an unparseable proxy is a normal 200.
+// Background bio hunt for directors the proxy left storyless. Same
+// ladder as the officers — the SEC's own documents first, Wikipedia
+// after — run off the request path and persisted, so each governance
+// open gets a little richer than the last without ever waiting.
+// Sequential and capped: directors are many and EDGAR is patient with
+// the polite.
+async function enrichDirectorBios(ticker, fullBoard) {
+  const missing = (fullBoard || []).filter((d) => d?.name && !d.bio).slice(0, 6);
+  if (missing.length === 0) return;
+  const identity = await getCompanyIdentity(ticker).catch(() => null);
+  const companyName = identity?.legalName || identity?.name || ticker;
+  const enriched = [];
+  for (const d of missing) {
+    let found = null;
+    if (identity?.cik) {
+      found = await filingBio(d.name, identity.cik).catch(() => null);
+    }
+    if (!found) {
+      const w = await wikipediaBio(d.name, companyName).catch(() => null);
+      if (w) found = { bio: w.bio, url: w.url, source: 'Wikipedia' };
+    }
+    if (found) {
+      enriched.push({
+        name: d.name, title: d.title || null,
+        bio: found.bio, bioSource: found.source, bioUrl: found.url,
+      });
+    }
+  }
+  if (enriched.length > 0) {
+    await saveProfiles(ticker, enriched, 'director');
+  }
+}
+
 router.get('/governance/:ticker', async (req, res) => {
   const raw = String(req.params.ticker || '').trim().toUpperCase();
   if (!raw || !/^[A-Z0-9.\-]{1,12}$/.test(raw)) {
@@ -282,6 +315,24 @@ router.get('/governance/:ticker', async (req, res) => {
     const fullBoard = mergeBoard(board, roster);
     const network = buildNetwork(raw, fullBoard, holdings);
 
+    // A director the proxy parse left storyless gets the saved bio if
+    // one exists — the panel reads from the union of this parse and
+    // every parse and enrichment before it.
+    try {
+      const savedRows = await storedProfiles(raw, 'director');
+      const savedByName = new Map(savedRows.map((r) => [r.name, r]));
+      for (const d of fullBoard || []) {
+        const s = d?.name ? savedByName.get(d.name) : null;
+        if (s?.bio && !d.bio) {
+          d.bio = s.bio;
+          d.bioSource = s.bioSource;
+          d.bioUrl = s.bioUrl;
+        }
+      }
+    } catch {
+      /* the live parse stands alone */
+    }
+
     // Remember everyone. The proxy parse only has to succeed ONCE for
     // the board to survive every future throttle and restart; the old
     // memory-cache-only design re-earned the same facts daily and
@@ -290,10 +341,18 @@ router.get('/governance/:ticker', async (req, res) => {
       raw,
       (fullBoard || []).map((d) => ({
         name: d.name, title: d.title || null, bio: d.bio || null,
-        bioSource: d.bio ? 'DEF 14A' : null, bioUrl: d.bio ? proxy._source || null : null,
+        bioSource: d.bio ? (d.bioSource || 'DEF 14A') : null,
+        bioUrl: d.bio ? (d.bioUrl || proxy._source || null) : null,
       })),
       'director'
     ).catch(() => {});
+
+    // Directors the proxy never described get the same fallback ladder
+    // the officers got — in the background, because a governance open
+    // must not wait on a walk through EDGAR. This request serves what
+    // it has; the enrichment lands in PersonProfile and the NEXT open
+    // (and the merge above) shows it.
+    enrichDirectorBios(raw, fullBoard).catch(() => {});
 
     res.json({
       ticker: raw, asOf: proxy.filedAt, source: proxy._source,
@@ -376,6 +435,12 @@ export async function execBiosHandler(req, res, deps = {}) {
     for (const o of roster.officers || []) {
       const name = o?.name;
       if (!name) continue;
+      // Directors file Forms 3/4 too, so the roster carries them — but
+      // a board seat is not an office, and Art Levinson does not belong
+      // on the executive card. Officers only; the board tab has the
+      // rest. The departed stay off the card as well.
+      if (o.former) continue;
+      if (!(o.isOfficer || o.office || o.title)) continue;
       const hit = byName.get(name);
       if (hit) {
         if (!hit.title && (o.office || o.title)) hit.title = o.office || o.title;
