@@ -108,6 +108,13 @@ struct DescriptionPanel: View {
         let decisions: [Decision]?
         let pitches: [Pitch]?
         let research: [Research]?
+        let reports: [Report]?
+
+        struct Report: Decodable {
+            let title: String?
+            let author: String?
+            let date: String?
+        }
 
         struct Research: Decodable {
             let name: String?
@@ -341,6 +348,16 @@ struct DescriptionPanel: View {
                                 .compactMap { $0 }.joined(separator: " · "))
                 }
 
+                // Written reports ARE coverage — most of the club's
+                // pre-app work lives here, and a held name with three
+                // reports on file used to read "never pitched or voted"
+                // as if nobody had ever looked at it.
+                ForEach(Array((c.reports ?? []).prefix(2).enumerated()), id: \.offset) { _, r in
+                    StatRow(label: "Report",
+                            value: [r.title, r.author, r.date.map { Fmt.date($0) }]
+                                .compactMap { $0 }.joined(separator: " · "))
+                }
+
                 // Newest decision first. A name can carry several — a buy
                 // and a later sell — and the pair is the record worth
                 // reading.
@@ -348,8 +365,9 @@ struct DescriptionPanel: View {
                     decisionRow(d)
                 }
 
-                if (c.decisions ?? []).isEmpty && (c.pitches ?? []).isEmpty {
-                    Text("Owned, but never pitched or voted on in the app.")
+                if (c.decisions ?? []).isEmpty && (c.pitches ?? []).isEmpty
+                    && (c.reports ?? []).isEmpty && (c.research ?? []).isEmpty {
+                    Text("Owned, but no pitch, vote, report, or research project on file.")
                         .font(Term.mono(9)).foregroundStyle(Term.fgMuted)
                 }
             }
@@ -366,6 +384,7 @@ struct DescriptionPanel: View {
             || !(c.decisions ?? []).isEmpty
             || !(c.pitches ?? []).isEmpty
             || !(c.research ?? []).isEmpty
+            || !(c.reports ?? []).isEmpty
     }
 
     @ViewBuilder
