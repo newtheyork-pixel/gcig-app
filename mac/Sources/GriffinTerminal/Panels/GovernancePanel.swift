@@ -79,6 +79,8 @@ struct GovernancePanel: View {
         let committees: [String]?
         let otherBoards: [String]?
         let bio: String?
+        let bioSource: String?
+        let bioUrl: String?
     }
 
     struct CompRow: Decodable {
@@ -122,7 +124,10 @@ struct GovernancePanel: View {
         let officers: [Officer]?
         struct Officer: Decodable {
             let name: String?
+            let title: String?
             let bio: String?
+            let bioSource: String?
+            let bioUrl: String?
         }
     }
 
@@ -147,6 +152,8 @@ struct GovernancePanel: View {
         let since: Int?
         let total: Double?
         let bio: String?
+        var bioSource: String?
+        var bioUrl: String?
     }
 
     // The 10-K bio map, tagged with the ticker it was fetched for. A
@@ -154,10 +161,16 @@ struct GovernancePanel: View {
     // flight for the old symbol can still resolve afterwards — the
     // tag lets every reader treat that stale payload as no data, the
     // native analogue of the web's execBiosTicker ref.
+    struct BioEntry {
+        let text: String
+        let source: String?
+        let url: String?
+    }
+
     private enum Bios {
         case idle
         case loading(String)
-        case done(String, [String: String])
+        case done(String, [String: BioEntry])
     }
 
     @State private var state: Loadable<Payload> = .loading
@@ -631,7 +644,8 @@ struct GovernancePanel: View {
 
     private func openDirector(_ d: Director) {
         selected = Profile(kind: .director, name: d.name ?? "—", title: nil,
-                           age: d.age, since: d.since, total: nil, bio: d.bio)
+                           age: d.age, since: d.since, total: nil, bio: d.bio,
+                           bioSource: d.bioSource, bioUrl: d.bioUrl)
     }
 
     private func openExec(_ e: Person) {
@@ -699,7 +713,7 @@ struct GovernancePanel: View {
 
     @ViewBuilder
     private func profileBody(_ sel: Profile) -> some View {
-        let (loading, bio) = bioFor(sel)
+        let (loading, bio, source, url) = bioFor(sel)
         VStack(alignment: .leading, spacing: 8) {
             if loading {
                 HStack(spacing: 8) {
@@ -717,13 +731,37 @@ struct GovernancePanel: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
             } else {
-                // No fabrication: say plainly that the filing carried
-                // no bio. The fact line above still gives the reader
-                // the structured tenure/comp we do have.
-                Text("No bio disclosed in this company's SEC filing.")
+                // No fabrication: say plainly that no source describes
+                // this person. The fact line above still gives the
+                // reader the structured tenure/comp we do have.
+                Text("No bio found in SEC filings or public sources.")
                     .font(Term.mono(11))
                     .italic()
                     .foregroundStyle(Term.fgDim)
+            }
+            if bio != nil, let source {
+                // Where the words came from. A biography with no
+                // provenance is an assertion, and the reader deciding
+                // how much to trust it needs to know whether the
+                // company filed these words or an encyclopedia wrote
+                // them.
+                HStack(spacing: 6) {
+                    Text("SOURCE: \(source.uppercased())")
+                        .font(Term.mono(9, weight: .bold))
+                        .foregroundStyle(Term.fgMuted)
+                    if let url, let u = URL(string: url) {
+                        Button {
+                            NSWorkspace.shared.open(u)
+                        } label: {
+                            Text("OPEN")
+                                .font(Term.mono(9, weight: .bold))
+                                .foregroundStyle(Term.blue)
+                        }
+                        .buttonStyle(.plain)
+                        .onHover { $0 ? NSCursor.pointingHand.push() : NSCursor.pop() }
+                    }
+                }
+                .padding(.top, 2)
             }
         }
         .padding(12)
@@ -733,17 +771,18 @@ struct GovernancePanel: View {
     // lazily-fetched 10-K map: still fetching (or fetched for another
     // ticker) reads as loading; resolved reads the matched bio or nil,
     // which the body renders as the honest empty state.
-    private func bioFor(_ sel: Profile) -> (loading: Bool, bio: String?) {
+    private func bioFor(_ sel: Profile) -> (loading: Bool, bio: String?, source: String?, url: String?) {
         if sel.kind == .director {
             let b = sel.bio?.trimmingCharacters(in: .whitespacesAndNewlines)
-            return (false, (b?.isEmpty ?? true) ? nil : b)
+            return (false, (b?.isEmpty ?? true) ? nil : b, sel.bioSource, sel.bioUrl)
         }
         switch bios {
         case .done(let t, let map) where t == ticker:
-            let b = map[Self.normName(sel.name)]
-            return (false, (b?.isEmpty ?? true) ? nil : b)
+            let e = map[Self.normName(sel.name)]
+            let b = e?.text
+            return (false, (b?.isEmpty ?? true) ? nil : b, e?.source, e?.url)
         default:
-            return (true, nil)
+            return (true, nil, nil, nil)
         }
     }
 
@@ -834,9 +873,11 @@ struct GovernancePanel: View {
         do {
             let data = try await API.shared.get("/terminal/governance/\(startedFor)/exec-bios")
             let p = try await API.shared.decode(BiosPayload.self, from: data)
-            var byName: [String: String] = [:]
+            var byName: [String: BioEntry] = [:]
             for o in p.officers ?? [] {
-                if let n = o.name, !n.isEmpty { byName[Self.normName(n)] = o.bio ?? "" }
+                guard let n = o.name, !n.isEmpty else { continue }
+                byName[Self.normName(n)] = BioEntry(text: o.bio ?? "",
+                                                    source: o.bioSource, url: o.bioUrl)
             }
             bios = .done(startedFor, byName)
         } catch {

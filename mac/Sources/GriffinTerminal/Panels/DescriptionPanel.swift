@@ -40,6 +40,10 @@ struct DescriptionPanel: View {
         let volume: Double?
         let avgVolume: Double?
         let summary: String?
+        /// The LLM rewrite of Item 1 in data-provider register. The
+        /// server has produced this for months; only the holdings page
+        /// ever rendered it, so DES led with the brochure.
+        let description: String?
         let exchange: String?
         let website: String?
         let country: String?
@@ -551,7 +555,7 @@ struct DescriptionPanel: View {
 
     @ViewBuilder
     private func business(_ i: Info) -> some View {
-        if let s = i.summary, !s.isEmpty {
+        if (i.description ?? i.summary)?.isEmpty == false {
             VStack(alignment: .leading, spacing: 6) {
                 HStack(spacing: 8) {
                     SectionLabel(text: "Business")
@@ -570,11 +574,31 @@ struct DescriptionPanel: View {
                     }
                     Spacer()
                 }
-                Text(s)
-                    .font(Term.mono(11))
-                    .foregroundStyle(Term.fgDim)
-                    .lineSpacing(2)
-                    .textSelection(.enabled)
+                // Lead with the readable rewrite where the server made
+                // one — tight, third person, data-provider register.
+                // The filing's own first-person prose stays underneath,
+                // dimmer, because it is the primary source the rewrite
+                // was distilled from.
+                if let d = i.description, !d.isEmpty {
+                    Text(d)
+                        .font(Term.mono(11))
+                        .foregroundStyle(Term.fg)
+                        .lineSpacing(2)
+                        .textSelection(.enabled)
+                }
+                if let s = i.summary, !s.isEmpty {
+                    if i.description?.isEmpty == false {
+                        Text("AS FILED")
+                            .font(Term.mono(8, weight: .bold))
+                            .foregroundStyle(Term.fgMuted)
+                            .padding(.top, 4)
+                    }
+                    Text(s)
+                        .font(Term.mono(i.description?.isEmpty == false ? 10 : 11))
+                        .foregroundStyle(Term.fgDim)
+                        .lineSpacing(2)
+                        .textSelection(.enabled)
+                }
             }
         } else {
             // Absence of a summary is a fact about the source, not a
