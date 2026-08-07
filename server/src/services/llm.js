@@ -448,6 +448,35 @@ function runProvider(name, { messages, temperature, jsonMode, timeoutMs, localMo
 const DEFAULT_ORDER = ['local', 'anthropic', 'openai'];
 const QUALITY_ORDER = ['anthropic', 'openai', 'local'];
 
+// Whether llmChat has any provider to try at all. Callers that want to
+// skip a doomed round trip must ask THIS, not re-derive the env-var
+// list themselves: two services checked only LOCAL_LLM_URL/OPENAI and
+// silently disabled ranking and the daily brief in the exact deploy
+// configuration where Anthropic was the one working provider.
+export function llmConfigured() {
+  return !!(
+    process.env.LOCAL_LLM_URL ||
+    process.env.ANTHROPIC_API_KEY ||
+    process.env.OPENAI_API_KEY
+  );
+}
+
+// Best guess at which model tag a default-order llmChat call will be
+// served by, for persistence rows. A fallback mid-call can still make
+// this wrong; it is a label, not a receipt.
+export function likelyModelTag() {
+  if (process.env.LOCAL_LLM_URL) {
+    return process.env.LOCAL_LLM_MODEL || DEFAULT_LOCAL_MODEL;
+  }
+  if (process.env.ANTHROPIC_API_KEY) {
+    return process.env.ANTHROPIC_MODEL || DEFAULT_ANTHROPIC_MODEL;
+  }
+  if (process.env.OPENAI_API_KEY) {
+    return process.env.OPENAI_MODEL || DEFAULT_OPENAI_MODEL;
+  }
+  return 'none';
+}
+
 export async function llmChat({
   messages,
   temperature,

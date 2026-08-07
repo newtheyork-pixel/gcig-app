@@ -247,5 +247,13 @@ export async function summarizeTickerNews(ticker, articles) {
     .trim();
   if (cleaned.length < 30) return null;
   tickerSummaryCache.set(key, { at: Date.now(), summary: cleaned });
+  // The key embeds the full URL set, so every new batch is a new entry
+  // and expired ones were never removed — cap it, oldest first.
+  if (tickerSummaryCache.size > 300) {
+    for (const k of tickerSummaryCache.keys()) {
+      if (tickerSummaryCache.size <= 300) break;
+      tickerSummaryCache.delete(k);
+    }
+  }
   return cleaned;
 }

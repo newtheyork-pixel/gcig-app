@@ -204,6 +204,17 @@ router.post('/snapshot/daily', async (req, res) => {
     if (data.totals.totalValue <= 0) {
       return res.status(400).json({ error: 'Sheet returned zero total value' });
     }
+    // A position whose GOOGLEFINANCE cell is stuck on #N/A contributes
+    // $0 to the total, so the "total" is really the book minus that
+    // position. Serving a live page that number is survivable; freezing
+    // it into the permanent value chart is not — the dip would read as
+    // a real loss forever. Refuse and let the next cron try again.
+    if ((data.totals.unpricedCount ?? 0) > 0) {
+      console.warn(
+        `Daily snapshot skipped: ${data.totals.unpricedCount} position(s) unpriced in the sheet — refusing to freeze a partial total.`
+      );
+      return res.status(409).json({ error: 'Sheet has unpriced positions — snapshot skipped' });
+    }
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     const snap = await prisma.portfolioSnapshot.upsert({
@@ -298,7 +309,15 @@ router.get('/quotes', async (_req, res) => {
     const data = { ...raw, holdings: await withResolvedDayChange(raw.holdings) };
 
     // Write a daily snapshot for today from the sheet total + cash.
-    if (data.totals.totalValue > 0) {
+    // Only when every position priced: an #N/A GOOGLEFINANCE cell
+    // parses to null and quietly drops that position from the total,
+    // and the durable value chart must never inherit that dip. The
+    // live payload still goes out below — the gate is on the write.
+    if ((data.totals.unpricedCount ?? 0) > 0) {
+      console.warn(
+        `Snapshot upsert skipped: ${data.totals.unpricedCount} position(s) unpriced in the sheet.`
+      );
+    } else if (data.totals.totalValue > 0) {
       const today = new Date();
       today.setHours(0, 0, 0, 0);
       await prisma.portfolioSnapshot.upsert({
@@ -452,7 +471,7 @@ router.get('/info/:ticker', tickerDataLimiter, async (req, res) => {
 // Full-text extraction of a single article URL. Fetched server-side so we
 // bypass CORS, run Mozilla's Readability to pull the main content, and
 // sanitize the result before sending it back. 1-hour cache per URL.
-router.get('/news/article', async (req, res) => {
+router.get('/news/article', tickerDataLimiter, async (req, res) => {
   const url = typeof req.query.url === 'string' ? req.query.url : '';
   if (!url) return res.status(400).json({ error: 'url required' });
   try {
@@ -465,8 +484,8 @@ router.get('/news/article', async (req, res) => {
   }
 });
 
-// Recent news headlines for a ticker, sourced from newsapi.org. The service
-// caches 15 minutes so a rapid round of holding clicks doesn't burn quota.
+// Recent news headlines for a ticker, sourced from Finnhub. The service
+// caches so a rapid round of holding clicks doesn't burn quota.
 router.get('/news/:ticker', tickerDataLimiter, async (req, res) => {
   const raw = String(req.params.ticker || '').trim().toUpperCase();
   if (!raw || !/^[A-Z0-9.\-]{1,10}$/.test(raw)) {
@@ -1359,10 +1378,16 @@ router.get('/betas', requireRole('PortfolioManager'), async (_req, res) => {
 });
 
 router.get('/history', async (_req, res) => {
-  const snapshots = await prisma.portfolioSnapshot.findMany({
-    orderBy: { date: 'asc' },
-    take: 365,
-  });
+  // Newest 365, then back into chronological order. Ascending take:365
+  // returns the FIRST 365 rows ever written, so a year after the first
+  // snapshot the chart silently stopped advancing — new days existed in
+  // the table and never reached the client.
+  const snapshots = (
+    await prisma.portfolioSnapshot.findMany({
+      orderBy: { date: 'desc' },
+      take: 365,
+    })
+  ).reverse();
 
   // Snapshots are the sheet's own totals, which already carry the cash
   // sleeves: the leftover FGTXX cash is the sheet's CASH line, and every

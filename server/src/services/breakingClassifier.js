@@ -1,4 +1,4 @@
-import { llmChat } from './llm.js';
+import { llmChat, extractJson } from './llm.js';
 
 // Decides which headlines are ACTUALLY breaking news.
 //
@@ -90,9 +90,11 @@ async function scoreBatch(articles) {
   });
   if (!raw) return new Map();
 
+  // Tolerate fenced/sentinel-wrapped JSON — Anthropic is first in the
+  // preferQuality order and only promises JSON by prompt, not contract.
   let parsed;
   try {
-    parsed = JSON.parse(raw);
+    parsed = JSON.parse(extractJson(raw));
   } catch {
     return new Map();
   }

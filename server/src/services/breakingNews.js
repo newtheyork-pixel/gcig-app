@@ -25,7 +25,8 @@
 // not standing up a table for a once-a-week banner.
 
 import { getNewsForTicker } from './news.js';
-import { llmChat } from './llm.js';
+import { getWireHeadlines } from './newsFeeds.js';
+import { llmChat, extractJson } from './llm.js';
 
 const CANDIDATE_COUNT = 15; // how many recent headlines the model ranks
 const RETRY_THROTTLE_MS = 30 * 60 * 1000; // after a failed attempt, wait 30m
@@ -122,9 +123,13 @@ async function classify(candidates) {
   });
   if (!raw) return { unavailable: true };
 
+  // extractJson, not bare JSON.parse: Anthropic sits first in the
+  // preferQuality order and has no native JSON mode, so a fenced reply
+  // is a formatting slip — treating it as "model unavailable" burned
+  // the once-a-day scan on a cosmetic wrapper.
   let parsed;
   try {
-    parsed = JSON.parse(raw);
+    parsed = JSON.parse(extractJson(raw));
   } catch {
     return { unavailable: true };
   }
@@ -191,8 +196,15 @@ export async function getDailyCriticalHeadline() {
   if (scan.day !== day) scan = { day, computed: false, lastTryAt: 0 };
 
   try {
-    const data = await getNewsForTicker('SPY', '');
-    const candidates = pickCandidates(data?.articles);
+    // Finnhub general PLUS the public wires. The Fed RSS exists for
+    // precisely this scan — a central-bank action the finance-trade
+    // press is slow on — and for its first year the scan never read it.
+    const [data, wire] = await Promise.all([
+      getNewsForTicker('SPY', '').catch(() => null),
+      getWireHeadlines().catch(() => []),
+    ]);
+    const merged = [...(data?.articles || []), ...(wire || [])];
+    const candidates = pickCandidates(merged);
     if (candidates.length === 0) {
       scan.lastTryAt = now; // transient — allow a retry later today
       const c = freshCurrent(now);

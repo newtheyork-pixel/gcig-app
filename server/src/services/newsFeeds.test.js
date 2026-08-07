@@ -9,6 +9,10 @@ import { parseFeed, getWireHeadlines } from './newsFeeds.js';
 
 const FEED = { id: 'test', source: 'Test Wire', url: 'http://x', weight: 'wire' };
 
+// Pinned "now" so the fixtures' dates stay inside the parser's max-age
+// window forever instead of rotting out of it.
+const NOW = new Date('2026-07-25T00:00:00Z').getTime();
+
 test('parses a plain RSS item', () => {
   const [a] = parseFeed(
     `<rss><channel><item>
@@ -17,7 +21,8 @@ test('parses a plain RSS item', () => {
       <pubDate>Wed, 23 Jul 2026 14:30:00 GMT</pubDate>
       <description>The FOMC moved early.</description>
     </item></channel></rss>`,
-    FEED
+    FEED,
+    NOW
   );
   assert.equal(a.title, 'Fed cuts rates by 50 basis points');
   assert.equal(a.url, 'https://example.com/a');
@@ -68,7 +73,8 @@ test('handles Atom entries with href links', () => {
       <link rel="alternate" href="https://e.com/atom"/>
       <updated>2026-07-24T09:00:00Z</updated>
     </entry></feed>`,
-    FEED
+    FEED,
+    NOW
   );
   assert.equal(a.url, 'https://e.com/atom');
   assert.equal(a.publishedAt, '2026-07-24T09:00:00.000Z');
@@ -94,6 +100,29 @@ test('an unparseable body yields no items rather than throwing', () => {
 test('an undated item still parses, with a null timestamp', () => {
   const [a] = parseFeed(`<item><title>T</title><link>https://e.com/h</link></item>`, FEED);
   assert.equal(a.publishedAt, null);
+});
+
+test('items older than the max age are dropped at parse', () => {
+  // The WSJ freeze: a feed serving HTTP 200 with content stuck in the
+  // past must contribute nothing, not eighteen-month-old headlines.
+  const out = parseFeed(
+    `<item><title>Ancient</title><link>https://e.com/old</link>
+       <pubDate>Mon, 27 Jan 2025 14:27:15 -0500</pubDate></item>
+     <item><title>Fresh</title><link>https://e.com/new</link>
+       <pubDate>Fri, 24 Jul 2026 12:00:00 GMT</pubDate></item>`,
+    FEED,
+    NOW
+  );
+  assert.equal(out.length, 1);
+  assert.equal(out[0].title, 'Fresh');
+});
+
+test('mixed text and CDATA in one tag keeps both parts', () => {
+  const [a] = parseFeed(
+    `<item><title>Breaking: <![CDATA[X & Y]]></title><link>https://e.com/mix</link></item>`,
+    FEED
+  );
+  assert.equal(a.title, 'Breaking: X & Y');
 });
 
 test('merges feeds newest-first and dedupes on URL ignoring query strings', async () => {

@@ -17,6 +17,8 @@ import { Readability, isProbablyReaderable } from '@mozilla/readability';
 import sanitizeHtml from 'sanitize-html';
 import dns from 'node:dns/promises';
 import net from 'node:net';
+import { Agent, fetch as undiciFetch } from 'undici';
+import { llmConfigured } from './llm.js';
 import { rankArticles } from './articleRanker.js';
 import { summarizeTickerNews, summarizeArticle } from './articleSummarizer.js';
 
@@ -116,7 +118,7 @@ export async function getNewsForTicker(ticker, name) {
     // ArticleRanking DB, and will retry the LLM for the unknown ones.
     const data = cached.data;
     const hasRankings = data.articles.some((a) => typeof a.score === 'number');
-    if (!hasRankings && process.env.LOCAL_LLM_URL) {
+    if (!hasRankings && llmConfigured()) {
       try {
         const retried = await rankArticles(data.articles, { ticker });
         data.articles = retried;
@@ -138,10 +140,17 @@ export async function getNewsForTicker(ticker, name) {
   try {
     rawArticles = await fetchFinnhubArticles(ticker, key);
   } catch (err) {
-    // On 429 (rate limit) serve stale cache if we have one, flagged so the
-    // UI can say "news may be outdated". Better than a blank panel.
-    if (err.status === 429 && cached) {
-      return { ...cached.data, stale: true, staleReason: 'rate_limit' };
+    // Any upstream failure serves the stale batch when one exists,
+    // flagged so the UI can say "news may be outdated". A minutes-old
+    // cache beats a red panel whether Finnhub said 429, 502, or the
+    // socket just died — the 429-only version of this rule threw away
+    // perfectly good headlines over transient 5xx blips.
+    if (cached) {
+      return {
+        ...cached.data,
+        stale: true,
+        staleReason: err.status === 429 ? 'rate_limit' : 'upstream_error',
+      };
     }
     throw err;
   }
@@ -178,7 +187,7 @@ export async function getNewsForTicker(ticker, name) {
 
 // ── Article extraction ─────────────────────────────────────────────────
 //
-// Fetches the article URL server-side (newsapi gives us the publisher URL),
+// Fetches the article URL server-side (the feed item carries the publisher URL),
 // parses it with JSDOM, runs Mozilla's Readability (same algorithm as
 // Firefox's reader view), then sanitizes the resulting HTML before returning
 // it to the client. Sanitization is non-negotiable because Readability hands
@@ -190,6 +199,12 @@ export async function getNewsForTicker(ticker, name) {
 
 const articleCache = new Map();
 const ARTICLE_TTL_MS = 60 * 60 * 1000;
+// Hard cap on cached articles. Keyed by member-supplied URL and holding
+// full sanitized HTML, an uncapped map here is the same 512MB-dyno
+// failure class as the companyfacts cache: the TTL was only ever
+// checked on read, so entries outlived their hour forever. Insertion
+// order is eviction order — close enough to LRU for a reader cache.
+const ARTICLE_CACHE_MAX = 200;
 const MAX_ARTICLE_BYTES = 2_000_000; // 2 MB ceiling on any fetched page
 
 // Very conservative allowlist. Semantic + inline formatting tags, plus links
@@ -295,6 +310,31 @@ async function assertPublicHttpUrl(raw) {
 const ARTICLE_UA =
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
 
+// The dispatcher every article fetch goes through. Its lookup runs at
+// CONNECT time, so the address the socket actually opens is the address
+// that passed the private-IP check — assertPublicHttpUrl alone had a
+// time-of-check/time-of-use gap where a short-TTL DNS record could
+// answer the check with a public IP and the fetch with 169.254.169.254.
+const publicOnlyAgent = new Agent({
+  connect: {
+    lookup(hostname, opts, cb) {
+      dns
+        .lookup(hostname, { all: true, verbatim: true })
+        .then((rows) => {
+          if (rows.length === 0 || rows.some((r) => isPrivateIp(r.address))) {
+            const e = new Error('Refusing to connect to a non-public address');
+            e.code = 'ENOTFOUND';
+            cb(e);
+            return;
+          }
+          if (opts && opts.all) cb(null, rows);
+          else cb(null, rows[0].address, rows[0].family);
+        })
+        .catch(cb);
+    },
+  },
+});
+
 export async function extractArticle(url) {
   const cached = articleCache.get(url);
   if (cached && Date.now() - cached.at < ARTICLE_TTL_MS) {
@@ -306,8 +346,9 @@ export async function extractArticle(url) {
   let current = await assertPublicHttpUrl(url);
   let res;
   for (let hop = 0; hop < 4; hop++) {
-    res = await fetch(current, {
+    res = await undiciFetch(current, {
       redirect: 'manual',
+      dispatcher: publicOnlyAgent,
       headers: {
         'User-Agent': ARTICLE_UA,
         Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9',
@@ -389,5 +430,11 @@ export async function extractArticle(url) {
     fetchedAt: new Date().toISOString(),
   };
   articleCache.set(url, { at: Date.now(), data });
+  if (articleCache.size > ARTICLE_CACHE_MAX) {
+    for (const [k, v] of articleCache) {
+      if (articleCache.size <= ARTICLE_CACHE_MAX && Date.now() - v.at < ARTICLE_TTL_MS) break;
+      articleCache.delete(k);
+    }
+  }
   return data;
 }

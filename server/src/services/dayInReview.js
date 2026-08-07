@@ -1,4 +1,5 @@
 import prisma from '../db.js';
+import { llmConfigured } from './llm.js';
 import { getSheetPortfolio } from './sheetPortfolio.js';
 import { generateDayInReview } from './articleSummarizer.js';
 import { getNewsForTicker } from './news.js';
@@ -89,6 +90,10 @@ async function buildPayload() {
       ? { ticker: { in: heldTickers } }
       : { ticker: { not: null, notIn: BROAD_MARKET_TICKERS } }),
     score: { not: null },
+    // Rankings persist forever and best-by-score alone is best-of-all-
+    // time: a 9.5 from March headlined every day's briefing until this
+    // window existed. A day in review reads this week's news.
+    createdAt: { gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) },
   };
 
   const [newPitches, upcomingPitches, openVotes, closedVotes, snapshots, topNews] =
@@ -211,7 +216,11 @@ export async function regenerate({ force = false } = {}) {
     const cached = getCached();
     if (cached) return { ...cached, cached: true };
   }
-  if (!process.env.LOCAL_LLM_URL) {
+  // Any configured provider will do — generateDayInReview goes through
+  // llmChat, which falls back local → Anthropic → OpenAI. Gating on the
+  // tunnel alone killed the daily brief in the exact deploy where the
+  // cloud key was the working provider.
+  if (!llmConfigured()) {
     return null;
   }
   try {

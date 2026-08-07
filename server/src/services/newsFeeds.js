@@ -41,7 +41,13 @@ export const FEEDS = [
   {
     id: 'wsj-markets',
     source: 'WSJ Markets',
-    url: 'https://feeds.a.dj.com/rss/RSSMarketsMain.xml',
+    // Dow Jones abandoned feeds.a.dj.com without turning it off: the old
+    // URL kept answering 200 with content frozen at January 2025, and
+    // because only *errors* skip a feed, we counted it healthy for
+    // eighteen months. The feed lives on their current CDN host now, and
+    // the per-item age gate below is the structural guard against the
+    // next silent freeze.
+    url: 'https://feeds.content.dowjones.io/public/rss/RSSMarketsMain',
     weight: 'wire',
   },
   {
@@ -56,9 +62,32 @@ export const FEEDS = [
     url: 'https://feeds.content.dowjones.io/public/rss/mw_topstories',
     weight: 'wire',
   },
+  // The two big press-release wires. Earnings releases, M&A announcements
+  // and guidance changes cross here the second the company publishes,
+  // usually minutes before any journalist writes them up — which is
+  // exactly the event class the breaking classifier's "scheduled print
+  // just landed" band wants to catch. Both keyless.
+  {
+    id: 'globenewswire',
+    source: 'GlobeNewswire',
+    url: 'https://www.globenewswire.com/RssFeed/orgclass/1/feedTitle/GlobeNewswire%20-%20News%20about%20Public%20Companies',
+    weight: 'wire',
+  },
+  {
+    id: 'prnewswire',
+    source: 'PR Newswire',
+    url: 'https://www.prnewswire.com/rss/financial-services-latest-news/financial-services-latest-news-list.rss',
+    weight: 'wire',
+  },
 ];
 
-let cache = { at: 0, articles: [] };
+// Reject items older than this at parse. A wire headline older than a
+// week is not news, and a feed whose *newest* item is older than this is
+// dead upstream no matter what its HTTP status says — the WSJ freeze
+// proved that liveness cannot be inferred from a 200.
+const MAX_ITEM_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+
+let cache = { at: 0, articles: [], health: [] };
 
 // ── Parsing ──────────────────────────────────────────────────────────
 // A regex reader rather than an XML dependency, the same shape
@@ -66,8 +95,11 @@ let cache = { at: 0, articles: [] };
 // well-formed in practice; anything we mis-parse simply drops out.
 
 function stripCdata(s) {
-  const m = /^\s*<!\[CDATA\[([\s\S]*?)\]\]>\s*$/.exec(s);
-  return m ? m[1] : s;
+  // Unwrap every CDATA section in place, not just a value that is one
+  // whole block: publishers mix plain text and CDATA in a single title,
+  // and the whole-block-only version left the wrapper for the tag
+  // stripper to eat, words and all.
+  return String(s).replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1');
 }
 
 function decodeEntities(s) {
@@ -83,6 +115,16 @@ function decodeEntities(s) {
       .replace(/&quot;/g, '"')
       .replace(/&apos;/g, "'")
       .replace(/&nbsp;/g, ' ')
+      // The common typographic names some wires use instead of numeric
+      // forms; anything rarer degrades to showing its entity, not to a
+      // parse failure.
+      .replace(/&rsquo;/g, '’')
+      .replace(/&lsquo;/g, '‘')
+      .replace(/&rdquo;/g, '”')
+      .replace(/&ldquo;/g, '“')
+      .replace(/&mdash;/g, '—')
+      .replace(/&ndash;/g, '–')
+      .replace(/&hellip;/g, '…')
       // Ampersand last, or it would mangle the entities decoded above.
       .replace(/&amp;/g, '&')
   );
@@ -121,7 +163,7 @@ function toIso(raw) {
   return Number.isNaN(d.getTime()) ? null : d.toISOString();
 }
 
-export function parseFeed(xml, feed) {
+export function parseFeed(xml, feed, now = Date.now()) {
   const out = [];
   // <item> is RSS, <entry> is Atom. Both appear across these publishers.
   const blocks = String(xml || '').match(/<(item|entry)\b[\s\S]*?<\/\1>/gi) || [];
@@ -129,16 +171,19 @@ export function parseFeed(xml, feed) {
     const title = tag(block, 'title');
     const url = tag(block, 'link') || atomLink(block);
     if (!title || !url) continue;
+    // Dated-and-stale is rejected; undated is kept — these publishers
+    // all stamp pubDate, so a missing date is a parse oddity on a live
+    // item, not a sign of age.
+    const published =
+      toIso(tag(block, 'pubDate')) || toIso(tag(block, 'published')) || toIso(tag(block, 'updated'));
+    if (published && now - new Date(published).getTime() > MAX_ITEM_AGE_MS) continue;
     out.push({
       title,
       description: tag(block, 'description') || tag(block, 'summary') || null,
       url,
       source: feed.source,
       author: null,
-      publishedAt:
-        toIso(tag(block, 'pubDate')) ||
-        toIso(tag(block, 'published')) ||
-        toIso(tag(block, 'updated')),
+      publishedAt: published,
       imageUrl: null,
       feedId: feed.id,
       feedWeight: feed.weight,
@@ -185,6 +230,18 @@ export async function getWireHeadlines(deps = {}) {
   // per-request timeout already bounds the worst case.
   const batches = await Promise.all(feeds.map((f) => fetcher(f)));
 
+  // Per-feed health, so a dead wire is visible in the terminal the way
+  // a wire-status row is on a real terminal, instead of silently
+  // contributing zero items until someone notices months later.
+  const health = feeds.map((f, i) => {
+    const items = batches[i] || [];
+    const newest = items.reduce(
+      (m, a) => (a.publishedAt && a.publishedAt > m ? a.publishedAt : m),
+      ''
+    );
+    return { id: f.id, source: f.source, items: items.length, newest: newest || null };
+  });
+
   const seen = new Set();
   const merged = [];
   for (const article of batches.flat()) {
@@ -197,6 +254,12 @@ export async function getWireHeadlines(deps = {}) {
     (a, b) => new Date(b.publishedAt || 0) - new Date(a.publishedAt || 0)
   );
 
-  if (!deps.fetchFeed) cache = { at: now, articles: merged };
+  if (!deps.fetchFeed) cache = { at: now, articles: merged, health };
   return merged;
+}
+
+// The most recent fetch's per-feed roll call. Serves /top-news's sources
+// block; empty until the first wire fetch of the process.
+export function getWireHealth() {
+  return cache.health || [];
 }

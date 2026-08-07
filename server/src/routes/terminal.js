@@ -29,7 +29,7 @@ import {
   summariesFor,
 } from '../services/internalResearch.js';
 import { extractFileText } from '../services/fileSummarizer.js';
-import { getWireHeadlines } from '../services/newsFeeds.js';
+import { getWireHeadlines, getWireHealth } from '../services/newsFeeds.js';
 import {
   scoreBreaking,
   filterBreaking,
@@ -962,11 +962,27 @@ export async function ytdPriceReturn(ticker, currentPrice) {
     // every ticker, which the guard below then reported as "no usable
     // history". The endpoint worked, the function worked, and the two
     // were never speaking the same shape.
-    const bars = await getHistory(ticker, 'ytd');
+    //
+    // The base is the previous year's FINAL close, which the 'ytd'
+    // range cannot supply — its first bar is the first trading day of
+    // this year, so anchoring there silently dropped the year's opening
+    // session from every YTD figure. Pull a year of bars and walk to
+    // the last one dated on or before Dec 31.
+    const bars = await getHistory(ticker, '1y');
     const points = (Array.isArray(bars) ? bars : []).filter((b) => b?.close != null);
     if (points.length < 2) return null;
-    // The first bar of the YTD window is the year's opening reference.
-    const base = points[0].close;
+    const boundary = `${new Date().getFullYear() - 1}-12-31`;
+    let base = null;
+    for (const b of points) {
+      // Bars arrive date-ascending, so the last one at or before the
+      // boundary is the prior year's closing print.
+      if (String(b.date) <= boundary) base = b.close;
+      else break;
+    }
+    // No prior-year bar (an IPO this year, or history that thin): the
+    // first bar of the current year is the honest fallback — exactly
+    // the old behavior.
+    if (base == null) base = points[0].close;
     if (!(base > 0)) return null;
     const pct = ((currentPrice - base) / base) * 100;
     ytdCache.set(ticker, { at: Date.now(), pct });
@@ -1110,16 +1126,26 @@ router.get('/peers/:ticker', async (req, res) => {
 router.get('/top-news', async (req, res) => {
   try {
     // Finnhub is the primary and must not be blocked by a slow publisher;
-    // the wire fetch already bounds itself and degrades to [].
-    const [data, wire] = await Promise.all([
+    // the wire fetch already bounds itself and degrades to []. The
+    // portfolio read is only for badging held names and must never cost
+    // the feed anything.
+    const [data, wire, book] = await Promise.all([
       getNewsForTicker('SPY', '').catch(() => null),
       getWireHeadlines().catch(() => []),
+      getSheetPortfolio().catch(() => null),
     ]);
+
+    // Nothing older than two days may reach the classifier. The scorer
+    // judges headline text alone and never sees a date, so without this
+    // gate a frozen feed's 18-month-old crash headline could run on the
+    // strip as BREAKING the moment the fresh sources thinned out.
+    const freshCutoff = Date.now() - 48 * 60 * 60 * 1000;
 
     const seen = new Set();
     const merged = [];
     for (const a of [...(data?.articles || []), ...wire]) {
       if (!a?.title || !a?.url) continue;
+      if (a.publishedAt && new Date(a.publishedAt).getTime() < freshCutoff) continue;
       const key = String(a.url).split('?')[0].toLowerCase();
       if (seen.has(key)) continue;
       seen.add(key);
@@ -1131,6 +1157,30 @@ router.get('/top-news', async (req, res) => {
     merged.sort(
       (a, b) => new Date(b.publishedAt || 0) - new Date(a.publishedAt || 0)
     );
+
+    // Tag headlines that mention a held name — the club's wire, not just
+    // a wire. Ticker must stand alone as an uppercase token (so GD does
+    // not fire inside a word); the company name matches with its legal
+    // suffix stripped.
+    const held = (book?.holdings || [])
+      .filter((h) => !h.isCash && h.ticker)
+      .map((h) => ({
+        ticker: String(h.ticker).toUpperCase(),
+        re: new RegExp(`(^|[^A-Za-z0-9])${String(h.ticker).toUpperCase()}([^A-Za-z0-9]|$)`),
+        name: String(h.name || '')
+          .replace(/,? (inc|corp(oration)?|co|ltd|plc|etf|trust|fund)\.?$/i, '')
+          .trim()
+          .toLowerCase(),
+      }))
+      .filter((h) => h.ticker.length >= 2 || h.name.length >= 4);
+    for (const a of merged) {
+      const title = String(a.title);
+      const lower = title.toLowerCase();
+      const hit = held.find(
+        (h) => h.re.test(title) || (h.name.length >= 4 && lower.includes(h.name))
+      );
+      if (hit) a.heldTicker = hit.ticker;
+    }
 
     const scored = await scoreBreaking(merged.slice(0, 25));
     const wantAll = req.query.all === '1' || req.query.all === 'true';
@@ -1145,6 +1195,7 @@ router.get('/top-news', async (req, res) => {
         score: a.score ?? null,
         breaking: a.breaking ?? null,
         breakingReason: a.breakingReason ?? null,
+        heldTicker: a.heldTicker ?? null,
       })),
       // Lets the client tell "nothing is breaking" apart from "we never
       // got to judge" — two states that must not look alike.
@@ -1153,6 +1204,9 @@ router.get('/top-news', async (req, res) => {
       sources: {
         finnhub: (data?.articles || []).length,
         wire: wire.length,
+        // Per-feed roll call, so a wire that dies upstream while
+        // returning 200 is visible here instead of eighteen months later.
+        feeds: getWireHealth(),
       },
       fetchedAt: data?.fetchedAt || new Date().toISOString(),
     });

@@ -13,7 +13,7 @@
 // articles just stay unranked. Ranking is strictly a best-effort
 // enhancement — never blocks news delivery.
 import prisma from '../db.js';
-import { llmChat } from './llm.js';
+import { llmChat, llmConfigured, likelyModelTag } from './llm.js';
 
 const SYSTEM_PROMPT = `You are ranking news articles for a student-run investment club. For each article, score its MATERIALITY on a 0.0 to 10.0 scale with one decimal place. Higher = more likely to move the stock or change the investment thesis.
 
@@ -124,8 +124,7 @@ export async function rankArticles(articles, { ticker } = {}) {
 
   // If everything is already ranked, or no LLM provider is configured and
   // nothing is cached yet, apply what we have and return.
-  const anyProvider = !!(process.env.LOCAL_LLM_URL || process.env.OPENAI_API_KEY);
-  if (!anyProvider || unknown.length === 0) {
+  if (!llmConfigured() || unknown.length === 0) {
     return applyAndSort(articles, persisted);
   }
 
@@ -181,11 +180,7 @@ export async function rankArticles(articles, { ticker } = {}) {
 
   // Fire-and-forget save. We don't await because the response is already
   // assembled; the write happens while the client gets its data.
-  const modelTag =
-    process.env.LOCAL_LLM_URL
-      ? process.env.LOCAL_LLM_MODEL || 'qwen2.5:14b-instruct-q4_K_M'
-      : process.env.OPENAI_MODEL || 'gpt-4o-mini';
-  persistRankings(toPersist, modelTag, ticker).catch(() => {});
+  persistRankings(toPersist, likelyModelTag(), ticker).catch(() => {});
 
   return applyAndSort(articles, persisted);
 }
