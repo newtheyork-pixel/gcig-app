@@ -64,14 +64,13 @@ struct ResearchPanel: View {
                     .font(Term.mono(11)).foregroundStyle(Term.white)
                     .lineLimit(1)
                 Spacer(minLength: 6)
-                // Terse on purpose: the pane floor is 320pt, and these
-                // six counts spelled out in words left the project name
-                // no room. A zero stays visible rather than vanishing,
-                // so the columns line up down the list and a thin
-                // project reads as thin without reading a digit.
-                Text(p.countsLine)
+                // WHO owns the work, where the count string used to
+                // sit. Forty rows of "Q0 F1 T0 C0" told a reader
+                // nothing; a name answers the question people actually
+                // bring to this list. The counts survive in the hover.
+                Text(p.createdBy?.name ?? p.countsLine)
                     .font(Term.mono(9)).foregroundStyle(Term.fgMuted)
-                    .monospacedDigit()
+                    .lineLimit(1)
                     .help(p.countsHelp)
                 Text(p.status)
                     .font(Term.mono(9)).foregroundStyle(Term.fgDim)
@@ -196,7 +195,10 @@ struct Project: Decodable, Identifiable {
     let brief: String?
     let updatedAt: String?
     let createdAt: String?
+    let createdBy: Author?
     let counts: Counts?
+
+    struct Author: Decodable { let name: String? }
 
     struct Counts: Decodable {
         let interviews: Int?
@@ -244,7 +246,7 @@ struct Project: Decodable, Identifiable {
     }
 
     enum CodingKeys: String, CodingKey {
-        case id, name, ticker, status, brief, updatedAt, createdAt
+        case id, name, ticker, status, brief, updatedAt, createdAt, createdBy
         case counts = "_count"
     }
 }

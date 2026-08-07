@@ -157,12 +157,10 @@ export default function FieldWork({ ticker }) {
                   {p.name}
                 </a>
               </td>
-              {/* A dash where the server sent no count: "not
-                  reported" and "none" are different answers. */}
-              <td className="num">{num(p._count?.questions)}</td>
-              <td className="num">{num(p._count?.artifacts)}</td>
-              <td className="num">{num(p._count?.targets)}</td>
-              <td className="num">{num(p._count?.interviews)}</td>
+              {/* Who owns the work. Forty rows of zero-counts told a
+                  reader nothing; the name answers the question people
+                  bring to this list. Counts live inside the project. */}
+              <td>{p.createdBy?.name || '—'}</td>
               <td>{p.status}</td>
               {/* Initiated, not last-touched: the updated stamp moves
                   whenever a row is relabelled, which had every project
@@ -179,25 +177,18 @@ export default function FieldWork({ ticker }) {
               <tr>
                 <th>Sym</th>
                 <th>Project</th>
-                {/* Questions and contacts, not just calls and files. C.H.
-                    Robinson has twenty-two questions and seventeen people
-                    in the funnel and no interviews yet — on a call count
-                    it reads as an empty project. */}
-                <th className="num">Qs</th>
-                <th className="num">Files</th>
-                <th className="num">Contacts</th>
-                <th className="num">Calls</th>
+                <th>Analyst</th>
                 <th>Status</th>
                 <th>Initiated</th>
               </tr>
             </thead>
             <tbody>
               {worked.length > 0 && historic.length > 0 && (
-                <tr><td colSpan={8} style={{ color: 'var(--term-fg-muted)', fontWeight: 700, fontSize: 10 }}>BEING RESEARCHED ({worked.length})</td></tr>
+                <tr><td colSpan={5} style={{ color: 'var(--term-fg-muted)', fontWeight: 700, fontSize: 10 }}>BEING RESEARCHED ({worked.length})</td></tr>
               )}
               {rows(worked)}
               {historic.length > 0 && (
-                <tr><td colSpan={8} style={{ color: 'var(--term-fg-muted)', fontWeight: 700, fontSize: 10 }}>HISTORIC WORK · CLOSED ({historic.length})</td></tr>
+                <tr><td colSpan={5} style={{ color: 'var(--term-fg-muted)', fontWeight: 700, fontSize: 10 }}>HISTORIC WORK · CLOSED ({historic.length})</td></tr>
               )}
               {rows(historic)}
             </tbody>

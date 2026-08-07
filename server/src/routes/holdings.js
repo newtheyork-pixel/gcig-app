@@ -735,7 +735,11 @@ router.get('/coverage/:ticker', async (req, res) => {
     // analyst, the true initiation date, and the buy level if a
     // valuation carries one.
     const research = (projects || [])
-      .filter((p) => !p.ownerOnly)
+      // The privacy rule protects owner-only work from OTHER members —
+      // hiding it from its own owner made DES deny coverage the owner
+      // could open two keystrokes away in RSCH. Same visibility the
+      // projects list applies.
+      .filter((p) => !p.ownerOnly || req.user?.isSuperAdmin || p.createdById === req.user?.id)
       .map((p) => {
         const v = p.valuations?.[0] || null;
         return {

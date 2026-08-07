@@ -80,26 +80,45 @@ final class Updater: ObservableObject {
 
     func check() async {
         if case .downloading = phase { return }
-        if case .ready = phase { return }
         // A failure notice stays up until the member dismisses it —
         // being replaced by the same UPDATE chip that just failed would
         // erase the only explanation they get.
         if case .failed = phase { return }
-        phase = .checking
+        // A staged build is NOT a reason to stop looking. It used to
+        // be: once somebody pressed UPDATE, the download was pinned and
+        // the hourly check stood down, so a release published minutes
+        // later stayed invisible until they had restarted into the old
+        // one — a member two versions behind climbed the ladder one
+        // rung per restart. The staged copy is remembered so a newer
+        // offer can supersede it below.
+        var staged: (url: URL, version: String)?
+        if case .ready(let u, let v) = phase { staged = (u, v) }
+
+        if staged == nil { phase = .checking }
         do {
             let data = try await API.shared.get("/app/latest", query: ["current": installed])
             let r = try await API.shared.decode(Release.self, from: data)
             guard r.available == true, let v = r.version, r.url != nil, r.sha256 != nil else {
-                phase = .idle
+                if staged == nil { phase = .idle }
                 return
             }
-            phase = .available(.init(version: v, notes: r.notes, mandatory: r.mandatory ?? false))
+            if let s = staged {
+                if s.version == v { return } // RESTART already points at the newest
+                // Superseded mid-wait: throw the old download away and
+                // stage the new one. The member asked to update; giving
+                // them yesterday's update instead of today's would honor
+                // the button and betray the intent. Still nothing
+                // installs without the RESTART press.
+                try? FileManager.default.removeItem(at: s.url)
+            }
             pending = r
+            phase = .available(.init(version: v, notes: r.notes, mandatory: r.mandatory ?? false))
+            if staged != nil { await download() }
         } catch {
             // A failed check is not worth a banner. The app works; it is
             // simply not certain it is current, and saying so every hour
             // would train people to ignore the one time it matters.
-            phase = .idle
+            if staged == nil { phase = .idle }
         }
     }
 
