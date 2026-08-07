@@ -261,10 +261,14 @@ export async function uploadFile({ buffer, filename, contentType }) {
     let res;
     for (let attempt = 0; ; attempt += 1) {
       try {
+        // No manual Content-Length: fetch computes it from the Buffer,
+        // and the runtime's validator now REJECTS a hand-set one beside
+        // a measurable body ("invalid content-length header") — which
+        // broke every >4MB upload the night a rebuild picked up the
+        // stricter undici. Graph only needs Content-Range from us.
         res = await fetch(uploadUrl, {
           method: 'PUT',
           headers: {
-            'Content-Length': String(chunk.length),
             'Content-Range': `bytes ${offset}-${end - 1}/${buffer.length}`,
           },
           body: chunk,
