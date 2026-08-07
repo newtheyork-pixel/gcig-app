@@ -141,7 +141,7 @@ router.post('/releases', async (req, res) => {
   if (!isSuperAdminEmail(req.user?.email)) {
     return res.status(403).json({ error: 'Super admin only' });
   }
-  const { version, url, sha256, bytes, notes, mandatory } = req.body || {};
+  const { version, url, sha256, bytes, notes, mandatory, live } = req.body || {};
   if (!SEMVER.test(String(version || ''))) {
     return res.status(400).json({ error: 'version must be x.y.z' });
   }
@@ -155,10 +155,15 @@ router.post('/releases', async (req, res) => {
     return res.status(400).json({ error: 'url must be https' });
   }
   try {
+    // `live` obeys the caller when the caller says something. The update
+    // branch used to hard-set true, which meant a build whose bytes
+    // never landed could not be taken DOWN through the same door it was
+    // put up through — the feed kept offering a download that 404'd.
+    const wantLive = typeof live === 'boolean' ? live : true;
     const row = await prisma.appRelease.upsert({
       where: { version },
-      create: { version, url, sha256: String(sha256).toLowerCase(), bytes: bytes ?? null, notes: notes ?? null, mandatory: !!mandatory },
-      update: { url, sha256: String(sha256).toLowerCase(), bytes: bytes ?? null, notes: notes ?? null, mandatory: !!mandatory, live: true },
+      create: { version, url, sha256: String(sha256).toLowerCase(), bytes: bytes ?? null, notes: notes ?? null, mandatory: !!mandatory, live: wantLive },
+      update: { url, sha256: String(sha256).toLowerCase(), bytes: bytes ?? null, notes: notes ?? null, mandatory: !!mandatory, live: wantLive },
     });
     res.status(201).json(row);
   } catch (err) {

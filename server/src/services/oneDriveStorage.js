@@ -252,14 +252,29 @@ export async function uploadFile({ buffer, filename, contentType }) {
   for (let offset = 0; offset < buffer.length; offset += CHUNK) {
     const end = Math.min(offset + CHUNK, buffer.length);
     const chunk = buffer.slice(offset, end);
-    const res = await fetch(uploadUrl, {
-      method: 'PUT',
-      headers: {
-        'Content-Length': String(chunk.length),
-        'Content-Range': `bytes ${offset}-${end - 1}/${buffer.length}`,
-      },
-      body: chunk,
-    });
+    // The chunk PUT goes to a different Microsoft host than Graph
+    // proper, and that host drops connections often enough that a
+    // 4.5MB release upload failed three times in a row while tiny
+    // simple-PUT writes sailed through. Resumable sessions exist to be
+    // retried; a network-level throw here gets three attempts on a
+    // short backoff before it becomes the caller's problem.
+    let res;
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        res = await fetch(uploadUrl, {
+          method: 'PUT',
+          headers: {
+            'Content-Length': String(chunk.length),
+            'Content-Range': `bytes ${offset}-${end - 1}/${buffer.length}`,
+          },
+          body: chunk,
+        });
+        break;
+      } catch (err) {
+        if (attempt >= 2) throw err;
+        await new Promise((r) => setTimeout(r, 1500 * (attempt + 1)));
+      }
+    }
     if (res.status >= 400) {
       const text = await res.text().catch(() => '');
       throw new Error(
