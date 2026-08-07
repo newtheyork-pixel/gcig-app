@@ -160,7 +160,9 @@ export default function Governance({ ticker }) {
           .join('; ')}`
       : null;
     const networkLine = data.network?.edges?.length
-      ? `Shared boards with holdings: ${data.network.edges.map((e) => `${e.person} ${e.a}-${e.b}`).join(', ')}`
+      ? `Board interlocks: ${data.network.edges
+          .map((e) => `${e.person} also on ${e.b}${e.held ? ' (a fund holding)' : ''}`)
+          .join(', ')}`
       : null;
     const ctx = [ceoLine, execLine, boardLine, compLine, networkLine]
       .filter(Boolean)
@@ -398,13 +400,20 @@ export default function Governance({ ticker }) {
 
           {tab === 'Network' && (
             (data.network?.edges || []).length === 0 ? (
-              <div className="term-loading">No shared boards among current fund holdings.</div>
+              <div className="term-loading">No other public-company boards parsed from the proxy.</div>
             ) : (
               <table className="term-table">
-                <thead><tr><th>Director</th><th>Focus</th><th>Also on (held)</th></tr></thead>
+                <thead><tr><th>Director</th><th>Focus</th><th>Also on</th></tr></thead>
                 <tbody>
                   {data.network.edges.map((e, i) => (
-                    <tr key={i}><td className="sym">{e.person}</td><td>{e.a}</td><td className="num">{e.b}</td></tr>
+                    <tr key={i}>
+                      <td className="sym">{e.person}</td>
+                      <td>{e.a}</td>
+                      <td className={e.held ? 'pos' : ''}>
+                        {e.b}
+                        {e.held ? ' · HELD' : ''}
+                      </td>
+                    </tr>
                   ))}
                 </tbody>
               </table>

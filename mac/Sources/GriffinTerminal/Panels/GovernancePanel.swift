@@ -99,6 +99,7 @@ struct GovernancePanel: View {
         let person: String?
         let a: String?
         let b: String?
+        let held: Bool?
     }
 
     struct Network: Decodable {
@@ -603,7 +604,7 @@ struct GovernancePanel: View {
     @ViewBuilder
     private func networkTable(_ edges: [Edge]) -> some View {
         if edges.isEmpty {
-            Text("No shared boards among current fund holdings.")
+            Text("No other public-company boards parsed from the proxy.")
                 .font(Term.mono(11))
                 .foregroundStyle(Term.fgMuted)
         } else {
@@ -611,7 +612,7 @@ struct GovernancePanel: View {
                 HStack(spacing: 8) {
                     Text("Director").frame(width: 160, alignment: .leading)
                     Text("Focus").frame(width: 70, alignment: .leading)
-                    Text("Also on (held)")
+                    Text("Also on")
                     Spacer(minLength: 0)
                 }
                 .font(Term.mono(9, weight: .bold))
@@ -631,7 +632,16 @@ struct GovernancePanel: View {
                             .frame(width: 70, alignment: .leading)
                         Text(e.b ?? "—")
                             .font(Term.mono(11))
-                            .foregroundStyle(Term.white)
+                            .foregroundStyle(e.held == true ? Term.positive : Term.white)
+                        if e.held == true {
+                            // The one edge that touches the club's own
+                            // book deserves to jump off the list.
+                            Text("HELD")
+                                .font(Term.mono(8, weight: .bold))
+                                .foregroundStyle(Term.bg)
+                                .padding(.horizontal, 4)
+                                .background(Term.positive)
+                        }
                         Spacer(minLength: 0)
                     }
                     .padding(.vertical, 3)

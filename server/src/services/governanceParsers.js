@@ -839,17 +839,35 @@ export function buildNetwork(focusTicker, board, holdings) {
   if (!f || !Array.isArray(board) || !Array.isArray(holdings)) {
     return { nodes: [], edges: [] };
   }
+  // EVERY other board is an edge, not just the ones the club happens
+  // to hold. The held-only version answered "which of our thirteen
+  // holdings shares a director with this company", which is almost
+  // always none — so the tab read "nothing" for a board wired into
+  // half the S&P. Held companies resolve to their ticker and carry
+  // the flag; everyone else appears under the name the proxy printed.
   const nodes = new Set();
   const edges = [];
+  const seen = new Set();
   for (const d of board) {
     for (const ob of d?.otherBoards || []) {
-      const tk = holdingFor(ob, holdings);
-      if (tk && tk.toUpperCase() !== f) {
-        nodes.add(f);
-        nodes.add(tk);
-        edges.push({ person: d.name, a: f, b: tk });
-      }
+      const name = String(ob || '').trim();
+      if (!name) continue;
+      const tk = holdingFor(name, holdings);
+      // A director "also" on the focus company's own board is the
+      // proxy describing the seat we are already looking at.
+      if (tk && tk.toUpperCase() === f) continue;
+      const label = tk || name;
+      if (label.toUpperCase() === f) continue;
+      const key = `${d.name}|${label}`.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      nodes.add(f);
+      nodes.add(label);
+      edges.push({ person: d.name, a: f, b: label, held: !!tk });
     }
   }
+  // Held interlocks first — the edge that touches the club's own book
+  // is the one worth seeing before the fold.
+  edges.sort((x, y) => Number(y.held) - Number(x.held) || String(x.person).localeCompare(String(y.person)));
   return { nodes: [...nodes], edges };
 }

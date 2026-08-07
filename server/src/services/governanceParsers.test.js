@@ -111,9 +111,19 @@ test('buildNetwork links directors whose other boards are also fund holdings', (
     { ticker: 'AAPL', name: 'Apple Inc' },
   ];
   const n = buildNetwork('FOCUS', board, holdings);
-  const pairs = n.edges.map((e) => `${e.person}|${e.a}|${e.b}`).sort();
-  assert.deepEqual(pairs, ['Maria Lopez|FOCUS|GLBX', 'Maria Lopez|FOCUS|INIT'].sort());
+  const pairs = n.edges.map((e) => `${e.person}|${e.a}|${e.b}|${e.held}`).sort();
+  // Every other board is an edge now; held ones resolve to a ticker
+  // and carry the flag, the rest keep the proxy's own words. The
+  // held-only cut left this tab reading "nothing" for almost every
+  // company on earth.
+  assert.deepEqual(pairs, [
+    'Maria Lopez|FOCUS|GLBX|true',
+    'Maria Lopez|FOCUS|INIT|true',
+    'David Chen|FOCUS|Soylent Corp|false',
+  ].sort());
   assert.ok(n.nodes.includes('FOCUS') && n.nodes.includes('GLBX'));
+  // Held edges sort ahead of unheld ones.
+  assert.equal(n.edges[n.edges.length - 1].held, false);
 });
 
 test('buildNetwork empty when no overlap / bad input', () => {
