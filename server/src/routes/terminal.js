@@ -12,6 +12,7 @@ import { getProxyStatement } from '../services/proxyStatement.js';
 import { getExecutiveBios } from '../services/executiveBios.js';
 import { wikipediaBio } from '../services/wikipediaBio.js';
 import { filingBio } from '../services/filingBio.js';
+import { cachedInterlocks, computeInterlocks } from '../services/boardInterlocks.js';
 import { saveProfiles, storedProfiles } from '../services/personProfiles.js';
 import { parseLeadership, parseBoard, parseComp, buildNetwork } from '../services/governanceParsers.js';
 import { getOfficerRoster, mergeLeadership, mergeBoard } from '../services/officerRoster.js';
@@ -314,6 +315,26 @@ router.get('/governance/:ticker', async (req, res) => {
     }
     const fullBoard = mergeBoard(board, roster);
     const network = buildNetwork(raw, fullBoard, holdings);
+
+    // The ownership-based interlocks — the structured answer to the
+    // question the prose parse mostly cannot read. Served from the
+    // last background pass; recomputed off the request path so a
+    // governance open never waits on a walk through EDGAR. First open
+    // shows the proxy's edges (often none), the next shows the map.
+    const owned = cachedInterlocks(raw);
+    if (owned && owned.length > 0) {
+      const have = new Set(network.edges.map((e) => `${e.person}|${e.b}`.toLowerCase()));
+      for (const e of owned) {
+        const key = `${e.person}|${e.b}`.toLowerCase();
+        if (!have.has(key)) network.edges.push(e);
+      }
+      network.edges.sort(
+        (x, y) => Number(y.held) - Number(x.held) || String(x.person).localeCompare(String(y.person))
+      );
+      network.nodes = [...new Set([raw, ...network.edges.map((e) => e.b)])];
+    } else {
+      computeInterlocks(raw, roster?.officers || [], holdings).catch(() => {});
+    }
 
     // A director the proxy parse left storyless gets the saved bio if
     // one exists — the panel reads from the union of this parse and

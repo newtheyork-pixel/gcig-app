@@ -174,6 +174,9 @@ export function parseOwnershipDoc(xml, { form, filedAt } = {}) {
   const rel = (doc.match(/<reportingOwnerRelationship>([\s\S]*?)<\/reportingOwnerRelationship>/i) || [])[1] || '';
   return {
     filedName: name,
+    // The person's own EDGAR identity. It unlocks their filings at
+    // EVERY issuer, which is what the interlock network is built from.
+    ownerCik: tag(doc, 'rptOwnerCik'),
     title: tag(rel, 'officerTitle'),
     isOfficer: flag(rel, 'isOfficer'),
     isDirector: flag(rel, 'isDirector'),
@@ -205,6 +208,7 @@ export function buildRoster(docs) {
         isOfficer: d.isOfficer,
         isDirector: d.isDirector,
         isTenPercent: d.isTenPercent,
+        ownerCik: d.ownerCik || null,
         lastFiledAt: d.filedAt,
         firstFiledAt: d.filedAt,
         // A Form 3 is somebody's first ownership filing at this company,
@@ -219,6 +223,7 @@ export function buildRoster(docs) {
       prev.isOfficer = prev.isOfficer || d.isOfficer;
       prev.isDirector = prev.isDirector || d.isDirector;
     }
+    if (!prev.ownerCik && d.ownerCik) prev.ownerCik = d.ownerCik;
     if (d.filedAt < prev.firstFiledAt) prev.firstFiledAt = d.filedAt;
     if (d.form === '3' && (!prev.form3At || d.filedAt < prev.form3At)) prev.form3At = d.filedAt;
   }
