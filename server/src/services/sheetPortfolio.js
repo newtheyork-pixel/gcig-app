@@ -185,7 +185,15 @@ export async function readSheetPortfolio({ forceFresh = false } = {}) {
   let totalValue = 0;
   let totalCost = 0;
   let cashValue = 0;
+  // Positions the sheet could not price. A GOOGLEFINANCE cell stuck on
+  // #N/A parses to null and would otherwise contribute $0 to the total
+  // silently — a book that looks $30k lighter because one formula
+  // hiccuped. Counted so snapshot writers can refuse to freeze a
+  // partial total into history.
+  let unpricedCount = 0;
   for (const h of holdings) {
+    const priced = h.marketValue != null || (h.shares != null && h.price != null);
+    if (!h.isCash && !priced) unpricedCount += 1;
     const mv =
       h.marketValue != null
         ? h.marketValue
@@ -207,7 +215,7 @@ export async function readSheetPortfolio({ forceFresh = false } = {}) {
 
   const data = {
     holdings,
-    totals: { totalValue, totalCost, totalGainLoss, totalGainLossPct, cashValue },
+    totals: { totalValue, totalCost, totalGainLoss, totalGainLossPct, cashValue, unpricedCount },
     fetchedAt: new Date().toISOString(),
     source: 'sheet',
   };

@@ -75,8 +75,12 @@ async function fetchIndexLevel(symbol, deps = {}) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 12_000);
     try {
+      // range=1d, because chartPreviousClose is the close before the
+      // WINDOW: ask for 2d and "prev" is two sessions back, which
+      // doubles up the day move. quotes.js makes the same call with 1d
+      // for the same reason.
       const r = await doFetch(
-        `${CHART_URL}/${encodeURIComponent(symbol)}?range=2d&interval=1d`,
+        `${CHART_URL}/${encodeURIComponent(symbol)}?range=1d&interval=1d`,
         { signal: controller.signal, headers: { 'User-Agent': UA, Accept: 'application/json' } }
       );
       if (r.status === 429 || r.status >= 500) {
@@ -202,7 +206,7 @@ export async function getWorldIndices(deps = {}) {
       const base = { name: idx.name, region: idx.region };
       const hit = levels[n];
       if (hit) {
-        const change = hit.prev != null ? hit.last - hit.prev : null;
+        let change = hit.prev != null ? hit.last - hit.prev : null;
         // A FRED level is a close, so its own percentage is yesterday's
         // move. The proxy's percentage is today's and tracks the index
         // faithfully — so the row carries the right LEVEL from one
@@ -214,6 +218,15 @@ export async function getWorldIndices(deps = {}) {
           if (live?.changePercent != null) {
             pct = live.changePercent;
             moveFrom = `finnhub:${idx.proxy}`;
+            // The point change must follow the percentage it now sits
+            // beside. Leaving FRED's day-old point move next to the
+            // proxy's live percentage let the pair disagree in sign on
+            // a reversal day. Re-derive it from the level we show:
+            // prev = last / (1 + pct/100), change = last - prev.
+            change =
+              Number.isFinite(hit.last) && pct !== -100
+                ? (hit.last * pct) / (100 + pct)
+                : null;
           }
         }
         return {

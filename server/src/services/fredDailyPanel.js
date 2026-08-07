@@ -167,10 +167,15 @@ export async function getDailyPanel({ forceFresh = false } = {}) {
 
   const daily = {};
   const weekly = {};
-  for (const r of results) {
+  // Series that errored, by id. A failed series used to vanish from the
+  // panel silently — the nowcaster ran with fewer features and nothing
+  // said so. Named here so a thin panel is visibly thin.
+  const failedSeries = [];
+  results.forEach((r, i) => {
     if (r.status !== 'fulfilled') {
       console.warn('daily-panel: series failed:', r.reason?.message);
-      continue;
+      failedSeries.push(allIds[i]);
+      return;
     }
     const { id, obs } = r.value;
     try {
@@ -184,13 +189,15 @@ export async function getDailyPanel({ forceFresh = false } = {}) {
       }
     } catch (err) {
       console.warn(`daily-panel: transform failed for ${id}:`, err.message);
+      failedSeries.push(id);
     }
-  }
+  });
 
   const data = {
     fetchedAt: new Date().toISOString(),
     daily,
     weekly,
+    failedSeries,
   };
   cache = { at: Date.now(), data };
   return data;

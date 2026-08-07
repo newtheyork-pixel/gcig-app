@@ -153,12 +153,23 @@ export async function getLiveQuotes(tickers, deps = {}) {
   if (list.length === 0) return {};
 
   const out = {};
-  // Per-ticker resolution runs in parallel; each path is independently
-  // never-throwing, so allSettled is belt-and-braces — a stray
-  // rejection still can't sink a sibling ticker or the whole call.
-  const settled = await Promise.allSettled(
-    list.map((sym) => resolveTicker(sym, quoteFetch, now))
-  );
+  // In parallel, but only a handful at a time. An uncapped fan-out
+  // turns a 120-name watchlist into a 120-request burst against
+  // Finnhub's 60/min budget — the whole batch fails together and the
+  // list renders priceless. Eight in flight keeps a big cold list
+  // moving without ever looking like a burst; warm tickers are cache
+  // hits and cost nothing. Each path is independently never-throwing,
+  // so allSettled is belt-and-braces — a stray rejection still can't
+  // sink a sibling ticker or the whole call.
+  const BATCH = 8;
+  const settled = [];
+  for (let i = 0; i < list.length; i += BATCH) {
+    settled.push(
+      ...(await Promise.allSettled(
+        list.slice(i, i + BATCH).map((sym) => resolveTicker(sym, quoteFetch, now))
+      ))
+    );
+  }
   list.forEach((sym, i) => {
     const s = settled[i];
     out[sym] = s.status === 'fulfilled' ? s.value : null;

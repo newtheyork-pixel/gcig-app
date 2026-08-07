@@ -23,6 +23,19 @@ router.use(verifyJwt, requireTerminalAccess);
 // names we are watching but do NOT own.
 const SOURCES = new Set(['seg13f', 'manual']);
 
+// Who may change or remove a stored row. A private row (userId set)
+// answers only to its owner; a shared row belongs to the club, so
+// touching it is an executive act — the same President/CIO tier
+// requireExecutive gates elsewhere, plus the super admin, who bypasses
+// every role gate. requireTerminalAccess on the mount only says who may
+// LOOK; it says nothing about who may erase.
+const EXEC_ROLES = new Set(['President', 'CIO']);
+function mayMutate(row, user) {
+  if (!user) return false;
+  if (row.userId != null) return row.userId === user.id;
+  return user.isSuperAdmin || EXEC_ROLES.has(user.role);
+}
+
 router.get('/', async (req, res) => {
   try {
     const [rows, sheet] = await Promise.all([
@@ -127,9 +140,10 @@ router.post('/', async (req, res) => {
     return res.status(400).json({ error: 'A ticker is required' });
   }
   const source = SOURCES.has(req.body?.source) ? req.body.source : 'manual';
-  // A member adding a name adds it to their own list unless they say
-  // otherwise; only the club list is shared, and sharing should be a
-  // deliberate act rather than the default.
+  // The default scope is the SHARED club list: a member adding a name
+  // adds it for everyone unless they ask for scope:"mine". Clients
+  // lean on that default, so keeping a name to yourself is the
+  // deliberate act here.
   const mine = req.body?.scope === 'mine';
   const userId = mine ? req.user?.id ?? null : null;
   try {
@@ -141,6 +155,13 @@ router.post('/', async (req, res) => {
     // as a bare 500 with nothing to read. This does the same job without
     // naming the index at all.
     const existing = await prisma.watchlistItem.findFirst({ where: { ticker, source, userId } });
+    // findFirst can only surface the requester's own private row or a
+    // shared one, so the case this catches is a member overwriting the
+    // club list's note. Same rule as DELETE below: the shared list is
+    // the club's record, and rewriting it is an executive act.
+    if (existing && !mayMutate(existing, req.user)) {
+      return res.status(403).json({ error: 'Only an executive can edit the club list entry' });
+    }
     const data = {
       name: req.body?.name ? String(req.body.name).slice(0, 200) : undefined,
       note: req.body?.note !== undefined ? String(req.body.note).slice(0, 500) : undefined,
@@ -168,6 +189,18 @@ router.delete('/:id', async (req, res) => {
     return res.status(400).json({ error: 'Holdings come from the sheet and cannot be removed here.' });
   }
   try {
+    // Look before deleting: the id alone says nothing about whose row
+    // this is, and an unchecked delete let any member erase another
+    // member's private row — or the club's shared list — by id.
+    const row = await prisma.watchlistItem.findUnique({ where: { id } });
+    if (!row) return res.status(404).json({ error: 'No such item' });
+    if (!mayMutate(row, req.user)) {
+      return res.status(403).json({
+        error: row.userId != null
+          ? 'Only the member who added this can remove it'
+          : 'Only an executive can remove a name from the club list',
+      });
+    }
     await prisma.watchlistItem.delete({ where: { id } });
     res.json({ ok: true });
   } catch {

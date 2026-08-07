@@ -1,4 +1,5 @@
-import { getRecentFilings } from './secFilings.js';
+import { getRecentFilings, SEC_UA } from './secFilings.js';
+import { secFetch as secArchivesFetch } from './secFetch.js';
 
 // INSDR data — insider Form 4 activity. Finnhub is the primary feed
 // (structured, already wired); SEC EDGAR Form 4 XML is the fallback so
@@ -114,15 +115,15 @@ export function normalizeFinnhub(rows) {
 }
 
 const CACHE_TTL_MS = 20 * 60 * 1000;
+// A miss earned by both vendors failing expires in minutes, not the
+// twenty a real answer keeps — the same never-cache-a-failure-under-a-
+// success's-TTL rule the SEC services follow.
+const FAILURE_TTL_MS = 2 * 60 * 1000;
 const cache = new Map(); // TICKER -> { at, payload }
 
 export function _resetInsiderCache() {
   cache.clear();
 }
-
-const UA =
-  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 ' +
-  '(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
 
 // ~24 months back, ISO yyyy-mm-dd, the window Finnhub wants.
 function windowDates() {
@@ -161,8 +162,15 @@ async function defaultSecFetch(ticker) {
   const all = [];
   for (const f of form4) {
     try {
-      const r = await fetch(toRawForm4Url(f.url), { headers: { 'User-Agent': UA, Accept: 'application/xml,text/xml,*/*' } });
-      if (!r.ok) continue;
+      // Through secFetch with the declared SEC UA, like every other
+      // EDGAR read. The old Chrome-impersonating UA is exactly what
+      // SEC blocks from datacenter IPs (secFilings.js:26-29 — the
+      // MGMT "no DEF 14A" prod bug), so this fallback silently never
+      // worked in production; secFetch also brings the throttle-retry
+      // discipline these Archives reads need.
+      const r = await secArchivesFetch(toRawForm4Url(f.url), {
+        headers: { 'User-Agent': SEC_UA, Accept: 'application/xml,text/xml,*/*' },
+      });
       all.push(...parseForm4Xml(await r.text()));
     } catch {
       // skip a bad doc; the rest still render
@@ -185,6 +193,7 @@ export async function getInsiderTransactions(ticker, deps = {}) {
 
   let transactions = [];
   let source = null;
+  let failed = false;
 
   try {
     const raw = await finnhubFetch(sym);
@@ -195,6 +204,7 @@ export async function getInsiderTransactions(ticker, deps = {}) {
     }
   } catch (err) {
     console.warn(`insiderTx finnhub(${sym}) failed:`, err.message);
+    failed = true;
   }
 
   if (source === null) {
@@ -211,10 +221,19 @@ export async function getInsiderTransactions(ticker, deps = {}) {
       }
     } catch (err) {
       console.warn(`insiderTx sec(${sym}) failed:`, err.message);
+      failed = true;
     }
   }
 
   const payload = { ticker: sym, transactions, _source: source };
-  cache.set(sym, { at: Date.now(), payload });
+  // An empty payload tainted by a vendor failure is a condition, not a
+  // fact about the ticker — let it expire in minutes. A real answer
+  // (or a genuinely quiet insider tape) keeps the twenty.
+  cache.set(sym, {
+    at: source === null && failed
+      ? Date.now() - CACHE_TTL_MS + FAILURE_TTL_MS
+      : Date.now(),
+    payload,
+  });
   return payload;
 }

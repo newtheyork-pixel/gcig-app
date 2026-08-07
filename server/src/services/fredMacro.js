@@ -21,6 +21,10 @@ let cache = { at: 0, data: null };
 // request would burn the FRED rate budget. Keyed by `${seriesId}:${days}`
 // so a callsite asking for 400 days doesn't poison a 365-day lookup.
 const SERIES_CACHE_TTL_MS = 6 * 60 * 60 * 1000; // 6h
+// A failure must never sit under a success's TTL: one timed-out minute
+// caching [] for six hours would cost the factor panel a series all
+// day. Failed entries are backdated so they expire in ~2 minutes.
+const SERIES_FAILURE_TTL_MS = 2 * 60 * 1000;
 const seriesCache = new Map();
 
 // Daily-updating series. `precision` = decimals to render. `unit` is
@@ -182,7 +186,10 @@ export async function getFredSeries(seriesId, { days = 365 } = {}) {
     const res = await fetch(url, { signal: controller.signal });
     if (!res.ok) {
       console.warn(`FRED series ${id} responded ${res.status}`);
-      seriesCache.set(cacheKey, { at: Date.now(), data: [] });
+      seriesCache.set(cacheKey, {
+        at: Date.now() - SERIES_CACHE_TTL_MS + SERIES_FAILURE_TTL_MS,
+        data: [],
+      });
       return [];
     }
     const json = await res.json();
@@ -206,7 +213,10 @@ export async function getFredSeries(seriesId, { days = 365 } = {}) {
     return out;
   } catch (err) {
     console.warn(`FRED series ${id} fetch failed:`, err.message);
-    seriesCache.set(cacheKey, { at: Date.now(), data: [] });
+    seriesCache.set(cacheKey, {
+      at: Date.now() - SERIES_CACHE_TTL_MS + SERIES_FAILURE_TTL_MS,
+      data: [],
+    });
     return [];
   } finally {
     clearTimeout(timer);

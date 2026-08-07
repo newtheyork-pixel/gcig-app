@@ -16,6 +16,16 @@ const DEFAULT_TIMEOUT_MS = 8_000;
 const EARNINGS_TTL_MS = 12 * 60 * 60 * 1000; // 12h
 const CONSENSUS_TTL_MS = 24 * 60 * 60 * 1000; // 24h
 
+// Never cache a failure under a success's TTL (the same rule secFetch
+// earned on the SEC side): one throttled Finnhub minute used to show
+// "no earnings data" / "no analyst coverage" for 12-24 hours. A failed
+// fetch is stored backdated so it retries within two minutes, while a
+// genuine empty answer keeps the full TTL.
+const FAILURE_TTL_MS = 2 * 60 * 1000;
+function failureAt(ttlMs) {
+  return Date.now() - ttlMs + FAILURE_TTL_MS;
+}
+
 const earningsCache = new Map(); // ticker → { at, data }
 const consensusCache = new Map(); // ticker → { at, data }
 
@@ -78,6 +88,7 @@ export async function getUpcomingEarnings(ticker, { daysAhead = 60 } = {}) {
     `&symbol=${encodeURIComponent(upper)}&token=${encodeURIComponent(key)}`;
 
   let data = null;
+  let failed = false;
   try {
     const json = await finnhubFetch(url);
     const rows = Array.isArray(json?.earningsCalendar) ? json.earningsCalendar : [];
@@ -91,8 +102,9 @@ export async function getUpcomingEarnings(ticker, { daysAhead = 60 } = {}) {
   } catch (err) {
     console.warn(`earnings(${upper}) failed:`, err.message);
     data = null;
+    failed = true;
   }
-  earningsCache.set(upper, { at: Date.now(), data });
+  earningsCache.set(upper, { at: failed ? failureAt(EARNINGS_TTL_MS) : Date.now(), data });
   return data;
 }
 
@@ -170,6 +182,7 @@ export async function getEarnings(ticker) {
     `&symbol=${encodeURIComponent(upper)}&token=${encodeURIComponent(key)}`;
 
   let data = { upcoming: null, history: [] };
+  let failed = false;
   try {
     const json = await finnhubFetch(url);
     const rows = Array.isArray(json?.earningsCalendar) ? json.earningsCalendar : [];
@@ -263,8 +276,9 @@ export async function getEarnings(ticker) {
   } catch (err) {
     console.warn(`getEarnings(${upper}) failed:`, err.message);
     data = { upcoming: null, history: [] };
+    failed = true;
   }
-  earningsCache.set(cacheKey, { at: Date.now(), data });
+  earningsCache.set(cacheKey, { at: failed ? failureAt(EARNINGS_TTL_MS) : Date.now(), data });
   return data;
 }
 
@@ -333,8 +347,9 @@ export async function getAnalystConsensus(ticker) {
   } catch (err) {
     console.warn(`consensus(${upper}) failed:`, err.message);
     data = null;
+    failed = true;
   }
-  consensusCache.set(upper, { at: Date.now(), data });
+  consensusCache.set(upper, { at: failed ? failureAt(CONSENSUS_TTL_MS) : Date.now(), data });
   return data;
 }
 
@@ -371,6 +386,7 @@ export async function getConsensus(ticker) {
     `&token=${encodeURIComponent(key)}`;
 
   let data = { latest: null, trend: [] };
+  let failed = false;
   try {
     const json = await finnhubFetch(url);
     if (Array.isArray(json) && json.length > 0) {
@@ -392,8 +408,9 @@ export async function getConsensus(ticker) {
   } catch (err) {
     console.warn(`getConsensus(${upper}) failed:`, err.message);
     data = { latest: null, trend: [] };
+    failed = true;
   }
-  consensusCache.set(cacheKey, { at: Date.now(), data });
+  consensusCache.set(cacheKey, { at: failed ? failureAt(CONSENSUS_TTL_MS) : Date.now(), data });
   return data;
 }
 
@@ -415,6 +432,7 @@ export async function getPeers(ticker) {
     `&token=${encodeURIComponent(key)}`;
 
   let data = [];
+  let failed = false;
   try {
     const json = await finnhubFetch(url);
     if (Array.isArray(json)) {
@@ -425,8 +443,9 @@ export async function getPeers(ticker) {
   } catch (err) {
     console.warn(`peers(${upper}) failed:`, err.message);
     data = [];
+    failed = true;
   }
-  peersCache.set(upper, { at: Date.now(), data });
+  peersCache.set(upper, { at: failed ? failureAt(PEERS_TTL_MS) : Date.now(), data });
   return data;
 }
 
@@ -444,6 +463,7 @@ export async function getPeerSnapshot(ticker) {
   if (cached && Date.now() - cached.at < SNAPSHOT_TTL_MS) return cached.data;
 
   let data = null;
+  let failed = false;
   try {
     const tok = encodeURIComponent(key);
     const sym = encodeURIComponent(upper);
@@ -475,7 +495,8 @@ export async function getPeerSnapshot(ticker) {
   } catch (err) {
     console.warn(`peerSnapshot(${upper}) failed:`, err.message);
     data = null;
+    failed = true;
   }
-  snapshotCache.set(upper, { at: Date.now(), data });
+  snapshotCache.set(upper, { at: failed ? failureAt(SNAPSHOT_TTL_MS) : Date.now(), data });
   return data;
 }

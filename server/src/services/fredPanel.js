@@ -178,15 +178,21 @@ export async function getFredPanel({ forceFresh = false } = {}) {
     return cache.data;
   }
   const seriesMaps = {};
+  // Series that errored, by id. A failed series used to be silently
+  // absent from the assembled panel, so the forecaster ran on a
+  // thinner feature set with nothing anywhere saying so. Listing them
+  // makes a degraded panel look degraded.
+  const failedSeries = [];
   // Fetch in parallel — FRED tolerates concurrent requests just fine.
   const results = await Promise.allSettled(
     SERIES.map((s) => fetchSeries(s.id, DEFAULT_START).then((obs) => ({ s, obs })))
   );
-  for (const r of results) {
+  results.forEach((r, i) => {
     if (r.status !== 'fulfilled') {
       // Network/HTTP failure on this series — log and skip.
       console.warn('FRED panel: series fetch failed:', r.reason?.message);
-      continue;
+      failedSeries.push(SERIES[i].id);
+      return;
     }
     const { s, obs } = r.value;
     // Wrap the per-series transform in try/catch too. If a series returns
@@ -196,8 +202,9 @@ export async function getFredPanel({ forceFresh = false } = {}) {
       seriesMaps[s.id] = toMonthEndMap(obs, s.frequency);
     } catch (err) {
       console.warn(`FRED panel: transform failed for ${s.id}:`, err.message);
+      failedSeries.push(s.id);
     }
-  }
+  });
   if (!seriesMaps[TARGET_ID]) {
     throw new Error(`FRED panel: target series ${TARGET_ID} missing`);
   }
@@ -206,6 +213,7 @@ export async function getFredPanel({ forceFresh = false } = {}) {
     fetchedAt: new Date().toISOString(),
     monthEnd,
     series,
+    failedSeries,
   };
   cache = { at: Date.now(), data };
   return data;

@@ -121,14 +121,10 @@ async function fetchNasdaqRows(ticker, range, assetclass) {
   return rawRows;
 }
 
-// Pull from NASDAQ and upsert. Returns the number of rows written.
-// `interval` is accepted for signature compatibility; NASDAQ only
-// serves daily, so weekly buckets are downsampled at read time.
-async function fetchNasdaqAndStore(ticker, range = '5y', interval = '1d') {
-  if (!VALID_RANGES.has(range)) range = '5y';
-  if (!VALID_INTERVALS.has(interval)) interval = '1d';
-
-  // Try common equities first; if that bucket says "no", retry as ETF.
+// Fetch + parse one range from NASDAQ, trying the equities bucket
+// first and ETFs second. Returns parsed bar rows; throws 404 when
+// neither bucket knows the symbol.
+async function fetchNasdaqBars(ticker, range) {
   let raw = await fetchNasdaqRows(ticker, range, 'stocks');
   if (raw == null || raw.length === 0) {
     raw = await fetchNasdaqRows(ticker, range, 'etf');
@@ -160,8 +156,63 @@ async function fetchNasdaqAndStore(ticker, range = '5y', interval = '1d') {
       source: 'nasdaq',
     });
   }
+  return rows;
+}
 
+// A close that moved after the fact is not a price update, it is a
+// restatement: NASDAQ back-adjusts the whole series on a split or
+// dividend adjustment, so the bars stored last month describe a share
+// that no longer exists. Appending fresh bars onto the old series
+// would manufacture a cliff at the splice date — a 10-for-1 split
+// reads as a 90% crash. Returns the first mismatch (for the log line)
+// or null. 0.5% is far above float noise and far below any real
+// corporate action. Exported for the colocated suite — pure, no DB.
+export function detectRestatement(fetched, stored, tolerance = 0.005) {
+  const key = (d) => (d instanceof Date ? d.toISOString().slice(0, 10) : String(d));
+  const prior = new Map();
+  for (const b of stored || []) {
+    if (b && b.close != null) prior.set(key(b.date), b.close);
+  }
+  for (const r of fetched || []) {
+    if (!r || r.close == null) continue;
+    const old = prior.get(key(r.date));
+    if (old == null || !(old > 0)) continue;
+    if (Math.abs(r.close - old) / old > tolerance) {
+      return { date: key(r.date), stored: old, fetched: r.close };
+    }
+  }
+  return null;
+}
+
+// Pull from NASDAQ and upsert. Returns the number of rows written.
+// `interval` is accepted for signature compatibility; NASDAQ only
+// serves daily, so weekly buckets are downsampled at read time.
+async function fetchNasdaqAndStore(ticker, range = '5y', interval = '1d') {
+  if (!VALID_RANGES.has(range)) range = '5y';
+  if (!VALID_INTERVALS.has(interval)) interval = '1d';
+
+  let rows = await fetchNasdaqBars(ticker, range);
   if (rows.length === 0) return 0;
+
+  // Where the fetch overlaps bars already stored, the closes must
+  // agree. If they don't, the stored history is stale (restated after
+  // a split/adjustment) — wipe it and take the full series fresh
+  // rather than appending a discontinuity.
+  const minDate = rows.reduce((m, r) => (r.date < m ? r.date : m), rows[0].date);
+  const stored = await prisma.priceBar.findMany({
+    where: { ticker, date: { gte: minDate } },
+    select: { date: true, close: true },
+  });
+  const restated = detectRestatement(rows, stored);
+  if (restated) {
+    console.warn(
+      `priceHistory(${ticker}): close on ${restated.date} restated ` +
+        `${restated.stored} -> ${restated.fetched} — wiping stale series and re-backfilling`
+    );
+    await prisma.priceBar.deleteMany({ where: { ticker } });
+    rows = await fetchNasdaqBars(ticker, 'max');
+    if (rows.length === 0) return 0;
+  }
 
   // Upsert one bar at a time. Prisma doesn't expose ON CONFLICT-batched
   // updates for SQLite/Postgres uniformly, but the row count is small
@@ -184,6 +235,25 @@ async function fetchNasdaqAndStore(ticker, range = '5y', interval = '1d') {
   }
 
   return rows.length;
+}
+
+// Size a top-up to the actual hole. A fixed '1mo' pull assumes the
+// series went stale yesterday; a ticker nobody has charted since
+// spring has a season-long gap that a month of bars would silently
+// bridge with one long line. Thresholds sit a few days inside
+// rangeToCutoff's windows so the chosen range always reaches past the
+// newest stored bar; a gap beyond every range means a full backfill.
+// Exported for the colocated suite — pure, no DB.
+export function rangeForGap(newestBarDate) {
+  const gapDays = (Date.now() - new Date(newestBarDate).getTime()) / 86400_000;
+  if (gapDays <= 25) return '1mo';
+  if (gapDays <= 85) return '3mo';
+  if (gapDays <= 180) return '6mo';
+  if (gapDays <= 360) return '1y';
+  if (gapDays <= 730) return '2y';
+  if (gapDays <= 1820) return '5y';
+  if (gapDays <= 3650) return '10y';
+  return 'max';
 }
 
 // Public: read history from cache. Backfills if missing or stale.
@@ -224,11 +294,13 @@ export async function getHistory(rawTicker, range = '6mo') {
       console.warn(`priceHistory(${ticker}) backfill failed:`, err.message);
     }
   } else if (isStale) {
-    // Top up with a short pull so we don't blow the rate budget on
-    // a full 5y refetch every day. The unique index dedupes overlapping
-    // bars; we just add today's (and any holiday-recovery bars).
+    // Top up with a pull sized to the gap — a month when the series
+    // went stale yesterday, wider when the ticker sat unrequested —
+    // so we neither blow the rate budget on a full 5y refetch nor
+    // leave a hole behind a fixed month. The unique index dedupes
+    // overlapping bars.
     try {
-      await fetchNasdaqAndStore(ticker, '1mo', '1d');
+      await fetchNasdaqAndStore(ticker, rangeForGap(latest.date), '1d');
     } catch (err) {
       console.warn(`priceHistory(${ticker}) top-up failed:`, err.message);
     }
@@ -358,7 +430,15 @@ export async function refreshUniverse() {
   let failed = 0;
   for (const ticker of tickers) {
     try {
-      await fetchNasdaqAndStore(ticker, '1mo', '1d');
+      // Same gap-sizing as the read path: the nightly run usually needs
+      // a month, but a ticker the cron missed for a stretch (redeploy
+      // gaps, upstream outages) needs however much it actually missed.
+      const latest = await prisma.priceBar.findFirst({
+        where: { ticker },
+        orderBy: { date: 'desc' },
+        select: { date: true },
+      });
+      await fetchNasdaqAndStore(ticker, latest ? rangeForGap(latest.date) : '5y', '1d');
       ok += 1;
     } catch (err) {
       failed += 1;

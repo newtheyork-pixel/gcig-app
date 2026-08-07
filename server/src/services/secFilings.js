@@ -219,14 +219,25 @@ export async function getRecentFilings(ticker, { limit = 10 } = {}) {
 
   const info = await getCikForTicker(upper);
   if (!info) {
-    // Cache the negative result so we don't keep retrying the lookup
-    // for unknown tickers (e.g. cash labels, illiquid foreign issues).
-    filingsCache.set(cacheKey, { at: Date.now(), data: [] });
+    // Two different facts hide behind one null, and only one of them
+    // deserves the long TTL. With the directory in hand, an unknown
+    // symbol is an answer (cash labels, illiquid foreign issues) —
+    // cache it so we don't keep retrying the lookup. Without the
+    // directory, EVERY symbol looks unknown and this null is our
+    // outage wearing the ticker's name; same split secFundamentals
+    // draws with unresolvedError(directoryLoaded).
+    filingsCache.set(cacheKey, {
+      at: tickerDirectoryLoaded()
+        ? Date.now()
+        : Date.now() - FILINGS_TTL_MS + FAILURE_TTL_MS,
+      data: [],
+    });
     return [];
   }
 
   const url = `${SUBMISSIONS_BASE}/submissions/CIK${info.cik}.json`;
   let filings = [];
+  let failed = false;
   try {
     const data = await fetchJson(url);
     const r = data?.filings?.recent;
@@ -260,9 +271,16 @@ export async function getRecentFilings(ticker, { limit = 10 } = {}) {
     }
   } catch (err) {
     console.warn(`SEC filings(${upper}) failed:`, err.message);
+    failed = true;
   }
 
-  filingsCache.set(cacheKey, { at: Date.now(), data: filings });
+  // Same rule as getLatestFilingByForm above: a throttled minute must
+  // never cost a ticker its filings for six hours. Successes keep the
+  // long TTL; a failure's empty list expires in minutes.
+  filingsCache.set(cacheKey, {
+    at: failed ? Date.now() - FILINGS_TTL_MS + FAILURE_TTL_MS : Date.now(),
+    data: filings,
+  });
   return filings.slice(0, limit);
 }
 
@@ -301,8 +319,12 @@ export async function getCompanyIdentity(ticker) {
   if (hit && Date.now() - hit.at < FILINGS_TTL_MS) return hit.data;
 
   let out = null;
+  let failed = false;
   try {
     const info = await resolveCik(upper);
+    // No CIK with no directory loaded is our outage, not a fact about
+    // the ticker — it must not read as "no identity" for six hours.
+    if (!info && !tickerDirectoryLoaded()) failed = true;
     if (info) {
       const d = await fetchJson(`${SUBMISSIONS_BASE}/submissions/CIK${info.cik}.json`);
       const b = d?.addresses?.business || {};
@@ -327,8 +349,14 @@ export async function getCompanyIdentity(ticker) {
     }
   } catch (err) {
     console.warn(`SEC identity(${upper}) failed:`, err.message);
+    failed = true;
   }
-  identityCache.set(upper, { at: Date.now(), data: out });
+  // A null earned by a throttle expires in minutes; a real answer (or a
+  // genuinely unknown symbol) keeps the long TTL.
+  identityCache.set(upper, {
+    at: failed ? Date.now() - FILINGS_TTL_MS + FAILURE_TTL_MS : Date.now(),
+    data: out,
+  });
   return out;
 }
 
