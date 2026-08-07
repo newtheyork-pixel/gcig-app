@@ -13,7 +13,9 @@ import { streamDownload, uploadFile } from '../services/oneDriveStorage.js';
 const prisma = new PrismaClient();
 const router = express.Router();
 
-const SEMVER = /^\d+\.\d+\.\d+$/;
+// Three segments or four: the point-release convention (0.2.2.1) is a
+// legitimate shape for a hotfix on a build already in the field.
+const SEMVER = /^\d+\.\d+\.\d+(\.\d+)?$/;
 /// Where clients reach us. Overridable so a staging deploy does not hand
 /// members a download URL pointing at production.
 const PUBLIC_API = (process.env.PUBLIC_API_URL || 'https://gcig-api.onrender.com/api').replace(/\/$/, '');
@@ -41,7 +43,11 @@ router.use(verifyJwt);
 export function newer(a, b) {
   const pa = String(a).split('.').map(Number);
   const pb = String(b).split('.').map(Number);
-  for (let i = 0; i < 3; i += 1) {
+  // Every segment, not the first three — a four-part hotfix (0.2.2.1)
+  // compared over three segments reads as equal to its base release,
+  // and an update nobody is offered is an update nobody has.
+  const n = Math.max(pa.length, pb.length);
+  for (let i = 0; i < n; i += 1) {
     const x = pa[i] || 0;
     const y = pb[i] || 0;
     if (x !== y) return x > y;
