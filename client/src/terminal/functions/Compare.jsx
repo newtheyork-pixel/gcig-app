@@ -187,6 +187,8 @@ export default function Compare({ ticker, onOpen }) {
   // tickers. Keyed off the snapshot (`data`), not the live quotes, so
   // it fires once per set load rather than on every 20s price tick.
   const briefRanForRef = useRef('');
+  const aliveRef = useRef(true);
+  useEffect(() => () => { aliveRef.current = false; }, []);
   useEffect(() => {
     if (!data || resolvable.length < 2) {
       setBrief('');
@@ -194,7 +196,6 @@ export default function Compare({ ticker, onOpen }) {
     }
     if (briefRanForRef.current === setKey) return;
     briefRanForRef.current = setKey;
-    let cancelled = false;
     setBriefLoading(true);
     const context = [
       `Head-to-head comparison of ${resolvable.length} tickers:`,
@@ -209,17 +210,18 @@ export default function Compare({ ticker, onOpen }) {
     api
       .post('/terminal/annotate', { function: 'CMP', context })
       .then(({ data }) => {
-        if (!cancelled) setBrief(data.brief || '');
+        if (aliveRef.current) setBrief(data.brief || '');
       })
       .catch(() => {
-        if (!cancelled) setBrief('');
+        if (aliveRef.current) setBrief('');
       })
       .finally(() => {
-        if (!cancelled) setBriefLoading(false);
+        // Unconditional against poll ticks: `resolvable` gets a fresh
+        // identity every 20s, so a per-effect cancelled flag flipped
+        // before a slow annotate resolved and the set-keyed ref then
+        // blocked the retry — the brief hung on "Generating…" forever.
+        if (aliveRef.current) setBriefLoading(false);
       });
-    return () => {
-      cancelled = true;
-    };
   }, [data, resolvable, setKey]);
 
   const onKeyDown = (e) => {

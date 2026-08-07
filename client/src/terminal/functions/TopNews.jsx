@@ -60,8 +60,11 @@ export default function TopNews() {
     fetchTop(true);
   }, []);
 
+  // Poll only while visible — a background tab shouldn't spend the caps.
   useEffect(() => {
-    const id = setInterval(() => fetchTop(false), POLL_INTERVAL_MS);
+    const id = setInterval(() => {
+      if (!document.hidden) fetchTop(false);
+    }, POLL_INTERVAL_MS);
     return () => clearInterval(id);
   }, []);
 
@@ -72,30 +75,34 @@ export default function TopNews() {
     return () => clearInterval(id);
   }, []);
 
-  // AI brief
+  // AI brief on genuinely new headlines. The 60s poll returns a fresh
+  // array identity even when nothing changed (server caches 10 min), so
+  // keying on `items` alone re-ran the LLM every minute per open pane.
+  // Fingerprint the content and only re-annotate when it moves.
+  const briefKeyRef = useRef('');
+  const aliveRef = useRef(true);
+  useEffect(() => () => { aliveRef.current = false; }, []);
   useEffect(() => {
     if (!items.length) return;
-    let cancelled = false;
+    const top = [...items].sort((a, b) => tsOf(b) - tsOf(a)).slice(0, 10);
+    const key = top.map((it) => it.url || it.title).join('|');
+    if (briefKeyRef.current === key) return;
+    briefKeyRef.current = key;
     setBriefLoading(true);
-    const context = [...items]
-      .sort((a, b) => tsOf(b) - tsOf(a))
-      .slice(0, 10)
+    const context = top
       .map((it, i) => `${i + 1}. ${formatTime(it.publishedAt)} — ${it.title || ''} (${it.source || ''})`)
       .join('\n');
     api
       .post('/terminal/annotate', { ticker: '', function: 'TOP', context })
       .then(({ data }) => {
-        if (!cancelled) setBrief(data.brief || '');
+        if (aliveRef.current) setBrief(data.brief || '');
       })
       .catch(() => {
-        if (!cancelled) setBrief('');
+        if (aliveRef.current) setBrief('');
       })
       .finally(() => {
-        if (!cancelled) setBriefLoading(false);
+        if (aliveRef.current) setBriefLoading(false);
       });
-    return () => {
-      cancelled = true;
-    };
   }, [items]);
 
   if (loading) return <div className="term-panel"><div className="term-loading">Loading top news…</div></div>;

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Component, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import CommandBar from './CommandBar.jsx';
 import FloatingWindow from './FloatingWindow.jsx';
 import SideRail from './components/SideRail.jsx';
@@ -6,6 +6,42 @@ import BreakingStrip from './components/BreakingStrip.jsx';
 import useTerminalPrefs from './hooks/useTerminalPrefs.js';
 import { getFunction, FUNCTIONS } from './registry.js';
 import { useAuth } from '../context/AuthContext.jsx';
+
+// A render error in one panel must cost that panel, not the workspace.
+// Without this, React 18 unmounts the whole tree on an uncaught render
+// throw and every open window dies with it. Keyed by fn+ticker so
+// switching the window to another function gives it a clean slate.
+class PanelBoundary extends Component {
+  constructor(props) {
+    super(props);
+    this.state = { failed: false };
+  }
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+  componentDidCatch(err) {
+    console.error(`panel ${this.props.fn} crashed:`, err);
+  }
+  componentDidUpdate(prev) {
+    if (this.state.failed && (prev.fn !== this.props.fn || prev.ticker !== this.props.ticker)) {
+      this.setState({ failed: false });
+    }
+  }
+  render() {
+    if (this.state.failed) {
+      return (
+        <div style={{ padding: '14px 16px', color: 'var(--term-amber)', fontSize: 12 }}>
+          <div style={{ fontWeight: 700, marginBottom: 6 }}>PANEL FAILED</div>
+          <div style={{ opacity: 0.8 }}>
+            {this.props.fn} hit a rendering error. Close this window and reopen it; the rest of the
+            workspace is unaffected.
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 // TerminalShell — the amber/black workstation. Owns:
 //   - The data-theme scoping (so the rest of the app is unaffected)
@@ -344,12 +380,14 @@ export default function TerminalShell({ onExit }) {
               }
             >
               {Comp ? (
-                <Comp
-                  ticker={w.ticker}
-                  fn={fnDef}
-                  workspaceContext={workspaceContext}
-                  onOpen={openFromPanel}
-                />
+                <PanelBoundary fn={w.fn} ticker={w.ticker}>
+                  <Comp
+                    ticker={w.ticker}
+                    fn={fnDef}
+                    workspaceContext={workspaceContext}
+                    onOpen={openFromPanel}
+                  />
+                </PanelBoundary>
               ) : null}
             </FloatingWindow>
           );

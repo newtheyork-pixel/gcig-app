@@ -65,10 +65,14 @@ export default function News({ ticker }) {
     fetchNews(true);
   }, [ticker]);
 
-  // Auto-poll every 60s
+  // Auto-poll every 60s — but not while the tab is hidden. The quote
+  // panels get this for free from useLiveRefresh; a raw interval kept
+  // burning the data and AI caps from background tabs.
   useEffect(() => {
     if (!ticker) return;
-    const id = setInterval(() => fetchNews(false), POLL_INTERVAL_MS);
+    const id = setInterval(() => {
+      if (!document.hidden) fetchNews(false);
+    }, POLL_INTERVAL_MS);
     return () => clearInterval(id);
   }, [ticker]);
 
@@ -79,30 +83,36 @@ export default function News({ ticker }) {
     return () => clearInterval(id);
   }, []);
 
-  // AI brief on new data
+  // AI brief on genuinely new data. The 60s poll hands back a fresh
+  // array identity even when the headlines are byte-identical (the
+  // server caches for 10 minutes), so keying on `items` re-ran the LLM
+  // annotate every minute per open pane — burning the shared AI cap to
+  // recompute an unchanged brief. Fingerprint the content instead and
+  // only re-annotate when a headline actually changes.
+  const briefKeyRef = useRef('');
+  const aliveRef = useRef(true);
+  useEffect(() => () => { aliveRef.current = false; }, []);
   useEffect(() => {
     if (!items.length || !ticker) return;
-    let cancelled = false;
+    const top = [...items].sort((a, b) => tsOf(b) - tsOf(a)).slice(0, 8);
+    const key = `${ticker}|${top.map((it) => it.url || it.title).join('|')}`;
+    if (briefKeyRef.current === key) return;
+    briefKeyRef.current = key;
     setBriefLoading(true);
-    const context = [...items]
-      .sort((a, b) => tsOf(b) - tsOf(a))
-      .slice(0, 8)
+    const context = top
       .map((it, i) => `${i + 1}. ${formatTime(it.publishedAt || it.providerPublishTime || it.time)} — ${it.title || ''}`)
       .join('\n');
     api
       .post('/terminal/annotate', { ticker, function: 'CN', context })
       .then(({ data }) => {
-        if (!cancelled) setBrief(data.brief || '');
+        if (aliveRef.current) setBrief(data.brief || '');
       })
       .catch(() => {
-        if (!cancelled) setBrief('');
+        if (aliveRef.current) setBrief('');
       })
       .finally(() => {
-        if (!cancelled) setBriefLoading(false);
+        if (aliveRef.current) setBriefLoading(false);
       });
-    return () => {
-      cancelled = true;
-    };
   }, [items, ticker]);
 
   if (!ticker) {

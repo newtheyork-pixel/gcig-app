@@ -164,6 +164,7 @@ export default function WeatherRadar() {
   useEffect(() => {
     fetchAlerts();
     const id = setInterval(() => {
+      if (document.hidden) return;
       fetchAlerts();
       installRadar(mapRef.current);
     }, REFRESH_MS);
@@ -186,6 +187,9 @@ export default function WeatherRadar() {
   // Confab-safe AI brief: only ask when there's something to read.
   // Zero active warnings → skip the call and show a plain line; a dead
   // LLM degrades to the server's "Data unavailable." like every panel.
+  const briefKeyRef = useRef('');
+  const aliveRef = useRef(true);
+  useEffect(() => () => { aliveRef.current = false; }, []);
   useEffect(() => {
     if (!data) return undefined;
     const totalActive = (data.mappedCount || 0) + (data.areaOnlyCount || 0);
@@ -193,7 +197,12 @@ export default function WeatherRadar() {
       setBrief('');
       return undefined;
     }
-    let cancelled = false;
+    // Same content-fingerprint rule as the news panes: the 5-minute
+    // refresh hands back a fresh object even when the alert set is
+    // unchanged, and each identity change was another LLM call.
+    const key = (data.list || []).slice(0, 12).map((a) => `${a.event}|${a.expires}`).join(';');
+    if (briefKeyRef.current === key) return undefined;
+    briefKeyRef.current = key;
     setBriefLoading(true);
     const lines = [];
     const counts = data.counts || {};
@@ -213,17 +222,15 @@ export default function WeatherRadar() {
     api
       .post('/terminal/annotate', { function: 'RDR', context: lines.join('\n') })
       .then(({ data: payload }) => {
-        if (!cancelled) setBrief(payload.brief || '');
+        if (aliveRef.current) setBrief(payload.brief || '');
       })
       .catch(() => {
-        if (!cancelled) setBrief('');
+        if (aliveRef.current) setBrief('');
       })
       .finally(() => {
-        if (!cancelled) setBriefLoading(false);
+        if (aliveRef.current) setBriefLoading(false);
       });
-    return () => {
-      cancelled = true;
-    };
+    return undefined;
   }, [data]);
 
   const onRefresh = () => {

@@ -211,7 +211,7 @@ export default function Movers({ onOpen }) {
                 <td className="num">
                   <FlashPrice value={m.last}>{fmt.px(m.last)}</FlashPrice>
                 </td>
-                <td className={`num ${m.changePct >= 0 ? 'pos' : 'neg'}`}>
+                <td className={`num ${m.changePct == null ? '' : m.changePct >= 0 ? 'pos' : 'neg'}`}>
                   {fmt.pct(m.changePct)}
                 </td>
               </tr>

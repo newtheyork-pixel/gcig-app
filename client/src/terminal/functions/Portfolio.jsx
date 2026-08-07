@@ -65,7 +65,11 @@ function buildRow(h, q) {
     uplDollar = h.dollarReturn != null ? h.dollarReturn : null;
     uplPct = h.percentReturn != null ? h.percentReturn / 100 : null;
   }
-  return { ...h, last, mv, dayPL, dayPct, uplDollar, uplPct };
+  // Server-derived from the bar cache; fraction here, like every other
+  // percent on the row.
+  const ytdPct = h.ytdReturn != null ? h.ytdReturn / 100 : null;
+
+  return { ...h, last, mv, dayPL, dayPct, uplDollar, uplPct, ytdPct };
 }
 
 const TABS = [
@@ -209,10 +213,21 @@ export default function Portfolio({ onOpen }) {
         dayPct,
         uplDollar,
         uplPct,
-        // Price return since the year opened. Server-derived from the bar
-        // cache when the sheet has no column for it; fraction here, like
-        // every other percent on this row.
-        ytdPct: h.ytdReturn != null ? h.ytdReturn / 100 : null,
+        // Price return since the year opened, rebuilt from the per-holding
+        // YTD figures: each position's start-of-year value is implied by
+        // walking its current value back through its own YTD move, so the
+        // fund-level number is exact for a constant-shares book rather
+        // than a drifting weighted average.
+        ytdPct: (() => {
+          let start = 0;
+          let now = 0;
+          for (const r of positions) {
+            if (r.ytdPct == null || r.mv == null || 1 + r.ytdPct <= 0) continue;
+            start += r.mv / (1 + r.ytdPct);
+            now += r.mv;
+          }
+          return start > 0 ? (now - start) / start : null;
+        })(),
         count: positions.length,
         benchDay,
         activeDay: dayPct != null && benchDay != null ? dayPct - benchDay : null,

@@ -177,7 +177,11 @@ export default function Chart({ ticker }) {
     const prev = points.length > 1 ? points[points.length - 2] : null;
     const lastClose = last.close;
     const liveLast = live && live.last != null ? live.last : lastClose;
-    const prevClose = prev ? prev.close : null;
+    // The bar cache is end-of-day, so during a session the newest bar is
+    // usually yesterday and points[-2] is two sessions back. The live
+    // quote carries the true prior close; the bar fallback only stands
+    // when there is no live tap (off-hours, unquoted symbols).
+    const prevClose = live && live.prevClose != null ? live.prevClose : prev ? prev.close : null;
     const changeAbs = prevClose != null ? liveLast - prevClose : null;
     const changePct = prevClose ? changeAbs / prevClose : null;
 

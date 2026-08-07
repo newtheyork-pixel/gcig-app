@@ -37,8 +37,10 @@ export default function Intraday({ ticker }) {
     { enabled: !!sym, intervalMs: 30000 }
   );
 
-  const up = data?.pctChange == null ? true : data.pctChange >= 0;
-  const color = up ? 'var(--term-positive)' : 'var(--term-negative)';
+  const unknown = data?.pctChange == null;
+  const up = unknown ? true : data.pctChange >= 0;
+  // An unknown change is neutral amber, not a green vote of confidence.
+  const color = unknown ? 'var(--term-amber)' : up ? 'var(--term-positive)' : 'var(--term-negative)';
   const points = data?.points || [];
 
   // A touch of vertical headroom around the line and the prior-close

@@ -75,10 +75,15 @@ export default function WorldIndices() {
   // ref survives the poll-driven re-renders; it resets only on a true
   // remount (a fresh open of the pane).
   const briefDoneRef = useRef(false);
+  // Unmount guard only. The old per-effect `cancelled` flag flipped on
+  // every 20s poll tick because `data` gets a fresh identity each cycle,
+  // so an annotate slower than one tick was discarded and the ref then
+  // blocked any retry — "Generating…" for the life of the pane.
+  const aliveRef = useRef(true);
+  useEffect(() => () => { aliveRef.current = false; }, []);
   useEffect(() => {
     if (!data?.rows?.length || briefDoneRef.current) return;
     briefDoneRef.current = true;
-    let cancelled = false;
     setBriefLoading(true);
     const context = data.rows
       .map(
@@ -89,17 +94,14 @@ export default function WorldIndices() {
     api
       .post('/terminal/annotate', { function: 'WEI', context })
       .then(({ data: res }) => {
-        if (!cancelled) setBrief(res.brief || '');
+        if (aliveRef.current) setBrief(res.brief || '');
       })
       .catch(() => {
-        if (!cancelled) setBrief('');
+        if (aliveRef.current) setBrief('');
       })
       .finally(() => {
-        if (!cancelled) setBriefLoading(false);
+        if (aliveRef.current) setBriefLoading(false);
       });
-    return () => {
-      cancelled = true;
-    };
   }, [data]);
 
   if (loading) {

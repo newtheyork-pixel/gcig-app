@@ -65,7 +65,7 @@ export default function Financials({ ticker, freq: _freq }) {
     const rows = data[statement] || [];
     const periods = data.periods || [];
     const at = (key) => (rows.find((r) => r.key === key) || {}).values || [];
-    const rev = (data.income.find((r) => r.key === 'revenue') || {}).values || [];
+    const rev = ((data.income || []).find((r) => r.key === 'revenue') || {}).values || [];
 
     const byPeriod = (fn, kind) =>
       ({ kind, values: periods.map((_, i) => fn(i)) });
