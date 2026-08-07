@@ -11,6 +11,7 @@ import { resolveCik } from '../services/secFundamentals.js';
 import { getProxyStatement } from '../services/proxyStatement.js';
 import { getExecutiveBios } from '../services/executiveBios.js';
 import { wikipediaBio } from '../services/wikipediaBio.js';
+import { filingBio } from '../services/filingBio.js';
 import { saveProfiles, storedProfiles } from '../services/personProfiles.js';
 import { parseLeadership, parseBoard, parseComp, buildNetwork } from '../services/governanceParsers.js';
 import { getOfficerRoster, mergeLeadership, mergeBoard } from '../services/officerRoster.js';
@@ -344,6 +345,7 @@ export async function execBiosHandler(req, res, deps = {}) {
   const fetchBios = deps.getExecutiveBios || getExecutiveBios;
   const fetchRoster = deps.getOfficerRoster || getOfficerRoster;
   const fetchWiki = deps.wikipediaBio || wikipediaBio;
+  const fetchFilingBio = deps.filingBio || filingBio;
   const fetchIdentity = deps.getCompanyIdentity || getCompanyIdentity;
   const loadStored = deps.storedProfiles || storedProfiles;
   const persist = deps.saveProfiles || saveProfiles;
@@ -383,12 +385,29 @@ export async function execBiosHandler(req, res, deps = {}) {
       }
     }
 
-    // Wikipedia for the bio-less, capped: a C-suite is a handful of
-    // people, and each lookup is two keyless requests.
+    // For the bio-less, two fallback tiers in trust order. First the
+    // SEC's own record: the appointment 8-K or proxy paragraph EDGAR
+    // full-text search can find ("Kevan Parekh, 53, ... joined Apple
+    // in June 2013"), which is a primary document about exactly this
+    // person. Sequential, not fanned out — these are SEC requests and
+    // bursts are how panels go dark. Then Wikipedia for whoever the
+    // filings still leave untold, in parallel because it is keyless
+    // and rate-generous.
     const companyName = identity?.legalName || identity?.name || raw;
     const missing = [...byName.values()].filter((p) => !p.bio).slice(0, 8);
+    if (identity?.cik) {
+      for (const p of missing) {
+        if (p.bio) continue;
+        const f = await fetchFilingBio(p.name, identity.cik).catch(() => null);
+        if (f) {
+          p.bio = f.bio;
+          p.bioSource = f.source;
+          p.bioUrl = f.url;
+        }
+      }
+    }
     await Promise.all(
-      missing.map(async (p) => {
+      missing.filter((p) => !p.bio).map(async (p) => {
         const w = await fetchWiki(p.name, companyName).catch(() => null);
         if (w) {
           p.bio = w.bio;

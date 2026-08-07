@@ -14,6 +14,7 @@ import router, { execBiosHandler } from './terminal.js';
 // gets its own cases below.
 const quietDeps = {
   getOfficerRoster: async () => ({ officers: [] }),
+  filingBio: async () => null,
   getCompanyIdentity: async () => null,
   wikipediaBio: async () => null,
   storedProfiles: async () => [],
