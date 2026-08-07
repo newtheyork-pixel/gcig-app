@@ -60,6 +60,22 @@ export function extractBio(html, name) {
   let bestScore = 0;
   for (const b of blocks) {
     if (/duly caused|signed on its behalf|power of attorney|signature/i.test(b)) continue;
+    // The paragraph must be ABOUT the person, not merely mention them:
+    // a successor's appointment names the departing officer too
+    // ("succeeding Katherine Adams"), and that is a bio of the OTHER
+    // person. In a real bio the subject arrives early and recurs.
+    const mentions = (b.match(new RegExp(surnameRe.source, 'gi')) || []).length;
+    const firstAt = b.search(surnameRe);
+    if (firstAt > b.length * 0.4 && mentions < 3) continue;
+    // Whose appointment IS this? "announced that Jennifer Newstead
+    // will become General Counsel, succeeding Katherine Adams" is a
+    // block about Newstead however many times it discusses Adams. If
+    // the appointment verbs name a subject and none of them is our
+    // person, the block belongs to somebody else.
+    const subjects = [...b.matchAll(
+      /\b(?:appointed|named|announced that|promoted)\s+([A-Z][a-zA-Z.'-]+(?:\s+[A-Z][a-zA-Z.'-]+){1,2})|\b([A-Z][a-zA-Z.'-]+(?:\s+[A-Z][a-zA-Z.'-]+){1,2})\s+(?:will become|has been appointed|was appointed|has been named)/g
+    )].map((m) => (m[1] || m[2] || ''));
+    if (subjects.length > 0 && !subjects.some((s) => surnameRe.test(s))) continue;
     let score = 0;
     if (/\b(joined|previously|prior to|has served|served as|assumed)\b/i.test(b)) score += 2;
     if (new RegExp(`${surname}[^.]{0,40},\\s*\\d{2},`).test(b)) score += 3; // "Parekh, 53,"
@@ -84,6 +100,82 @@ function docUrl(cikRaw, id) {
   if (!accession || !filename || /\.pdf$/i.test(filename)) return null;
   const cik = String(parseInt(cikRaw, 10));
   return `https://www.sec.gov/Archives/edgar/data/${cik}/${accession.replace(/-/g, '')}/${filename}`;
+}
+
+// ── The no-search path ───────────────────────────────────────────────
+//
+// efts.sec.gov (full-text search) is behind an edge that refuses cloud
+// datacenter IPs, so the FTS route above works from a laptop and
+// returns nothing from Render. The submissions feed — the endpoint the
+// whole terminal already lives on and that Render provably reaches —
+// marks every 8-K with its item numbers, and Item 5.02 IS the officer
+// appointment/departure item. The documents that carry bios are
+// therefore enumerable without any search at all.
+
+const companyDocsCache = new Map(); // cik -> { at, docs }
+const docTextCache = new Map(); // url -> { at, text }
+const DOC_CACHE_MAX = 40;
+
+async function candidateDocs(cikStr, fetcher) {
+  const hit = companyDocsCache.get(cikStr);
+  if (hit && Date.now() - hit.at < TTL_MS) return hit.docs;
+  const docs = [];
+  try {
+    const res = await fetcher(
+      `https://data.sec.gov/submissions/CIK${cikStr.padStart(10, '0')}.json`,
+      { headers: { 'User-Agent': SEC_UA, Accept: 'application/json' } }
+    );
+    const j = await res.json();
+    const r = j?.filings?.recent || {};
+    const cikNum = String(parseInt(cikStr, 10));
+    const rows = (r.form || []).map((form, i) => ({
+      form,
+      items: r.items?.[i] || '',
+      accession: r.accessionNumber?.[i] || '',
+      doc: r.primaryDocument?.[i] || '',
+      date: r.filingDate?.[i] || '',
+    }));
+    let proxies = 0;
+    for (const row of rows) {
+      if (!row.accession || !row.doc || /\.pdf$/i.test(row.doc)) continue;
+      const isAppointment = row.form === '8-K' && row.items.includes('5.02');
+      const isProxy = row.form === 'DEF 14A' && proxies < 1;
+      if (!isAppointment && !isProxy) continue;
+      if (isProxy) proxies += 1;
+      docs.push({
+        form: row.form,
+        date: row.date,
+        url: `https://www.sec.gov/Archives/edgar/data/${cikNum}/${row.accession.replace(/-/g, '')}/${row.doc}`,
+      });
+      if (docs.length >= 12) break;
+    }
+  } catch {
+    /* an empty list is the honest miss */
+  }
+  companyDocsCache.set(cikStr, { at: Date.now(), docs });
+  if (companyDocsCache.size > 100) {
+    companyDocsCache.delete(companyDocsCache.keys().next().value);
+  }
+  return docs;
+}
+
+async function docText(url, fetcher) {
+  const hit = docTextCache.get(url);
+  if (hit && Date.now() - hit.at < TTL_MS) return hit.text;
+  let text = null;
+  try {
+    const res = await fetcher(url, { headers: { 'User-Agent': SEC_UA } });
+    text = (await res.text()).slice(0, MAX_DOC_BYTES);
+  } catch {
+    text = null;
+  }
+  // Cached even as a null: fifteen officers walking the same dead URL
+  // is fifteen times one failure otherwise.
+  docTextCache.set(url, { at: Date.now(), text });
+  if (docTextCache.size > DOC_CACHE_MAX) {
+    docTextCache.delete(docTextCache.keys().next().value);
+  }
+  return text;
 }
 
 /**
@@ -121,20 +213,33 @@ export async function filingBio(name, cik, deps = {}) {
       const url = docUrl(cikStr, h._id);
       if (!url) continue;
       tried += 1;
-      try {
-        const doc = await fetcher(url, { headers: { 'User-Agent': SEC_UA } });
-        const html = (await doc.text()).slice(0, MAX_DOC_BYTES);
-        const bio = extractBio(html, person);
-        if (bio) {
-          value = { bio, url, source: h._source?.file_type || 'SEC filing' };
-          break;
-        }
-      } catch {
-        /* one unreadable document is not an answer about the person */
+      const html = await docText(url, fetcher);
+      if (!html) continue;
+      const bio = extractBio(html, person);
+      if (bio) {
+        value = { bio, url, source: h._source?.file_type || 'SEC filing' };
+        break;
       }
     }
   } catch {
     value = null;
+  }
+
+  // The search host refused or found nothing: walk the appointment
+  // 8-Ks and the newest proxy directly. The list and every document
+  // are cached per company, so a fifteen-officer panel costs the same
+  // handful of fetches as a one-officer one.
+  if (!value) {
+    const docs = await candidateDocs(cikStr, fetcher);
+    for (const d of docs) {
+      const html = await docText(d.url, fetcher);
+      if (!html) continue;
+      const bio = extractBio(html, person);
+      if (bio) {
+        value = { bio, url: d.url, source: d.form };
+        break;
+      }
+    }
   }
 
   cache.set(key, { at: Date.now(), value });

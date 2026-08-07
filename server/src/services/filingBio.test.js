@@ -32,3 +32,11 @@ test('compensation-table narrative is rejected', () => {
 test('a document about somebody else yields nothing', () => {
   assert.equal(extractBio(APPOINTMENT, 'Jane Nowhere'), null);
 });
+
+test('a successor announcement is not the departing officer’s bio', () => {
+  const NEWSTEAD = `
+<p>On December 4, 2025, Apple Inc. ("Apple") announced that Jennifer Newstead will become Apple's General Counsel, succeeding Katherine Adams. Ms. Adams, who previously announced her intention to retire, served Apple since 2017. Ms. Adams will continue in an advisory role during the transition period to support continuity across the legal organization.</p>`;
+  assert.equal(extractBio(NEWSTEAD, 'Katherine Adams'), null);
+  const forNewstead = extractBio(NEWSTEAD, 'Jennifer Newstead');
+  assert.ok(forNewstead === null || /Newstead will become/.test(forNewstead));
+});
