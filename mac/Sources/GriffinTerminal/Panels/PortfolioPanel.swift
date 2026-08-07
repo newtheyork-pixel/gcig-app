@@ -93,14 +93,23 @@ struct PortfolioPanel: View {
     @State private var state: Loadable<Payload> = .loading
     @State private var quotes: [String: Quote] = [:]
     @State private var coverage: [String: Cov] = [:]
-    /// The cash-yield estimate the WEB adds on top of the sheet total.
+    /// The cash-yield picture the WEB adds on top of the sheet total.
     ///
-    /// Not used to change PM's own number — it is used to explain why
-    /// the two screens disagree, which is the actual problem. The web
-    /// headline reads $137,070 and this panel reads $135,464, and until
-    /// now nothing anywhere said the gap was a single simulated interest
-    /// figure rather than one of them being broken.
-    @State private var cashInterest: Double?
+    /// Not used to change PM's own number — the marked total stays the
+    /// headline per the treasurer's split. But the interest itself is a
+    /// real factor the club earns, so it renders as a visible line of
+    /// its own (header + cash section), not an 8pt whisper: which
+    /// sleeve, at what yield, worth how much since inception.
+    struct CashYield: Decodable {
+        let estimatedInterestEarned: Double?
+        let bdaEstimatedInterest: Double?
+        let fgtxxEstimatedInterest: Double?
+        let fgtxxBalance: Double?
+        let fgtxxYieldApy: Double?
+        let bdaApy: Double?
+    }
+    @State private var cashYield: CashYield?
+    private var cashInterest: Double? { cashYield?.estimatedInterestEarned }
 
     var body: some View {
         PanelState(state: state,
@@ -135,6 +144,7 @@ struct PortfolioPanel: View {
                             if !cash.isEmpty {
                                 Divider().overlay(Term.border).padding(.vertical, 4)
                                 ForEach(cash) { c in cashRow(c, total: total) }
+                                cashYieldLine
                             }
                         } header: {
                             VStack(alignment: .leading, spacing: 0) {
@@ -254,23 +264,21 @@ struct PortfolioPanel: View {
             Text("YTD IS PRICE ONLY")
                 .font(Term.mono(9)).foregroundStyle(Term.fgDim)
             VStack(alignment: .trailing, spacing: 0) {
-                Text(Fmt.money(total))
+                // The headline is the fund's ACTUAL value: marks plus
+                // the interest the cash sleeves have earned — the same
+                // number the website leads with, on Thomas's direction.
+                // The marked figure moves to the line beneath, so the
+                // reconciliation is still one glance away.
+                let withInterest = total + max(0, cashInterest ?? 0)
+                Text(Fmt.money(withInterest))
                     .font(Term.mono(13, weight: .bold))
                     .foregroundStyle(Term.white)
-                    .tickFlash(total)
-                // The reconciliation, in the one place somebody
-                // comparing the two screens is looking. MARKED is what
-                // the sheet prices; the website's headline adds an
-                // estimate of interest the cash sleeves threw off, which
-                // its own source calls deliberately optimistic because
-                // the sheet already carries most of it. Both numbers are
-                // real and they answer different questions; the failure
-                // was showing one of them with no way to reach the other.
+                    .tickFlash(withInterest)
                 if let ci = cashInterest, ci > 0 {
-                    Text("marked · web shows \(Fmt.money(total + ci)) with cash interest")
-                        .font(Term.mono(8))
+                    Text("incl +\(Fmt.money(ci)) cash interest (est) · \(Fmt.money(total)) marked")
+                        .font(Term.mono(9))
                         .foregroundStyle(Term.fgMuted)
-                        .help("The website adds an estimated \(Fmt.money(ci)) of interest earned on the BDA and FGTXX cash sleeves since inception. It is a simulation, not a credited balance, and the sheet already reflects some of it.")
+                        .help("Estimated interest earned on the BDA and FGTXX cash sleeves since inception, credited into the headline the way the website credits it. The marked figure is what the sheet prices without it. The estimate leans optimistic — the sheet already reflects some of this money.")
                 }
             }
         }
@@ -527,13 +535,32 @@ struct PortfolioPanel: View {
     private func cashCell(_ f: Field, _ c: Holding, weight: Double?) -> some View {
         switch f {
         case .ticker:
-            Text("CASH").font(Term.mono(11, weight: .bold)).foregroundStyle(Term.cyan)
+            // The cash is not idle: it sits in Goldman's FGTXX money
+            // market. Naming the instrument is the difference between
+            // "we forgot this" and "this is a position that yields".
+            Text("FGTXX").font(Term.mono(11, weight: .bold)).foregroundStyle(Term.cyan)
+        case .name:
+            let apy = cashYield?.fgtxxYieldApy
+            Text(apy != nil
+                 ? "Money market · \(String(format: "%.2f", apy! * 100))% 7-day"
+                 : "Money market")
+                .foregroundStyle(Term.fgDim)
         case .value:
             Text(Fmt.money(c.marketValue, decimals: 0)).foregroundStyle(Term.white)
         case .wt:
             Text(weight.map { Fmt.pct($0, decimals: 1, signed: false) } ?? "—")
                 .foregroundStyle(Term.fgDim)
-        case .name, .club, .shares, .avgCost, .last, .cost, .day, .sinceBuy, .pct, .ytd:
+        case .sinceBuy:
+            // What the cash sleeves have EARNED — the estimated interest
+            // since inception, in the same column where every stock
+            // shows its gain. Cash returning something is exactly the
+            // point Thomas wanted on the page.
+            if let ci = cashYield?.estimatedInterestEarned, ci > 0 {
+                Text("+\(Fmt.money(ci, decimals: 0))").foregroundStyle(Term.positive)
+            } else {
+                Text("")
+            }
+        case .club, .shares, .avgCost, .last, .cost, .day, .pct, .ytd:
             // Cash has no basis, no mark and no share count. These stay
             // empty rather than zero: a zero reads as a measured value.
             // Nobody pitches cash either.
@@ -600,8 +627,14 @@ struct PortfolioPanel: View {
                 let base = invested - d
                 return base > 0 ? d / base * 100 : nil
             }(),
-            upl: cost.map { invested - $0 },
-            uplPct: (cost.map { $0 > 0 } ?? false) ? (invested - cost!) / cost! * 100 : nil)
+            // The gain line counts the cash sleeves' earnings beside the
+            // stocks' — the estimated interest joins SINCE BUY here just
+            // as it does on the FGTXX row, so the total agrees with its
+            // own column.
+            upl: cost.map { invested - $0 + max(0, cashYield?.estimatedInterestEarned ?? 0) },
+            uplPct: (cost.map { $0 > 0 } ?? false)
+                ? (invested - cost! + max(0, cashYield?.estimatedInterestEarned ?? 0)) / cost! * 100
+                : nil)
         return HStack(spacing: Self.gap) {
             ForEach(Field.allCases, id: \.self) { f in
                 sized(f) { totalCell(f, t) }
@@ -675,10 +708,38 @@ struct PortfolioPanel: View {
            let p = try? await API.shared.decode(CovPayload.self, from: d) {
             coverage = p.coverage ?? [:]
         }
-        struct Yield: Decodable { let estimatedInterestEarned: Double? }
         if let d = try? await API.shared.get("/holdings/cash-yield"),
-           let y = try? await API.shared.decode(Yield.self, from: d) {
-            cashInterest = y.estimatedInterestEarned
+           let y = try? await API.shared.decode(CashYield.self, from: d) {
+            cashYield = y
+        }
+    }
+
+    /// The cash sleeves' own story, told under their rows: what the
+    /// money-market balance yields today and what each sleeve has
+    /// thrown off since inception. This is the number Thomas wants ON
+    /// the page — earning ~4% on idle cash is a real decision the book
+    /// makes, and it was invisible here.
+    @ViewBuilder private var cashYieldLine: some View {
+        if let y = cashYield, let ci = y.estimatedInterestEarned, ci > 0 {
+            HStack(spacing: 6) {
+                Text("CASH INTEREST")
+                    .font(Term.mono(9, weight: .bold)).foregroundStyle(Term.fgMuted)
+                if let apy = y.fgtxxYieldApy {
+                    Text("FGTXX \(String(format: "%.2f", apy * 100))% 7-day")
+                        .font(Term.mono(9)).foregroundStyle(Term.fg)
+                }
+                if let f = y.fgtxxEstimatedInterest, f > 0 {
+                    Text("+\(Fmt.money(f)) earned")
+                        .font(Term.mono(9)).foregroundStyle(Term.positive)
+                }
+                if let b = y.bdaEstimatedInterest, b > 0 {
+                    Text("· BDA +\(Fmt.money(b)) before it was deployed")
+                        .font(Term.mono(9)).foregroundStyle(Term.fgMuted)
+                }
+                Text("· est since inception, not credited to the marked total")
+                    .font(Term.mono(8)).foregroundStyle(Term.fgDim)
+            }
+            .padding(.horizontal, 10).padding(.vertical, 4)
         }
     }
 }
