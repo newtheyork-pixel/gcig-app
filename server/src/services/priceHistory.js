@@ -449,7 +449,10 @@ export async function getStoredHistoryBatch(tickers, { days = 380 } = {}) {
     (out[r.ticker] ||= []).push({
       date: r.date.toISOString().slice(0, 10),
       close: r.close,
-      volume: r.volume,
+      // volume is a BigInt column; raw BigInt mixed into Number
+      // arithmetic THROWS, which took the whole watchlist route down
+      // on deploy. getHistory converts at the same boundary.
+      volume: r.volume == null ? null : Number(r.volume),
     });
   }
   return out;
