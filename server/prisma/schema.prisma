@@ -1678,3 +1678,38 @@ model AppRelease {
 
   @@index([live, createdAt])
 }
+
+// A person we have identified at a covered company, with the best bio
+// we have found for them. Parsed people used to live only in 24h
+// memory caches, so every restart re-parsed the filings and a throttled
+// SEC minute showed an empty MGMT panel — "not saving" was the exact
+// complaint. Rows persist; parses refresh them; the panel always has
+// last-known-good to serve.
+model PersonProfile {
+  id        Int      @id @default(autoincrement())
+  ticker    String
+  name      String
+  // "exec" or "director" — one person can be both, on two rows.
+  kind      String
+  title     String?
+  bio       String?
+  // Where the bio text came from: "10-K", "DEF 14A", "Wikipedia".
+  bioSource String?
+  bioUrl    String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([ticker, name, kind])
+  @@index([ticker])
+}
+
+// The readable company description DES leads with. Generated from the
+// 10-K's Item 1 by the LLM; persisted so a deploy does not cost every
+// ticker its description and a dead LLM serves yesterday's rather
+// than nothing.
+model CompanyProfile {
+  ticker            String   @id
+  description       String?
+  descriptionSource String?
+  updatedAt         DateTime @updatedAt
+}

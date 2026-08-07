@@ -19,6 +19,7 @@
 // model adding anything to it.
 
 import { llmChat } from './llm.js';
+import prisma from '../db.js';
 
 const TTL_MS = 7 * 24 * 60 * 60 * 1000;   // matches the filing's own cache
 const MAX_ENTRIES = 200;
@@ -65,6 +66,27 @@ export async function readableDescription(ticker, itemOneText, deps = {}) {
   const hit = cache.get(key);
   if (hit && Date.now() - hit.at < TTL_MS) return hit.value;
 
+  // The durable copy outlives the process; the memory cache in front
+  // only saves the query. Deploys used to cost every ticker its
+  // description and one LLM outage blanked DES for whoever asked
+  // during it — now the last good paragraph always stands in.
+  const db = deps.prisma || prisma;
+  let storedRow = null;
+  try {
+    storedRow = await db.companyProfile.findUnique({ where: { ticker: key } });
+    if (
+      storedRow?.description &&
+      Date.now() - new Date(storedRow.updatedAt).getTime() < 30 * 24 * 60 * 60 * 1000
+    ) {
+      const value = { text: storedRow.description, source: storedRow.descriptionSource || 'sec-10k-item1' };
+      cache.set(key, { at: Date.now(), value });
+      evict();
+      return value;
+    }
+  } catch {
+    /* no DB is no obstacle; the LLM path stands alone */
+  }
+
   const chat = deps.llmChat || llmChat;
   // The first few thousand characters carry what the company does; the
   // rest of Item 1 is regulation, seasonality and human capital. Sending
@@ -90,8 +112,23 @@ export async function readableDescription(ticker, itemOneText, deps = {}) {
   // unreachable for one request is not a fact about the company, and
   // storing it under the filing's TTL would cost a name its description
   // for seven days.
-  const value = clean ? { text: clean, source: 'sec-10k-item1' } : null;
-  cache.set(key, { at: clean ? Date.now() : Date.now() - TTL_MS + 120_000, value });
+  let value = clean ? { text: clean, source: 'sec-10k-item1' } : null;
+  if (clean) {
+    try {
+      await db.companyProfile.upsert({
+        where: { ticker: key },
+        create: { ticker: key, description: clean, descriptionSource: 'sec-10k-item1' },
+        update: { description: clean, descriptionSource: 'sec-10k-item1' },
+      });
+    } catch {
+      /* persistence is a bonus, never a gate */
+    }
+  } else if (storedRow?.description) {
+    // The regeneration failed but an older paragraph exists: age beats
+    // absence for a description whose facts change once a year.
+    value = { text: storedRow.description, source: storedRow.descriptionSource || 'sec-10k-item1' };
+  }
+  cache.set(key, { at: clean || value ? Date.now() : Date.now() - TTL_MS + 120_000, value });
   evict();
   return value;
 }

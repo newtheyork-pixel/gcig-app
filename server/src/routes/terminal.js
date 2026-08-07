@@ -10,6 +10,8 @@ import { getFacilities, sitesNearStorm } from '../services/facilities.js';
 import { resolveCik } from '../services/secFundamentals.js';
 import { getProxyStatement } from '../services/proxyStatement.js';
 import { getExecutiveBios } from '../services/executiveBios.js';
+import { wikipediaBio } from '../services/wikipediaBio.js';
+import { saveProfiles, storedProfiles } from '../services/personProfiles.js';
 import { parseLeadership, parseBoard, parseComp, buildNetwork } from '../services/governanceParsers.js';
 import { getOfficerRoster, mergeLeadership, mergeBoard } from '../services/officerRoster.js';
 import { getCustomerConcentration } from '../services/xbrlConcentration.js';
@@ -18,7 +20,7 @@ import { getNewsForTicker } from '../services/news.js';
 import { getWorldIndices, REGION_ORDER } from '../services/worldIndices.js';
 import { getInsiderTransactions } from '../services/insiderTx.js';
 import { getLiveQuotes } from '../services/liveQuotes.js';
-import { searchSymbols, getRecentFilings } from '../services/secFilings.js';
+import { searchSymbols, getRecentFilings, getCompanyIdentity } from '../services/secFilings.js';
 import { getWeatherImpact } from '../services/weatherSignals.js';
 import { getActiveAlerts } from '../services/wxAlerts.js';
 import { getMacroSensitivity } from '../services/factorSensitivity.js';
@@ -278,6 +280,20 @@ router.get('/governance/:ticker', async (req, res) => {
     }
     const fullBoard = mergeBoard(board, roster);
     const network = buildNetwork(raw, fullBoard, holdings);
+
+    // Remember everyone. The proxy parse only has to succeed ONCE for
+    // the board to survive every future throttle and restart; the old
+    // memory-cache-only design re-earned the same facts daily and
+    // showed an empty panel whenever it lost.
+    saveProfiles(
+      raw,
+      (fullBoard || []).map((d) => ({
+        name: d.name, title: d.title || null, bio: d.bio || null,
+        bioSource: d.bio ? 'DEF 14A' : null, bioUrl: d.bio ? proxy._source || null : null,
+      })),
+      'director'
+    ).catch(() => {});
+
     res.json({
       ticker: raw, asOf: proxy.filedAt, source: proxy._source,
       ceo, execs, board: fullBoard, comp, network,
@@ -288,6 +304,21 @@ router.get('/governance/:ticker', async (req, res) => {
     });
   } catch (err) {
     console.error(`terminal/governance(${raw}) failed:`, err.message);
+    // Before admitting defeat, serve what previous successes banked.
+    // A day-old board beats a blank one on every question this panel
+    // answers; `stored` flags the vintage so the client can say so.
+    try {
+      const rows = await storedProfiles(raw, 'director');
+      if (rows.length > 0) {
+        return res.json({
+          ticker: raw, asOf: null, source: null, stored: true,
+          ceo: null, execs: [], comp: null, network: null, leadership: null,
+          board: rows.map((r) => ({ name: r.name, title: r.title, bio: r.bio })),
+        });
+      }
+    } catch {
+      /* the 502 below is the honest answer */
+    }
     res.status(502).json({ error: 'Governance data unavailable' });
   }
 });
@@ -311,16 +342,86 @@ router.get('/governance/:ticker', async (req, res) => {
 // the same honest-empty 200, so this endpoint can never 5xx.
 export async function execBiosHandler(req, res, deps = {}) {
   const fetchBios = deps.getExecutiveBios || getExecutiveBios;
+  const fetchRoster = deps.getOfficerRoster || getOfficerRoster;
+  const fetchWiki = deps.wikipediaBio || wikipediaBio;
+  const fetchIdentity = deps.getCompanyIdentity || getCompanyIdentity;
+  const loadStored = deps.storedProfiles || storedProfiles;
+  const persist = deps.saveProfiles || saveProfiles;
   const raw = String(req.params.ticker || '').trim().toUpperCase();
   if (!raw || !/^[A-Z0-9.\-]{1,12}$/.test(raw)) {
     return res.status(400).json({ error: 'Invalid ticker' });
   }
   try {
-    const { ticker, source, officers } = await fetchBios(raw);
-    res.json({ ticker, source, officers });
+    // Three sources, in trust order. The 10-K's own officer section is
+    // the primary; the Form 3/4 roster supplies the NAMES for filers
+    // (Apple among them) that incorporate the section by reference and
+    // describe nobody; Wikipedia fills a missing story for people
+    // public enough to have one, clearly labelled. Everything lands in
+    // PersonProfile, so once seen, a bio survives restarts, throttles
+    // and parser regressions — "no bios" was mostly "not saved".
+    const [kBios, roster, identity] = await Promise.all([
+      fetchBios(raw).catch(() => ({ source: null, officers: [] })),
+      fetchRoster(raw).catch(() => ({ officers: [] })),
+      fetchIdentity(raw).catch(() => null),
+    ]);
+
+    const byName = new Map();
+    for (const o of kBios.officers || []) {
+      if (!o?.name) continue;
+      byName.set(o.name, { name: o.name, title: o.title || null, bio: o.bio || null,
+                           bioSource: o.bio ? '10-K' : null, bioUrl: o.bio ? kBios.source : null });
+    }
+    for (const o of roster.officers || []) {
+      const name = o?.name;
+      if (!name) continue;
+      const hit = byName.get(name);
+      if (hit) {
+        if (!hit.title && (o.office || o.title)) hit.title = o.office || o.title;
+      } else {
+        byName.set(name, { name, title: o.office || o.title || null, bio: null,
+                           bioSource: null, bioUrl: null });
+      }
+    }
+
+    // Wikipedia for the bio-less, capped: a C-suite is a handful of
+    // people, and each lookup is two keyless requests.
+    const companyName = identity?.legalName || identity?.name || raw;
+    const missing = [...byName.values()].filter((p) => !p.bio).slice(0, 8);
+    await Promise.all(
+      missing.map(async (p) => {
+        const w = await fetchWiki(p.name, companyName).catch(() => null);
+        if (w) {
+          p.bio = w.bio;
+          p.bioSource = 'Wikipedia';
+          p.bioUrl = w.url;
+        }
+      })
+    );
+
+    let officers = [...byName.values()];
+    let source = kBios.source || null;
+    let stored = false;
+    if (officers.length === 0) {
+      // Every live source came back empty — a throttled minute, most
+      // likely. Serve what the table remembers rather than an empty
+      // panel that reads as "this company has no management".
+      const rows = await loadStored(raw, 'exec');
+      officers = rows.map((r) => ({ name: r.name, title: r.title, bio: r.bio,
+                                    bioSource: r.bioSource, bioUrl: r.bioUrl }));
+      stored = officers.length > 0;
+    } else {
+      persist(raw, officers, 'exec').catch(() => {});
+    }
+
+    res.json({ ticker: raw, source, officers, stored });
   } catch (err) {
     console.warn(`terminal/exec-bios(${raw}) degraded:`, err.message);
-    res.json({ ticker: raw, source: null, officers: [] });
+    const rows = await loadStored(raw, 'exec').catch(() => []);
+    res.json({
+      ticker: raw, source: null, stored: rows.length > 0,
+      officers: rows.map((r) => ({ name: r.name, title: r.title, bio: r.bio,
+                                   bioSource: r.bioSource, bioUrl: r.bioUrl })),
+    });
   }
 }
 
