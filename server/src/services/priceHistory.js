@@ -422,10 +422,55 @@ export async function getTrackedTickers() {
   return rows.map((r) => r.ticker);
 }
 
+/**
+ * Stored bars only — never fetches. One query for the whole list.
+ *
+ * The watchlist's perf columns used to fan getHistory over the list,
+ * where every cold name is a full 5y upstream backfill; sixty of those
+ * at once is the stampede that got the whole batch throttled and the
+ * columns rendered as dashes for everyone. Serving strictly from the
+ * DB makes the read cheap and honest — a name with no bars yet shows
+ * dashes until the nightly warmer reaches it, instead of every name
+ * showing dashes because the fetches killed each other.
+ *
+ * Returns ticker → date-ascending [{ date, close, volume }].
+ */
+export async function getStoredHistoryBatch(tickers, { days = 380 } = {}) {
+  const list = [...new Set((tickers || []).map((t) => String(t || '').trim().toUpperCase()).filter(Boolean))];
+  if (!list.length) return {};
+  const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+  const rows = await prisma.priceBar.findMany({
+    where: { ticker: { in: list }, date: { gte: since } },
+    orderBy: [{ ticker: 'asc' }, { date: 'asc' }],
+    select: { ticker: true, date: true, close: true, volume: true },
+  });
+  const out = {};
+  for (const r of rows) {
+    (out[r.ticker] ||= []).push({
+      date: r.date.toISOString().slice(0, 10),
+      close: r.close,
+      volume: r.volume,
+    });
+  }
+  return out;
+}
+
 // Cron entry point: top-up the latest bar for every tracked ticker.
 // Throttled to avoid Yahoo rate-limiting (one request every 250ms).
 export async function refreshUniverse() {
-  const tickers = await getTrackedTickers();
+  // Everything with bars, PLUS everything on the watchlist that has
+  // none yet. The universe used to be self-selecting — only names
+  // somebody had already charted got warmed — so most of the SEG 13F
+  // list never acquired the history its perf columns need.
+  const tracked = await getTrackedTickers();
+  let watch = [];
+  try {
+    const rows = await prisma.watchlistItem.findMany({ select: { ticker: true } });
+    watch = rows.map((r) => String(r.ticker || '').trim().toUpperCase()).filter(Boolean);
+  } catch {
+    watch = [];
+  }
+  const tickers = [...new Set([...tracked, ...watch])];
   let ok = 0;
   let failed = 0;
   for (const ticker of tickers) {
@@ -444,7 +489,10 @@ export async function refreshUniverse() {
       failed += 1;
       console.warn(`refreshUniverse(${ticker}) failed:`, err.message);
     }
-    await new Promise((resolve) => setTimeout(resolve, 250));
+    // 400ms, up from 250: the universe now includes cold watchlist
+    // names whose first pass is a full 5y backfill each — the heavier
+    // pull deserves the politer pace.
+    await new Promise((resolve) => setTimeout(resolve, 400));
   }
   return { tickers: tickers.length, ok, failed };
 }

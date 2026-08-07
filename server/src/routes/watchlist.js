@@ -3,8 +3,8 @@ import { PrismaClient } from '@prisma/client';
 import { verifyJwt, requireTerminalAccess } from '../middleware/auth.js';
 import { getSheetPortfolio } from '../services/sheetPortfolio.js';
 import { getLiveQuotes } from '../services/liveQuotes.js';
-import { getHistory } from '../services/priceHistory.js';
-import { ytdPriceReturn } from './terminal.js';
+import { getStoredHistoryBatch } from '../services/priceHistory.js';
+import * as quoteScheduler from '../services/quoteScheduler.js';
 
 const prisma = new PrismaClient();
 const router = express.Router();
@@ -76,48 +76,72 @@ router.get('/', async (req, res) => {
       })),
     ];
 
-    const tickers = [...new Set(items.map((i) => i.ticker))].slice(0, 120);
-    // Quotes are best-effort. A vendor miss leaves a row without a price
-    // rather than dropping the row, because the list is the point and the
-    // price is decoration.
-    let quotes = {};
+    // EVERY row gets a shot at a price — the old slice(0,120) simply cut
+    // the alphabet somewhere around G and the tail rendered priceless
+    // with no marker. The paced scheduler cache is the primary source
+    // (built for exactly this list, then left unread for months); names
+    // it has not warmed yet fall back to a bounded live batch, capped so
+    // a cold boot cannot recreate the burst that rate-limited the whole
+    // panel into dashes.
+    const tickers = [...new Set(items.map((i) => i.ticker))];
+    const quotes = {};
+    const needLive = [];
+    for (const row of quoteScheduler.read(tickers)) {
+      if (row.pending || row.price == null) {
+        needLive.push(row.ticker);
+      } else {
+        quotes[row.ticker] = {
+          last: row.price,
+          changePct: row.changePercent ?? null,
+          prevClose: row.prevClose ?? null,
+          asOf: row.asOf,
+          stale: row.stale === true,
+        };
+      }
+    }
     try {
-      quotes = await getLiveQuotes(tickers);
+      const live = await getLiveQuotes(needLive.slice(0, 40));
+      for (const [t, q] of Object.entries(live)) {
+        if (q) quotes[t] = q;
+      }
     } catch {
-      quotes = {};
+      /* the scheduler rows stand on their own */
     }
 
-    // Volume and the longer performance windows, from the same bar
-    // history the charts use. Best-effort per ticker and bounded, because
-    // a watchlist of 120 names must not turn into 120 serial fetches on
-    // every open — a name whose history is unavailable renders without
-    // the columns rather than holding up the list.
+    // Volume and the longer performance windows, from STORED bars only —
+    // one query for the whole list, no upstream. A cold name shows
+    // dashes until the universe warmer (boot + 21:30 ET) reaches it,
+    // which is honest; the old per-name live fetch meant sixty 5y
+    // backfills at once, which got the entire batch throttled and the
+    // columns blanked for everyone, warm names included.
     const stats = {};
-    await Promise.all(
-      tickers.slice(0, 60).map(async (t) => {
-        try {
-          const bars = (await getHistory(t, '1y')) || [];
-          const closes = bars.filter((b) => b?.close != null);
-          if (closes.length < 2) return;
-          const last = closes[closes.length - 1];
-          const at = (n) => closes[Math.max(0, closes.length - 1 - n)]?.close;
-          const pct = (from) => (from ? ((last.close - from) / from) * 100 : null);
-          // Average volume over the last twenty sessions, which is what
-          // "is this liquid enough for us" actually asks. A single day's
-          // print answers a different and less useful question.
-          const vols = closes.slice(-20).map((b) => b.volume).filter((v) => v != null);
-          stats[t] = {
-            avgVolume20d: vols.length ? Math.round(vols.reduce((a, b) => a + b, 0) / vols.length) : null,
-            pct1m: pct(at(21)),
-            pct3m: pct(at(63)),
-            pct1y: pct(closes[0].close),
-            ytd: await ytdPriceReturn(t, last.close),
-          };
-        } catch {
-          /* no history for this one; the row still renders */
-        }
-      })
-    );
+    const boundary = `${new Date().getFullYear() - 1}-12-31`;
+    const barsByTicker = await getStoredHistoryBatch(tickers).catch(() => ({}));
+    for (const [t, bars] of Object.entries(barsByTicker)) {
+      const closes = bars.filter((b) => b?.close != null);
+      if (closes.length < 2) continue;
+      const last = closes[closes.length - 1];
+      const at = (n) => closes[Math.max(0, closes.length - 1 - n)]?.close;
+      const pct = (from) => (from ? ((last.close - from) / from) * 100 : null);
+      // Average volume over the last twenty sessions, which is what
+      // "is this liquid enough for us" actually asks. A single day's
+      // print answers a different and less useful question.
+      const vols = closes.slice(-20).map((b) => b.volume).filter((v) => v != null);
+      // YTD base: the last close on or before Dec 31, same rule the
+      // terminal's ytdPriceReturn applies.
+      let ytdBase = null;
+      for (const b of closes) {
+        if (b.date <= boundary) ytdBase = b.close;
+        else break;
+      }
+      stats[t] = {
+        avgVolume20d: vols.length ? Math.round(vols.reduce((a, b) => a + b, 0) / vols.length) : null,
+        pct1m: pct(at(21)),
+        pct3m: pct(at(63)),
+        pct1y: pct(closes[0].close),
+        ytd: pct(ytdBase),
+      };
+    }
 
     res.json({
       items: items.map((i) => ({ ...i, quote: quotes[i.ticker] || null, stats: stats[i.ticker] || null })),

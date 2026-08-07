@@ -176,3 +176,30 @@ export async function getLiveQuotes(tickers, deps = {}) {
   });
   return out;
 }
+
+/**
+ * The quote scheduler's per-ticker fetch, Finnhub edition.
+ *
+ * The scheduler shipped wired to the Yahoo chart fetcher, which Render's
+ * egress IP cannot reach — so the paced cache it fills ran around the
+ * clock collecting nulls while the watchlist kept burst-fetching
+ * Finnhub and rate-limiting itself. One name every few seconds through
+ * the same Finnhub endpoint the rest of the app trusts never comes near
+ * the 60/min budget. Never throws; a miss is a null the scheduler skips.
+ */
+export async function fetchOneForScheduler(ticker) {
+  try {
+    const raw = await defaultQuoteFetch(String(ticker || '').toUpperCase());
+    if (!raw || !raw.c) return null;
+    return {
+      price: raw.c,
+      change: raw.d ?? null,
+      changePercent: raw.dp ?? null,
+      prevClose: raw.pc ?? null,
+      currency: 'USD',
+      name: String(ticker || '').toUpperCase(),
+    };
+  } catch {
+    return null;
+  }
+}

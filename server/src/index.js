@@ -15,7 +15,7 @@ import paperRoutes, { runTick as paperTick } from './routes/paper.js';
 import appRoutes from './routes/app.js';
 import alertRoutes from './routes/alerts.js';
 import { PrismaClient } from '@prisma/client';
-import { fetchOneQuote } from './services/quotes.js';
+import { fetchOneForScheduler } from './services/liveQuotes.js';
 import { getSheetPortfolio } from './services/sheetPortfolio.js';
 import * as quoteScheduler from './services/quoteScheduler.js';
 
@@ -231,7 +231,20 @@ async function refreshTrackedTickers() {
 }
 refreshTrackedTickers();
 setInterval(refreshTrackedTickers, 10 * 60 * 1000);
-quoteScheduler.start(fetchOneQuote);
+// Finnhub, not Yahoo: Render's IP cannot reach Yahoo's chart endpoint,
+// so the original fetcher warmed the cache with nothing, forever.
+quoteScheduler.start(fetchOneForScheduler);
+
+// One universe pass shortly after boot, on top of the 21:30 ET cron.
+// The watchlist's perf columns read stored bars only, and a deploy that
+// lands just after the nightly window would otherwise leave new names
+// bare for a full day. Ninety seconds in, so startup traffic settles
+// first; the run itself is internally paced.
+setTimeout(() => {
+  refreshPriceUniverse()
+    .then((r) => console.log(`[boot] price-cache: ${r.ok}/${r.tickers} ok, ${r.failed} failed`))
+    .catch((err) => console.warn('[boot] price-cache failed:', err.message));
+}, 90_000);
 
 // awake, just doesn't fire if nobody's pinged the API for 15+ min.
 // The lazy /day-in-review endpoint is the safety net either way.
