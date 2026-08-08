@@ -5,6 +5,7 @@
 // large-caps). Best-effort, never throws (same contract as
 // services/worldIndices.js): a missing/failed proxy yields an empty stub.
 import { getRecentFilings, SEC_UA } from './secFilings.js';
+import { takeSlot } from './secFetch.js';
 
 // SEC hands back the XSL viewer URL (.../xslF…/doc.htm → HTML wrapper).
 // The raw primary document sits at the same path without that segment.
@@ -38,6 +39,7 @@ async function defaultFilingsFetch(ticker) {
   return getRecentFilings(ticker, { limit: 150 });
 }
 async function defaultDocFetch(url) {
+  await takeSlot();
   const r = await fetch(url, { headers: { 'User-Agent': SEC_UA, Accept: 'text/html,*/*' } });
   if (!r.ok) throw new Error(`sec doc ${r.status}`);
   return r.text();

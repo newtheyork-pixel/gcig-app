@@ -22,6 +22,7 @@
 // reference to the proxy and carry no such section; that is a tier,
 // not a bug).
 import { getRecentFilings, SEC_UA } from './secFilings.js';
+import { takeSlot } from './secFetch.js';
 import { parseHtml, cellText } from './htmlExtract.js';
 
 // SEC hands back the XSL viewer URL (.../xslF…/doc.htm → an HTML
@@ -58,6 +59,7 @@ async function defaultFilingsFetch(ticker) {
   return getRecentFilings(ticker, { limit: 150 });
 }
 async function defaultDocFetch(url) {
+  await takeSlot();
   const r = await fetch(url, {
     headers: { 'User-Agent': SEC_UA, Accept: 'text/html,*/*' },
   });

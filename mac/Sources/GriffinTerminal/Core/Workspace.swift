@@ -89,15 +89,10 @@ final class Workspace: ObservableObject {
         // numbered menu row, Bloomberg's oldest navigation idiom.
         if let n = Int(raw), runNumber(n) { return }
 
-        // A bare ticker no longer jumps straight to DES. On Bloomberg,
-        // loading a security WITHOUT a function opens the menu of
-        // everything you can do with it — the single best
-        // discoverability move the terminal has, and the one a student
-        // needs most. Explicit \"AIT DES\" still goes straight there.
-        if !raw.contains(" "), Parser.looksLikeTicker(raw), !Registry.ids.contains(raw) {
-            open(Command(ticker: raw, function: "SMENU", args: nil), in: bounds)
-            return
-        }
+        // A bare ticker goes straight to DES, by the owner's call: the
+        // menu detour read as friction once members knew the mnemonics.
+        // SMENU stays one keystroke away as an explicit \"AIT SMENU\",
+        // and Parser.parse's default already lands bare tickers on DES.
 
         guard let cmd = Parser.parse(input) else {
             // Distinguish "I do not know that word" from "that needs a

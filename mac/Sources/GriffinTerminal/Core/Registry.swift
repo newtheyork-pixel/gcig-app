@@ -118,6 +118,14 @@ enum Registry {
               width: 860, height: 520, native: true),
         .init(id: "HDS", label: "Holders", help: "13F holders and insider filings.", planned: true),
         .init(id: "EQS", label: "Equity Screener", help: "Screen the universe, funnel-style.", planned: true),
+        // Built on the web in the August feature wave; native panels to
+        // follow. The grammar knows them so the command line points at
+        // the working surface instead of shrugging.
+        .init(id: "STAT", label: "System Status", help: "Quote scheduler health and news wire liveness.", planned: true),
+        .init(id: "DVD", label: "Dividend History", help: "Dividend history with raises and cuts. Nasdaq-listed names only.", planned: true),
+        .init(id: "SI", label: "Short Interest", help: "FINRA shares short, days to cover, daily short-volume share.", planned: true),
+        .init(id: "CORR", label: "Correlation", help: "Pairwise correlation across the book, 3m and 1y.", planned: true),
+        .init(id: "HALT", label: "Trading Halts", help: "Live Nasdaq and NYSE halt tape with decoded reasons.", planned: true),
         .init(id: "DAYB", label: "Morning Page", help: "The auto-composed pre-meeting brief.", planned: true),
     ]
 

@@ -18,6 +18,35 @@
 // worse than one that takes three.
 
 const RETRYABLE = new Set([403, 429, 500, 502, 503, 504]);
+
+// ── The one pipe ─────────────────────────────────────────────────────
+//
+// Retries handle a throttle after it happens; nothing here prevented
+// one. The consumers multiplied — panels fan out in Promise.all, the
+// boot warmer walks the book, bios enrichment reads filing after
+// filing — and each was polite alone while the sum burst past SEC's
+// ten a second, so an interactive FA open could eat a 429 caused by a
+// background pass it knows nothing about. Every request now takes a
+// slot from one process-wide bucket: five a second, comfortably under
+// the cap, with headroom left for the retries themselves. Background
+// work and foreground panels share the queue; the queue is short
+// enough that a panel never waits perceptibly unless the alternative
+// was being refused outright.
+const MIN_GAP_MS = 200; // 5/s
+let lastSlotAt = 0;
+let slotChain = Promise.resolve();
+
+export function takeSlot() {
+  const my = slotChain.then(async () => {
+    const wait = lastSlotAt + MIN_GAP_MS - Date.now();
+    if (wait > 0) await sleep(wait);
+    lastSlotAt = Date.now();
+  });
+  // Errors cannot occur above, but never let a broken link stall the
+  // chain forever.
+  slotChain = my.catch(() => {});
+  return my;
+}
 const BACKOFF_MS = [400, 1200];
 
 function sleep(ms) {
@@ -34,6 +63,7 @@ function sleep(ms) {
 export async function secFetch(url, { headers = {}, timeoutMs = 15_000, attempts = 3 } = {}) {
   let last = null;
   for (let i = 0; i < attempts; i += 1) {
+    await takeSlot();
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {

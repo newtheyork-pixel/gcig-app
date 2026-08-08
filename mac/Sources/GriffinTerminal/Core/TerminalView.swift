@@ -566,17 +566,6 @@ private struct CommandBarView: View {
             return
         }
 
-        // A bare ticker opens the security menu, not DES. Workspace.run
-        // has owned that rule since SMENU shipped, but this submit path
-        // went straight to Parser.parse — so the one feature written for
-        // discoverability was unreachable from the command line itself.
-        if !raw.contains(" "), Parser.looksLikeTicker(raw.uppercased()),
-           !Registry.ids.contains(raw.uppercased()) {
-            ws.open(Command(ticker: raw.uppercased(), function: "SMENU", args: nil))
-            value = ""
-            return
-        }
-
         // Priority order, same as the web: an exactly-parseable line
         // runs as typed; a partial match takes the highlighted
         // suggestion; anything else goes to the LLM.

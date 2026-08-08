@@ -46,6 +46,11 @@ import watchlistRoutes from './routes/watchlist.js';
 import davRoutes from './routes/dav.js';
 import subscriptionRoutes from './routes/subscriptions.js';
 import secDocProxyRoutes from './routes/secDocProxy.js';
+import dividendsRoutes from './routes/dividends.js';
+import correlationRoutes from './routes/correlation.js';
+import ecoRoutes from './routes/eco.js';
+import shortInterestRoutes from './routes/shortInterest.js';
+import haltsRoutes from './routes/halts.js';
 import notesRoutes from './routes/notes.js';
 import researchRoutes from './routes/research.js';
 import { ensureRecurringMeetings } from './services/recurringMeetings.js';
@@ -156,6 +161,11 @@ app.use('/api/president-review', presidentReviewRoutes);
 // SEC-only allowlist inside the service plus the per-IP rate limit in
 // the router file.
 app.use('/api/terminal/sec-doc-proxy', secDocProxyRoutes);
+app.use('/api/terminal/dividends', dividendsRoutes);
+app.use('/api/correlation', correlationRoutes);
+app.use('/api/eco', ecoRoutes);
+app.use('/api/short-interest', shortInterestRoutes);
+app.use('/api/halts', haltsRoutes);
 app.use('/api/terminal', terminalRoutes);
 app.use('/dav', davRoutes);
 app.use('/api/watchlist', watchlistRoutes);

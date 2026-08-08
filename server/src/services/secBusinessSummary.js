@@ -12,6 +12,7 @@
 // existing CIK/filings lookup.
 
 import { getLatestFilingByForm, SEC_UA } from './secFilings.js';
+import { takeSlot } from './secFetch.js';
 
 // Inline tags vanish with no gap ("<b>Acme</b>Co" -> "AcmeCo"); anything
 // structural becomes whitespace so a header can't fuse to its body.
@@ -282,6 +283,7 @@ export async function getBusinessProfile(ticker) {
   try {
     const tenK = await getLatestFilingByForm(key, /^10-K(405|SB)?$/i);
     if (tenK?.url) {
+      await takeSlot();
       const r = await fetch(tenK.url, {
         headers: { 'User-Agent': SEC_UA, Accept: 'text/html' },
       });

@@ -1,4 +1,5 @@
 import { resolveCik } from './secFundamentals.js';
+import { takeSlot } from './secFetch.js';
 import { SEC_UA } from './secFilings.js';
 
 // Who runs the company TODAY.
@@ -368,12 +369,14 @@ export function mergeBoard(board, roster) {
 }
 
 async function getJson(url) {
+  await takeSlot();
   const r = await fetch(url, { headers: { 'User-Agent': SEC_UA, Accept: 'application/json' } });
   if (!r.ok) throw new Error(`SEC ${r.status}`);
   return r.json();
 }
 
 async function getText(url) {
+  await takeSlot();
   const r = await fetch(url, { headers: { 'User-Agent': SEC_UA, Accept: 'application/xml,text/xml,text/html,*/*' } });
   if (!r.ok) throw new Error(`SEC ${r.status}`);
   return r.text();

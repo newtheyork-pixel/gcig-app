@@ -35,6 +35,11 @@ import Organization from './functions/Organization.jsx';
 import Alerts from './functions/Alerts.jsx';
 import EarningsCalendar from './functions/EarningsCalendar.jsx';
 import Status from './functions/Status.jsx';
+import Dividends from './functions/Dividends.jsx';
+import Correlation from './functions/Correlation.jsx';
+import Economic from './functions/Economic.jsx';
+import ShortInterest from './functions/ShortInterest.jsx';
+import Halts from './functions/Halts.jsx';
 
 export const FUNCTIONS = [
   {
@@ -115,10 +120,14 @@ export const FUNCTIONS = [
   { id: 'MOVR', label: 'Movers', help: 'Day\'s biggest gainers and losers.', requires: null, component: Movers },
   { id: 'ALRT', label: 'Policy Alerts', help: 'The book checked against the club\'s own IPS: position caps, cash floor, drawdown review rules. A rule that could not run says so.', requires: null, component: Alerts, w: 640, h: 520 },
   { id: 'EVTS', label: 'Earnings Calendar', help: 'When every holding reports, next 60 days, with before-open/after-close timing.', requires: null, component: EarningsCalendar, w: 720, h: 520 },
+  { id: 'HALT', label: 'Trading Halts', help: 'Live Nasdaq + NYSE halt tape: active halts with decoded reasons, today\'s resumptions, held names flagged.', requires: null, component: Halts, w: 720, h: 560 },
+  { id: 'SI', label: 'Short Interest', help: 'Bi-monthly shares short, change and days to cover (FINRA consolidated), plus the latest day\'s off-exchange short-volume %.', requires: 'ticker', component: ShortInterest },
+  { id: 'CORR', label: 'Correlation', help: 'Pairwise correlation of daily log returns across the book (3m/1y), plus each name\'s correlation to the rest of the book. Stored bars, close-to-close, dividends excluded.', requires: null, component: Correlation, w: 800, h: 620 },
+  { id: 'DVD', label: 'Dividend History', help: 'Cash dividend history: ex/pay/record/declared dates, amount, raises and cuts. Nasdaq-listed names only.', requires: 'ticker', component: Dividends },
   { id: 'STAT', label: 'System Status', help: 'The terminal on itself: quote scheduler health and per-wire news feed liveness.', requires: null, component: Status, w: 560, h: 480 },
   { id: 'PM', label: 'Portfolio Manager', help: 'The whole book: positions, weights, live value & P&L, sector allocation.', requires: null, component: Portfolio },
   { id: 'SPLC', label: 'Supply Chain', help: 'Customers, suppliers & key inputs from the latest 10-K, with stated revenue concentration.', requires: 'ticker', component: SupplyChain },
-  { id: 'ECO', label: 'Economic Calendar', help: 'Upcoming releases and central bank events.', requires: null, component: ComingSoon },
+  { id: 'ECO', label: 'Economic Calendar', help: 'Upcoming FRED releases (next 14 days, key prints bold) and recent macro readings. FRED carries no consensus, so forecasts render a dash.', requires: null, component: Economic, w: 700, h: 560 },
   { id: 'WX', label: 'Weather Impact', help: 'Named-storm event impact on your Gulf O&G + insurer exposure.', requires: null, component: WeatherImpact },
   { id: 'RDR', label: 'Weather Radar', help: 'Live US NEXRAD radar + active NWS warnings.', requires: null, component: WeatherRadar },
   // PM-and-above inside the panel itself — the terminal gate is
