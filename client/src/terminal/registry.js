@@ -32,6 +32,9 @@ import Research from './functions/Research.jsx';
 import FieldWork from './functions/FieldWork.jsx';
 import ComingSoon from './functions/ComingSoon.jsx';
 import Organization from './functions/Organization.jsx';
+import Alerts from './functions/Alerts.jsx';
+import EarningsCalendar from './functions/EarningsCalendar.jsx';
+import Status from './functions/Status.jsx';
 
 export const FUNCTIONS = [
   {
@@ -110,6 +113,9 @@ export const FUNCTIONS = [
   { id: 'WEI', label: 'World Indices', help: 'Global index snapshot.', requires: null, component: WorldIndices },
   { id: 'TOP', label: 'Top News', help: 'Market-wide top headlines.', requires: null, component: TopNews, w: 780, h: 620 },
   { id: 'MOVR', label: 'Movers', help: 'Day\'s biggest gainers and losers.', requires: null, component: Movers },
+  { id: 'ALRT', label: 'Policy Alerts', help: 'The book checked against the club\'s own IPS: position caps, cash floor, drawdown review rules. A rule that could not run says so.', requires: null, component: Alerts, w: 640, h: 520 },
+  { id: 'EVTS', label: 'Earnings Calendar', help: 'When every holding reports, next 60 days, with before-open/after-close timing.', requires: null, component: EarningsCalendar, w: 720, h: 520 },
+  { id: 'STAT', label: 'System Status', help: 'The terminal on itself: quote scheduler health and per-wire news feed liveness.', requires: null, component: Status, w: 560, h: 480 },
   { id: 'PM', label: 'Portfolio Manager', help: 'The whole book: positions, weights, live value & P&L, sector allocation.', requires: null, component: Portfolio },
   { id: 'SPLC', label: 'Supply Chain', help: 'Customers, suppliers & key inputs from the latest 10-K, with stated revenue concentration.', requires: 'ticker', component: SupplyChain },
   { id: 'ECO', label: 'Economic Calendar', help: 'Upcoming releases and central bank events.', requires: null, component: ComingSoon },

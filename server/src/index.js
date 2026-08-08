@@ -50,7 +50,7 @@ import notesRoutes from './routes/notes.js';
 import researchRoutes from './routes/research.js';
 import { ensureRecurringMeetings } from './services/recurringMeetings.js';
 import cron from 'node-cron';
-import { checkBuyLevels } from './services/buyLevelWatch.js';
+import { checkBuyLevels, checkStaleValuations } from './services/buyLevelWatch.js';
 import { regenerate as regenerateDayInReview } from './services/dayInReview.js';
 import { scrapeAndStoreDailyRates } from './services/gsamRates.js';
 import { refreshUniverse as refreshPriceUniverse } from './services/priceHistory.js';
@@ -333,6 +333,17 @@ cron.schedule(
         }
       })
       .catch((err) => console.error('[cron] buy-levels failed:', err.message));
+    // Same close-of-day pass asks the other watch question: which
+    // valuations aged past their review date with nobody told. Runs
+    // beside the crossing check because they share a cadence, not a
+    // trigger — this one fires whether or not any price moved.
+    checkStaleValuations()
+      .then((r) => {
+        if (r.stale > 0) {
+          console.log(`[cron] review-scan: ${r.stale} valuations past review, ${r.notified} owners emailed`);
+        }
+      })
+      .catch((err) => console.error('[cron] review-scan failed:', err.message));
   },
   { timezone: 'America/New_York' }
 );

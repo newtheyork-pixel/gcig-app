@@ -127,3 +127,58 @@ export async function checkBuyLevels(deps = {}) {
 
   return { checked: watched.length, crossed, cleared, unpriced, alerts };
 }
+
+/**
+ * The staleness half of the watch: a valuation past its reviewBy date
+ * whose owner has not been told. The buy-level path only mentions
+ * staleness when a price happens to cross, which inverted the intent —
+ * a model that quietly ages past its review date is exactly the one
+ * nobody is looking at. Once per staleness: reviewAlertedAt arms the
+ * shot and moving reviewBy forward re-arms it, the same pattern
+ * alertedAt uses for crossings.
+ */
+export async function checkStaleValuations() {
+  const now = new Date();
+  const stale = await prisma.researchValuation.findMany({
+    where: {
+      reviewBy: { lt: now },
+      reviewAlertedAt: null,
+      project: { status: { not: 'Closed' } },
+    },
+    include: { project: { select: { id: true, name: true, status: true } } },
+  });
+  let notified = 0;
+  for (const v of stale) {
+    const to = (v.watchers || []).filter((e) => /@/.test(e));
+    let sent = false;
+    if (to.length) {
+      try {
+        await sendBuyLevelEmail(to, {
+          ticker: v.ticker,
+          name: v.name,
+          project: v.project?.name || null,
+          price: null,
+          buyBelow: v.buyBelow,
+          currency: v.currency || 'USD',
+          base: v.base ?? null,
+          stale: true,
+          reviewBy: v.reviewBy,
+          source: 'review-date scan',
+        });
+        sent = true;
+        notified += 1;
+      } catch (err) {
+        console.error(`[review-scan] email failed for ${v.ticker || v.name}:`, err.message);
+      }
+    }
+    // Same discipline as crossings: a failed send stays un-announced so
+    // tomorrow tries again; no watchers means the log line is the alert.
+    if (sent || to.length === 0) {
+      await prisma.researchValuation.update({
+        where: { id: v.id },
+        data: { reviewAlertedAt: now },
+      });
+    }
+  }
+  return { stale: stale.length, notified };
+}

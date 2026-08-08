@@ -34,6 +34,7 @@ import {
 } from '../services/internalResearch.js';
 import { extractFileText } from '../services/fileSummarizer.js';
 import { getWireHeadlines, getWireHealth } from '../services/newsFeeds.js';
+import * as quoteScheduler from '../services/quoteScheduler.js';
 import {
   scoreBreaking,
   filterBreaking,
@@ -109,6 +110,9 @@ const KNOWN_FUNCTIONS = [
   { id: 'WEI', label: 'World Equity Indices', summary: 'Global index snapshot.' },
   { id: 'TOP', label: 'Top News', summary: 'Market-wide top headlines.' },
   { id: 'MOVR', label: 'Movers', summary: 'Day\'s biggest gainers and losers.' },
+  { id: 'ALRT', label: 'Policy Alerts', summary: 'The book checked against the club\'s own IPS rules.' },
+  { id: 'EVTS', label: 'Earnings Calendar', summary: 'When every holding reports, next 60 days.' },
+  { id: 'STAT', label: 'System Status', summary: 'Quote scheduler health and news wire liveness.' },
   { id: 'PM', label: 'Portfolio Manager', summary: 'The whole book: positions, weights, live value and P&L, sector allocation.' },
   { id: 'SPLC', label: 'Supply Chain', summary: 'Customers, suppliers and key inputs named in the latest 10-K, with stated revenue concentration.' },
   { id: 'ECO', label: 'Economic Calendar', summary: 'Upcoming releases and central bank events.' },
@@ -1420,6 +1424,20 @@ router.get('/top-news', async (req, res) => {
     console.error('terminal/top-news failed:', err.message);
     res.status(502).json({ error: 'Top news unavailable' });
   }
+});
+
+// STATUS — is the terminal's own plumbing healthy. The quote scheduler
+// has carried an honest self-report since it was written and nothing
+// ever served it; the news wires got their per-feed roll call when the
+// WSJ feed was found dead after eighteen silent months. One route puts
+// both where a member can see them — a terminal that can say "my data
+// is degraded" is one whose normal readings can be trusted.
+router.get('/status', (_req, res) => {
+  res.json({
+    quotes: quoteScheduler.status(),
+    feeds: getWireHealth(),
+    fetchedAt: new Date().toISOString(),
+  });
 });
 
 // GET /api/terminal/indices — world index snapshot. Data sourcing and

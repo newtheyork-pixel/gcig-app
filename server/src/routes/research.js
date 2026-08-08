@@ -2251,7 +2251,12 @@ router.patch('/valuations/:id', canResearch, async (req, res) => {
     // already been alerted on stays silent at the new number, which is
     // the opposite of what changing it means.
     if (b.buyBelow !== undefined) data.alertedAt = null;
-    if (b.reviewBy !== undefined) data.reviewBy = b.reviewBy ? new Date(b.reviewBy) : null;
+    if (b.reviewBy !== undefined) {
+      data.reviewBy = b.reviewBy ? new Date(b.reviewBy) : null;
+      // A moved review date re-arms the staleness alert: the NEXT time
+      // the model ages past it is news again.
+      data.reviewAlertedAt = null;
+    }
     if (b.watchers !== undefined) data.watchers = emails(b.watchers);
     if (b.note !== undefined) data.note = b.note ? String(b.note).slice(0, 4000) : null;
     if (b.currency !== undefined && /^[A-Za-z]{3}$/.test(String(b.currency))) {
