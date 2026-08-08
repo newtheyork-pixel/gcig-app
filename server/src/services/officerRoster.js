@@ -370,14 +370,14 @@ export function mergeBoard(board, roster) {
 
 async function getJson(url) {
   await takeSlot();
-  const r = await fetch(url, { headers: { 'User-Agent': SEC_UA, Accept: 'application/json' } });
+  const r = await fetch(url, { signal: AbortSignal.timeout(15_000), headers: { 'User-Agent': SEC_UA, Accept: 'application/json' } });
   if (!r.ok) throw new Error(`SEC ${r.status}`);
   return r.json();
 }
 
 async function getText(url) {
   await takeSlot();
-  const r = await fetch(url, { headers: { 'User-Agent': SEC_UA, Accept: 'application/xml,text/xml,text/html,*/*' } });
+  const r = await fetch(url, { signal: AbortSignal.timeout(15_000), headers: { 'User-Agent': SEC_UA, Accept: 'application/xml,text/xml,text/html,*/*' } });
   if (!r.ok) throw new Error(`SEC ${r.status}`);
   return r.text();
 }

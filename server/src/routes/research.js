@@ -2247,17 +2247,33 @@ router.patch('/valuations/:id', canResearch, async (req, res) => {
     for (const k of ['bear', 'base', 'bull', 'priceAtWrite', 'buyBelow']) {
       if (b[k] !== undefined) data[k] = num(b[k]);
     }
-    // Moving the level re-arms it. Otherwise raising a watch you have
-    // already been alerted on stays silent at the new number, which is
-    // the opposite of what changing it means.
-    if (b.buyBelow !== undefined) data.alertedAt = null;
-    if (b.reviewBy !== undefined) {
-      data.reviewBy = b.reviewBy ? new Date(b.reviewBy) : null;
-      // A moved review date re-arms the staleness alert: the NEXT time
-      // the model ages past it is news again.
-      data.reviewAlertedAt = null;
+    // Moving the level re-arms it, but only a real MOVE — comparing
+    // against the existing value, not merely the field being present.
+    // A save that echoes the same buyBelow (editing a note, say) used
+    // to silently clear the alert, so a crossing that already happened
+    // would fire a second time. Same for the review date.
+    if (b.buyBelow !== undefined) {
+      const next = num(b.buyBelow);
+      if (next !== existing.buyBelow) data.alertedAt = null;
     }
-    if (b.watchers !== undefined) data.watchers = emails(b.watchers);
+    if (b.reviewBy !== undefined) {
+      const nextReview = b.reviewBy ? new Date(b.reviewBy) : null;
+      data.reviewBy = nextReview;
+      const changed =
+        (nextReview?.getTime() ?? null) !== (existing.reviewBy?.getTime() ?? null);
+      if (changed) data.reviewAlertedAt = null;
+    }
+    // Adding watchers to a valuation already marked stale re-arms it,
+    // so the new watchers actually hear about the staleness that the
+    // no-watchers scan could not tell anyone about.
+    if (b.watchers !== undefined) {
+      const nextWatchers = emails(b.watchers);
+      data.watchers = nextWatchers;
+      const hadNone = !(existing.watchers || []).length;
+      if (hadNone && nextWatchers.length && existing.reviewAlertedAt) {
+        data.reviewAlertedAt = null;
+      }
+    }
     if (b.note !== undefined) data.note = b.note ? String(b.note).slice(0, 4000) : null;
     if (b.currency !== undefined && /^[A-Za-z]{3}$/.test(String(b.currency))) {
       data.currency = String(b.currency).toUpperCase();

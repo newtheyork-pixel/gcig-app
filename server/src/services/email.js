@@ -263,12 +263,53 @@ export async function sendBuyLevelEmail(toEmails, alert) {
       ? `$${Number(n).toLocaleString()}`
       : `${Number(n).toLocaleString()} ${currency}`;
 
-  const staleBlock = stale
+  // A crossing email and a review-date email are different claims. When
+  // price is null this was not triggered by any price event — the
+  // valuation simply aged past its review date — and the crossing
+  // language ("reached", "closed at, at or below the level") would be a
+  // false price signal in fiduciary software. The review email says
+  // only what is true: the model is stale.
+  const reviewOnly = price == null;
+
+  const staleBlock = stale && !reviewOnly
     ? `<div style="margin: 16px 0; padding: 12px 14px; border: 1px solid #B91C1C; background: #FEF2F2; color: #7F1D1D; font-size: 13px; line-height: 1.5;">
          <strong>This valuation is past its review date${reviewBy ? ` (${new Date(reviewBy).toISOString().slice(0, 10)})` : ''}.</strong>
          The level was set against numbers that have not been revisited since. Re-run the model before acting on this.
        </div>`
     : '';
+
+  if (reviewOnly) {
+    await getTransporter().sendMail({
+      from: from(),
+      to: from(),
+      bcc: toEmails,
+      subject: `${ticker} valuation is past its review date`,
+      html: `
+        <div style="font-family: 'Inter', system-ui, sans-serif; max-width: 560px; margin: 0 auto; padding: 32px;">
+          <div style="text-align: center; margin-bottom: 24px;">
+            <h1 style="color: #1B2A4A; font-size: 20px; margin: 0; font-family: Georgia, serif; letter-spacing: -0.01em;">The Griffin Fund</h1>
+            <p style="color: #C9A84C; font-size: 11px; text-transform: uppercase; letter-spacing: 2px; margin: 4px 0 0;">
+              Valuation past review date
+            </p>
+          </div>
+          <p style="color: #1B2A4A; font-size: 15px; line-height: 1.6; margin: 0 0 16px;">
+            The valuation <em>${name}</em>${project ? ` (${project})` : ''} on <strong>${ticker}</strong>
+            has passed its review date${reviewBy ? ` (${new Date(reviewBy).toISOString().slice(0, 10)})` : ''}.
+            Its buy level of ${money(buyBelow)} was set against numbers that have not been revisited since.
+          </p>
+          <div style="margin: 16px 0; padding: 12px 14px; border: 1px solid #B91C1C; background: #FEF2F2; color: #7F1D1D; font-size: 13px; line-height: 1.5;">
+            <strong>This is not a price alert.</strong> Nothing about the current price is implied.
+            Re-run the model before acting on the level.
+          </div>
+          <p style="color: #64748B; font-size: 11px; line-height: 1.6; margin: 12px 0 0;">
+            You are getting this because you watch this valuation and it aged past its review date.
+            You will not be told again until the review date is moved forward.
+          </p>
+        </div>
+      `,
+    });
+    return;
+  }
 
   await getTransporter().sendMail({
     from: from(),

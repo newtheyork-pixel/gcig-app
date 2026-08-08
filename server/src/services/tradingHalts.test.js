@@ -306,7 +306,12 @@ test('both wires down is an empty tape with a visible roll call, never a throw',
     now: NOW,
   });
   assert.deepEqual(out.halts, []);
-  assert.deepEqual(out.sources, { nasdaq: 0, nyse: 0 });
+  // Injected fetchers bypass lastGood, so both wires read live-but-empty
+  // rather than stale — the roll call still shows zero rows each.
+  assert.equal(out.sources.nasdaq, 0);
+  assert.equal(out.sources.nyse, 0);
+  assert.equal(out.sources.nasdaqLive, true);
+  assert.equal(out.sources.nyseLive, true);
   assert.equal(out.fetchedAt, new Date(NOW).toISOString());
 });
 

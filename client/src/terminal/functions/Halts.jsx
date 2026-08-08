@@ -183,7 +183,14 @@ export default function Halts({ onOpen }) {
       <div className="term-panel-header">
         <span className="ticker">HALT</span>
         <span className="name">Trading Halts · Nasdaq + NYSE wires</span>
-        <span className="term-live-badge">● LIVE</span>
+        {/* Live only when BOTH wires answered this cycle. A wire serving
+            its last snapshot can show a halt that has since resumed, so
+            the badge must not claim live over a stale tape. */}
+        {sources.nasdaqLive !== false && sources.nyseLive !== false ? (
+          <span className="term-live-badge">● LIVE</span>
+        ) : (
+          <span className="term-live-badge" style={{ color: 'var(--term-amber)' }}>● STALE</span>
+        )}
         {lastRefresh && (
           <span className="term-refresh-ts">
             {lastRefresh.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: true })}
@@ -197,6 +204,12 @@ export default function Halts({ onOpen }) {
       {sources.nasdaq === 0 && sources.nyse === 0 ? (
         <div className="term-error" style={{ fontSize: 11 }}>
           Neither halt wire returned data — the tape below may be stale.
+        </div>
+      ) : sources.nasdaqLive === false || sources.nyseLive === false ? (
+        <div className="term-error" style={{ fontSize: 11 }}>
+          {sources.nasdaqLive === false ? 'Nasdaq' : 'NYSE'} wire did not answer
+          {' '}({Math.round((sources.nasdaqStaleSeconds || sources.nyseStaleSeconds || 0) / 60)}m ago). Its
+          halts below are from the last good pull and a resumed one may still read as active.
         </div>
       ) : null}
 

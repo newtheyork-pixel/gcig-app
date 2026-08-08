@@ -251,9 +251,15 @@ export function computeYoY(observations) {
 }
 
 async function getPrints() {
+  let anyFailed = false;
   const results = await Promise.all(
     PRINT_SERIES.map(async (s) => {
       const obs = await getFredSeries(s.series, { days: s.days });
+      // getFredSeries returns [] on a fetch failure. These are weekly
+      // and monthly series that always carry recent observations, so an
+      // empty result is a failed fetch, not a quiet series — and a
+      // failed fetch must not bake into the hour-long success cache.
+      if (obs.length === 0) anyFailed = true;
       const stat = s.yoy ? computeYoY(obs) : latestAndPrior(obs);
       return {
         series: s.series,
@@ -265,7 +271,7 @@ async function getPrints() {
       };
     })
   );
-  return results;
+  return { prints: results, failed: anyFailed };
 }
 
 // The panel's whole payload:
@@ -294,11 +300,15 @@ export async function getEcoCalendar({ forceFresh = false } = {}) {
       // look alike — the house rule every panel lives by, and the flag
       // that let the first production miss be diagnosed from a curl.
       upcomingFailed: upcoming.failed === true,
-      prints,
+      prints: prints.prints,
+      printsFailed: prints.failed === true,
       fetchedAt: new Date().toISOString(),
     };
+    // Either half failing backdates the whole build: a transient FRED
+    // blip on the prints used to bake into the hour cache and show a
+    // row of dashes for sixty minutes.
     cache = {
-      at: upcoming.failed
+      at: upcoming.failed || prints.failed
         ? Date.now() - CACHE_TTL_MS + FAILURE_TTL_MS
         : Date.now(),
       data: out,

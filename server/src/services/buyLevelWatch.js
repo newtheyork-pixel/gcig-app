@@ -171,9 +171,12 @@ export async function checkStaleValuations() {
         console.error(`[review-scan] email failed for ${v.ticker || v.name}:`, err.message);
       }
     }
-    // Same discipline as crossings: a failed send stays un-announced so
-    // tomorrow tries again; no watchers means the log line is the alert.
-    if (sent || to.length === 0) {
+    // Only a real send arms the dedupe. A valuation with no watchers
+    // must stay un-stamped: stamping it would silence it forever, so
+    // adding a watcher tomorrow would never tell them the model is
+    // stale. It costs one cheap re-scan a night until somebody watches
+    // it, which is the correct trade.
+    if (sent) {
       await prisma.researchValuation.update({
         where: { id: v.id },
         data: { reviewAlertedAt: now },

@@ -5,7 +5,7 @@
 // network, and this file only decides what to feed it.
 
 import express from 'express';
-import { verifyJwt } from '../middleware/auth.js';
+import { verifyJwt, requireTerminalAccess } from '../middleware/auth.js';
 import { getSheetPortfolio } from '../services/sheetPortfolio.js';
 import { getCashBalance } from '../services/tradeExecution.js';
 import { getUpcomingEarningsBatch } from '../services/marketData.js';
@@ -24,7 +24,11 @@ const router = express.Router();
 //
 // A gate that is missing looks exactly like a gate that is passing, from
 // the outside, right up until somebody checks.
-router.use(verifyJwt);
+// verifyJwt only authenticates; the whole book — every position, its
+// weight, the cash floor, the names underwater — must not reach the
+// JuniorAnalyst tier that the terminal deliberately excludes. Same gate
+// as every sibling terminal route, which this one shipped without.
+router.use(verifyJwt, requireTerminalAccess);
 router.get('/', async (_req, res) => {
   try {
     // Each input is optional and each failure is visible downstream: a

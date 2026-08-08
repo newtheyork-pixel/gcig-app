@@ -40,7 +40,7 @@ async function defaultFilingsFetch(ticker) {
 }
 async function defaultDocFetch(url) {
   await takeSlot();
-  const r = await fetch(url, { headers: { 'User-Agent': SEC_UA, Accept: 'text/html,*/*' } });
+  const r = await fetch(url, { signal: AbortSignal.timeout(15_000), headers: { 'User-Agent': SEC_UA, Accept: 'text/html,*/*' } });
   if (!r.ok) throw new Error(`sec doc ${r.status}`);
   return r.text();
 }

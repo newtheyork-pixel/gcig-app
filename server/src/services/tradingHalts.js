@@ -432,6 +432,11 @@ let cache = { at: 0, payload: null };
 // that wire to slightly-stale rather than blanking it — the same
 // per-source posture /top-news takes with its feeds.
 let lastGood = { nasdaq: null, nyse: null };
+// When each wire last brought fresh rows. A wire down for a sustained
+// stretch keeps serving its last snapshot, and a resumed halt that the
+// snapshot still shows as active is a FALSE halt — so a member deserves
+// to know the tape is stale, not "LIVE".
+let lastGoodAt = { nasdaq: 0, nyse: 0 };
 
 /**
  * The merged halt tape. Never throws and never returns null: the
@@ -465,9 +470,9 @@ export async function getHalts(deps = {}) {
     let nasdaqRows = nasdaq;
     let nyseRows = nyse;
     if (!injected) {
-      if (nasdaq) lastGood.nasdaq = nasdaq;
+      if (nasdaq) { lastGood.nasdaq = nasdaq; lastGoodAt.nasdaq = now; }
       else nasdaqRows = lastGood.nasdaq;
-      if (nyse) lastGood.nyse = nyse;
+      if (nyse) { lastGood.nyse = nyse; lastGoodAt.nyse = now; }
       else nyseRows = lastGood.nyse;
     }
     nasdaqRows = nasdaqRows || [];
@@ -478,8 +483,24 @@ export async function getHalts(deps = {}) {
       fetchedAt: new Date(now).toISOString(),
       // Rows each wire brought to THIS payload — the roll call that
       // makes a dead wire visible in the terminal instead of months
-      // later (the WSJ-freeze lesson).
-      sources: { nasdaq: nasdaqRows.length, nyse: nyseRows.length },
+      // later (the WSJ-freeze lesson). `live` is whether the wire
+      // answered THIS cycle; `staleSeconds` ages a snapshot being
+      // served from lastGood, so the panel can say a halt might have
+      // resumed rather than badge it live.
+      sources: {
+        nasdaq: nasdaqRows.length,
+        nyse: nyseRows.length,
+        nasdaqLive: !injected ? !!nasdaq : true,
+        nyseLive: !injected ? !!nyse : true,
+        nasdaqStaleSeconds:
+          !injected && !nasdaq && lastGoodAt.nasdaq
+            ? Math.round((now - lastGoodAt.nasdaq) / 1000)
+            : null,
+        nyseStaleSeconds:
+          !injected && !nyse && lastGoodAt.nyse
+            ? Math.round((now - lastGoodAt.nyse) / 1000)
+            : null,
+      },
     };
 
     if (!injected) {

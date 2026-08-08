@@ -16,6 +16,7 @@
 // null on any failure rather than a thrown exception that would spill
 // a 5xx out the handler.
 import { SEC_UA } from './secFilings.js';
+import { takeSlot } from './secFetch.js';
 
 // 16 MB cap. SEC primary HTML docs are typically ≤2 MB; the KO proxy
 // we already pull is ~6 MB; capping at 16 MB safely covers any HTML
@@ -82,6 +83,9 @@ function injectBaseHref(html, url) {
 }
 
 async function defaultDocFetch(url) {
+  // Counts against the same process-wide SEC budget as every other
+  // EDGAR reader; the FIL viewer used to fetch outside it entirely.
+  await takeSlot();
   // Mirrors the proxyStatement.js docFetch shape: SEC_UA + a permissive
   // Accept (HTML, then anything) so a binary exhibit in the same path
   // still flows through unchanged. redirect:'manual' so the upstream can't 30x

@@ -1,4 +1,5 @@
 import prisma from '../db.js';
+import { takeSlot } from './secFetch.js';
 
 // SEC EDGAR backfill for historical Goldman Sachs FGTXX yields. The
 // daily GSAM PDF only carries today's snapshot, so to compute YTD
@@ -17,12 +18,14 @@ const TARGET_TICKER = 'FGTXX';
 const UA = 'GriffinFund research@thegriffinfund.org';
 
 async function fetchJson(url) {
+  await takeSlot();
   const res = await fetch(url, { headers: { 'User-Agent': UA, Accept: 'application/json' } });
   if (!res.ok) throw new Error(`EDGAR ${res.status} for ${url}`);
   return res.json();
 }
 
 async function fetchText(url) {
+  await takeSlot();
   const res = await fetch(url, { headers: { 'User-Agent': UA, Accept: 'application/xml' } });
   if (!res.ok) throw new Error(`EDGAR ${res.status} for ${url}`);
   return res.text();

@@ -151,7 +151,9 @@ export default function Economic() {
 
       {rows.length === 0 ? (
         <div className="term-loading">
-          {upcoming.length === 0
+          {data.upcomingFailed
+            ? 'Could not reach FRED for the release schedule. Retrying shortly.'
+            : upcoming.length === 0
             ? 'No scheduled releases came back from FRED for the next 14 days.'
             : 'No watched releases inside 14 days. Switch to All to see the rest.'}
         </div>

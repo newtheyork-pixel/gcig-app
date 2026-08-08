@@ -285,6 +285,7 @@ export async function getBusinessProfile(ticker) {
     if (tenK?.url) {
       await takeSlot();
       const r = await fetch(tenK.url, {
+        signal: AbortSignal.timeout(15_000),
         headers: { 'User-Agent': SEC_UA, Accept: 'text/html' },
       });
       if (r.ok) {
