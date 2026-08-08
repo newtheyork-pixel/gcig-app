@@ -289,6 +289,16 @@ final class GriffinDrive: ObservableObject {
             if head.contains("ppt/") { return "pptx" }
             return "zip"
         }
+        // Text has no magic number, which left every prose note — the
+        // CHRW case summary, the ELMD filings pass — as a bare "?"
+        // while the PDFs beside them healed. No NULs plus valid UTF-8
+        // over the head is the honest test; .md because these notes
+        // are written as markdown and Quick Look renders it.
+        let head = bytes.prefix(4096)
+        if !head.isEmpty, !head.contains(0),
+           String(data: head, encoding: .utf8) != nil {
+            return "md"
+        }
         return nil
     }
 
