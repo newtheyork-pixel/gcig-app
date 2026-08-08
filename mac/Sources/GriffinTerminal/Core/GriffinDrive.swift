@@ -260,6 +260,38 @@ final class GriffinDrive: ObservableObject {
     /// somebody else's document.
     private var artifactIdByVolumePath: [String: Int] = [:]
 
+    /// Disk names that extend a bare artifact title with a sniffed
+    /// extension ("Reports/Anglo" → "Reports/Anglo.pdf"). Reconcile
+    /// must treat these as the artifacts they are — without the alias
+    /// set, the very file we just named correctly reads as unknown and
+    /// gets swept to the Trash on the next cycle.
+    private var extendedNames: Set<String> = []
+
+    /// The extensions a sniff can produce, in the order the existence
+    /// check probes them. Small on purpose: research artifacts are
+    /// papers, decks, sheets and images.
+    private static let SNIFF_EXTS = ["pdf", "xlsx", "docx", "pptx", "png", "jpg", "zip", "csv", "txt"]
+
+    /// What the bytes say the file is. A title with no extension gets
+    /// one from the CONTENT, because Finder identifies files by name
+    /// and a real PDF called "Anglo American" renders as a "?" nobody
+    /// can open.
+    nonisolated static func sniffExtension(_ bytes: Data) -> String? {
+        if bytes.starts(with: [0x25, 0x50, 0x44, 0x46]) { return "pdf" } // %PDF
+        if bytes.starts(with: [0x89, 0x50, 0x4E, 0x47]) { return "png" }
+        if bytes.starts(with: [0xFF, 0xD8, 0xFF]) { return "jpg" }
+        if bytes.starts(with: [0x50, 0x4B]) { // PK zip container
+            // Office files are zips; telling them apart needs the
+            // member list, which names the format in its first entries.
+            let head = String(decoding: bytes.prefix(4096), as: UTF8.self)
+            if head.contains("xl/") { return "xlsx" }
+            if head.contains("word/") { return "docx" }
+            if head.contains("ppt/") { return "pptx" }
+            return "zip"
+        }
+        return nil
+    }
+
     /// Trash entries already acted on, so a sweep that runs on every
     /// filesystem event does not re-post the same deletion. Keyed by the
     /// trashed path, because the file stays in the Trash until the user
@@ -294,7 +326,48 @@ final class GriffinDrive: ObservableObject {
             let dest = base.appendingPathComponent(row.title)
             try? FileManager.default.createDirectory(
                 at: dest.deletingLastPathComponent(), withIntermediateDirectories: true)
-            if FileManager.default.fileExists(atPath: dest.path) { continue }
+            if FileManager.default.fileExists(atPath: dest.path) {
+                // Heal an earlier pull that materialized a bare title:
+                // read the head, name the file by its bytes, once. The
+                // SIG reports sat as "?" icons for exactly this reason.
+                if (row.title as NSString).pathExtension.isEmpty,
+                   let fh = FileHandle(forReadingAtPath: dest.path),
+                   let head = try? fh.read(upToCount: 4096),
+                   let ext = Self.sniffExtension(head) {
+                    try? fh.close()
+                    let newDest = dest.appendingPathExtension(ext)
+                    if !FileManager.default.fileExists(atPath: newDest.path),
+                       (try? FileManager.default.moveItem(at: dest, to: newDest)) != nil {
+                        let diskName = "\(row.title).\(ext)"
+                        let volOld = "\(base.lastPathComponent)/\(row.title)"
+                        let volNew = "\(base.lastPathComponent)/\(diskName)"
+                        extendedNames.insert(diskName)
+                        remoteIdByPath[diskName] = row.id
+                        artifactIdByVolumePath[volNew] = row.id
+                        if let sz = known.removeValue(forKey: volOld) {
+                            known[volNew] = sz
+                        }
+                    }
+                } else {
+                    // fh may be open with no sniffable head; close it.
+                }
+                continue
+            }
+            // A bare title may live on disk under a sniffed extension
+            // from an earlier pull; finding it under any candidate name
+            // means it is already here.
+            if (row.title as NSString).pathExtension.isEmpty {
+                let hit = Self.SNIFF_EXTS.first { ext in
+                    FileManager.default.fileExists(atPath: dest.path + "." + ext)
+                }
+                if let ext = hit {
+                    let extended = "\(base.lastPathComponent)/\(row.title).\(ext)"
+                    extendedNames.insert("\(row.title).\(ext)")
+                    remoteIdByPath["\(row.title).\(ext)"] = row.id
+                    artifactIdByVolumePath[extended] = row.id
+                    continue
+                }
+            }
             wanted.append((row, item, dest))
         }
         // Before the early return, not after it. Reconciling only when
@@ -312,7 +385,7 @@ final class GriffinDrive: ObservableObject {
         // swept and failed again, identically, forever. That is how the
         // CHRW project lost "3 Regulatory" and "4 Company filings", and
         // why they stayed lost.
-        let titles = Set((w.artifacts ?? []).map(\.title))
+        let titles = Set((w.artifacts ?? []).map(\.title)).union(extendedNames)
         let awaiting = Self.awaitingDirectories(for: wanted.map { $0.dest }, under: base)
         reconcile(base: base, against: titles, awaiting: awaiting)
         guard !wanted.isEmpty else { return true }
@@ -323,7 +396,7 @@ final class GriffinDrive: ObservableObject {
         // open two hundred sockets and have Render rate-limit us.
         var pulled = 0
         var index = 0
-        await withTaskGroup(of: (String, Int)?.self) { group in
+        await withTaskGroup(of: (String, String, Int, Int)?.self) { group in
             func submit() {
                 guard index < wanted.count else { return }
                 let job = wanted[index]
@@ -338,21 +411,43 @@ final class GriffinDrive: ObservableObject {
                         try FileManager.default.createDirectory(
                             at: job.dest.deletingLastPathComponent(),
                             withIntermediateDirectories: true)
-                        try bytes.write(to: job.dest, options: .atomic)
-                        return (job.row.title, bytes.count)
+                        // A title with no extension gets one from the
+                        // bytes. The SIG project's reports arrived as
+                        // prose titles, materialized as extension-less
+                        // files, and rendered as a folder of "?" icons
+                        // no double-click could open — real PDFs the
+                        // Finder had no way to recognize.
+                        var dest = job.dest
+                        var diskName = job.row.title
+                        if (job.row.title as NSString).pathExtension.isEmpty,
+                           let ext = Self.sniffExtension(bytes) {
+                            dest = dest.appendingPathExtension(ext)
+                            diskName = "\(job.row.title).\(ext)"
+                        }
+                        try bytes.write(to: dest, options: .atomic)
+                        return (job.row.title, diskName, bytes.count, job.row.id)
                     } catch { return nil }
                 }
             }
             for _ in 0..<min(6, wanted.count) { submit() }
             while let done = await group.next() {
-                if let (title, size) = done {
+                if let (title, diskName, size, rowId) = done {
                     // Recorded before the watcher can see it, or our own
                     // download is read back as a local edit and pushed
                     // straight up again. Volume-relative, matching what
                     // the watcher's walk produces — the bare title never
                     // matched, so every pull re-uploaded its own
                     // downloads and churned the whole club's sync.
-                    known["\(base.lastPathComponent)/\(title)"] = size
+                    known["\(base.lastPathComponent)/\(diskName)"] = size
+                    if diskName != title {
+                        // The alias set is what keeps reconcile's hands
+                        // off the extended name, and the id maps are
+                        // what keep an edit or a trash of it pointed at
+                        // the artifact it is.
+                        extendedNames.insert(diskName)
+                        remoteIdByPath[diskName] = rowId
+                        artifactIdByVolumePath["\(base.lastPathComponent)/\(diskName)"] = rowId
+                    }
                     pulled += 1
                     status.pending = max(0, wanted.count - pulled)
                 }
