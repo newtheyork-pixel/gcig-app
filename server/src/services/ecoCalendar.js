@@ -44,6 +44,11 @@ let namesCache = { at: 0, byId: null };
 
 const UPCOMING_WINDOW_DAYS = 14;
 
+let lastRawSample = [];
+export function _lastRawSample() {
+  return lastRawSample;
+}
+
 // The releases a stock club actually plans around. Matched against
 // FRED's own release names — anchored, because FRED also publishes
 // "Gross Domestic Product by Industry" and a start-only GDP pattern
@@ -187,7 +192,12 @@ async function getUpcoming() {
   // null = the fetch failed (vs. an honest empty window) — the caller
   // uses that to backdate the cache so the retry comes soon.
   if (payload == null) return { rows: [], failed: true };
-  return { rows: transformReleaseDates(payload, { start, end, nameById }), failed: false };
+  const rows = transformReleaseDates(payload, { start, end, nameById });
+  // Kept beside the transform so a shape drift upstream is one curl
+  // away from visible instead of a guessing game: what FRED actually
+  // sent, trimmed.
+  lastRawSample = (payload.release_dates || payload.releaseDates || []).slice(0, 3);
+  return { rows, failed: false };
 }
 
 // Latest + prior from an oldest-first observation feed (getFredSeries'
@@ -280,6 +290,10 @@ export async function getEcoCalendar({ forceFresh = false } = {}) {
     const out = {
       configured: true,
       upcoming: upcoming.rows,
+      // Empty-because-quiet and empty-because-the-fetch-died must not
+      // look alike — the house rule every panel lives by, and the flag
+      // that let the first production miss be diagnosed from a curl.
+      upcomingFailed: upcoming.failed === true,
       prints,
       fetchedAt: new Date().toISOString(),
     };
