@@ -40,6 +40,18 @@ if ! security find-identity -v -p codesigning | grep -q "Developer ID Applicatio
 fi
 
 echo "==> version $VERSION (build $BUILD)"
+
+# Tests gate the release. Twice now a build was signed and notarized
+# while the suite was red, and both times the failures were real enough
+# to demand a diagnosis before publishing — the gate makes the pause
+# automatic. The live smoke tests can flake when a server deploy is
+# rolling out at the same moment; RELEASE_SKIP_TESTS=1 is the explicit
+# escape for exactly that, so skipping stays a decision and not a habit.
+if [ "${RELEASE_SKIP_TESTS:-0}" != "1" ]; then
+  echo "==> swift test (RELEASE_SKIP_TESTS=1 to skip)"
+  swift test
+fi
+
 ./build.sh release
 
 # Stamp the version INTO the bundle. The updater compares what is
