@@ -306,7 +306,24 @@ struct ChartPanel: View {
 
     private func chartArea(_ pts: [Point], _ s: Stats?,
                            _ series: [StudySeries]) -> some View {
-        let dom = yDomain(pts)
+        // Measured, not guessed. A fixed headroom fraction cleared the
+        // legend in a tall pane and lost to it in a short one — the
+        // legend is ~80pt regardless of pane size, so the fraction it
+        // needs GROWS as the pane shrinks. GeometryReader gives the real
+        // height and the domain gets exactly the padding that puts the
+        // series below the legend block, plus a margin, at every size.
+        GeometryReader { geo in
+            let legendClear = min(0.5, (Self.legendHeightEstimate + 14) / max(geo.size.height, 120))
+            let dom = yDomain(pts, topFraction: max(0.06, legendClear))
+            chartBody(pts, s, series, dom: dom)
+        }
+    }
+
+    /// Four mono lines plus padding — stable enough to size against.
+    private static let legendHeightEstimate: CGFloat = 84
+
+    private func chartBody(_ pts: [Point], _ s: Stats?,
+                           _ series: [StudySeries], dom: ClosedRange<Double>) -> some View {
         return Chart {
             priceMarks(pts, base: dom.lowerBound)
             studyMarks(series)
@@ -558,20 +575,23 @@ struct ChartPanel: View {
         return "\(mdy(f.date)) – \(mdy(l.date))"
     }
 
-    private func yDomain(_ pts: [Point]) -> ClosedRange<Double> {
+    private func yDomain(_ pts: [Point], topFraction: CGFloat) -> ClosedRange<Double> {
         let closes = pts.compactMap(\.close)
         guard let lo = closes.min(), let hi = closes.max(), hi > lo else {
             let v = closes.first ?? 0
             return (v - 1)...(v + 1)
         }
-        // Asymmetric on purpose, the way Bloomberg ranges GP: the
-        // stats legend floats in the plot's top-left corner, so the
-        // scale leaves real headroom above the series and the legend
-        // only ever covers empty sky. Symmetric 4% put the recent peak
-        // underneath the legend and flush against the panel edge,
-        // where it read as covered and clipped.
+        // Asymmetric, the way Bloomberg ranges GP: real headroom above
+        // the series so the floating legend only covers empty sky. The
+        // top fraction arrives MEASURED from the pane's actual height —
+        // a fixed percentage cleared tall panes and collided in short
+        // ones. topFraction is the share of the final plot height the
+        // legend needs, so the data occupies (1 - f) and the padding in
+        // price units is range * f / (1 - f).
         let range = hi - lo
-        return (lo - range * 0.04)...(hi + range * 0.18)
+        let f = Double(min(topFraction, 0.6))
+        let topPad = range * f / max(1 - f, 0.4)
+        return (lo - range * 0.04)...(hi + topPad)
     }
 
     private func xDomain(_ pts: [Point]) -> ClosedRange<Date> {
