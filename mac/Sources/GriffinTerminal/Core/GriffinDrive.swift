@@ -270,7 +270,7 @@ final class GriffinDrive: ObservableObject {
     /// The extensions a sniff can produce, in the order the existence
     /// check probes them. Small on purpose: research artifacts are
     /// papers, decks, sheets and images.
-    private static let SNIFF_EXTS = ["pdf", "xlsx", "docx", "pptx", "png", "jpg", "zip", "csv", "txt"]
+    private static let SNIFF_EXTS = ["pdf", "xlsx", "docx", "pptx", "png", "jpg", "zip", "csv", "txt", "md"]
 
     /// What the bytes say the file is. A title with no extension gets
     /// one from the CONTENT, because Finder identifies files by name
@@ -306,7 +306,10 @@ final class GriffinDrive: ObservableObject {
         guard let pid = projectId, let base = root else { return false }
         struct Wrap: Decodable {
             let artifacts: [Row]?
-            struct Row: Decodable { let id: Int; let title: String; let fileRef: String? }
+            struct Row: Decodable {
+                let id: Int; let title: String; let fileRef: String?
+                let body: String?
+            }
         }
         guard let data = try? await API.shared.get("/research/projects/\(pid)"),
               let w = try? await API.shared.decode(Wrap.self, from: data) else { return false }
@@ -320,7 +323,35 @@ final class GriffinDrive: ObservableObject {
         // project immediately, with files filling in underneath.
         var wanted: [(row: Wrap.Row, item: String, dest: URL)] = []
         for row in w.artifacts ?? [] {
-            guard let item = DocumentViewer.itemId(from: row.fileRef) else { continue }
+            guard let item = DocumentViewer.itemId(from: row.fileRef) else {
+                // An artifact with no file is not an artifact with no
+                // content: inline text bodies are the same list by
+                // design, and skipping them left the SIG project's
+                // entire Data folder — fifteen curated source notes —
+                // invisible on the volume. They materialize as
+                // markdown. Deliberately NOT registered for replace-
+                // by-edit: a member editing one on disk creates a new
+                // artifact beside it rather than silently rewriting a
+                // curated note under its original byline.
+                if let body = row.body, !body.isEmpty {
+                    let hasExt = !(row.title as NSString).pathExtension.isEmpty
+                    let diskName = hasExt ? row.title : row.title + ".md"
+                    let dest = base.appendingPathComponent(diskName)
+                    let bytes = Data(body.utf8)
+                    let volKey = "\(base.lastPathComponent)/\(diskName)"
+                    if !hasExt { extendedNames.insert(diskName) }
+                    artifactIdByVolumePath[volKey] = row.id
+                    if known[volKey] != bytes.count
+                        || !FileManager.default.fileExists(atPath: dest.path) {
+                        try? FileManager.default.createDirectory(
+                            at: dest.deletingLastPathComponent(),
+                            withIntermediateDirectories: true)
+                        try? bytes.write(to: dest, options: .atomic)
+                        known[volKey] = bytes.count
+                    }
+                }
+                continue
+            }
             remoteIdByPath[row.title] = row.id
             artifactIdByVolumePath["\(base.lastPathComponent)/\(row.title)"] = row.id
             let dest = base.appendingPathComponent(row.title)
