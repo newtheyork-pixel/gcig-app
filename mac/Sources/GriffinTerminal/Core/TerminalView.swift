@@ -45,6 +45,7 @@ struct TerminalView: View {
             GriffinVolume.shared.mountIfPrepared()
             GriffinVolume.shared.clearFileProviderDomains()
             Updater.shared.start()
+            MarketBell.shared.start()
         }
         .background(BlockCaretInstaller().frame(width: 0, height: 0))
         .sheet(isPresented: $namingLayout) { LayoutNameSheet() }

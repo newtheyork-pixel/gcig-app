@@ -34,6 +34,18 @@ struct GriffinTerminalApp: App {
             }
             // Launchpad. The arranged screen is a work product; these
             // make it durable and addressable.
+            // The opening and closing bells, and the switch to silence
+            // them. A market terminal rings at 9:30 and 4:00 ET; a
+            // student in a lecture at 9:30 can turn it off.
+            CommandMenu("Market") {
+                Toggle("Ring the Bells", isOn: Binding(
+                    get: { MarketBell.shared.enabled },
+                    set: { MarketBell.shared.enabled = $0 }
+                ))
+                Divider()
+                Button("Preview Opening Bell") { MarketBell.shared.preview(.open) }
+                Button("Preview Closing Bell") { MarketBell.shared.preview(.close) }
+            }
             CommandMenu("Layouts") {
                 Button("Save Layout As…") {
                     NotificationCenter.default.post(name: .saveLayoutPrompt, object: nil)
