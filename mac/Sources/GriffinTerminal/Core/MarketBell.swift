@@ -1,5 +1,6 @@
 import Foundation
 import AppKit
+import AVFoundation
 
 // The opening bell and the closing bell.
 //
@@ -39,12 +40,28 @@ final class MarketBell: ObservableObject {
     private var lastTick: Date?
     private var loop: Task<Void, Never>?
 
+    // Rendered once, off the main thread, and kept: the ring is a few
+    // hundred KB of PCM and takes a beat to synthesize, which should not
+    // land on the main actor at half past nine. A retained player, so it
+    // is not deallocated mid-ring.
+    private var openWav: Data?
+    private var closeWav: Data?
+    private var player: AVAudioPlayer?
+
     private init() {
         enabled = UserDefaults.standard.object(forKey: Self.prefKey) as? Bool ?? true
     }
 
     func start() {
         loop?.cancel()
+        // Pre-render the bells so the first ring is instant.
+        if openWav == nil {
+            Task.detached(priority: .utility) {
+                let o = BellSynth.wav(.open)
+                let c = BellSynth.wav(.close)
+                await MainActor.run { self.openWav = o; self.closeWav = c }
+            }
+        }
         loop = Task { [weak self] in
             while !Task.isCancelled {
                 self?.tick(now: Date())
@@ -102,36 +119,29 @@ final class MarketBell: ObservableObject {
 
     private func ring(_ bell: Bell) {
         guard enabled else { return }
-        switch bell {
-        case .open:
-            // A floor bell is rung, not tapped: three bright strikes.
-            playSequence(["Hero", "Glass", "Glass"], gap: 0.22)
-        case .close:
-            // One deep, final note.
-            play("Submarine")
-        }
+        play(bell)
     }
 
     // MARK: Sound
 
-    private func play(_ name: String) {
-        NSSound(named: NSSound.Name(name))?.play()
-    }
-
-    private func playSequence(_ names: [String], gap: TimeInterval) {
-        for (i, name) in names.enumerated() {
-            DispatchQueue.main.asyncAfter(deadline: .now() + gap * Double(i)) { [weak self] in
-                self?.play(name)
-            }
+    private func play(_ bell: Bell) {
+        // Cache may still be rendering on a cold first ring; synthesize
+        // inline as a fallback so the bell is never silent.
+        let data = (bell == .open ? openWav : closeWav) ?? BellSynth.wav(bell == .open ? .open : .close)
+        do {
+            let p = try AVAudioPlayer(data: data)
+            p.prepareToPlay()
+            p.play()
+            player = p
+        } catch {
+            // A bell that cannot open the audio device is a nice-to-have
+            // that failed; never let it disturb anything else.
         }
     }
 
-    /// Ring a bell now, for the menu's "test" affordance — bypasses the
-    /// enabled gate so a muted user can still hear what they turned off.
+    /// Ring a bell now, for the menu's preview — bypasses the enabled
+    /// gate so a muted user can still hear what they turned off.
     func preview(_ bell: Bell) {
-        switch bell {
-        case .open: playSequence(["Hero", "Glass", "Glass"], gap: 0.22)
-        case .close: play("Submarine")
-        }
+        play(bell)
     }
 }
