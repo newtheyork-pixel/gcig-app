@@ -4210,10 +4210,15 @@ private struct SearchResultsView: View {
     private func snippet(_ row: SearchRow) -> String {
         let body = row.body
         guard !body.isEmpty else { return "" }
-        let low = body.lowercased()
+        // Search the ORIGINAL string case-insensitively. A String.Index
+        // taken from body.lowercased() is not valid in body — lowercasing
+        // can change length (Turkish İ becomes two scalars, ß, ligatures),
+        // and offsetting that foreign index into body can slice mid-
+        // grapheme or trap outright on non-ASCII notes.
         var at: String.Index?
         for t in terms {
-            if let r = low.range(of: t), at == nil || r.lowerBound < at! { at = r.lowerBound }
+            if let r = body.range(of: t, options: .caseInsensitive),
+               at == nil || r.lowerBound < at! { at = r.lowerBound }
         }
         guard let hit = at else { return String(body.prefix(140)) }
         let start = body.index(hit, offsetBy: -40, limitedBy: body.startIndex) ?? body.startIndex

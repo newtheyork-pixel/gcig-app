@@ -51,6 +51,13 @@ final class GriffinDrive: ObservableObject {
     /// our own downloads from being read back as local edits.
     private var known: [String: Int] = [:]
     private var pushing = false
+    /// True while a pull is materializing files. The download writes on a
+    /// background executor and the parent records `known` only after the
+    /// await returns, so an FSEvent firing in that gap sent scanAndPush
+    /// to walk a just-written file, find it absent from `known`, and
+    /// re-upload our own download as a duplicate. The flag closes the
+    /// window: no push runs while a pull is landing bytes.
+    private var pulling = false
 
     var root: URL? { ticker.map { FinderSync.root(project: $0) } }
 
@@ -183,7 +190,7 @@ final class GriffinDrive: ObservableObject {
     }
 
     private func scanAndPush() {
-        guard !pushing else { return }
+        guard !pushing, !pulling else { return }
         // The volume root, not one project's folder: a single watcher
         // covers every project and the first path segment says which.
         let base = GriffinVolume.mountPoint
@@ -261,11 +268,20 @@ final class GriffinDrive: ObservableObject {
     private var artifactIdByVolumePath: [String: Int] = [:]
 
     /// Disk names that extend a bare artifact title with a sniffed
-    /// extension ("Reports/Anglo" → "Reports/Anglo.pdf"). Reconcile
-    /// must treat these as the artifacts they are — without the alias
-    /// set, the very file we just named correctly reads as unknown and
-    /// gets swept to the Trash on the next cycle.
-    private var extendedNames: Set<String> = []
+    /// extension ("Reports/Anglo" → "Reports/Anglo.pdf"), keyed by the
+    /// project folder they belong to. Reconcile must treat these as the
+    /// artifacts they are, but ONLY within their own project — a global
+    /// set let a "Data/notes.md" in one project shield a stale
+    /// same-named file in another from cleanup.
+    private var extendedNames: [String: Set<String>] = [:]
+
+    /// The extended names for one project folder, mutable in place.
+    private func extendedNames(for project: String) -> Set<String> {
+        extendedNames[project] ?? []
+    }
+    private func addExtended(_ name: String, for project: String) {
+        extendedNames[project, default: []].insert(name)
+    }
 
     /// The extensions a sniff can produce, in the order the existence
     /// check probes them. Small on purpose: research artifacts are
@@ -349,10 +365,20 @@ final class GriffinDrive: ObservableObject {
                     let dest = base.appendingPathComponent(diskName)
                     let bytes = Data(body.utf8)
                     let volKey = "\(base.lastPathComponent)/\(diskName)"
-                    if !hasExt { extendedNames.insert(diskName) }
+                    if !hasExt { addExtended(diskName, for: base.lastPathComponent) }
                     artifactIdByVolumePath[volKey] = row.id
-                    if known[volKey] != bytes.count
-                        || !FileManager.default.fileExists(atPath: dest.path) {
+                    // Materialize ONLY when the file is absent, NEVER
+                    // overwrite. The size gate this replaces was a
+                    // data-loss bug: a member's on-disk edit rebaselined
+                    // known, the next pull saw known != the unchanged
+                    // server body, and rewrote the file back to the
+                    // original — destroying the edit. An existing file is
+                    // left exactly as it is: if the member changed it,
+                    // scanAndPush uploads it as a new artifact beside
+                    // this note (the stated intent); if the note changed
+                    // in the app, the app is the source of truth and the
+                    // disk copy re-materializes if the file is removed.
+                    if !FileManager.default.fileExists(atPath: dest.path) {
                         try? FileManager.default.createDirectory(
                             at: dest.deletingLastPathComponent(),
                             withIntermediateDirectories: true)
@@ -382,7 +408,7 @@ final class GriffinDrive: ObservableObject {
                         let diskName = "\(row.title).\(ext)"
                         let volOld = "\(base.lastPathComponent)/\(row.title)"
                         let volNew = "\(base.lastPathComponent)/\(diskName)"
-                        extendedNames.insert(diskName)
+                        addExtended(diskName, for: base.lastPathComponent)
                         remoteIdByPath[diskName] = row.id
                         artifactIdByVolumePath[volNew] = row.id
                         if let sz = known.removeValue(forKey: volOld) {
@@ -403,7 +429,7 @@ final class GriffinDrive: ObservableObject {
                 }
                 if let ext = hit {
                     let extended = "\(base.lastPathComponent)/\(row.title).\(ext)"
-                    extendedNames.insert("\(row.title).\(ext)")
+                    addExtended("\(row.title).\(ext)", for: base.lastPathComponent)
                     remoteIdByPath["\(row.title).\(ext)"] = row.id
                     artifactIdByVolumePath[extended] = row.id
                     continue
@@ -426,7 +452,7 @@ final class GriffinDrive: ObservableObject {
         // swept and failed again, identically, forever. That is how the
         // CHRW project lost "3 Regulatory" and "4 Company filings", and
         // why they stayed lost.
-        let titles = Set((w.artifacts ?? []).map(\.title)).union(extendedNames)
+        let titles = Set((w.artifacts ?? []).map(\.title)).union(extendedNames(for: base.lastPathComponent))
         let awaiting = Self.awaitingDirectories(for: wanted.map { $0.dest }, under: base)
         reconcile(base: base, against: titles, awaiting: awaiting)
         guard !wanted.isEmpty else { return true }
@@ -470,6 +496,7 @@ final class GriffinDrive: ObservableObject {
                     } catch { return nil }
                 }
             }
+            pulling = true
             for _ in 0..<min(6, wanted.count) { submit() }
             while let done = await group.next() {
                 if let (title, diskName, size, rowId) = done {
@@ -485,7 +512,7 @@ final class GriffinDrive: ObservableObject {
                         // off the extended name, and the id maps are
                         // what keep an edit or a trash of it pointed at
                         // the artifact it is.
-                        extendedNames.insert(diskName)
+                        addExtended(diskName, for: base.lastPathComponent)
                         remoteIdByPath[diskName] = rowId
                         artifactIdByVolumePath["\(base.lastPathComponent)/\(diskName)"] = rowId
                     }
@@ -494,6 +521,7 @@ final class GriffinDrive: ObservableObject {
                 }
                 submit()
             }
+            pulling = false
         }
         status.pending = 0
         if pulled > 0 { status.lastPull = "\(pulled) file\(pulled == 1 ? "" : "s") at \(Fmt.localStamp())" }
