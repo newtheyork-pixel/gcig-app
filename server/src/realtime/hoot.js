@@ -1,33 +1,34 @@
 import { WebSocketServer } from 'ws';
 import { authenticateToken, hasTerminalAccess } from '../middleware/auth.js';
 
-// The desk squawk box ("hoot"). One club-wide channel: a member holds a
-// button, their microphone streams to us, and we fan it out live to
-// everyone else on the channel. It is routed THROUGH the server rather
-// than peer-to-peer on purpose — everyone already holds one authenticated
-// socket to us, so there is no NAT to punch, no STUN/TURN to run, and no
-// third-party audio stack on the native client. The cost is our
-// bandwidth, which is fine because push-to-talk means one voice at a time.
+// The desk squawk box. Presence for the whole terminal plus push-to-talk
+// voice, relayed through the server (no peer-to-peer, no NAT, no third-
+// party audio stack on the native client). Two ways to be heard:
 //
-// Wire format: audio is raw 16 kHz mono little-endian Int16 PCM in BINARY
-// frames; everything else (who is here, who is keyed up) is JSON TEXT
-// frames. Outgoing audio is prefixed with the speaker's id (4-byte BE
-// uint32) so listeners can label and mix it.
+//   - the shared "Trade Desk": your keyed audio reaches everyone present;
+//   - a direct line to one person: your keyed audio reaches only them.
 //
-// A member may hold several connections at once (web terminal + native
-// app, or two tabs) — presence is deduped to one entry per person, and a
-// member's own voice is never echoed back to any of their own devices.
+// A direct line opens without the other person's say-so — this is a
+// turret intercom, not a phone call — but it is push-to-talk, so nothing
+// is heard until someone holds the button, and presence shows everyone
+// whose line they are on.
 //
-// Single-instance assumption: the roster lives in memory, so this is
-// correct only while the API runs on one dyno. If it is ever scaled out,
-// the fan-out needs a shared bus (Redis pub/sub) — until then, do not.
+// Wire format: audio is 16 kHz mono little-endian Int16 PCM in BINARY
+// frames prefixed with the speaker's 4-byte big-endian id; presence,
+// keyed-up, mute, target and activity are JSON TEXT frames. A member may
+// hold several connections (web + native); presence is deduped to one
+// entry per person and a member never hears their own voice.
+//
+// Single-instance assumption: the roster lives in memory, correct only
+// while the API runs on one dyno. Scaling out needs a shared bus.
 
-const MAX_FRAME = 64 * 1024; // a keyed PCM frame is ~20-40ms; cap the rest as abuse
+const MAX_FRAME = 64 * 1024; // a keyed PCM frame is ~20-40ms; cap the rest
 
 export function attachHoot(server) {
   const wss = new WebSocketServer({ noServer: true });
-  const peers = new Map(); // connId -> { ws, user, talking, alive }
+  const peers = new Map(); // connId -> { ws, user, talking, muted, target, lastActive, alive }
   let nextConnId = 1;
+  const now = () => Date.now();
 
   server.on('upgrade', (req, socket, head) => {
     let url;
@@ -36,12 +37,7 @@ export function attachHoot(server) {
     } catch {
       return socket.destroy();
     }
-    // This is the only WebSocket surface; anything else is a mistake.
     if (url.pathname !== '/ws/hoot') return socket.destroy();
-
-    // Browsers cannot set an Authorization header on a WebSocket, so the
-    // JWT rides in the query string. Same secret + tokenVersion check as
-    // every HTTP route, and the same terminal-access gate.
     authenticateToken(url.searchParams.get('token'))
       .then((user) => {
         if (!user || !hasTerminalAccess(user)) {
@@ -53,19 +49,42 @@ export function attachHoot(server) {
       .catch(() => socket.destroy());
   });
 
-  // One roster entry per PERSON, not per connection; a member counts as
-  // talking if any of their devices is keyed up.
+  // One roster entry per person. talking is OR across their devices; a
+  // member counts as muted only if every device is muted; target and
+  // last-active take the most recent. idleMs is stamped at send time and
+  // the client ticks it forward locally between broadcasts.
   function roster() {
+    const t = now();
     const byMember = new Map();
     for (const p of peers.values()) {
       const cur = byMember.get(p.user.id);
-      if (cur) cur.talking = cur.talking || p.talking;
-      else byMember.set(p.user.id, { id: p.user.id, name: p.user.name, talking: p.talking });
+      if (cur) {
+        cur.talking = cur.talking || p.talking;
+        cur.muted = cur.muted && p.muted;
+        cur.target = p.target ?? cur.target;
+        cur._active = Math.max(cur._active, p.lastActive);
+      } else {
+        byMember.set(p.user.id, {
+          id: p.user.id,
+          name: p.user.name,
+          talking: p.talking,
+          muted: p.muted,
+          target: p.target ?? null,
+          _active: p.lastActive,
+        });
+      }
     }
-    return [...byMember.values()];
+    return [...byMember.values()].map((m) => ({
+      id: m.id,
+      name: m.name,
+      talking: m.talking,
+      muted: m.muted,
+      target: m.target,
+      idleMs: Math.max(0, t - m._active),
+    }));
   }
-  const memberTalking = (memberId) => {
-    for (const p of peers.values()) if (p.user.id === memberId && p.talking) return true;
+  const memberTalking = (id) => {
+    for (const p of peers.values()) if (p.user.id === id && p.talking) return true;
     return false;
   };
 
@@ -76,16 +95,37 @@ export function attachHoot(server) {
         try {
           p.ws.send(s);
         } catch {
-          /* a dead socket is reaped by the heartbeat */
+          /* reaped by heartbeat */
         }
       }
     }
   }
   const sendPresence = () => broadcastText({ t: 'presence', members: roster() });
 
+  function sendToMember(memberId, frame) {
+    for (const p of peers.values()) {
+      if (p.user.id !== memberId) continue;
+      if (p.ws.readyState === p.ws.OPEN) {
+        try {
+          p.ws.send(frame, { binary: true });
+        } catch {
+          /* reaped by heartbeat */
+        }
+      }
+    }
+  }
+
   wss.on('connection', (ws, user) => {
     const connId = nextConnId++;
-    const me = { ws, user, talking: false, alive: true };
+    const me = {
+      ws,
+      user,
+      talking: false,
+      muted: false,
+      target: null, // null = Trade Desk; a member id = direct line
+      lastActive: now(),
+      alive: true,
+    };
     peers.set(connId, me);
 
     try {
@@ -101,21 +141,25 @@ export function attachHoot(server) {
 
     ws.on('message', (data, isBinary) => {
       if (isBinary) {
-        // Audio only flows while this connection is actually keyed up, so
-        // no one can hold the channel open silently.
-        if (!me.talking || data.length > MAX_FRAME) return;
+        // Audio flows only while keyed up and not muted.
+        if (me.muted || !me.talking || data.length > MAX_FRAME) return;
+        me.lastActive = now();
         const header = Buffer.allocUnsafe(4);
         header.writeUInt32BE(user.id >>> 0, 0);
         const frame = Buffer.concat([header, data]);
-        for (const p of peers.values()) {
-          if (p.user.id === user.id) continue; // never back to the speaker's own devices
-          if (p.ws.readyState === p.ws.OPEN) {
-            try {
-              p.ws.send(frame, { binary: true });
-            } catch {
-              /* reaped by heartbeat */
+        if (me.target == null) {
+          for (const p of peers.values()) {
+            if (p.user.id === user.id) continue; // never back to the speaker
+            if (p.ws.readyState === p.ws.OPEN) {
+              try {
+                p.ws.send(frame, { binary: true });
+              } catch {
+                /* reaped */
+              }
             }
           }
+        } else {
+          sendToMember(me.target, frame);
         }
         return;
       }
@@ -126,16 +170,39 @@ export function attachHoot(server) {
       } catch {
         return;
       }
-      if (msg.t === 'ptt') {
-        const on = !!msg.on;
-        if (me.talking !== on) {
-          const was = memberTalking(user.id);
-          me.talking = on;
-          const now = memberTalking(user.id);
-          // Only announce a change at the PERSON level, so a second device
-          // toggling doesn't flap the light while they're still talking.
-          if (was !== now) broadcastText({ t: 'ptt', id: user.id, name: user.name, on: now });
+      me.lastActive = now();
+      switch (msg.t) {
+        case 'ptt': {
+          const on = !!msg.on;
+          if (me.talking !== on) {
+            const was = memberTalking(user.id);
+            me.talking = on;
+            const nowTalking = memberTalking(user.id);
+            if (was !== nowTalking) {
+              broadcastText({ t: 'ptt', id: user.id, name: user.name, on: nowTalking, target: me.target ?? null });
+            }
+          }
+          break;
         }
+        case 'mute':
+          me.muted = !!msg.on;
+          sendPresence();
+          break;
+        case 'target': {
+          const to = msg.to;
+          if (to === 'desk' || to == null) me.target = null;
+          else {
+            const id = Number(to);
+            me.target = Number.isFinite(id) ? id : null;
+          }
+          sendPresence();
+          break;
+        }
+        case 'active':
+          sendPresence();
+          break;
+        default:
+          break;
       }
     });
 
@@ -146,8 +213,8 @@ export function attachHoot(server) {
     ws.on('error', drop);
   });
 
-  // Heartbeat: a socket that stops answering pings is gone (a closed
-  // laptop leaves no FIN), so reap it or it lingers on the roster forever.
+  // Heartbeat: reap sockets that stop answering pings (a closed laptop
+  // leaves no FIN) so they do not linger on the roster.
   const heartbeat = setInterval(() => {
     let reaped = false;
     for (const [id, p] of peers) {
