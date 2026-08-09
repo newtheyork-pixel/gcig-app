@@ -90,6 +90,45 @@ export async function verifyJwt(req, res, next) {
   }
 }
 
+// Verify a raw JWT the way verifyJwt does (secret + tokenVersion) and
+// return the caller's identity, or null. For the WebSocket layer, which
+// cannot run Express middleware.
+export async function authenticateToken(token) {
+  if (!token) return null;
+  try {
+    const payload = jwt.verify(token, process.env.JWT_SECRET);
+    const user = await prisma.user.findUnique({
+      where: { id: payload.id },
+      select: { id: true, name: true, email: true, role: true, extraRoles: true, tokenVersion: true },
+    });
+    if (!user) return null;
+    if ((payload.v ?? 0) !== (user.tokenVersion ?? 0)) return null;
+    return {
+      id: user.id,
+      name: user.name,
+      email: user.email,
+      role: user.role,
+      extraRoles: user.extraRoles || [],
+      isSuperAdmin: isSuperAdminEmail(user.email),
+    };
+  } catch {
+    return null;
+  }
+}
+
+// Terminal access as a predicate (Analyst and above, plus Advisory, plus
+// super admin), mirroring requireTerminalAccess for callers off the
+// Express path.
+export function hasTerminalAccess(user) {
+  if (!user) return false;
+  if (user.isSuperAdmin) return true;
+  const roles = [user.role, ...(user.extraRoles || [])];
+  return roles.some((r) => {
+    const advisory = r === 'AdvisoryBoardMember' || r === 'FacultyAdvisory';
+    return advisory || (ROLE_RANK[r] || 0) >= ROLE_RANK.Analyst;
+  });
+}
+
 export function requireAdmin(req, res, next) {
   if (!req.user || req.user.role !== 'President') {
     return res.status(403).json({ error: 'President role required' });

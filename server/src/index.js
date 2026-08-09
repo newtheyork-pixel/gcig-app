@@ -2,6 +2,7 @@ import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
+import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { generalLimiter } from './middleware/rateLimit.js';
@@ -54,6 +55,7 @@ import haltsRoutes from './routes/halts.js';
 import notesRoutes from './routes/notes.js';
 import researchRoutes from './routes/research.js';
 import outreachLabelingRoutes from './routes/outreachLabeling.js';
+import { attachHoot } from './realtime/hoot.js';
 import { ensureRecurringMeetings } from './services/recurringMeetings.js';
 import cron from 'node-cron';
 import { checkBuyLevels, checkStaleValuations } from './services/buyLevelWatch.js';
@@ -397,7 +399,11 @@ cron.schedule(
 );
 
 const port = process.env.PORT || 4000;
-app.listen(port, async () => {
+// A bare http.Server around Express so the desk squawk box can accept
+// WebSocket upgrades on /ws/hoot alongside the ordinary routes.
+const server = http.createServer(app);
+attachHoot(server);
+server.listen(port, async () => {
   console.log(`Griffin Fund API listening on http://localhost:${port}`);
   try {
     await ensureRecurringMeetings();
