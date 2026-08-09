@@ -9,14 +9,14 @@ import SwiftUI
 // re-fetch it, which is the web's onChanged pattern and the only way
 // eight tabs stay in agreement about one project.
 //
-// The approval gate is re-implemented honestly rather than reproduced
+// The send gate is re-implemented honestly rather than reproduced
 // visually. Every rule that matters is enforced on the server, so this
-// panel does not decide whether you may approve or send; it asks, shows
-// what came back, and never renders a state as safer than the server
-// called it. Two rules carried from the web that must never regress:
+// panel does not decide whether you may send; it asks, shows what came
+// back, and never renders a state as safer than the server called it.
+// Two rules carried from the web that must never regress:
 // `unscreened` and `clear-keyword-only` are never shown as a pass, and
-// Copy — the de-facto send button — stays shut until both sign-offs are
-// in.
+// Copy — the de-facto send button — stays shut when the server says the
+// draft cannot go out (a prohibited screen, or a rejection).
 //
 // Sources are aliases everywhere. The server never sends a real name in
 // a citation and this panel renders exactly what it sends.
@@ -1079,11 +1079,8 @@ private enum RTab: String, CaseIterable {
         case .questions:
             return p.coverage?.summary?.unaddressed ?? 0
         case .outreach:
-            // A draft waiting on YOUR signature blocks someone else, so
-            // it outranks the funnel; falls back to ready-to-send.
-            let q = p.outreachQueue
-            let me = q?.awaitingMe ?? 0
-            return me > 0 ? me : (q?.readyToSend ?? 0)
+            // How many drafts are ready to send but still sitting.
+            return p.outreachQueue?.readyToSend ?? 0
         case .interviews:
             // An interview nobody has reviewed that carries a flag. This
             // used to sit on FIELD, where it could equally have meant a
@@ -1933,14 +1930,8 @@ private struct OutreachTab: View {
         if let q, (q.awaitingReview ?? 0) + (q.readyToSend ?? 0) + (q.rejected ?? 0)
             + (q.screenBlocked ?? 0) + (q.screenElevated ?? 0) + notScreened > 0 {
             HStack(spacing: 12) {
-                if let n = q.awaitingMe, n > 0 {
-                    Text("\(n) waiting on your approval").foregroundStyle(Term.white)
-                }
-                if let n = q.awaitingReview, n > 0 {
-                    Text("\(n) awaiting sign-off").foregroundStyle(Term.fgDim)
-                }
                 if let n = q.readyToSend, n > 0 {
-                    Text("\(n) approved, ready to send").foregroundStyle(Term.positive)
+                    Text("\(n) ready to send").foregroundStyle(Term.positive)
                 }
                 if let n = q.rejected, n > 0 {
                     Text("\(n) rejected").foregroundStyle(Term.negative)
@@ -2240,10 +2231,9 @@ private struct TargetDetailView: View {
     }
 }
 
-// The outreach email and its two sign-offs. The app does not send the
-// mail — it goes from a real person's school address — so what this
-// panel owes the user is the text, verbatim and copyable, plus an
-// honest account of who has signed off and who has not.
+// The outreach email panel. The app does not send the mail — it goes
+// from a real person's school address — so what this panel owes the
+// user is the text, verbatim and copyable, plus the compliance read.
 private struct DraftsSection: View {
     let target: Target
     @Binding var busy: Bool
@@ -2304,12 +2294,12 @@ private struct DraftsSection: View {
                         .buttonStyle(TermButtonStyle())
                         .disabled(busy || subject.isEmpty || bodyText.isEmpty)
                         Button("Cancel") { composing = false }.buttonStyle(TermButtonStyle())
-                        Text("Anything written here needs two sign-offs before it can go out.")
+                        Text("Anything written here is screened by compliance before it goes out.")
                             .font(Term.mono(9)).foregroundStyle(Term.fgMuted)
                     }
                 }
             } else if drafts.isEmpty {
-                Text("Nothing drafted. Anything written here needs two sign-offs before it can go out.")
+                Text("Nothing drafted. Anything written here is screened by compliance before it goes out.")
                     .font(Term.mono(10)).foregroundStyle(Term.fgMuted)
             }
 
@@ -2454,12 +2444,7 @@ private struct DraftCard: View {
                     .autocorrectionDisabled()
                     .frame(minHeight: 180)
                     .padding(4).background(Term.bg).termBorder()
-                // Said before they commit: fixing a typo on a
-                // fully-approved draft costs both sign-offs.
-                if (d.approvalCount ?? 0) > 0 {
-                    Text("Saving a change clears \((d.approvalCount ?? 0) == 1 ? "the approval" : "both approvals") — the draft goes back for review.")
-                        .font(Term.mono(9)).foregroundStyle(Term.negative)
-                }
+                // Editing re-runs the compliance screen on the new words.
                 HStack(spacing: 6) {
                     Button("Save") {
                         let s = subject, b = bodyText
@@ -2486,27 +2471,8 @@ private struct DraftCard: View {
 
             if !editing && d.sentAt == nil {
                 HStack(spacing: 6) {
-                    if d.canIApprove == true {
-                        Button("Approve") {
-                            Task { await run {
-                                _ = try await API.shared.post("/research/drafts/\(d.id)/approve", json: [:])
-                            } }
-                        }
-                        .buttonStyle(TermButtonStyle()).disabled(busy)
-                    }
-                    if d.iApproved == true {
-                        Text("you approved this").font(Term.mono(9)).foregroundStyle(Term.positive)
-                        // Withdrawing is a first-class action: someone
-                        // who thinks better of a sign-off must be able
-                        // to say so without editing the text out from
-                        // under the other approver.
-                        Button("Withdraw") {
-                            Task { await run {
-                                try await ResearchHTTP.delete("/research/drafts/\(d.id)/approve")
-                            } }
-                        }
-                        .buttonStyle(TermButtonStyle()).disabled(busy)
-                    }
+                    // An exec can still veto a draft outright; it just is
+                    // not required for one to go out.
                     if d.canIApprove == true {
                         Button("Reject") { rejecting.toggle() }
                             .buttonStyle(TermButtonStyle()).disabled(busy)
@@ -2516,10 +2482,9 @@ private struct DraftCard: View {
                     }
                     .buttonStyle(TermButtonStyle()).disabled(busy)
 
-                    // Copy is the send button, so it stays shut until
-                    // the server says both signatures are in. A greyed
-                    // control with a reason teaches the rule; a hidden
-                    // one just looks broken.
+                    // Copy is the send button. It stays shut only when the
+                    // draft cannot go out at all — rejected, or blocked by
+                    // the compliance screen.
                     Button(copied ? "Copied" : "Copy to send") {
                         let text = "Subject: \(d.subject)\n\n\(d.body)"
                         NSPasteboard.general.clearContents()
@@ -2531,7 +2496,8 @@ private struct DraftCard: View {
                     .disabled(d.fullyApproved != true)
                     .help(d.fullyApproved == true
                           ? "Copy, then send from your school address to \(target.email ?? "them")"
-                          : "Needs two approvals first")
+                          : (d.stage == "rejected" ? "This draft was rejected — edit it to send"
+                             : "The compliance screen blocks this — edit it"))
 
                     if d.fullyApproved == true {
                         Button("Mark sent") {
