@@ -59,6 +59,10 @@ export default function OutreachLabeling() {
   const [saving, setSaving] = useState(false);
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState('');
+  // Prefetched so the copy runs inside the click gesture. Safari refuses a
+  // clipboard write that happens after an await (the network fetch spends
+  // the user activation), so the prompt is fetched on open and held here.
+  const [grokPrompt, setGrokPrompt] = useState('');
 
   useEffect(() => {
     if (!allowed) return;
@@ -99,6 +103,7 @@ export default function OutreachLabeling() {
     setSelectedId(row.id);
     setCopied(false);
     setError('');
+    setGrokPrompt('');
     setForm(
       row.label
         ? {
@@ -110,17 +115,66 @@ export default function OutreachLabeling() {
           }
         : EMPTY_FORM
     );
+    // Fetch the paste-into-Grok prompt now, so the button can copy it
+    // without a network round-trip standing between the click and the
+    // clipboard write.
+    api
+      .get(`/outreach-labeling/${row.id}/grok-prompt`)
+      .then((r) => setGrokPrompt(r.data?.prompt || ''))
+      .catch(() => setGrokPrompt(''));
+  };
+
+  // Write within the gesture; fall back to the legacy textarea path when
+  // the async Clipboard API is missing or refuses (older Safari, non-secure
+  // contexts).
+  const writeClipboard = async (text) => {
+    try {
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(text);
+        return true;
+      }
+    } catch {
+      /* fall through */
+    }
+    try {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed';
+      ta.style.top = '-1000px';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.focus();
+      ta.select();
+      const ok = document.execCommand('copy');
+      document.body.removeChild(ta);
+      return ok;
+    } catch {
+      return false;
+    }
   };
 
   const copyForGrok = async () => {
     if (!selected) return;
-    try {
-      const r = await api.get(`/outreach-labeling/${selected.id}/grok-prompt`);
-      await navigator.clipboard.writeText(r.data?.prompt || '');
+    setError('');
+    let text = grokPrompt;
+    if (!text) {
+      // Prefetch hasn't landed yet — fetch it now. Outside Safari this is
+      // fine; on Safari the prefetch normally beats the click.
+      try {
+        const r = await api.get(`/outreach-labeling/${selected.id}/grok-prompt`);
+        text = r.data?.prompt || '';
+        setGrokPrompt(text);
+      } catch {
+        setError('Could not load the prompt');
+        return;
+      }
+    }
+    const ok = await writeClipboard(text);
+    if (ok) {
       setCopied(true);
       setTimeout(() => setCopied(false), 2500);
-    } catch {
-      setError('Could not copy the prompt');
+    } else {
+      setError('Could not copy. The prompt is loaded; try once more.');
     }
   };
 
