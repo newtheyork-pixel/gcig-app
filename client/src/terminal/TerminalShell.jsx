@@ -1,5 +1,6 @@
 import { Component, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import CommandBar from './CommandBar.jsx';
+import HootBar from './HootBar.jsx';
 import FloatingWindow from './FloatingWindow.jsx';
 import SideRail from './components/SideRail.jsx';
 import BreakingStrip from './components/BreakingStrip.jsx';
@@ -299,6 +300,8 @@ export default function TerminalShell({ onExit }) {
       </div>
 
       <CommandBar onCommand={applyCommand} lastInterpretation={lastInterpretation} />
+
+      <HootBar />
 
       <BreakingStrip />
 
