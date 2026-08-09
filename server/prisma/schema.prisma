@@ -1327,18 +1327,21 @@ model OutreachScreenLabel {
   draftId Int           @unique
   draft   OutreachDraft @relation(fields: [draftId], references: [id], onDelete: Cascade)
 
-  // The grader's own call. risk is the three-level verdict the screen
-  // itself emits; category names which FLAG-list behaviour it matched,
-  // null for a clean low.
-  humanRisk     String
+  // The grader's OPTIONAL own call. Often absent now that the loop is
+  // paste-Grok-and-go; when present, risk is the three-level verdict the
+  // screen emits and category names which FLAG-list behaviour it matched.
+  humanRisk     String?
   humanCategory String?
   humanNote     String?
 
-  // Grok's call, typed in by hand after pasting the draft into it. Kept
-  // beside the human's, never blended: a second opinion is only worth
-  // having while you can still watch it disagree.
+  // Grok's call. The reviewer pastes Grok's raw reply and we parse the
+  // verdict out of it, so nothing is retyped. grokRaw keeps the whole
+  // response for the audit trail; grokRisk/grokNote are what we parsed.
+  // Kept beside the human's, never blended: a second opinion is only
+  // worth having while you can still watch it disagree.
   grokRisk String?
   grokNote String?
+  grokRaw  String?
 
   // What the screen said about these exact words, frozen at label time.
   screenRiskAtLabel String?

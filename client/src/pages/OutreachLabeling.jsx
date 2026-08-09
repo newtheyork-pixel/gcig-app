@@ -39,11 +39,33 @@ function RiskPill({ risk }) {
 
 const FILTERS = [
   { key: 'all', label: 'All screened' },
-  { key: 'unlabeled', label: 'Not yet graded' },
-  { key: 'disagreements', label: 'Screen vs you' },
+  { key: 'unlabeled', label: 'No Grok yet' },
+  { key: 'disagreements', label: 'Screen vs Grok' },
 ];
 
-const EMPTY_FORM = { humanRisk: '', humanCategory: '', humanNote: '', grokRisk: '', grokNote: '' };
+const EMPTY_FORM = { humanRisk: '', humanCategory: '', humanNote: '', grokResponse: '' };
+
+// Read Grok's verdict out of whatever it replied, so the reviewer never
+// retypes it. Mirrors the server's parser; this one only drives the live
+// preview chip, the server's is authoritative on save.
+function parseGrokReply(text) {
+  if (!text) return { risk: null, reason: null };
+  const s = String(text);
+  const a = s.indexOf('{');
+  const b = s.lastIndexOf('}');
+  if (a !== -1 && b > a) {
+    try {
+      const o = JSON.parse(s.slice(a, b + 1));
+      if (o && ['low', 'elevated', 'prohibited'].includes(o.risk)) {
+        return { risk: o.risk, reason: o.reason ? String(o.reason) : null };
+      }
+    } catch {
+      /* fall through */
+    }
+  }
+  const m = s.toLowerCase().match(/\b(low|elevated|prohibited)\b/);
+  return { risk: m ? m[1] : null, reason: null };
+}
 
 export default function OutreachLabeling() {
   const { isExecutive, isSuperAdmin } = useAuth();
@@ -98,6 +120,8 @@ export default function OutreachLabeling() {
   }, [allowed]);
 
   const selected = useMemo(() => rows.find((r) => r.id === selectedId) || null, [rows, selectedId]);
+  const grokParsed = useMemo(() => parseGrokReply(form.grokResponse), [form.grokResponse]);
+  const canSave = !!(grokParsed.risk || form.humanRisk);
 
   const openDraft = (row) => {
     setSelectedId(row.id);
@@ -110,8 +134,7 @@ export default function OutreachLabeling() {
             humanRisk: row.label.humanRisk || '',
             humanCategory: row.label.humanCategory || '',
             humanNote: row.label.humanNote || '',
-            grokRisk: row.label.grokRisk || '',
-            grokNote: row.label.grokNote || '',
+            grokResponse: row.label.grokRaw || '',
           }
         : EMPTY_FORM
     );
@@ -179,16 +202,16 @@ export default function OutreachLabeling() {
   };
 
   const save = async () => {
-    if (!selected || !form.humanRisk) return;
+    if (!selected || !canSave) return;
     setSaving(true);
     setError('');
     try {
       const payload = {
-        humanRisk: form.humanRisk,
+        humanRisk: form.humanRisk || null,
         humanCategory: form.humanRisk === 'low' ? null : form.humanCategory || null,
         humanNote: form.humanNote || null,
-        grokRisk: form.grokRisk || null,
-        grokNote: form.grokNote || null,
+        // The raw reply; the server parses the verdict out of it.
+        grokResponse: form.grokResponse || null,
       };
       const r = await api.post(`/outreach-labeling/${selected.id}`, payload);
       const updated = r.data?.row;
@@ -217,15 +240,15 @@ export default function OutreachLabeling() {
       <PageHeader
         kicker="Compliance"
         title="Outreach Screen Labeling"
-        subtitle="Grade the screen against your own call to find where it over-flags. Nothing here is fed back to the model as an example."
+        subtitle="Copy each draft into Grok, paste its reply back, and see where the screen over-flags. Nothing here is fed back to the model as an example."
       />
 
       {metrics && (
         <div className="mb-6 grid grid-cols-2 gap-3 md:grid-cols-4">
-          <Stat label="Graded" value={metrics.screen.compared} />
-          <Stat label="Screen agrees" value={metrics.screen.agree} tone="emerald" />
-          <Stat label="Over-flags" value={metrics.screen.overFlag} tone="amber" hint="stricter than you" />
-          <Stat label="Under-flags" value={metrics.screen.underFlag} tone="red" hint="missed what you caught" />
+          <Stat label="Graded" value={metrics.screenVsGrok.compared} />
+          <Stat label="Screen agrees" value={metrics.screenVsGrok.agree} tone="emerald" hint="with Grok" />
+          <Stat label="Over-flags" value={metrics.screenVsGrok.overFlag} tone="amber" hint="stricter than Grok" />
+          <Stat label="Under-flags" value={metrics.screenVsGrok.underFlag} tone="red" hint="laxer than Grok" />
         </div>
       )}
 
@@ -255,7 +278,10 @@ export default function OutreachLabeling() {
           ) : (
             rows.map((row) => {
               const disagrees =
-                row.label && row.label.screenRiskAtLabel && row.label.humanRisk !== row.label.screenRiskAtLabel;
+                row.label &&
+                row.label.screenRiskAtLabel &&
+                row.label.grokRisk &&
+                row.label.grokRisk !== row.label.screenRiskAtLabel;
               return (
                 <button
                   key={row.id}
@@ -277,10 +303,10 @@ export default function OutreachLabeling() {
                   <div className="mt-2 flex flex-wrap items-center gap-2">
                     <span className="text-[10px] uppercase tracking-wide text-navy-300">screen</span>
                     <RiskPill risk={row.screenRisk} />
-                    {row.label && (
+                    {row.label?.grokRisk && (
                       <>
-                        <span className="text-[10px] uppercase tracking-wide text-navy-300">you</span>
-                        <RiskPill risk={row.label.humanRisk} />
+                        <span className="text-[10px] uppercase tracking-wide text-navy-300">grok</span>
+                        <RiskPill risk={row.label.grokRisk} />
                       </>
                     )}
                     {disagrees && (
@@ -324,16 +350,50 @@ export default function OutreachLabeling() {
                 </span>
               </div>
 
-              {/* Your verdict */}
+              {/* Grok's verdict — paste the reply, we read it for you */}
               <div className="mt-5">
                 <div className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-navy-400">
-                  Your verdict
+                  Grok's verdict
                 </div>
-                <div className="grid grid-cols-3 gap-2">
+                <ol className="mb-2 space-y-0.5 text-[11px] text-navy-400">
+                  <li>1. Click Copy for Grok above, paste it into Grok.</li>
+                  <li>2. Paste Grok's whole reply below. The verdict is read out of it.</li>
+                </ol>
+                <textarea
+                  value={form.grokResponse}
+                  onChange={(e) => setForm((f) => ({ ...f, grokResponse: e.target.value }))}
+                  placeholder={'Paste Grok\'s reply here, e.g. {"risk":"low","reason":"..."}'}
+                  rows={4}
+                  className="w-full rounded-lg border border-navy-100 bg-white px-3 py-2 font-mono text-xs text-navy"
+                />
+                <div className="mt-2 text-sm">
+                  {!form.grokResponse ? (
+                    <span className="text-navy-300">Waiting for Grok's reply.</span>
+                  ) : grokParsed.risk ? (
+                    <span className="inline-flex flex-wrap items-center gap-2 text-navy-600">
+                      Read Grok as <RiskPill risk={grokParsed.risk} />
+                      {grokParsed.reason && <span className="text-navy-400">{grokParsed.reason}</span>}
+                    </span>
+                  ) : (
+                    <span className="text-amber-600">
+                      Couldn't read a verdict yet. Paste the whole JSON Grok returned.
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              {/* Your own call, optional — the loop does not require it */}
+              <details className="mt-5 border-t border-navy-50 pt-4">
+                <summary className="cursor-pointer text-[11px] font-semibold uppercase tracking-wide text-navy-400">
+                  Your own call <span className="normal-case text-navy-300">(optional)</span>
+                </summary>
+                <div className="mt-3 grid grid-cols-3 gap-2">
                   {RISKS.map((r) => (
                     <button
                       key={r.value}
-                      onClick={() => setForm((f) => ({ ...f, humanRisk: r.value }))}
+                      onClick={() =>
+                        setForm((f) => ({ ...f, humanRisk: f.humanRisk === r.value ? '' : r.value }))
+                      }
                       className={`rounded-lg border px-2 py-2 text-center transition ${
                         form.humanRisk === r.value
                           ? 'border-navy bg-navy text-white'
@@ -375,38 +435,7 @@ export default function OutreachLabeling() {
                   rows={2}
                   className="mt-3 w-full rounded-lg border border-navy-100 bg-white px-3 py-2 text-sm text-navy"
                 />
-              </div>
-
-              {/* Grok's verdict, typed by hand */}
-              <div className="mt-5 border-t border-navy-50 pt-4">
-                <div className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-navy-400">
-                  Grok's verdict <span className="normal-case text-navy-300">(paste the draft in, record what it says)</span>
-                </div>
-                <div className="grid grid-cols-3 gap-2">
-                  {RISKS.map((r) => (
-                    <button
-                      key={r.value}
-                      onClick={() =>
-                        setForm((f) => ({ ...f, grokRisk: f.grokRisk === r.value ? '' : r.value }))
-                      }
-                      className={`rounded-lg border px-2 py-1.5 text-center text-xs font-semibold transition ${
-                        form.grokRisk === r.value
-                          ? 'border-gold bg-gold text-navy'
-                          : 'border-navy-100 bg-white text-navy hover:border-navy'
-                      }`}
-                    >
-                      {r.label}
-                    </button>
-                  ))}
-                </div>
-                <textarea
-                  value={form.grokNote}
-                  onChange={(e) => setForm((f) => ({ ...f, grokNote: e.target.value }))}
-                  placeholder="What Grok said (optional)"
-                  rows={2}
-                  className="mt-3 w-full rounded-lg border border-navy-100 bg-white px-3 py-2 text-sm text-navy"
-                />
-              </div>
+              </details>
 
               {error && <div className="mt-3 text-sm text-red-600">{error}</div>}
 
@@ -416,7 +445,7 @@ export default function OutreachLabeling() {
                     last graded by {selected.label.labeledBy || 'someone'}
                   </span>
                 )}
-                <Button onClick={save} disabled={!form.humanRisk || saving}>
+                <Button onClick={save} disabled={!canSave || saving}>
                   {saving ? 'Saving…' : selected.label ? 'Update grade' : 'Save grade'}
                 </Button>
               </div>

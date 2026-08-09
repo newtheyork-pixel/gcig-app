@@ -49,38 +49,69 @@ const VALID_CATEGORY = new Set(FLAG_CATEGORIES.map((c) => c.key));
 
 const RANK = { low: 0, elevated: 1, prohibited: 2 };
 
+// The screen against a reference verdict: do they agree, and if not, which
+// way did the screen err. 'over' is the screen stricter than the reference
+// (the noise that trains people to click past warnings); 'under' is the
+// screen laxer (the dangerous direction). Null when either side has no
+// comparable verdict.
+function compareRisk(screen, ref) {
+  const s = RANK[screen];
+  const r = RANK[ref];
+  if (s == null || r == null) return null;
+  if (s === r) return 'agree';
+  return s > r ? 'over' : 'under';
+}
+
 /**
- * Where the screen and the human agree, and — when they do not — which
- * way the screen erred. Over-flagging is the screen stricter than the
- * truth (the noise that trains people to click past warnings);
- * under-flagging is the screen missing what a person caught (the
- * dangerous direction). Pure and exported so the arithmetic is tested
- * rather than trusted.
+ * Agreement across the labelled set. The live loop compares the screen to
+ * GROK (the second opinion the reviewer records); the human verdict is
+ * kept as an optional third column for the cases someone weighs in on.
+ * Pure and exported so the arithmetic is tested rather than trusted.
  */
 export function agreementMetrics(rows) {
-  const m = {
-    total: rows.length,
-    screen: { compared: 0, agree: 0, overFlag: 0, underFlag: 0 },
-    grok: { compared: 0, agree: 0, disagree: 0 },
-  };
-  for (const r of rows) {
-    const h = RANK[r.humanRisk];
-    if (h == null) continue;
-    const s = RANK[r.screenRisk];
-    if (s != null) {
-      m.screen.compared++;
-      if (s === h) m.screen.agree++;
-      else if (s > h) m.screen.overFlag++;
-      else m.screen.underFlag++;
-    }
-    const g = RANK[r.grokRisk];
-    if (g != null) {
-      m.grok.compared++;
-      if (g === h) m.grok.agree++;
-      else m.grok.disagree++;
+  const tally = () => ({ compared: 0, agree: 0, overFlag: 0, underFlag: 0 });
+  const m = { total: rows.length, screenVsGrok: tally(), screenVsHuman: tally() };
+  for (const row of rows) {
+    for (const [key, ref] of [
+      ['screenVsGrok', row.grokRisk],
+      ['screenVsHuman', row.humanRisk],
+    ]) {
+      const c = compareRisk(row.screenRisk, ref);
+      if (!c) continue;
+      const t = m[key];
+      t.compared++;
+      if (c === 'agree') t.agree++;
+      else if (c === 'over') t.overFlag++;
+      else t.underFlag++;
     }
   }
   return m;
+}
+
+/**
+ * Pull a verdict out of whatever Grok replied. The prompt asks for strict
+ * JSON, so the happy path is the first {...} block; but a chat model wraps
+ * it in prose or fences often enough that a bare-word fallback is worth
+ * having. Exported for tests. Returns { risk, reason } with risk null when
+ * nothing legible is found — the caller decides that is not saveable.
+ */
+export function parseGrokVerdict(text) {
+  if (text == null || text === '') return { risk: null, reason: null };
+  const s = String(text);
+  const start = s.indexOf('{');
+  const end = s.lastIndexOf('}');
+  if (start !== -1 && end > start) {
+    try {
+      const o = JSON.parse(s.slice(start, end + 1));
+      if (o && typeof o === 'object' && !Array.isArray(o) && VALID_RISK.has(o.risk)) {
+        return { risk: o.risk, reason: o.reason != null ? String(o.reason).slice(0, 300) : null };
+      }
+    } catch {
+      /* fall through to the bare-word scan */
+    }
+  }
+  const m = s.toLowerCase().match(/\b(low|elevated|prohibited)\b/);
+  return { risk: m ? m[1] : null, reason: null };
 }
 
 // The entire prompt the screen hands the model, flattened into one block
@@ -124,6 +155,7 @@ function draftRow(d) {
           humanNote: d.label.humanNote,
           grokRisk: d.label.grokRisk,
           grokNote: d.label.grokNote,
+          grokRaw: d.label.grokRaw,
           screenRiskAtLabel: d.label.screenRiskAtLabel,
           labeledBy: d.label.labeledBy?.name || null,
           updatedAt: d.label.updatedAt,
@@ -156,10 +188,16 @@ router.get('/queue', async (req, res) => {
       take: 500,
     });
     let rows = drafts.map(draftRow);
-    if (filter === 'unlabeled') rows = rows.filter((r) => !r.label);
+    // "Not yet graded" means no Grok verdict recorded — the loop's unit of
+    // work. "Disagreements" is where the screen and Grok part ways.
+    if (filter === 'unlabeled') rows = rows.filter((r) => !(r.label && r.label.grokRisk));
     else if (filter === 'disagreements')
       rows = rows.filter(
-        (r) => r.label && r.label.screenRiskAtLabel && r.label.humanRisk !== r.label.screenRiskAtLabel
+        (r) =>
+          r.label &&
+          r.label.screenRiskAtLabel &&
+          r.label.grokRisk &&
+          r.label.grokRisk !== r.label.screenRiskAtLabel
       );
     res.json({ rows });
   } catch (err) {
@@ -181,16 +219,17 @@ router.get('/metrics', async (_req, res) => {
       grokRisk: l.grokRisk,
     }));
     const metrics = agreementMetrics(rows);
+    // The prompt-improvement queue: where the screen and Grok disagree.
     const disagreements = labels
-      .filter((l) => l.screenRiskAtLabel && l.humanRisk !== l.screenRiskAtLabel)
+      .filter((l) => l.screenRiskAtLabel && l.grokRisk && l.grokRisk !== l.screenRiskAtLabel)
       .map((l) => ({
         draftId: l.draftId,
         subject: l.draft?.subject || '',
         screenRisk: l.screenRiskAtLabel,
-        humanRisk: l.humanRisk,
-        humanCategory: l.humanCategory,
         grokRisk: l.grokRisk,
-        direction: RANK[l.screenRiskAtLabel] > RANK[l.humanRisk] ? 'over-flag' : 'under-flag',
+        grokNote: l.grokNote,
+        humanRisk: l.humanRisk,
+        direction: RANK[l.screenRiskAtLabel] > RANK[l.grokRisk] ? 'over-flag' : 'under-flag',
       }));
     res.json({ metrics, disagreements });
   } catch (err) {
@@ -225,22 +264,36 @@ router.post('/:draftId', async (req, res) => {
   const draftId = Number(req.params.draftId);
   if (!Number.isInteger(draftId)) return res.status(400).json({ error: 'Bad id' });
 
-  const { humanRisk, humanCategory, humanNote, grokRisk, grokNote } = req.body || {};
-  if (!VALID_RISK.has(humanRisk)) {
-    return res.status(400).json({ error: 'humanRisk must be low, elevated, or prohibited' });
-  }
-  // A category only makes sense on a flag, and must name a real one. A low
-  // verdict clears it — you cannot cite a FLAG-list behaviour for a clean
-  // email.
+  const { humanRisk, humanCategory, humanNote, grokResponse } = req.body || {};
+
+  // The human verdict is optional now. When present it must be valid, and
+  // a category only makes sense on a flag — you cannot cite a FLAG-list
+  // behaviour for a clean low.
+  let hRisk = null;
   let category = null;
-  if (humanRisk !== RISK.LOW) {
-    if (humanCategory != null && humanCategory !== '' && !VALID_CATEGORY.has(humanCategory)) {
-      return res.status(400).json({ error: 'humanCategory is not a known flag category' });
+  if (humanRisk != null && humanRisk !== '') {
+    if (!VALID_RISK.has(humanRisk)) {
+      return res.status(400).json({ error: 'humanRisk must be low, elevated, or prohibited' });
     }
-    category = humanCategory || null;
+    hRisk = humanRisk;
+    if (hRisk !== RISK.LOW) {
+      if (humanCategory != null && humanCategory !== '' && !VALID_CATEGORY.has(humanCategory)) {
+        return res.status(400).json({ error: 'humanCategory is not a known flag category' });
+      }
+      category = humanCategory || null;
+    }
   }
-  if (grokRisk != null && grokRisk !== '' && !VALID_RISK.has(grokRisk)) {
-    return res.status(400).json({ error: 'grokRisk must be low, elevated, or prohibited' });
+
+  // Grok's verdict is parsed straight out of the reply the reviewer
+  // pasted, so nothing is retyped.
+  const grok = parseGrokVerdict(grokResponse);
+
+  // Something comparable has to land, or there is nothing to score.
+  if (!hRisk && !grok.risk) {
+    const msg = grokResponse
+      ? "Could not read a verdict from Grok's reply — paste the whole JSON it returned"
+      : "Paste Grok's reply, or set your own verdict, before saving";
+    return res.status(400).json({ error: msg });
   }
 
   try {
@@ -248,11 +301,12 @@ router.post('/:draftId', async (req, res) => {
     if (!draft) return res.status(404).json({ error: 'No such draft' });
 
     const data = {
-      humanRisk,
+      humanRisk: hRisk,
       humanCategory: category,
       humanNote: humanNote ? String(humanNote).slice(0, 1000) : null,
-      grokRisk: grokRisk || null,
-      grokNote: grokNote ? String(grokNote).slice(0, 1000) : null,
+      grokRisk: grok.risk,
+      grokNote: grok.reason,
+      grokRaw: grokResponse ? String(grokResponse).slice(0, 4000) : null,
       screenRiskAtLabel: draft.screenRisk,
       labeledById: req.user?.id ?? null,
     };

@@ -1,14 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { agreementMetrics, grokPromptFor } from './outreachLabeling.js';
+import { agreementMetrics, grokPromptFor, parseGrokVerdict } from './outreachLabeling.js';
 import { SYSTEM_PROMPT } from '../services/outreachScreen.js';
 
-// The whole point of the labeling tool is to measure where the screen and
-// a human disagree, and which way the screen erred. Over-flagging — the
-// screen stricter than the truth — is the failure that started this: it is
-// how a flag becomes noise people click past. Under-flagging is the screen
-// missing what a person caught. The arithmetic that separates them is
-// worth pinning.
+// The live loop measures where the screen and GROK disagree, and which way
+// the screen erred. Over-flagging (the screen stricter than Grok) is the
+// failure that started this: it is how a flag becomes noise people click
+// past. Under-flagging is the screen laxer than Grok. The arithmetic that
+// separates them is worth pinning.
 
 test('perfect agreement counts every row and no error either way', () => {
   const m = agreementMetrics([
@@ -16,51 +15,84 @@ test('perfect agreement counts every row and no error either way', () => {
     { screenRisk: 'elevated', humanRisk: 'elevated', grokRisk: 'elevated' },
   ]);
   assert.equal(m.total, 2);
-  assert.equal(m.screen.compared, 2);
-  assert.equal(m.screen.agree, 2);
-  assert.equal(m.screen.overFlag, 0);
-  assert.equal(m.screen.underFlag, 0);
-  assert.equal(m.grok.agree, 2);
+  assert.equal(m.screenVsGrok.compared, 2);
+  assert.equal(m.screenVsGrok.agree, 2);
+  assert.equal(m.screenVsGrok.overFlag, 0);
+  assert.equal(m.screenVsGrok.underFlag, 0);
+  assert.equal(m.screenVsHuman.agree, 2);
 });
 
 test('the screen calling low drafts elevated is counted as over-flagging', () => {
   // These are the four PetSmart/jewellery drafts: the screen said elevated,
-  // the human says low.
+  // Grok says low.
   const m = agreementMetrics([
-    { screenRisk: 'elevated', humanRisk: 'low' },
-    { screenRisk: 'elevated', humanRisk: 'low' },
-    { screenRisk: 'prohibited', humanRisk: 'low' },
+    { screenRisk: 'elevated', grokRisk: 'low' },
+    { screenRisk: 'elevated', grokRisk: 'low' },
+    { screenRisk: 'prohibited', grokRisk: 'low' },
   ]);
-  assert.equal(m.screen.overFlag, 3);
-  assert.equal(m.screen.underFlag, 0);
-  assert.equal(m.screen.agree, 0);
+  assert.equal(m.screenVsGrok.overFlag, 3);
+  assert.equal(m.screenVsGrok.underFlag, 0);
+  assert.equal(m.screenVsGrok.agree, 0);
 });
 
 test('the screen missing a real flag is counted as under-flagging', () => {
   const m = agreementMetrics([
-    { screenRisk: 'low', humanRisk: 'prohibited' },
-    { screenRisk: 'elevated', humanRisk: 'prohibited' },
+    { screenRisk: 'low', grokRisk: 'prohibited' },
+    { screenRisk: 'elevated', grokRisk: 'prohibited' },
   ]);
-  assert.equal(m.screen.underFlag, 2);
-  assert.equal(m.screen.overFlag, 0);
+  assert.equal(m.screenVsGrok.underFlag, 2);
+  assert.equal(m.screenVsGrok.overFlag, 0);
 });
 
 test('a missing screen or grok verdict is skipped, not scored as agreement', () => {
   const m = agreementMetrics([
-    { screenRisk: null, humanRisk: 'low', grokRisk: null },
-    { screenRisk: 'low', humanRisk: 'low' },
+    { screenRisk: null, grokRisk: 'low' },
+    { screenRisk: 'low', grokRisk: 'low' },
   ]);
   assert.equal(m.total, 2);
-  assert.equal(m.screen.compared, 1, 'the null-screen row is not compared');
-  assert.equal(m.screen.agree, 1);
-  assert.equal(m.grok.compared, 0, 'no grok verdict anywhere to compare');
+  assert.equal(m.screenVsGrok.compared, 1, 'the null-screen row is not compared');
+  assert.equal(m.screenVsGrok.agree, 1);
 });
 
-test('a row with no human verdict contributes nothing but the total', () => {
-  const m = agreementMetrics([{ screenRisk: 'elevated', humanRisk: undefined, grokRisk: 'low' }]);
+test('the optional human column is scored separately from Grok', () => {
+  const m = agreementMetrics([
+    { screenRisk: 'elevated', grokRisk: 'low', humanRisk: 'low' }, // both say the screen over-flagged
+    { screenRisk: 'elevated', grokRisk: 'low' }, // Grok only, no human weighed in
+  ]);
+  assert.equal(m.screenVsGrok.compared, 2);
+  assert.equal(m.screenVsGrok.overFlag, 2);
+  assert.equal(m.screenVsHuman.compared, 1, 'only the row with a human verdict counts');
+  assert.equal(m.screenVsHuman.overFlag, 1);
+});
+
+test('a row Grok never graded contributes nothing but the total', () => {
+  const m = agreementMetrics([{ screenRisk: 'elevated', grokRisk: undefined }]);
   assert.equal(m.total, 1);
-  assert.equal(m.screen.compared, 0);
-  assert.equal(m.grok.compared, 0);
+  assert.equal(m.screenVsGrok.compared, 0);
+  assert.equal(m.screenVsHuman.compared, 0);
+});
+
+test("Grok's verdict is parsed out of the pasted reply, no retyping", () => {
+  // The strict-JSON happy path.
+  const clean = parseGrokVerdict('{"risk":"low","reason":"Ordinary published-work outreach","concerns":[]}');
+  assert.equal(clean.risk, 'low');
+  assert.match(clean.reason, /published-work/);
+
+  // Wrapped in a code fence and prose, the way a chat model tends to answer.
+  const fenced = parseGrokVerdict('Sure — here you go:\n```json\n{"risk":"elevated","reason":"asks a sitting exec"}\n```\nHope that helps!');
+  assert.equal(fenced.risk, 'elevated');
+  assert.match(fenced.reason, /sitting exec/);
+
+  // No JSON at all, just a sentence: fall back to the bare verdict word.
+  assert.equal(parseGrokVerdict('I would call this prohibited, honestly.').risk, 'prohibited');
+
+  // Nothing legible: risk is null so the caller refuses to save it.
+  assert.equal(parseGrokVerdict('no idea, sorry').risk, null);
+  assert.equal(parseGrokVerdict('').risk, null);
+  assert.equal(parseGrokVerdict(null).risk, null);
+
+  // An unknown risk value in otherwise-valid JSON is not trusted.
+  assert.equal(parseGrokVerdict('{"risk":"catastrophic"}').risk, null);
 });
 
 test('the Grok prompt carries the ENTIRE screen prompt, self-contained', () => {
@@ -93,11 +125,3 @@ test('a draft with no target still yields a complete, unambiguous prompt', () =>
   assert.match(p, /Body text/);
 });
 
-test('grok is scored independently of the screen', () => {
-  const m = agreementMetrics([
-    { screenRisk: 'elevated', humanRisk: 'low', grokRisk: 'low' }, // screen over-flags, grok agrees with human
-  ]);
-  assert.equal(m.screen.overFlag, 1);
-  assert.equal(m.grok.agree, 1);
-  assert.equal(m.grok.disagree, 0);
-});

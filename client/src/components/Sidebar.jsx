@@ -79,6 +79,7 @@ const NAV_SECTIONS = [
 export default function Sidebar({ onNavigate }) {
   const { user, logout, isAdmin, isExecutive, isPmOrAbove, isAdvisory, isSuperAdmin } = useAuth();
   const [badges, setBadges] = useState({ pitchRequests: 0 });
+  const [logoFailed, setLogoFailed] = useState(false);
 
   // Poll the pending-pitch-requests count so the sidebar chip stays fresh.
   // 60s cadence is plenty for an inbox-style notification — anything more
@@ -105,16 +106,19 @@ export default function Sidebar({ onNavigate }) {
   return (
     <aside className="flex h-full w-64 flex-col bg-navy text-white">
       <div className="flex flex-col items-center gap-3 px-5 py-6 border-b border-navy-500/50">
-        <div className="rounded-lg bg-white px-3 py-2">
-          <img
-            src="/grace-logo.png"
-            alt="Grace Church School"
-            className="h-10 w-auto"
-            onError={(e) => {
-              e.currentTarget.style.display = 'none';
-            }}
-          />
-        </div>
+        {!logoFailed && (
+          <div className="rounded-lg bg-white px-3 py-2">
+            <img
+              src="/grace-logo.png"
+              alt="Grace Church School"
+              className="h-10 w-auto"
+              // Hide the CHIP, not just the image: a failed load used to
+              // leave an empty white box. On error we drop the whole thing
+              // and the wordmark below carries the brand.
+              onError={() => setLogoFailed(true)}
+            />
+          </div>
+        )}
         <div className="text-center leading-tight">
           <div className="font-serif text-lg font-semibold text-white">
             The Griffin Fund
