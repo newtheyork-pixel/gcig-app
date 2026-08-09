@@ -83,18 +83,22 @@ export function agreementMetrics(rows) {
   return m;
 }
 
-// The email as the screen saw it, so a paste into Grok grades the same
-// words with the same instructions the model was given. Mirrors the user
-// content screenOutreach builds.
-function grokPromptFor(draft) {
+// The entire prompt the screen hands the model, flattened into one block
+// a person can paste into Grok. Grok starts cold — no system message,
+// none of our context — so the whole thing has to travel: the complete
+// instructions (SYSTEM_PROMPT, which already ends by asking for the JSON
+// verdict) and then this one email with its recipient. Nothing is
+// summarised or trimmed. What the model is asked, Grok is asked; the
+// labelled divider only marks where the rules stop and the email begins.
+export function grokPromptFor(draft) {
   const t = draft.target || {};
-  const text = `Subject: ${draft.subject || ''}\n\n${draft.body || ''}`;
   const context =
     `Recipient: ${t.name || 'unknown'}` +
     `\nTheir relationship to the company we are researching: ${t.relationship || 'unknown'}` +
     `\nCurrent employer: ${t.employer || 'unknown'}` +
-    `\n\n${text}`;
-  return `${SYSTEM_PROMPT}\n\n---\n\n${context}`;
+    `\n\nSubject: ${draft.subject || ''}` +
+    `\n\n${draft.body || ''}`;
+  return `${SYSTEM_PROMPT}\n\n--- EMAIL TO REVIEW ---\n\n${context}`;
 }
 
 function draftRow(d) {

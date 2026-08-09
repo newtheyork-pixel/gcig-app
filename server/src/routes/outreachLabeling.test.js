@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { agreementMetrics } from './outreachLabeling.js';
+import { agreementMetrics, grokPromptFor } from './outreachLabeling.js';
+import { SYSTEM_PROMPT } from '../services/outreachScreen.js';
 
 // The whole point of the labeling tool is to measure where the screen and
 // a human disagree, and which way the screen erred. Over-flagging — the
@@ -60,6 +61,36 @@ test('a row with no human verdict contributes nothing but the total', () => {
   assert.equal(m.total, 1);
   assert.equal(m.screen.compared, 0);
   assert.equal(m.grok.compared, 0);
+});
+
+test('the Grok prompt carries the ENTIRE screen prompt, self-contained', () => {
+  // Grok has no system message and none of our context, so the copied
+  // block has to be everything the model was given — the full rules and
+  // this one email — or Grok is grading a different task than the screen.
+  const draft = {
+    subject: 'Your time at PetSmart',
+    body: 'How did the private-label buying process work while you were there?',
+    target: { name: 'A. Rivera', relationship: 'FormerEmployee', employer: 'Retired' },
+  };
+  const p = grokPromptFor(draft);
+  // The complete instructions travel verbatim, including the binding rules
+  // the calibration fix added and the JSON reply format.
+  assert.ok(p.includes(SYSTEM_PROMPT), 'the whole SYSTEM_PROMPT is present, unabridged');
+  assert.match(p, /return low unless/);
+  assert.match(p, /Reply with strict JSON only/);
+  // And the specific email + recipient, so it grades these exact words.
+  assert.match(p, /A\. Rivera/);
+  assert.match(p, /FormerEmployee/);
+  assert.match(p, /Your time at PetSmart/);
+  assert.match(p, /while you were there/);
+});
+
+test('a draft with no target still yields a complete, unambiguous prompt', () => {
+  const p = grokPromptFor({ subject: 'Hi', body: 'Body text', target: null });
+  assert.ok(p.includes(SYSTEM_PROMPT));
+  assert.match(p, /Recipient: unknown/);
+  assert.match(p, /Subject: Hi/);
+  assert.match(p, /Body text/);
 });
 
 test('grok is scored independently of the screen', () => {
