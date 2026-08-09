@@ -358,6 +358,7 @@ struct PanelRouter: View {
     var body: some View {
         switch functionID {
         case "DES":  DescriptionPanel(ticker: ticker ?? "")
+        case "HOOT": HootPanel(hoot: .shared)
         case "PM":   PortfolioPanel()
         case "TRK":  DecisionRecordPanel()
         case "EXEC", "PAPER": PaperPanel()

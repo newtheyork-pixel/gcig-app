@@ -32,6 +32,9 @@ enum Registry {
         .init(id: "DES", label: "Description",
               help: "Company snapshot: quote, fundamentals, business summary.",
               requires: "ticker", width: 620, height: 520, native: true),
+        .init(id: "HOOT", aliases: ["SQUAWK", "DESK"], label: "Squawk Box",
+              help: "The desk squawk box: who is on the terminal, the shared Trade Desk, and a direct line to any one person. Hold to talk.",
+              width: 460, height: 460, native: true),
         .init(id: "PM", label: "Portfolio Manager",
               help: "The whole book: cost, weights, live value, P&L, YTD.",
               // Sized to the table's own minimum, so a freshly opened PM

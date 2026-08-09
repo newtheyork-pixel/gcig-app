@@ -23,7 +23,10 @@ struct TerminalView: View {
             // type, not after.
             TabStrip()
             CommandBarView().zIndex(100)
-            HootBar()
+            // The squawk box is a command (HOOT), not a bar — but presence
+            // runs silently the whole time the terminal is open, so the
+            // panel can show who is on the desk.
+            Color.clear.frame(height: 0).onAppear { Hoot.shared.start() }
             BreakingStrip()
             HStack(spacing: 0) {
                 SideRail()

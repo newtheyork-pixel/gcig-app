@@ -1,31 +1,43 @@
 import SwiftUI
 import AVFoundation
 
-// The desk squawk box, native. Same wire protocol as the web client and
-// server/src/realtime/hoot.js: one club channel, hold to talk, audio
-// relayed through our own server (no peer-to-peer, no accounts). Audio is
-// 16 kHz mono little-endian Int16 PCM in BINARY frames; presence and
-// keyed-up state are JSON TEXT frames. Incoming audio is prefixed with a
-// 4-byte speaker id we do not need here (presence already labels talkers).
+// The desk squawk box, native. Shared for the whole terminal session: it
+// joins presence the moment the terminal opens (silent — no bar), so the
+// HOOT panel can show who is on the desk. Two ways to be heard, matching
+// server/src/realtime/hoot.js: the shared Trade Desk (target nil), or a
+// direct line to one person (target = their id). You always hear the desk
+// and any direct call; the mic only engages when you hold to talk.
+//
+// Wire: 16 kHz mono Int16 PCM in binary frames (prefixed with a 4-byte
+// speaker id we skip on playback); presence, keyed-up, mute, target and
+// activity are JSON.
 
 @MainActor
 final class Hoot: ObservableObject {
+    static let shared = Hoot()
+
     struct Member: Identifiable, Equatable {
         let id: Int
         let name: String
         var talking: Bool
+        var muted: Bool
+        var idleMs: Int
+        var target: Int?
     }
     enum Status { case connecting, on, off }
 
     @Published private(set) var status: Status = .off
     @Published private(set) var members: [Member] = []
     @Published private(set) var talking = false
+    @Published private(set) var muted = false
+    @Published private(set) var target: Int?  // nil = Trade Desk
     @Published private(set) var micDenied = false
     private(set) var selfId: Int?
 
     private let session = URLSession(configuration: .default)
     private var task: URLSessionWebSocketTask?
     private var closed = true
+    private var activeTimer: Timer?
     private let audio = HootAudio()
 
     // ---- lifecycle ----
@@ -33,14 +45,20 @@ final class Hoot: ObservableObject {
     func start() {
         guard closed else { return }
         closed = false
-        audio.startEngine()
+        audio.startEngine()  // playback only; the mic waits for the button
         connect()
+        activeTimer?.invalidate()
+        activeTimer = Timer.scheduledTimer(withTimeInterval: 25, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.send(["t": "active"]) }
+        }
     }
 
     func stop() {
         closed = true
         talking = false
         audio.transmitting = false
+        activeTimer?.invalidate()
+        activeTimer = nil
         audio.stopEngine()
         task?.cancel(with: .goingAway, reason: nil)
         task = nil
@@ -49,8 +67,6 @@ final class Hoot: ObservableObject {
 
     private func connect() {
         status = .connecting
-        // API is an actor; hop to it for the token-bearing URL, then back
-        // to the main actor (inherited by this Task) to open the socket.
         Task { [weak self] in
             guard let self else { return }
             let url = await API.shared.webSocketURL("/ws/hoot")
@@ -76,10 +92,13 @@ final class Hoot: ObservableObject {
         }
     }
 
+    private func send(_ obj: [String: Any]) {
+        guard let data = try? JSONSerialization.data(withJSONObject: obj),
+              let s = String(data: data, encoding: .utf8) else { return }
+        task?.send(.string(s)) { _ in }
+    }
+
     // ---- receive loop ----
-    // The switch happens inside the @Sendable completion (no actor state
-    // touched there); only the Sendable payloads (String / Data) cross to
-    // the main actor.
     private func receive() {
         task?.receive { [weak self] result in
             switch result {
@@ -130,17 +149,38 @@ final class Hoot: ObservableObject {
         guard let arr = raw as? [[String: Any]] else { return [] }
         return arr.compactMap { m in
             guard let id = m["id"] as? Int, let name = m["name"] as? String else { return nil }
-            return Member(id: id, name: name, talking: (m["talking"] as? Bool) ?? false)
+            return Member(
+                id: id, name: name,
+                talking: (m["talking"] as? Bool) ?? false,
+                muted: (m["muted"] as? Bool) ?? false,
+                idleMs: (m["idleMs"] as? Int) ?? 0,
+                target: m["target"] as? Int)
         }
     }
 
-    // ---- push to talk ----
+    // ---- controls ----
+
+    /// Point push-to-talk at the Trade Desk (nil) or one person's line.
+    func setTarget(_ memberId: Int?) {
+        target = memberId
+        send(["t": "target", "to": memberId ?? "desk"])
+    }
+
+    func toggleMute() {
+        muted.toggle()
+        if muted, talking {
+            talking = false
+            audio.transmitting = false
+            send(["t": "ptt", "on": false])
+        }
+        send(["t": "mute", "on": muted])
+    }
 
     func pressToTalk() {
-        guard status == .on, !talking else { return }
+        guard status == .on, !talking, !muted else { return }
         AVCaptureDevice.requestAccess(for: .audio) { [weak self] granted in
             Task { @MainActor in
-                guard let self, self.status == .on else { return }
+                guard let self, self.status == .on, !self.muted else { return }
                 if !granted {
                     self.micDenied = true
                     return
@@ -149,7 +189,7 @@ final class Hoot: ObservableObject {
                 self.audio.startCapture()
                 self.audio.transmitting = true
                 self.talking = true
-                self.task?.send(.string("{\"t\":\"ptt\",\"on\":true}")) { _ in }
+                self.send(["t": "ptt", "on": true])
             }
         }
     }
@@ -158,14 +198,13 @@ final class Hoot: ObservableObject {
         guard talking else { return }
         talking = false
         audio.transmitting = false
-        task?.send(.string("{\"t\":\"ptt\",\"on\":false}")) { _ in }
+        send(["t": "ptt", "on": false])
     }
 }
 
-// The realtime audio path, kept off the main actor. @unchecked Sendable
-// because AVAudioEngine's tap callback and URLSessionWebSocketTask.send are
-// both thread-safe, and the only shared mutable state is a couple of flags
-// whose worst-case race is one dropped or extra 20ms frame.
+// The realtime audio path, off the main actor. @unchecked Sendable because
+// AVAudioEngine's tap callback and URLSessionWebSocketTask.send are both
+// thread-safe and the only shared state is a couple of flags.
 final class HootAudio: @unchecked Sendable {
     private let engine = AVAudioEngine()
     private let player = AVAudioPlayerNode()
@@ -176,10 +215,7 @@ final class HootAudio: @unchecked Sendable {
     private var started = false
     private var capturing = false
 
-    // Set by Hoot on connect. URLSession is thread-safe, so the audio tap
-    // sends captured frames directly.
     var socket: URLSessionWebSocketTask?
-    // Flipped by Hoot; read on the audio thread.
     var transmitting = false
 
     func startEngine() {
