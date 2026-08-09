@@ -1343,6 +1343,12 @@ model OutreachScreenLabel {
   grokNote String?
   grokRaw  String?
 
+  // Claude's call, produced by grading the same prompt at a higher tier.
+  // Its own column so it sits beside Grok's rather than overwriting it —
+  // two independent second opinions are worth more than one blended one.
+  claudeRisk   String?
+  claudeReason String?
+
   // What the screen said about these exact words, frozen at label time.
   screenRiskAtLabel String?
 

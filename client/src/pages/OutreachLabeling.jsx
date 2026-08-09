@@ -71,6 +71,7 @@ export default function OutreachLabeling() {
   const { isExecutive, isSuperAdmin } = useAuth();
   const allowed = isExecutive || isSuperAdmin;
 
+  const [view, setView] = useState('grade');
   const [filter, setFilter] = useState('all');
   const [rows, setRows] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -243,6 +244,27 @@ export default function OutreachLabeling() {
         subtitle="Copy each draft into Grok, paste its reply back, and see where the screen over-flags. Nothing here is fed back to the model as an example."
       />
 
+      <div className="mb-5 inline-flex rounded-lg border border-navy-100 bg-white p-1">
+        {[
+          ['grade', 'Grade'],
+          ['board', 'Board'],
+        ].map(([k, l]) => (
+          <button
+            key={k}
+            onClick={() => setView(k)}
+            className={`rounded-md px-4 py-1.5 text-sm font-semibold transition ${
+              view === k ? 'bg-navy text-white' : 'text-navy-400 hover:text-navy'
+            }`}
+          >
+            {l}
+          </button>
+        ))}
+      </div>
+
+      {view === 'board' && <BoardView />}
+
+      {view === 'grade' && (
+        <>
       {metrics && (
         <div className="mb-6 grid grid-cols-2 gap-3 md:grid-cols-4">
           <Stat label="Graded" value={metrics.screenVsGrok.compared} />
@@ -307,6 +329,12 @@ export default function OutreachLabeling() {
                       <>
                         <span className="text-[10px] uppercase tracking-wide text-navy-300">grok</span>
                         <RiskPill risk={row.label.grokRisk} />
+                      </>
+                    )}
+                    {row.label?.claudeRisk && (
+                      <>
+                        <span className="text-[10px] uppercase tracking-wide text-navy-300">claude</span>
+                        <RiskPill risk={row.label.claudeRisk} />
                       </>
                     )}
                     {disagrees && (
@@ -452,6 +480,117 @@ export default function OutreachLabeling() {
             </Card>
           )}
         </div>
+      </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+// Read-only overview: every screened draft with all three verdicts side by
+// side, each row expanding to the email and the reasoning. This is the
+// board that used to live only as a static export — now driven by the
+// stored labels.
+function Dash() {
+  return <span className="text-xs text-navy-200">—</span>;
+}
+
+function BoardView() {
+  const [rows, setRows] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    api
+      .get('/outreach-labeling/queue', { params: { filter: 'all' } })
+      .then((r) => setRows(r.data?.rows || []))
+      .catch(() => {})
+      .finally(() => setLoading(false));
+  }, []);
+
+  const claudeOf = (row) => row.label?.claudeRisk || null;
+  const claudeGraded = rows.filter((r) => claudeOf(r));
+  const overflags = rows.filter((r) => r.screenRisk === 'elevated' && claudeOf(r) === 'low');
+  const underflags = rows.filter(
+    (r) => r.screenRisk === 'low' && ['elevated', 'prohibited'].includes(claudeOf(r))
+  );
+
+  if (loading) return <Card className="p-6 text-sm text-navy-400">Loading…</Card>;
+  if (!rows.length) return <Card className="p-6 text-sm text-navy-400">No screened drafts yet.</Card>;
+
+  return (
+    <div>
+      <div className="mb-6 grid grid-cols-2 gap-3 md:grid-cols-4">
+        <Stat label="Drafts" value={rows.length} />
+        <Stat label="Claude graded" value={claudeGraded.length} hint="of the full book" />
+        <Stat label="Over-flags" value={overflags.length} tone="amber" hint="screen strict, Claude low" />
+        <Stat label="Under-flags" value={underflags.length} tone="red" hint="Claude flags, screen low" />
+      </div>
+
+      <div className="overflow-hidden rounded-xl border border-navy-100 bg-white shadow-card">
+        <div className="hidden gap-3 border-b border-navy-100 bg-navy-50/40 px-4 py-2.5 text-[10px] font-semibold uppercase tracking-wide text-navy-300 md:grid md:grid-cols-[52px_1fr_100px_92px_100px]">
+          <span>Draft</span>
+          <span>Recipient</span>
+          <span>Screen</span>
+          <span>Grok</span>
+          <span>Claude</span>
+        </div>
+
+        {rows.map((row) => {
+          const c = claudeOf(row);
+          const dis = c && c !== row.screenRisk;
+          return (
+            <details
+              key={row.id}
+              className={`border-b border-navy-50 last:border-0 ${dis ? 'border-l-2 border-l-amber-400' : ''}`}
+            >
+              <summary className="grid cursor-pointer list-none grid-cols-[52px_1fr_auto] items-center gap-3 px-4 py-3 transition hover:bg-navy-50/40 md:grid-cols-[52px_1fr_100px_92px_100px]">
+                <span className="font-mono text-xs text-navy-300">#{row.id}</span>
+                <span className="min-w-0">
+                  <span className="block truncate text-sm font-semibold text-navy">
+                    {row.target?.name || 'unknown'}
+                  </span>
+                  <span className="text-[11px] text-navy-300">{row.target?.relationship || ''}</span>
+                </span>
+                <span className="hidden md:block">
+                  <RiskPill risk={row.screenRisk} />
+                </span>
+                <span className="hidden md:block">
+                  {row.label?.grokRisk ? <RiskPill risk={row.label.grokRisk} /> : <Dash />}
+                </span>
+                <span className="hidden md:block">{c ? <RiskPill risk={c} /> : <Dash />}</span>
+                <span className="flex flex-wrap justify-end gap-1 md:hidden">
+                  <RiskPill risk={row.screenRisk} />
+                  {c && <RiskPill risk={c} />}
+                </span>
+              </summary>
+              <div className="grid gap-3 bg-navy-50/30 px-4 pb-4 pt-1 text-sm">
+                <pre className="max-h-56 overflow-auto whitespace-pre-wrap rounded-lg border border-navy-100 bg-white p-3 font-mono text-xs leading-relaxed text-navy-600">
+                  {`Subject: ${row.subject}\n\n${row.body}`}
+                </pre>
+                <div>
+                  <span className="text-[11px] font-semibold uppercase tracking-wide text-navy-400">Screen </span>
+                  <RiskPill risk={row.screenRisk} />{' '}
+                  <span className="text-navy-500">{row.screenReason}</span>
+                </div>
+                {row.label?.grokRisk && (
+                  <div>
+                    <span className="text-[11px] font-semibold uppercase tracking-wide text-navy-400">Grok </span>
+                    <RiskPill risk={row.label.grokRisk} />{' '}
+                    <span className="text-navy-500">{row.label.grokNote || ''}</span>
+                  </div>
+                )}
+                {c ? (
+                  <div>
+                    <span className="text-[11px] font-semibold uppercase tracking-wide text-navy-400">Claude </span>
+                    <RiskPill risk={c} /> <span className="text-navy-500">{row.label.claudeReason || ''}</span>
+                  </div>
+                ) : (
+                  <div className="text-[12px] text-navy-300">Claude has not graded this one yet.</div>
+                )}
+              </div>
+            </details>
+          );
+        })}
       </div>
     </div>
   );

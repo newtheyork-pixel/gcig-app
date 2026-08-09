@@ -54,6 +54,18 @@ test('a missing screen or grok verdict is skipped, not scored as agreement', () 
   assert.equal(m.screenVsGrok.agree, 1);
 });
 
+test('Claude is scored as its own comparison, beside Grok', () => {
+  // Same over-flag shape as Grok: the screen said elevated, Claude says low.
+  const m = agreementMetrics([
+    { screenRisk: 'elevated', grokRisk: 'low', claudeRisk: 'low' },
+    { screenRisk: 'low', claudeRisk: 'low' }, // Claude only, no Grok
+  ]);
+  assert.equal(m.screenVsClaude.compared, 2);
+  assert.equal(m.screenVsClaude.overFlag, 1);
+  assert.equal(m.screenVsClaude.agree, 1);
+  assert.equal(m.screenVsGrok.compared, 1, 'only the row Grok graded counts for Grok');
+});
+
 test('the optional human column is scored separately from Grok', () => {
   const m = agreementMetrics([
     { screenRisk: 'elevated', grokRisk: 'low', humanRisk: 'low' }, // both say the screen over-flagged

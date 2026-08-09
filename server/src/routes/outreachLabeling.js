@@ -70,10 +70,16 @@ function compareRisk(screen, ref) {
  */
 export function agreementMetrics(rows) {
   const tally = () => ({ compared: 0, agree: 0, overFlag: 0, underFlag: 0 });
-  const m = { total: rows.length, screenVsGrok: tally(), screenVsHuman: tally() };
+  const m = {
+    total: rows.length,
+    screenVsGrok: tally(),
+    screenVsClaude: tally(),
+    screenVsHuman: tally(),
+  };
   for (const row of rows) {
     for (const [key, ref] of [
       ['screenVsGrok', row.grokRisk],
+      ['screenVsClaude', row.claudeRisk],
       ['screenVsHuman', row.humanRisk],
     ]) {
       const c = compareRisk(row.screenRisk, ref);
@@ -156,6 +162,8 @@ function draftRow(d) {
           grokRisk: d.label.grokRisk,
           grokNote: d.label.grokNote,
           grokRaw: d.label.grokRaw,
+          claudeRisk: d.label.claudeRisk,
+          claudeReason: d.label.claudeReason,
           screenRiskAtLabel: d.label.screenRiskAtLabel,
           labeledBy: d.label.labeledBy?.name || null,
           updatedAt: d.label.updatedAt,
@@ -217,6 +225,7 @@ router.get('/metrics', async (_req, res) => {
       humanRisk: l.humanRisk,
       screenRisk: l.screenRiskAtLabel,
       grokRisk: l.grokRisk,
+      claudeRisk: l.claudeRisk,
     }));
     const metrics = agreementMetrics(rows);
     // The prompt-improvement queue: where the screen and Grok disagree.
@@ -323,6 +332,37 @@ router.post('/:draftId', async (req, res) => {
   } catch (err) {
     console.error('outreach labeling save failed:', err.message);
     res.status(500).json({ error: 'Could not save the label' });
+  }
+});
+
+// Record Claude's verdict, written by the offline grading pass. It touches
+// ONLY the claude columns via upsert, so Grok's and the human's grades on
+// the same draft are never overwritten — two independent second opinions
+// kept side by side. Freezes the screen verdict on first write so the
+// comparison is against the words Claude actually saw.
+router.post('/:draftId/claude', async (req, res) => {
+  const draftId = Number(req.params.draftId);
+  if (!Number.isInteger(draftId)) return res.status(400).json({ error: 'Bad id' });
+  const { risk, reason } = req.body || {};
+  if (!VALID_RISK.has(risk)) {
+    return res.status(400).json({ error: 'risk must be low, elevated, or prohibited' });
+  }
+  try {
+    const draft = await prisma.outreachDraft.findUnique({ where: { id: draftId } });
+    if (!draft) return res.status(404).json({ error: 'No such draft' });
+    const claude = { claudeRisk: risk, claudeReason: reason ? String(reason).slice(0, 600) : null };
+    await prisma.outreachScreenLabel.upsert({
+      where: { draftId },
+      create: { draftId, screenRiskAtLabel: draft.screenRisk, ...claude },
+      // Only the claude columns; grok/human and the frozen screen verdict
+      // are left exactly as they were.
+      update: claude,
+    });
+    const full = await prisma.outreachDraft.findUnique({ where: { id: draftId }, include: DRAFT_INCLUDE });
+    res.status(201).json({ row: draftRow(full) });
+  } catch (err) {
+    console.error('outreach labeling claude save failed:', err.message);
+    res.status(500).json({ error: 'Could not save the Claude verdict' });
   }
 });
 
