@@ -67,6 +67,7 @@ echo "==> signing for distribution"
 # Timestamped, because a signature without one stops validating the day
 # the certificate expires rather than the day it was revoked.
 codesign --force --deep --timestamp --options runtime \
+  --entitlements GriffinTerminal.entitlements \
   --sign "$SIGN_ID" "$APP"
 codesign --verify --deep --strict --verbose=1 "$APP"
 

@@ -64,6 +64,21 @@ actor API {
         if let t { TokenStore.write("jwt", t) } else { TokenStore.delete("jwt") }
     }
 
+    /// A WebSocket URL under our origin, carrying the session token as a
+    /// query parameter — a WebSocket cannot set an Authorization header,
+    /// same as the browser. `path` is rooted at the host (e.g. "/ws/hoot"),
+    /// not under /api.
+    func webSocketURL(_ path: String) -> URL? {
+        guard let apiURL = URL(string: base) else { return nil }
+        var comps = URLComponents()
+        comps.scheme = apiURL.scheme == "http" ? "ws" : "wss"
+        comps.host = apiURL.host
+        comps.port = apiURL.port
+        comps.path = path
+        if let token { comps.queryItems = [URLQueryItem(name: "token", value: token)] }
+        return comps.url
+    }
+
     var isSignedIn: Bool { token != nil }
 
     // MARK: Requests

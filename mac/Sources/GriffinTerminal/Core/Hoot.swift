@@ -1,0 +1,272 @@
+import SwiftUI
+import AVFoundation
+
+// The desk squawk box, native. Same wire protocol as the web client and
+// server/src/realtime/hoot.js: one club channel, hold to talk, audio
+// relayed through our own server (no peer-to-peer, no accounts). Audio is
+// 16 kHz mono little-endian Int16 PCM in BINARY frames; presence and
+// keyed-up state are JSON TEXT frames. Incoming audio is prefixed with a
+// 4-byte speaker id we do not need here (presence already labels talkers).
+
+@MainActor
+final class Hoot: ObservableObject {
+    struct Member: Identifiable, Equatable {
+        let id: Int
+        let name: String
+        var talking: Bool
+    }
+    enum Status { case connecting, on, off }
+
+    @Published private(set) var status: Status = .off
+    @Published private(set) var members: [Member] = []
+    @Published private(set) var talking = false
+    @Published private(set) var micDenied = false
+    private(set) var selfId: Int?
+
+    private let session = URLSession(configuration: .default)
+    private var task: URLSessionWebSocketTask?
+    private var closed = true
+    private let audio = HootAudio()
+
+    // ---- lifecycle ----
+
+    func start() {
+        guard closed else { return }
+        closed = false
+        audio.startEngine()
+        connect()
+    }
+
+    func stop() {
+        closed = true
+        talking = false
+        audio.transmitting = false
+        audio.stopEngine()
+        task?.cancel(with: .goingAway, reason: nil)
+        task = nil
+        status = .off
+    }
+
+    private func connect() {
+        status = .connecting
+        // API is an actor; hop to it for the token-bearing URL, then back
+        // to the main actor (inherited by this Task) to open the socket.
+        Task { [weak self] in
+            guard let self else { return }
+            let url = await API.shared.webSocketURL("/ws/hoot")
+            guard !self.closed else { return }
+            guard let url else {
+                self.status = .off
+                return
+            }
+            let t = self.session.webSocketTask(with: url)
+            self.task = t
+            self.audio.socket = t
+            t.resume()
+            self.receive()
+        }
+    }
+
+    private func onDrop() {
+        guard !closed else { return }
+        status = .off
+        DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
+            guard let self, !self.closed else { return }
+            self.connect()
+        }
+    }
+
+    // ---- receive loop ----
+    // The switch happens inside the @Sendable completion (no actor state
+    // touched there); only the Sendable payloads (String / Data) cross to
+    // the main actor.
+    private func receive() {
+        task?.receive { [weak self] result in
+            switch result {
+            case .failure:
+                Task { @MainActor in self?.onDrop() }
+            case .success(let message):
+                switch message {
+                case .string(let s):
+                    Task { @MainActor in
+                        self?.handleText(s)
+                        self?.receive()
+                    }
+                case .data(let d):
+                    Task { @MainActor in
+                        if d.count > 4 { self?.audio.play(d.subdata(in: 4 ..< d.count)) }
+                        self?.receive()
+                    }
+                @unknown default:
+                    Task { @MainActor in self?.receive() }
+                }
+            }
+        }
+    }
+
+    private func handleText(_ s: String) {
+        guard let data = s.data(using: .utf8),
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let t = obj["t"] as? String
+        else { return }
+        switch t {
+        case "welcome":
+            status = .on
+            if let me = obj["self"] as? [String: Any] { selfId = me["id"] as? Int }
+            members = Self.parseMembers(obj["members"])
+        case "presence":
+            members = Self.parseMembers(obj["members"])
+        case "ptt":
+            if let id = obj["id"] as? Int, let on = obj["on"] as? Bool,
+               let idx = members.firstIndex(where: { $0.id == id }) {
+                members[idx].talking = on
+            }
+        default:
+            break
+        }
+    }
+
+    private static func parseMembers(_ raw: Any?) -> [Member] {
+        guard let arr = raw as? [[String: Any]] else { return [] }
+        return arr.compactMap { m in
+            guard let id = m["id"] as? Int, let name = m["name"] as? String else { return nil }
+            return Member(id: id, name: name, talking: (m["talking"] as? Bool) ?? false)
+        }
+    }
+
+    // ---- push to talk ----
+
+    func pressToTalk() {
+        guard status == .on, !talking else { return }
+        AVCaptureDevice.requestAccess(for: .audio) { [weak self] granted in
+            Task { @MainActor in
+                guard let self, self.status == .on else { return }
+                if !granted {
+                    self.micDenied = true
+                    return
+                }
+                self.micDenied = false
+                self.audio.startCapture()
+                self.audio.transmitting = true
+                self.talking = true
+                self.task?.send(.string("{\"t\":\"ptt\",\"on\":true}")) { _ in }
+            }
+        }
+    }
+
+    func releaseToTalk() {
+        guard talking else { return }
+        talking = false
+        audio.transmitting = false
+        task?.send(.string("{\"t\":\"ptt\",\"on\":false}")) { _ in }
+    }
+}
+
+// The realtime audio path, kept off the main actor. @unchecked Sendable
+// because AVAudioEngine's tap callback and URLSessionWebSocketTask.send are
+// both thread-safe, and the only shared mutable state is a couple of flags
+// whose worst-case race is one dropped or extra 20ms frame.
+final class HootAudio: @unchecked Sendable {
+    private let engine = AVAudioEngine()
+    private let player = AVAudioPlayerNode()
+    private let wire = AVAudioFormat(
+        commonFormat: .pcmFormatInt16, sampleRate: 16000, channels: 1, interleaved: true)!
+    private var playConv: AVAudioConverter?
+    private var capConv: AVAudioConverter?
+    private var started = false
+    private var capturing = false
+
+    // Set by Hoot on connect. URLSession is thread-safe, so the audio tap
+    // sends captured frames directly.
+    var socket: URLSessionWebSocketTask?
+    // Flipped by Hoot; read on the audio thread.
+    var transmitting = false
+
+    func startEngine() {
+        guard !started else { return }
+        let out = engine.mainMixerNode.outputFormat(forBus: 0)
+        engine.attach(player)
+        engine.connect(player, to: engine.mainMixerNode, format: out)
+        playConv = AVAudioConverter(from: wire, to: out)
+        engine.prepare()
+        do {
+            try engine.start()
+            player.play()
+            started = true
+        } catch {
+            started = false
+        }
+    }
+
+    func stopEngine() {
+        stopCapture()
+        player.stop()
+        engine.stop()
+        started = false
+    }
+
+    func startCapture() {
+        guard started, !capturing else { return }
+        let input = engine.inputNode
+        let inFmt = input.inputFormat(forBus: 0)
+        guard inFmt.sampleRate > 0, inFmt.channelCount > 0 else { return }
+        capConv = AVAudioConverter(from: inFmt, to: wire)
+        input.installTap(onBus: 0, bufferSize: 2048, format: inFmt) { [weak self] buf, _ in
+            self?.onCapture(buf, inFmt: inFmt)
+        }
+        capturing = true
+    }
+
+    func stopCapture() {
+        guard capturing else { return }
+        engine.inputNode.removeTap(onBus: 0)
+        capturing = false
+    }
+
+    private func onCapture(_ buf: AVAudioPCMBuffer, inFmt: AVAudioFormat) {
+        guard transmitting, let conv = capConv, let sock = socket else { return }
+        let ratio = wire.sampleRate / inFmt.sampleRate
+        let cap = AVAudioFrameCount(Double(buf.frameLength) * ratio) + 32
+        guard let outBuf = AVAudioPCMBuffer(pcmFormat: wire, frameCapacity: cap) else { return }
+        var fed = false
+        var err: NSError?
+        conv.convert(to: outBuf, error: &err) { _, status in
+            if fed { status.pointee = .noDataNow; return nil }
+            fed = true
+            status.pointee = .haveData
+            return buf
+        }
+        guard err == nil, outBuf.frameLength > 0, let ch = outBuf.int16ChannelData else { return }
+        let data = Data(bytes: ch[0], count: Int(outBuf.frameLength) * MemoryLayout<Int16>.size)
+        sock.send(.data(data)) { _ in }
+    }
+
+    func play(_ pcm: Data) {
+        guard started, let conv = playConv else { return }
+        let frames = pcm.count / MemoryLayout<Int16>.size
+        guard frames > 0,
+              let inBuf = AVAudioPCMBuffer(pcmFormat: wire, frameCapacity: AVAudioFrameCount(frames))
+        else { return }
+        inBuf.frameLength = AVAudioFrameCount(frames)
+        pcm.withUnsafeBytes { raw in
+            if let base = raw.baseAddress, let dst = inBuf.int16ChannelData {
+                memcpy(dst[0], base, frames * MemoryLayout<Int16>.size)
+            }
+        }
+        let out = engine.mainMixerNode.outputFormat(forBus: 0)
+        let ratio = out.sampleRate / wire.sampleRate
+        let cap = AVAudioFrameCount(Double(frames) * ratio) + 32
+        guard let outBuf = AVAudioPCMBuffer(pcmFormat: out, frameCapacity: cap) else { return }
+        var fed = false
+        var err: NSError?
+        conv.convert(to: outBuf, error: &err) { _, status in
+            if fed { status.pointee = .noDataNow; return nil }
+            fed = true
+            status.pointee = .haveData
+            return inBuf
+        }
+        if err == nil, outBuf.frameLength > 0 {
+            player.scheduleBuffer(outBuf, at: nil, options: [], completionHandler: nil)
+        }
+    }
+}

@@ -23,5 +23,7 @@
   </array>
   <key>NSAppTransportSecurity</key>
   <dict><key>NSAllowsArbitraryLoads</key><false/></dict>
+  <key>NSMicrophoneUsageDescription</key>
+  <string>Griffin Terminal uses your microphone for the desk squawk box — hold to talk to your team.</string>
 </dict>
 </plist>

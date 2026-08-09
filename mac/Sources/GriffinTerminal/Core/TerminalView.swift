@@ -23,6 +23,7 @@ struct TerminalView: View {
             // type, not after.
             TabStrip()
             CommandBarView().zIndex(100)
+            HootBar()
             BreakingStrip()
             HStack(spacing: 0) {
                 SideRail()
