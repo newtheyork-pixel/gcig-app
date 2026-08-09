@@ -508,10 +508,15 @@ function BoardView() {
   }, []);
 
   const claudeOf = (row) => row.label?.claudeRisk || null;
+  // The screen verdict frozen when the draft was graded — what Grok and
+  // Claude actually reacted to. The live screenRisk can drift because the
+  // screen's model pass is nondeterministic, so the frozen one is the fair
+  // basis and keeps the board consistent with the metrics.
+  const screenAt = (row) => row.label?.screenRiskAtLabel || row.screenRisk;
   const claudeGraded = rows.filter((r) => claudeOf(r));
-  const overflags = rows.filter((r) => r.screenRisk === 'elevated' && claudeOf(r) === 'low');
+  const overflags = rows.filter((r) => screenAt(r) === 'elevated' && claudeOf(r) === 'low');
   const underflags = rows.filter(
-    (r) => r.screenRisk === 'low' && ['elevated', 'prohibited'].includes(claudeOf(r))
+    (r) => screenAt(r) === 'low' && ['elevated', 'prohibited'].includes(claudeOf(r))
   );
 
   if (loading) return <Card className="p-6 text-sm text-navy-400">Loading…</Card>;
@@ -537,7 +542,8 @@ function BoardView() {
 
         {rows.map((row) => {
           const c = claudeOf(row);
-          const dis = c && c !== row.screenRisk;
+          const s = screenAt(row);
+          const dis = c && c !== s;
           return (
             <details
               key={row.id}
@@ -552,14 +558,14 @@ function BoardView() {
                   <span className="text-[11px] text-navy-300">{row.target?.relationship || ''}</span>
                 </span>
                 <span className="hidden md:block">
-                  <RiskPill risk={row.screenRisk} />
+                  <RiskPill risk={s} />
                 </span>
                 <span className="hidden md:block">
                   {row.label?.grokRisk ? <RiskPill risk={row.label.grokRisk} /> : <Dash />}
                 </span>
                 <span className="hidden md:block">{c ? <RiskPill risk={c} /> : <Dash />}</span>
                 <span className="flex flex-wrap justify-end gap-1 md:hidden">
-                  <RiskPill risk={row.screenRisk} />
+                  <RiskPill risk={s} />
                   {c && <RiskPill risk={c} />}
                 </span>
               </summary>
@@ -569,8 +575,11 @@ function BoardView() {
                 </pre>
                 <div>
                   <span className="text-[11px] font-semibold uppercase tracking-wide text-navy-400">Screen </span>
-                  <RiskPill risk={row.screenRisk} />{' '}
+                  <RiskPill risk={s} />{' '}
                   <span className="text-navy-500">{row.screenReason}</span>
+                  {s !== row.screenRisk && (
+                    <span className="text-[11px] text-navy-300"> (screen since drifted to {row.screenRisk})</span>
+                  )}
                 </div>
                 {row.label?.grokRisk && (
                   <div>
