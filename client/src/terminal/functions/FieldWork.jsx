@@ -2600,24 +2600,14 @@ function Targets({ project, onChanged, focus, onFocused }) {
         {fn.conversionPct != null ? ` · ${fn.conversionPct}% conversion` : ''}
       </div>
 
-      {/* Where the outreach queue actually stands. Without this line the
-          approval state is invisible until you open a person, which is
-          how a fully-approved email sits unsent for a week. */}
+      {/* Where the outreach queue actually stands. Without this line a
+          draft's state is invisible until you open a person, which is
+          how a ready email sits unsent for a week. */}
       {q.awaitingReview || q.readyToSend || q.rejected || q.screenBlocked || q.unscreened || q.keywordOnly ? (
         <div style={{ fontSize: 11 }}>
-          {q.awaitingMe ? (
-            <span style={{ color: 'var(--term-white)', marginRight: 12 }}>
-              {q.awaitingMe} waiting on your approval
-            </span>
-          ) : null}
-          {q.awaitingReview ? (
-            <span style={{ color: 'var(--term-fg-dim)', marginRight: 12 }}>
-              {q.awaitingReview} awaiting sign-off
-            </span>
-          ) : null}
           {q.readyToSend ? (
             <span style={{ color: 'var(--term-positive)', marginRight: 12 }}>
-              {q.readyToSend} approved, ready to send
+              {q.readyToSend} ready to send
             </span>
           ) : null}
           {q.rejected ? (
@@ -3044,14 +3034,14 @@ function TargetDetail({ target: t, onBack, onChanged }) {
   );
 }
 
-// The outreach email and its two sign-offs.
+// The outreach email panel.
 //
 // The app does not send the mail — it goes from a real person's school
 // address, which is the only way a cold email from a student club is
 // going to be read. So what this panel owes the user is the text,
-// verbatim and copyable, plus an honest account of who has signed off
-// and who has not. "Copy" is the send button here, and it is only
-// enabled once both approvals are in.
+// verbatim and copyable, plus the compliance read. "Copy" is the send
+// button here, enabled unless the screen blocks the draft or an exec
+// rejected it.
 function Drafts({ target, onChanged }) {
   const drafts = target.drafts || [];
   const [composing, setComposing] = useState(false);
@@ -3172,7 +3162,7 @@ function Drafts({ target, onChanged }) {
 
       {drafts.length === 0 && !composing ? (
         <div className="term-loading" style={{ fontSize: 11 }}>
-          Nothing drafted. Anything written here needs two sign-offs before it can go out.
+          Nothing drafted. Anything written here is screened by compliance before it goes out.
         </div>
       ) : null}
 
@@ -3387,21 +3377,16 @@ function DraftCard({ d, target, replies = [], busy, copied, onCopy, onRun }) {
   const [note, setNote] = useState('');
   const [rejecting, setRejecting] = useState(false);
 
-  // The state line has to be readable in one glance and must never
-  // overstate where a draft has got to — "ready" on something with one
-  // approval is how an unreviewed email goes out.
+  // The state line has to read in one glance. Approvals are no longer
+  // required to send, so the states left are sent, rejected,
+  // screen-blocked, and ready.
   const state = d.sentAt
     ? { text: `SENT ${fmtDate(d.sentAt)}${d.sentBy ? ` by ${d.sentBy.name}` : ''}`, tone: 'var(--term-fg-muted)' }
     : d.rejectedAt
     ? { text: `REJECTED by ${d.rejectedBy?.name || 'someone'} — ${d.reviewNote || 'no reason given'}`, tone: 'var(--term-negative)' }
     : d.screenBlocked
-    ? { text: 'BLOCKED by the compliance screen — cannot be approved or sent as written', tone: 'var(--term-negative)' }
-    : d.fullyApproved
-    ? { text: `APPROVED by ${d.approvedByNames.join(' and ')} — ready to send`, tone: 'var(--term-positive)' }
-    : {
-        text: `${d.approvalCount} of ${d.approvalsNeeded} approvals${d.approvalCount ? ` — ${d.approvedByNames.join(', ')}` : ''}`,
-        tone: 'var(--term-fg-dim)',
-      };
+    ? { text: 'BLOCKED by the compliance screen — edit it, which re-screens', tone: 'var(--term-negative)' }
+    : { text: 'READY TO SEND', tone: 'var(--term-positive)' };
 
   const findings = d.screenFindings?.hits || [];
   const concerns = d.screenFindings?.concerns || [];
@@ -3455,14 +3440,7 @@ function DraftCard({ d, target, replies = [], busy, copied, onCopy, onRun }) {
             value={f.body}
             onChange={(e) => setF({ ...f, body: e.target.value })}
           />
-          {/* Said before they commit, not after. Someone fixing a typo
-              on a fully-approved draft needs to know it costs both
-              sign-offs. */}
-          {d.approvalCount > 0 ? (
-            <div style={{ color: 'var(--term-negative)', fontSize: 10 }}>
-              Saving a change clears {d.approvalCount === 1 ? 'the approval' : `both approvals`} — the draft goes back for review.
-            </div>
-          ) : null}
+          {/* Editing re-runs the compliance screen on the new words. */}
           <div style={{ display: 'flex', gap: 6 }}>
             <TermButton
               disabled={busy}
@@ -3501,27 +3479,24 @@ function DraftCard({ d, target, replies = [], busy, copied, onCopy, onRun }) {
 
       {!editing && !d.sentAt ? (
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
-          {d.canIApprove ? (
-            <TermButton disabled={busy} onClick={() => onRun(() => api.post(`/research/drafts/${d.id}/approve`))}>
-              Approve
-            </TermButton>
-          ) : null}
-          {d.iApproved && !d.sentAt ? (
-            <TermButton disabled={busy} onClick={() => onRun(() => api.delete(`/research/drafts/${d.id}/approve`))}>
-              Withdraw my approval
-            </TermButton>
-          ) : null}
+          {/* An exec can still veto a draft outright; it just is not
+              required for one to go out. */}
           {d.canIApprove ? (
             <TermButton disabled={busy} onClick={() => setRejecting(!rejecting)}>Reject</TermButton>
           ) : null}
           <TermButton disabled={busy} onClick={() => setEditing(true)}>Edit</TermButton>
 
-          {/* Copy is the send button, so it stays shut until both
-              sign-offs are in. A greyed control with a reason attached
-              teaches the rule; a hidden one just looks broken. */}
+          {/* Copy is the send button. It stays shut only when the draft
+              cannot go out at all — rejected, or blocked by the screen. */}
           <TermButton
             disabled={busy || !d.fullyApproved}
-            title={d.fullyApproved ? `Copy, then send from your school address to ${target.email || 'them'}` : 'Needs two approvals first'}
+            title={
+              d.fullyApproved
+                ? `Copy, then send from your school address to ${target.email || 'them'}`
+                : d.rejectedAt
+                ? 'This draft was rejected — edit it to send'
+                : 'The compliance screen blocks this — edit it'
+            }
             onClick={onCopy}
           >
             {copied ? 'Copied' : 'Copy to send'}

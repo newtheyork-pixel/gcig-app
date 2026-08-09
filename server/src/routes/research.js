@@ -1064,14 +1064,16 @@ router.delete('/targets/:id', canResearch, async (req, res) => {
   }
 });
 
-// ── Outreach drafts: two sign-offs before anything is sent ───────────
+// ── Outreach drafts ─────────────────────────────────────────────────
 //
-// The only irreversible thing this app does. A vote can be re-run and a
-// claim can be struck, but an email lands in a stranger's inbox
-// carrying the club's name and the school's, and there is no taking it
-// back. So it takes two people.
+// Sending an email is the one irreversible thing this app does, and it
+// used to take two sign-offs. That gate is gone by decision: the
+// compliance screen still reads every draft and still HARD-BLOCKS a
+// `prohibited` verdict, and an exec can still reject a draft outright,
+// but ordinary outreach no longer waits on two people to click approve.
+// Setting this back to 2 restores the old policy without other changes.
 
-const REQUIRED_APPROVALS = 2;
+const REQUIRED_APPROVALS = 0;
 
 // Who may sign off. Deliberately narrower than who may write: any
 // analyst can draft, but the sign-off is the club's word going out
@@ -1402,11 +1404,15 @@ router.post('/drafts/:id/sent', canResearch, async (req, res) => {
       });
     }
 
-    const have = new Set(d.approvals.map((a) => a.userId)).size;
-    if (have < REQUIRED_APPROVALS) {
-      return res.status(409).json({
-        error: `This needs ${REQUIRED_APPROVALS} approvals and has ${have}. Two different people have to sign off before it goes out.`,
-      });
+    // Approvals are no longer required to send (REQUIRED_APPROVALS is 0).
+    // The prohibited-screen and rejection gates above still stand.
+    if (REQUIRED_APPROVALS > 0) {
+      const have = new Set(d.approvals.map((a) => a.userId)).size;
+      if (have < REQUIRED_APPROVALS) {
+        return res.status(409).json({
+          error: `This needs ${REQUIRED_APPROVALS} approvals and has ${have}. ${REQUIRED_APPROVALS} people have to sign off before it goes out.`,
+        });
+      }
     }
 
     const updated = await prisma.$transaction(async (tx) => {
