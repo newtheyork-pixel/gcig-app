@@ -34,6 +34,7 @@ import PitchRequests from './pages/PitchRequests.jsx';
 import CPI from './pages/CPI.jsx';
 import Tankers from './pages/Tankers.jsx';
 import PresidentReview from './pages/PresidentReview.jsx';
+import OutreachLabeling from './pages/OutreachLabeling.jsx';
 import Terminal from './pages/Terminal.jsx';
 
 export default function App() {
@@ -104,6 +105,7 @@ export default function App() {
         <Route path="/organization" element={<Organization />} />
         <Route path="/profile" element={<Profile />} />
         <Route path="/president-review" element={<PresidentReview />} />
+        <Route path="/outreach-labeling" element={<OutreachLabeling />} />
       </Route>
       {/* Terminal lives outside the standard Layout — it owns the viewport. */}
       <Route

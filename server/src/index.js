@@ -53,6 +53,7 @@ import shortInterestRoutes from './routes/shortInterest.js';
 import haltsRoutes from './routes/halts.js';
 import notesRoutes from './routes/notes.js';
 import researchRoutes from './routes/research.js';
+import outreachLabelingRoutes from './routes/outreachLabeling.js';
 import { ensureRecurringMeetings } from './services/recurringMeetings.js';
 import cron from 'node-cron';
 import { checkBuyLevels, checkStaleValuations } from './services/buyLevelWatch.js';
@@ -172,6 +173,7 @@ app.use('/api/watchlist', watchlistRoutes);
 app.use('/api/subscriptions', subscriptionRoutes);
 app.use('/api/notes', notesRoutes);
 app.use('/api/research', researchRoutes);
+app.use('/api/outreach-labeling', outreachLabelingRoutes);
 
 // Generic error handler. Logs the full error server-side for debugging but
 // never leaks internal details (stack traces, Prisma error bodies, etc.) to

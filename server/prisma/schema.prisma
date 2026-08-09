@@ -115,6 +115,7 @@ model User {
   outreachDraftsMinorEdited OutreachDraft[]       @relation("OutreachDraftMinorEditor")
   outreachApprovals         OutreachApproval[]    @relation("OutreachApprover")
   outreachMessagesLogged    OutreachMessage[]     @relation("OutreachReplyRecorder")
+  outreachLabels            OutreachScreenLabel[] @relation("OutreachLabeler")
   watchlistItems            WatchlistItem[]       @relation("WatchlistAdder")
   watchlistOwned            WatchlistItem[]       @relation("WatchlistOwner")
   siteVisits                SiteVisit[]           @relation("SiteVisitVisitor")
@@ -1303,11 +1304,50 @@ model OutreachDraft {
   sentBy   User?     @relation("OutreachDraftSender", fields: [sentById], references: [id], onDelete: SetNull)
 
   messages OutreachMessage[]
+  label    OutreachScreenLabel?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   @@index([targetId, createdAt])
+}
+
+// A human's verdict on a draft the screen already read, kept to
+// calibrate the screen. It is its OWN table on purpose: labelled cases
+// are the eval set, and the moment one becomes a prompt example we are
+// scoring the screen against its own answer key. Same firewall as the
+// golden eval — nothing in here is ever fed back into SYSTEM_PROMPT.
+//
+// One row per draft; re-labelling upserts. The screen's verdict is
+// frozen at label time (screenRiskAtLabel) because a draft's live
+// screenRisk is rewritten the next time anyone edits the words, and a
+// label is a judgement about the exact text the grader was shown.
+model OutreachScreenLabel {
+  id      Int           @id @default(autoincrement())
+  draftId Int           @unique
+  draft   OutreachDraft @relation(fields: [draftId], references: [id], onDelete: Cascade)
+
+  // The grader's own call. risk is the three-level verdict the screen
+  // itself emits; category names which FLAG-list behaviour it matched,
+  // null for a clean low.
+  humanRisk     String
+  humanCategory String?
+  humanNote     String?
+
+  // Grok's call, typed in by hand after pasting the draft into it. Kept
+  // beside the human's, never blended: a second opinion is only worth
+  // having while you can still watch it disagree.
+  grokRisk String?
+  grokNote String?
+
+  // What the screen said about these exact words, frozen at label time.
+  screenRiskAtLabel String?
+
+  labeledById Int?
+  labeledBy   User? @relation("OutreachLabeler", fields: [labeledById], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 // One message in a correspondence, either direction.

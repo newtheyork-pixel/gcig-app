@@ -22,6 +22,7 @@ import {
   ClipboardList,
   Network,
   Monitor,
+  ShieldCheck,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext.jsx';
 import RoleBadge from './RoleBadge.jsx';
@@ -61,6 +62,7 @@ const NAV_SECTIONS = [
     items: [
       { to: '/library', label: 'Library', icon: BookOpen },
       { to: '/field-research', label: 'Research', icon: Mic },
+      { to: '/outreach-labeling', label: 'Outreach Screen', icon: ShieldCheck, executiveOnly: true },
     ],
   },
   {
