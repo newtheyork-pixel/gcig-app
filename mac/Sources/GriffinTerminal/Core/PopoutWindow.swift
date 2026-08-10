@@ -102,7 +102,7 @@ struct PopoutWindow: View {
         .background(Term.bgHeader)
         .overlay(alignment: .bottom) { Rectangle().fill(Term.border).frame(height: 1) }
         .contentShape(Rectangle())
-        .gesture(WindowDragGesture())
+        .windowDragIfAvailable()
     }
 
     private var commandLine: some View {
@@ -190,4 +190,17 @@ struct WindowConfigurator: NSViewRepresentable {
     }
 
     func updateNSView(_ nsView: NSView, context: Context) {}
+}
+// Dragging a window by a custom view is macOS 15's WindowDragGesture. On
+// macOS 14 the header simply is not a drag handle — a small loss that lets
+// the whole terminal run on older Macs.
+private extension View {
+    @ViewBuilder
+    func windowDragIfAvailable() -> some View {
+        if #available(macOS 15, *) {
+            self.gesture(WindowDragGesture())
+        } else {
+            self
+        }
+    }
 }

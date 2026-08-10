@@ -3,7 +3,7 @@ import PackageDescription
 
 let package = Package(
     name: "GriffinTerminal",
-    platforms: [.macOS(.v15)],
+    platforms: [.macOS(.v14)],
     targets: [
         .executableTarget(
             name: "GriffinTerminal",
