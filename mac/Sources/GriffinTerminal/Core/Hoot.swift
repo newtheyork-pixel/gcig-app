@@ -33,6 +33,11 @@ final class Hoot: ObservableObject {
     @Published private(set) var target: Int?  // nil = Trade Desk
     @Published private(set) var micDenied = false
     private(set) var selfId: Int?
+    /// This connection's own display name, from `welcome`. Used to label a
+    /// roster entry that is your OWN account on another device — with
+    /// per-connection presence, your second device shows up as a separate
+    /// participant, and this stops it reading as a stranger with your name.
+    private(set) var selfName: String?
 
     private let session = URLSession(configuration: .default)
     private var task: URLSessionWebSocketTask?
@@ -131,7 +136,10 @@ final class Hoot: ObservableObject {
         switch t {
         case "welcome":
             status = .on
-            if let me = obj["self"] as? [String: Any] { selfId = me["id"] as? Int }
+            if let me = obj["self"] as? [String: Any] {
+                selfId = me["id"] as? Int
+                selfName = me["name"] as? String
+            }
             members = Self.parseMembers(obj["members"])
         case "presence":
             members = Self.parseMembers(obj["members"])

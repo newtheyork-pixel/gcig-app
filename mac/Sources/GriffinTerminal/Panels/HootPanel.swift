@@ -58,6 +58,12 @@ struct HootPanel: View {
                             Text(m.name)
                                 .font(Term.mono(11, weight: m.talking ? .semibold : .regular))
                                 .foregroundStyle(Term.fg).lineLimit(1)
+                            // Your own account on another device — labelled so
+                            // it does not read as a stranger who shares your name.
+                            if let sn = hoot.selfName, m.name == sn {
+                                Text("· your other device")
+                                    .font(Term.mono(9)).foregroundStyle(Term.cyan)
+                            }
                             if m.muted {
                                 Image(systemName: "mic.slash.fill").foregroundStyle(Term.fgMuted).font(.system(size: 9))
                             }
