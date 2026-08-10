@@ -178,23 +178,22 @@ final class Hoot: ObservableObject {
 
     func pressToTalk() {
         guard !talking, !muted else { return }
-        // Engage the mic and prompt immediately — do NOT wait on the socket.
-        // The old code gated this on status == .on, so a press before the
-        // connection settled never even asked for the microphone. Only the
-        // network send depends on being connected.
+        // Optimistic: the button turns LIVE the instant you press, which
+        // proves the gesture fired even before the mic is granted. The mic
+        // engages independently of the socket; only the send waits on it.
+        talking = true
+        if status == .on { send(["t": "ptt", "on": true]) }
         AVCaptureDevice.requestAccess(for: .audio) { [weak self] granted in
             Task { @MainActor in
-                guard let self, !self.muted else { return }
+                guard let self, self.talking, !self.muted else { return }
                 if !granted {
                     self.micDenied = true
+                    self.releaseToTalk()
                     return
                 }
                 self.micDenied = false
-                self.audio.startEngine() // idempotent; make sure audio is up
                 self.audio.startCapture()
                 self.audio.transmitting = true
-                self.talking = true
-                if self.status == .on { self.send(["t": "ptt", "on": true]) }
             }
         }
     }
@@ -203,7 +202,8 @@ final class Hoot: ObservableObject {
         guard talking else { return }
         talking = false
         audio.transmitting = false
-        send(["t": "ptt", "on": false])
+        audio.stopCapture()
+        if status == .on { send(["t": "ptt", "on": false]) }
     }
 }
 
@@ -218,7 +218,7 @@ final class HootAudio: @unchecked Sendable {
     private var playConv: AVAudioConverter?
     private var capConv: AVAudioConverter?
     private var started = false
-    private var capturing = false
+    private var captureEngine: AVAudioEngine?
 
     var socket: URLSessionWebSocketTask?
     var transmitting = false
@@ -246,22 +246,35 @@ final class HootAudio: @unchecked Sendable {
         started = false
     }
 
+    // Capture runs on its OWN engine, created when you key up and torn
+    // down when you release. A separate engine, STARTED after the tap is
+    // installed, is the reliable way to actually pull the microphone on
+    // macOS — installing an input tap on the shared playback engine
+    // mid-run does not engage the mic (no orange indicator, no frames).
     func startCapture() {
-        guard started, !capturing else { return }
-        let input = engine.inputNode
-        let inFmt = input.inputFormat(forBus: 0)
-        guard inFmt.sampleRate > 0, inFmt.channelCount > 0 else { return }
-        capConv = AVAudioConverter(from: inFmt, to: wire)
-        input.installTap(onBus: 0, bufferSize: 2048, format: inFmt) { [weak self] buf, _ in
-            self?.onCapture(buf, inFmt: inFmt)
+        guard captureEngine == nil else { return }
+        let eng = AVAudioEngine()
+        let input = eng.inputNode
+        let fmt = input.outputFormat(forBus: 0)
+        guard fmt.sampleRate > 0 else { return }
+        capConv = AVAudioConverter(from: fmt, to: wire)
+        input.installTap(onBus: 0, bufferSize: 2048, format: fmt) { [weak self] buf, _ in
+            self?.onCapture(buf, inFmt: fmt)
         }
-        capturing = true
+        eng.prepare()
+        do {
+            try eng.start()
+            captureEngine = eng
+        } catch {
+            captureEngine = nil
+        }
     }
 
     func stopCapture() {
-        guard capturing else { return }
-        engine.inputNode.removeTap(onBus: 0)
-        capturing = false
+        guard let eng = captureEngine else { return }
+        eng.inputNode.removeTap(onBus: 0)
+        eng.stop()
+        captureEngine = nil
     }
 
     private func onCapture(_ buf: AVAudioPCMBuffer, inFmt: AVAudioFormat) {
