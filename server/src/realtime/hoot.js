@@ -15,9 +15,15 @@ import { authenticateToken, hasTerminalAccess } from '../middleware/auth.js';
 //
 // Wire format: audio is 16 kHz mono little-endian Int16 PCM in BINARY
 // frames prefixed with the speaker's 4-byte big-endian id; presence,
-// keyed-up, mute, target and activity are JSON TEXT frames. A member may
-// hold several connections (web + native); presence is deduped to one
-// entry per person and a member never hears their own voice.
+// keyed-up, mute, target and activity are JSON TEXT frames.
+//
+// Each CONNECTION is its own participant on the desk, keyed by a
+// per-connection id rather than the account id. The same account signed
+// in on two devices therefore shows as two entries and each hears the
+// other — only your own connection is ever muted back to you. That is
+// what makes one account usable across devices, and testing with a single
+// account work at all (two logins of the same account are two
+// participants, not one person talking to themselves).
 //
 // Single-instance assumption: the roster lives in memory, correct only
 // while the API runs on one dyno. Scaling out needs a shared bus.
@@ -49,44 +55,21 @@ export function attachHoot(server) {
       .catch(() => socket.destroy());
   });
 
-  // One roster entry per person. talking is OR across their devices; a
-  // member counts as muted only if every device is muted; target and
-  // last-active take the most recent. idleMs is stamped at send time and
-  // the client ticks it forward locally between broadcasts.
+  // One roster entry per CONNECTION, keyed by connId. idleMs is stamped at
+  // send time and the client ticks it forward locally between broadcasts.
+  // The client hides its own entry by matching the connId it was handed in
+  // `welcome`, so a second login of the same account is just another peer.
   function roster() {
     const t = now();
-    const byMember = new Map();
-    for (const p of peers.values()) {
-      const cur = byMember.get(p.user.id);
-      if (cur) {
-        cur.talking = cur.talking || p.talking;
-        cur.muted = cur.muted && p.muted;
-        cur.target = p.target ?? cur.target;
-        cur._active = Math.max(cur._active, p.lastActive);
-      } else {
-        byMember.set(p.user.id, {
-          id: p.user.id,
-          name: p.user.name,
-          talking: p.talking,
-          muted: p.muted,
-          target: p.target ?? null,
-          _active: p.lastActive,
-        });
-      }
-    }
-    return [...byMember.values()].map((m) => ({
-      id: m.id,
-      name: m.name,
-      talking: m.talking,
-      muted: m.muted,
-      target: m.target,
-      idleMs: Math.max(0, t - m._active),
+    return [...peers.entries()].map(([cid, p]) => ({
+      id: cid,
+      name: p.user.name,
+      talking: p.talking,
+      muted: p.muted,
+      target: p.target ?? null,
+      idleMs: Math.max(0, t - p.lastActive),
     }));
   }
-  const memberTalking = (id) => {
-    for (const p of peers.values()) if (p.user.id === id && p.talking) return true;
-    return false;
-  };
 
   function broadcastText(obj) {
     const s = JSON.stringify(obj);
@@ -102,15 +85,13 @@ export function attachHoot(server) {
   }
   const sendPresence = () => broadcastText({ t: 'presence', members: roster() });
 
-  function sendToMember(memberId, frame) {
-    for (const p of peers.values()) {
-      if (p.user.id !== memberId) continue;
-      if (p.ws.readyState === p.ws.OPEN) {
-        try {
-          p.ws.send(frame, { binary: true });
-        } catch {
-          /* reaped by heartbeat */
-        }
+  function sendToConn(connId, frame) {
+    const p = peers.get(connId);
+    if (p && p.ws.readyState === p.ws.OPEN) {
+      try {
+        p.ws.send(frame, { binary: true });
+      } catch {
+        /* reaped by heartbeat */
       }
     }
   }
@@ -122,14 +103,14 @@ export function attachHoot(server) {
       user,
       talking: false,
       muted: false,
-      target: null, // null = Trade Desk; a member id = direct line
+      target: null, // null = Trade Desk; a connId = direct line to that connection
       lastActive: now(),
       alive: true,
     };
     peers.set(connId, me);
 
     try {
-      ws.send(JSON.stringify({ t: 'welcome', self: { id: user.id, name: user.name }, members: roster() }));
+      ws.send(JSON.stringify({ t: 'welcome', self: { id: connId, name: user.name }, members: roster() }));
     } catch {
       /* ignore */
     }
@@ -145,11 +126,11 @@ export function attachHoot(server) {
         if (me.muted || !me.talking || data.length > MAX_FRAME) return;
         me.lastActive = now();
         const header = Buffer.allocUnsafe(4);
-        header.writeUInt32BE(user.id >>> 0, 0);
+        header.writeUInt32BE(connId >>> 0, 0);
         const frame = Buffer.concat([header, data]);
         if (me.target == null) {
-          for (const p of peers.values()) {
-            if (p.user.id === user.id) continue; // never back to the speaker
+          for (const [cid, p] of peers) {
+            if (cid === connId) continue; // never back to the speaker's own connection
             if (p.ws.readyState === p.ws.OPEN) {
               try {
                 p.ws.send(frame, { binary: true });
@@ -159,7 +140,7 @@ export function attachHoot(server) {
             }
           }
         } else {
-          sendToMember(me.target, frame);
+          sendToConn(me.target, frame);
         }
         return;
       }
@@ -175,12 +156,8 @@ export function attachHoot(server) {
         case 'ptt': {
           const on = !!msg.on;
           if (me.talking !== on) {
-            const was = memberTalking(user.id);
             me.talking = on;
-            const nowTalking = memberTalking(user.id);
-            if (was !== nowTalking) {
-              broadcastText({ t: 'ptt', id: user.id, name: user.name, on: nowTalking, target: me.target ?? null });
-            }
+            broadcastText({ t: 'ptt', id: connId, name: user.name, on, target: me.target ?? null });
           }
           break;
         }
