@@ -89,7 +89,7 @@ struct HootPanel: View {
                     .background(hoot.talking ? Term.negative : Color.clear)
                     .overlay(RoundedRectangle(cornerRadius: 5)
                         .stroke(hoot.talking ? Term.negative : Term.border, lineWidth: 1))
-                    .opacity(hoot.status == .on && !hoot.muted ? 1 : 0.5)
+                    .opacity(hoot.muted ? 0.5 : 1)
                     .contentShape(Rectangle())
                     .gesture(
                         DragGesture(minimumDistance: 0)

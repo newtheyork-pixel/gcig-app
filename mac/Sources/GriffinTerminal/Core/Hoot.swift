@@ -177,19 +177,24 @@ final class Hoot: ObservableObject {
     }
 
     func pressToTalk() {
-        guard status == .on, !talking, !muted else { return }
+        guard !talking, !muted else { return }
+        // Engage the mic and prompt immediately — do NOT wait on the socket.
+        // The old code gated this on status == .on, so a press before the
+        // connection settled never even asked for the microphone. Only the
+        // network send depends on being connected.
         AVCaptureDevice.requestAccess(for: .audio) { [weak self] granted in
             Task { @MainActor in
-                guard let self, self.status == .on, !self.muted else { return }
+                guard let self, !self.muted else { return }
                 if !granted {
                     self.micDenied = true
                     return
                 }
                 self.micDenied = false
+                self.audio.startEngine() // idempotent; make sure audio is up
                 self.audio.startCapture()
                 self.audio.transmitting = true
                 self.talking = true
-                self.send(["t": "ptt", "on": true])
+                if self.status == .on { self.send(["t": "ptt", "on": true]) }
             }
         }
     }
