@@ -10,10 +10,16 @@ cd "$(dirname "$0")"
 CONFIG="${1:-release}"
 APP="build/Griffin Terminal.app"
 
-echo "==> swift build ($CONFIG)"
-swift build -c "$CONFIG"
+# Universal: arm64 AND x86_64, so the app runs on Apple Silicon AND on
+# Intel Macs. A single-arch (arm64) build simply will not launch on Intel
+# — Rosetta only translates the other direction — which is how an Intel
+# member ended up unable to open it.
+ARCHS="--arch arm64 --arch x86_64"
 
-BIN="$(swift build -c "$CONFIG" --show-bin-path)/GriffinTerminal"
+echo "==> swift build ($CONFIG, universal)"
+swift build -c "$CONFIG" $ARCHS
+
+BIN="$(swift build -c "$CONFIG" $ARCHS --show-bin-path)/GriffinTerminal"
 [ -f "$BIN" ] || { echo "no binary at $BIN"; exit 1; }
 
 rm -rf "$APP"
