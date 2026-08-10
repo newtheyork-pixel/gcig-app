@@ -171,6 +171,7 @@ final class Hoot: ObservableObject {
         if muted, talking {
             talking = false
             audio.transmitting = false
+            audio.stopCapture() // release the mic — muting mid-hold left it on
             send(["t": "ptt", "on": false])
         }
         send(["t": "mute", "on": muted])

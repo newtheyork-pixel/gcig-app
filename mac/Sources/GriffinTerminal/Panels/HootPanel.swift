@@ -117,6 +117,9 @@ struct HootPanel: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(Term.bgPanel)
         .onAppear { Hoot.shared.start() }
+        // Safety: if the panel closes while you are still holding the
+        // button, do not leave the mic keyed open.
+        .onDisappear { hoot.releaseToTalk() }
     }
 
     @ViewBuilder
