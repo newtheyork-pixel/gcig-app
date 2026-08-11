@@ -8,7 +8,7 @@
 // explain.
 
 import express from 'express';
-import { verifyJwt } from '../middleware/auth.js';
+import { verifyJwt, denyGuest } from '../middleware/auth.js';
 import { PrismaClient } from '@prisma/client';
 import { getLiveQuotes } from '../services/liveQuotes.js';
 import {
@@ -33,6 +33,8 @@ const TICKER = /^[A-Z0-9.\-]{1,10}$/;
 // A gate that is missing looks exactly like a gate that is passing, from
 // the outside, right up until somebody checks.
 router.use(verifyJwt);
+// Paper trading is club-only; never served to a guest.
+router.use(denyGuest);
 /**
  * What following the rules is worth on an order of this size, right now.
  *

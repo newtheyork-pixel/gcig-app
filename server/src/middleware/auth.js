@@ -78,6 +78,7 @@ export async function verifyJwt(req, res, next) {
       role: user.role,
       extraRoles: user.extraRoles || [],
       isSuperAdmin: isSuperAdminEmail(user.email),
+      isGuest: isGuestEmail(user.email),
       firstName: profile.firstName,
       lastName: profile.lastName,
       honorific: profile.honorific,
@@ -110,6 +111,7 @@ export async function authenticateToken(token) {
       role: user.role,
       extraRoles: user.extraRoles || [],
       isSuperAdmin: isSuperAdminEmail(user.email),
+      isGuest: isGuestEmail(user.email),
     };
   } catch {
     return null;
@@ -158,6 +160,90 @@ export function isSuperAdminEmail(email) {
     e.trim().toLowerCase()
   );
   return allowed.includes(String(email).trim().toLowerCase());
+}
+
+// ---- Guest access ----------------------------------------------------
+//
+// A guest is an outside collaborator (not a club member) given a login
+// purely to VIEW a fixed slice of research. Identified by email, so no
+// schema or token change is needed. Everything about a guest is
+// fail-closed: the firewall allows only an explicit set of API prefixes,
+// research is scoped to GUEST_RESEARCH_TICKERS, and the club's portfolio
+// and governance are invisible.
+const GUEST_EMAILS = (process.env.GUEST_EMAILS || 'fb2712@columbia.edu')
+  .split(',')
+  .map((e) => e.trim().toLowerCase())
+  .filter(Boolean);
+
+export function isGuestEmail(email) {
+  return !!email && GUEST_EMAILS.includes(String(email).trim().toLowerCase());
+}
+
+// The only research a guest may see, by ticker: the Lindt study (LISN),
+// the data-center work (VRT, MTRS, ABB, SIKA, COGNITE), and UMG/GOOGL/FB.
+export const GUEST_RESEARCH_TICKERS = ['LISN', 'VRT', 'MTRS', 'ABB', 'SIKA', 'COGNITE', 'UMG', 'GOOGL', 'FB'];
+
+// API path prefixes a guest may reach; everything else is refused. Research
+// is allowed HERE (the firewall lets it through) but the research routes
+// scope the DATA to the whitelist on top of this. The market/macro tools
+// carry no club or portfolio data.
+const GUEST_API_ALLOW = [
+  '/api/auth', '/api/app', '/api/2fa', '/api/public', '/api/system', '/api/health',
+  '/api/research', '/api/watchlist', '/api/subscriptions',
+  '/api/terminal', '/api/eco', '/api/cpi', '/api/short-interest', '/api/halts', '/api/alerts',
+];
+
+// Guest ids, resolved from GUEST_EMAILS and cached briefly. The token
+// carries the id, so a non-guest request costs no DB hit at all.
+let _guestIds = null;
+let _guestIdsAt = 0;
+async function guestUserIds() {
+  if (_guestIds && Date.now() - _guestIdsAt < 60_000) return _guestIds;
+  const users = await prisma.user.findMany({
+    where: { email: { in: GUEST_EMAILS } },
+    select: { id: true },
+  });
+  _guestIds = new Set(users.map((u) => u.id));
+  _guestIdsAt = Date.now();
+  return _guestIds;
+}
+
+// Global gate mounted on /api. Non-guests, and unauthenticated or invalid
+// requests, pass straight through — the routers do their own auth. A guest
+// may reach only GUEST_API_ALLOW; anything else is refused before the route
+// runs. Deliberately fail-OPEN for non-guests on any error so a cache miss
+// can never lock out the 36 members; the sensitive routers ALSO carry
+// denyGuest, so the portfolio stays closed even in that window.
+export async function guestFirewall(req, res, next) {
+  const header = req.headers.authorization || '';
+  if (!header.startsWith('Bearer ')) return next();
+  let id;
+  try {
+    id = jwt.verify(header.slice(7), process.env.JWT_SECRET).id;
+  } catch {
+    return next();
+  }
+  let ids;
+  try {
+    ids = await guestUserIds();
+  } catch {
+    return next();
+  }
+  if (!ids.has(id)) return next();
+  const full = req.baseUrl + req.path; // mounted at /api -> '/api' + '/holdings/...'
+  const allowed = GUEST_API_ALLOW.some((a) => full === a || full.startsWith(a + '/'));
+  if (allowed) return next();
+  return res.status(403).json({ error: 'Your account does not have access to this area.' });
+}
+
+// Router-level guard (defense in depth): 403 for a guest. Placed after
+// verifyJwt on routers that must never serve a guest, so the portfolio
+// stays closed regardless of the firewall allowlist.
+export function denyGuest(req, res, next) {
+  if (req.user && isGuestEmail(req.user.email)) {
+    return res.status(403).json({ error: 'Your account does not have access to this.' });
+  }
+  next();
 }
 
 // Canonical "user" shape sent to the client in every auth response.

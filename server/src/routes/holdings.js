@@ -112,7 +112,7 @@ async function fetchQuoteSummary(ticker) {
   }
 }
 import prisma from '../db.js';
-import { verifyJwt, requireSuperAdmin, requireRole } from '../middleware/auth.js';
+import { verifyJwt, requireSuperAdmin, requireRole, denyGuest } from '../middleware/auth.js';
 import { getSheetPortfolio, withResolvedDayChange } from '../services/sheetPortfolio.js';
 import { getNewsForTicker, extractArticle } from '../services/news.js';
 import { getBusinessProfile } from '../services/secBusinessSummary.js';
@@ -245,6 +245,9 @@ router.post('/snapshot/daily', async (req, res) => {
 });
 
 router.use(verifyJwt);
+// The portfolio is club-only. Closed to guests even if the firewall
+// allowlist ever changes.
+router.use(denyGuest);
 
 // Live portfolio pulled from the club's Google Sheet.
 // The sheet IS the source of truth — the local Holding table is unused

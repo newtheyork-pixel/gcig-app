@@ -6,6 +6,7 @@ import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { generalLimiter } from './middleware/rateLimit.js';
+import { guestFirewall } from './middleware/auth.js';
 
 import authRoutes from './routes/auth.js';
 import userRoutes from './routes/users.js';
@@ -124,6 +125,9 @@ app.use(
   })
 );
 app.use('/api', generalLimiter);
+// Outside-collaborator lockdown: a guest may reach only an explicit set of
+// API areas (see GUEST_API_ALLOW). Non-guests pass straight through.
+app.use('/api', guestFirewall);
 
 // Serve uploaded files (PDF, PPTX)
 app.use('/uploads', express.static(path.join(__dirname, '..', 'uploads')));

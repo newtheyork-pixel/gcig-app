@@ -46,7 +46,8 @@ export function attachHoot(server) {
     if (url.pathname !== '/ws/hoot') return socket.destroy();
     authenticateToken(url.searchParams.get('token'))
       .then((user) => {
-        if (!user || !hasTerminalAccess(user)) {
+        // The desk is club-only: a guest collaborator does not join it.
+        if (!user || !hasTerminalAccess(user) || user.isGuest) {
           socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
           return socket.destroy();
         }

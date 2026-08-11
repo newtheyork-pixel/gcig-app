@@ -2,7 +2,7 @@ import { Router } from 'express';
 import multer from 'multer';
 import rateLimit from 'express-rate-limit';
 import prisma from '../db.js';
-import { isSuperAdminEmail, verifyJwt, requireRole } from '../middleware/auth.js';
+import { isSuperAdminEmail, verifyJwt, requireRole, GUEST_RESEARCH_TICKERS } from '../middleware/auth.js';
 import { transcribe, isConfigured as transcriptionConfigured, formatStamp, parseTranscriptText } from '../services/transcription.js';
 import { extractClaims } from '../services/claimExtraction.js';
 import { scanForAnswer } from '../services/answerScan.js';
@@ -31,6 +31,26 @@ import { uploadFile } from '../services/oneDriveStorage.js';
 
 const router = Router();
 router.use(verifyJwt);
+
+// A guest (outside collaborator) gets READ-ONLY access to a fixed slice of
+// research and nothing else. Reads are scoped to GUEST_RESEARCH_TICKERS in
+// the handlers below; here we enforce read-only and confine a guest to the
+// project list, manifest, and single-project detail (that detail is the
+// whole workspace, so it is all a guest needs).
+router.use((req, res, next) => {
+  if (!req.user?.isGuest) return next();
+  if (req.method !== 'GET') {
+    return res.status(403).json({ error: 'Your account has read-only research access.' });
+  }
+  const p = req.path;
+  const ok =
+    p === '/projects' ||
+    p === '/projects/manifest' ||
+    p === '/artifacts/permissions' ||
+    /^\/projects\/\d+$/.test(p);
+  if (!ok) return res.status(403).json({ error: 'Your account does not have access to this.' });
+  next();
+});
 
 // Field research is a PM-and-above activity — the same bar that governs
 // pitching and editing reports.
@@ -100,11 +120,17 @@ router.get('/projects', async (req, res) => {
     // client does not render it.
     const visibility = isSuperAdminEmail(req.user?.email) ? {} : { ownerOnly: false };
     const ticker = req.query.ticker ? String(req.query.ticker).toUpperCase() : null;
+    // A guest sees only the whitelisted tickers, and no query param widens
+    // it — the guest where REPLACES the normal one rather than merging, so
+    // ?ticker=SIG cannot reach past the list.
+    const where = req.user?.isGuest
+      ? { ownerOnly: false, ticker: { in: GUEST_RESEARCH_TICKERS } }
+      : { ...visibility, ...(ticker ? { ticker } : {}) };
     const projects = await prisma.researchProject.findMany({
       // One where, not two: a second `where` key silently replaces the
       // first in an object literal, which quietly disabled the
       // owner-only filter entirely.
-      where: { ...visibility, ...(ticker ? { ticker } : {}) },
+      where,
       orderBy: { updatedAt: 'desc' },
       include: {
         createdBy: { select: { id: true, name: true } },
@@ -174,6 +200,10 @@ router.get('/projects/manifest', async (req, res) => {
 
     const [projects, agg] = await Promise.all([
       prisma.researchProject.findMany({
+        // A guest's manifest lists only the tickers they may open.
+        where: req.user?.isGuest
+          ? { ownerOnly: false, ticker: { in: GUEST_RESEARCH_TICKERS } }
+          : undefined,
         select: { id: true, name: true, ticker: true, updatedAt: true },
       }),
       prisma.researchArtifact.groupBy({
@@ -215,6 +245,17 @@ router.get('/projects/:id', async (req, res) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id)) return res.status(400).json({ error: 'Bad id' });
   try {
+    // A guest may open only a whitelisted, non-owner-only project. Checked
+    // with a cheap lookup before assembling the full workspace payload.
+    if (req.user?.isGuest) {
+      const meta = await prisma.researchProject.findUnique({
+        where: { id },
+        select: { ticker: true, ownerOnly: true },
+      });
+      if (!meta || meta.ownerOnly || !GUEST_RESEARCH_TICKERS.includes(meta.ticker)) {
+        return res.status(404).json({ error: 'Not found' });
+      }
+    }
     const project = await prisma.researchProject.findUnique({
       where: { id },
       include: {

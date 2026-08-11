@@ -2,9 +2,17 @@ import { Router, raw } from 'express';
 import { PrismaClient } from '@prisma/client';
 import jwt from 'jsonwebtoken';
 import { uploadFile, streamDownload } from '../services/oneDriveStorage.js';
+import { isGuestEmail, GUEST_RESEARCH_TICKERS } from '../middleware/auth.js';
 
 const prisma = new PrismaClient();
 const router = Router();
+
+// A guest sees only the whitelisted ticker folders on the drive, and may
+// not write. Ticker comparison is case-insensitive; the DAV path can carry
+// any case but stored tickers are upper.
+const GUEST_TICKERS_UC = new Set(GUEST_RESEARCH_TICKERS.map((t) => t.toUpperCase()));
+const guestBlockedTicker = (req, ticker) =>
+  req.user?.isGuest && !(ticker && GUEST_TICKERS_UC.has(String(ticker).toUpperCase()));
 
 // WebDAV, so the research files appear in Finder under Locations.
 //
@@ -48,7 +56,7 @@ function unauthorized(res) {
 }
 
 /// Basic auth carrying our own JWT as the password.
-function davAuth(req, res, next) {
+async function davAuth(req, res, next) {
   const header = req.headers.authorization || '';
   if (!header.startsWith('Basic ')) return unauthorized(res);
   let token = '';
@@ -59,7 +67,13 @@ function davAuth(req, res, next) {
     return unauthorized(res);
   }
   try {
-    req.user = jwt.verify(token, process.env.JWT_SECRET);
+    const payload = jwt.verify(token, process.env.JWT_SECRET);
+    // The token carries no email; look it up so guest scoping can apply.
+    const u = await prisma.user.findUnique({
+      where: { id: payload.id },
+      select: { email: true },
+    });
+    req.user = { ...payload, email: u?.email || null, isGuest: isGuestEmail(u?.email || '') };
   } catch {
     return unauthorized(res);
   }
@@ -110,8 +124,11 @@ function parse(rawPath) {
   return { ticker: parts[0] || null, rest: parts.slice(1) };
 }
 
-async function projects() {
+async function projects(guestOnly = false) {
   return prisma.researchProject.findMany({
+    where: guestOnly
+      ? { ownerOnly: false, ticker: { in: GUEST_RESEARCH_TICKERS } }
+      : undefined,
     select: { id: true, ticker: true, name: true, updatedAt: true },
     orderBy: { updatedAt: 'desc' },
   });
@@ -155,7 +172,7 @@ router.propfind('*', async (req, res) => {
   try {
     // The root: one folder per project.
     if (!ticker) {
-      const list = await projects();
+      const list = await projects(req.user?.isGuest);
       const out = [entry(`${base}/`, { isDir: true, name: 'Griffin Fund' })];
       if (depth === 1) {
         for (const p of list) {
@@ -166,6 +183,10 @@ router.propfind('*', async (req, res) => {
       }
       return multistatus(res, out);
     }
+
+    // A guest sees only the whitelisted ticker folders; anything else is
+    // as good as not there.
+    if (guestBlockedTicker(req, ticker)) return res.status(404).end();
 
     const data = await artifactsFor(ticker);
     if (!data) return res.status(404).end();
@@ -210,6 +231,7 @@ router.propfind('*', async (req, res) => {
 router.get('*', async (req, res) => {
   const { ticker, rest } = parse(req.path);
   if (!ticker || !rest.length) return res.status(404).end();
+  if (guestBlockedTicker(req, ticker)) return res.status(404).end();
   const data = await artifactsFor(ticker);
   const row = data?.rows.find((r) => r.title === rest.join('/'));
   if (!row) return res.status(404).end();
@@ -223,6 +245,8 @@ router.get('*', async (req, res) => {
 });
 
 router.put('*', async (req, res) => {
+  // A guest has read-only access to the drive.
+  if (req.user?.isGuest) return res.status(403).end();
   const { ticker, rest } = parse(req.path);
   if (!ticker || !rest.length) return res.status(400).end();
   const title = rest.join('/');
@@ -267,6 +291,9 @@ router.put('*', async (req, res) => {
 // Creating a folder is a no-op that succeeds. Folders here are implied by
 // the paths of the files in them, so an empty one has nothing to exist
 // as — but failing the verb would make Finder refuse to create anything.
-router.mkcol('*', (_req, res) => res.status(201).end());
+router.mkcol('*', (req, res) => {
+  if (req.user?.isGuest) return res.status(403).end();
+  res.status(201).end();
+});
 
 export default router;
