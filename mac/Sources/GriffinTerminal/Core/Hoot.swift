@@ -228,14 +228,37 @@ final class HootAudio: @unchecked Sendable {
     private var capConv: AVAudioConverter?
     private var started = false
     private var captureEngine: AVAudioEngine?
+    private var configObserver: NSObjectProtocol?
 
     var socket: URLSessionWebSocketTask?
     var transmitting = false
 
     func startEngine() {
         guard !started else { return }
+        buildPlaybackGraph()
+        // Restart the playback engine whenever the audio configuration
+        // changes. macOS STOPS an AVAudioEngine on any output-device or
+        // format change, and one routinely fires in the first seconds
+        // after launch as the audio system settles. Left unhandled, the
+        // engine started once here silently stops and never renders
+        // another buffer — which is exactly why incoming voice was never
+        // heard, while SENDING (on its own capture engine, freshly started
+        // on every key-up) worked every time.
+        if configObserver == nil {
+            configObserver = NotificationCenter.default.addObserver(
+                forName: .AVAudioEngineConfigurationChange, object: engine, queue: .main
+            ) { [weak self] _ in self?.restartPlayback() }
+        }
+    }
+
+    /// (Re)wire player -> mixer against the CURRENT hardware format and
+    /// start. Split out so a configuration change can rebuild the graph
+    /// rather than reuse a converter aimed at a format that no longer
+    /// exists.
+    private func buildPlaybackGraph() {
+        _ = engine.outputNode  // force the output chain to exist
         let out = engine.mainMixerNode.outputFormat(forBus: 0)
-        engine.attach(player)
+        if player.engine == nil { engine.attach(player) }
         engine.connect(player, to: engine.mainMixerNode, format: out)
         playConv = AVAudioConverter(from: wire, to: out)
         engine.prepare()
@@ -248,8 +271,15 @@ final class HootAudio: @unchecked Sendable {
         }
     }
 
+    private func restartPlayback() {
+        started = false
+        engine.stop()
+        buildPlaybackGraph()
+    }
+
     func stopEngine() {
         stopCapture()
+        if let o = configObserver { NotificationCenter.default.removeObserver(o); configObserver = nil }
         player.stop()
         engine.stop()
         started = false
@@ -305,6 +335,9 @@ final class HootAudio: @unchecked Sendable {
     }
 
     func play(_ pcm: Data) {
+        // Heal a stopped engine on the next incoming frame, in case a
+        // configuration change slipped through without a notification.
+        if !engine.isRunning { restartPlayback() }
         guard started, let conv = playConv else { return }
         let frames = pcm.count / MemoryLayout<Int16>.size
         guard frames > 0,
