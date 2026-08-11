@@ -44,6 +44,7 @@ final class GriffinDrive: ObservableObject {
 
     private var stream: FSEventStreamRef?
     private var poller: Task<Void, Never>?
+    private var activeObserver: NSObjectProtocol?
     private var projectId: Int?
     private var ticker: String?
     /// Path → size, as last reconciled. A file whose size matches what we
@@ -76,10 +77,29 @@ final class GriffinDrive: ObservableObject {
         poller = Task { [weak self] in
             while !Task.isCancelled {
                 await self?.pullAll()
-                try? await Task.sleep(for: .seconds(12))
+                try? await Task.sleep(for: .seconds(8))
+            }
+        }
+        // Sync the instant the app is brought to the front, so the volume
+        // is fresh the moment you look at it instead of up to a poll stale.
+        // Added once and kept for the app's life; syncNow no-ops when the
+        // engine is stopped.
+        if activeObserver == nil {
+            activeObserver = NotificationCenter.default.addObserver(
+                forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main
+            ) { [weak self] _ in
+                Task { @MainActor in self?.syncNow() }
             }
         }
         status.running = true
+    }
+
+    /// Force an immediate whole-volume sync pass, outside the poll cadence.
+    /// Used on app activation and available to any view that wants "sync
+    /// now". A no-op while the engine is stopped.
+    func syncNow() {
+        guard status.running else { return }
+        Task { await pullAll() }
     }
 
     /// Ticker → project id, so a change under LISN/ knows where to go.
