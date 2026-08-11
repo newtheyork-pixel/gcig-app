@@ -31,7 +31,14 @@ export function issueJwt(user) {
 export async function verifyJwt(req, res, next) {
   const header = req.headers.authorization;
   if (!header || !header.startsWith('Bearer ')) {
-    return res.status(401).json({ error: 'Missing token' });
+    // `code: 'AUTH'` marks a 401 as a verdict on the TOKEN itself (dead,
+    // revoked, or absent) rather than a per-route permission answer. The
+    // web client keys off it to log out + redirect on ANY endpoint, which
+    // fixes the "first page loads then every data call says invalid token,
+    // stuck forever" dead end. A data route's own 401 carries no code, so
+    // it still bubbles up without nuking the session (the Calendar
+    // fan-out case).
+    return res.status(401).json({ error: 'Missing token', code: 'AUTH' });
   }
   const token = header.slice(7);
   try {
@@ -50,9 +57,9 @@ export async function verifyJwt(req, res, next) {
         tokenVersion: true,
       },
     });
-    if (!user) return res.status(401).json({ error: 'User not found' });
+    if (!user) return res.status(401).json({ error: 'User not found', code: 'AUTH' });
     if ((payload.v ?? 0) !== (user.tokenVersion ?? 0)) {
-      return res.status(401).json({ error: 'Session revoked, please sign in again' });
+      return res.status(401).json({ error: 'Session revoked, please sign in again', code: 'AUTH' });
     }
 
     // Silent rotation — if the JWT is past its half-life, mint a fresh
@@ -87,7 +94,7 @@ export async function verifyJwt(req, res, next) {
     };
     next();
   } catch {
-    return res.status(401).json({ error: 'Invalid or expired token' });
+    return res.status(401).json({ error: 'Invalid or expired token', code: 'AUTH' });
   }
 }
 

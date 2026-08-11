@@ -115,13 +115,18 @@ api.interceptors.response.use(
         // promise rejection.
         return Promise.reject(err);
       }
-      // Only treat the 401 as "session is over" when it came from a
-      // request that's actually checking the session, OR when no token
-      // was sent at all. A 401 on a random data endpoint while every
-      // other authed call on the page succeeds means the endpoint is
-      // misbehaving, not that the user's logged out — so bubble it up
-      // to the caller's try/catch instead of nuking storage.
-      const sessionVerdict = isAuthVerdictRequest(err.config) || !sent;
+      // Treat the 401 as "session is over" when: the server tagged it as
+      // an auth verdict (`code: 'AUTH'` — a dead/revoked/absent token from
+      // verifyJwt, authoritative on ANY endpoint), OR it came from a
+      // request actually checking the session, OR no token was sent at
+      // all. Without the code check, an expired token 401s every data
+      // endpoint but none are "verdict paths", so the user is never logged
+      // out — they just see "invalid or expired token" on every page,
+      // stuck. A data route's OWN 401 carries no code and still bubbles up
+      // to the caller (the Calendar fan-out case) rather than nuking
+      // storage.
+      const authCode = err.response?.data?.code === 'AUTH';
+      const sessionVerdict = authCode || isAuthVerdictRequest(err.config) || !sent;
       if (!sessionVerdict) {
         return Promise.reject(err);
       }
