@@ -17,7 +17,10 @@ import { saveProfiles, storedProfiles } from '../services/personProfiles.js';
 import { parseLeadership, parseBoard, parseComp, buildNetwork } from '../services/governanceParsers.js';
 import { getOfficerRoster, mergeLeadership, mergeBoard } from '../services/officerRoster.js';
 import { getCustomerConcentration } from '../services/xbrlConcentration.js';
-import { getPeers, getPeerSnapshot, getEarnings, getConsensus } from '../services/marketData.js';
+import {
+  getPeerSnapshot, getEarnings, getConsensus, getMarketCaps,
+} from '../services/marketData.js';
+import { getPeerSet } from '../services/peerSet.js';
 import { getNewsForTicker } from '../services/news.js';
 import { getWorldIndices, REGION_ORDER } from '../services/worldIndices.js';
 import { getInsiderTransactions } from '../services/insiderTx.js';
@@ -1287,8 +1290,14 @@ router.get('/peers/:ticker', async (req, res) => {
     return res.status(400).json({ error: 'Invalid ticker' });
   }
   try {
-    const list = await getPeers(raw);
-    const peers = [...new Set(list)].filter((t) => t !== raw).slice(0, 6);
+    // Not the vendor's list any more — see services/peerSet.js. The
+    // sub-industry cohort is one of three sources and the weakest of
+    // them, and it is size-ranked before it is used, which is what
+    // stops a four-billion-dollar department store leading Amazon's
+    // comparables.
+    const set = await getPeerSet(raw, { marketCaps: getMarketCaps });
+    const peers = set.peers.map((p) => p.ticker);
+    const sourceOf = new Map(set.peers.map((p) => [p.ticker, p.source]));
     const symbols = [raw, ...peers];
 
     // Small concurrency window — never fire all snapshots at once.
@@ -1304,6 +1313,11 @@ router.get('/peers/:ticker', async (req, res) => {
       return {
         ticker: s,
         isFocus: s === raw,
+        // Why this row is on the list. Dillard's next to Amazon is a
+        // defensible answer to "same sub-industry" and an indefensible
+        // one to "who competes with Amazon", and a reader can only tell
+        // which question was answered if the row says so.
+        source: s === raw ? null : sourceOf.get(s) || 'sector',
         name: snap?.name || s,
         price: snap?.price ?? null,
         changePct: snap?.changePct ?? null,
@@ -1318,7 +1332,10 @@ router.get('/peers/:ticker', async (req, res) => {
     if (peers.length === 0 && rows[0]?.price == null) {
       return res.status(404).json({ error: 'No data for this ticker' });
     }
-    res.json({ ticker: raw, count: peers.length, rows });
+    res.json({
+      ticker: raw, count: peers.length, rows,
+      sourceLabels: set.sources, caveat: set.caveat,
+    });
   } catch (err) {
     console.error(`terminal/peers(${raw}) failed:`, err.message);
     res.status(502).json({ error: 'Peer comparison failed' });

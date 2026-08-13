@@ -3,6 +3,33 @@ import api from '../../api/client.js';
 import useLiveRefresh from '../hooks/useLiveRefresh.js';
 import FlashPrice from '../components/FlashPrice.jsx';
 
+// Why a name is on the list, in one badge.
+//
+// The panel used to show a vendor's GICS sub-industry cohort with no
+// provenance whatever, which is how Dillard's came to sit against
+// Amazon looking like a bug. It was not a bug: since the 2023 GICS
+// revision the department stores share Broadline Retail with Amazon,
+// and Walmart was moved to a different SECTOR. Both facts are correct
+// and neither is what the panel is for, so every row now says which
+// question it is answering.
+const PEER_SOURCE = {
+  filing: {
+    label: '10-K',
+    color: 'var(--term-positive, #4ade80)',
+    help: "Named as a competitor in this company's own annual report — the filer saying so under signature.",
+  },
+  peer: {
+    label: 'READ',
+    color: 'var(--term-cyan, #22d3ee)',
+    help: 'Our own read of who this company competes with: a judgement, not a vendor classification. The ticker is verified to exist in EDGAR; its relevance is our call.',
+  },
+  sector: {
+    label: 'GICS',
+    color: 'var(--term-fg-muted)',
+    help: 'Same GICS sub-industry. A classification, not a competitive view.',
+  },
+};
+
 // PEER — sector peer comparison. Finnhub's peer set for the focused
 // ticker plus a compact fundamentals snapshot per name, with the
 // focus row pinned on top and highlighted. Requires a ticker. Mirrors
@@ -171,7 +198,7 @@ export default function Peers({ ticker, onOpen }) {
 
       {data.count === 0 ? (
         <div className="term-loading">
-          Finnhub has no peer set for {data.ticker} — common for ETFs, funds,
+          No comparables found for {data.ticker} — common for ETFs, funds,
           and thinly-covered names. Showing {data.ticker} alone.
         </div>
       ) : null}
@@ -201,6 +228,23 @@ export default function Peers({ ticker, onOpen }) {
                 <td className="sym">
                   {r.ticker}
                   {r.name ? <span className="peer-name">{r.name}</span> : null}
+                  {PEER_SOURCE[r.source] ? (
+                    <span
+                      style={{
+                        marginLeft: 6,
+                        fontSize: 9,
+                        fontWeight: 700,
+                        padding: '0 3px',
+                        border: '1px solid',
+                        borderRadius: 2,
+                        color: PEER_SOURCE[r.source].color,
+                        borderColor: PEER_SOURCE[r.source].color,
+                      }}
+                      title={PEER_SOURCE[r.source].help}
+                    >
+                      {PEER_SOURCE[r.source].label}
+                    </span>
+                  ) : null}
                 </td>
                 <td className="num">
                   <FlashPrice value={r.price}>{fmt.px(r.price)}</FlashPrice>
@@ -220,10 +264,16 @@ export default function Peers({ ticker, onOpen }) {
       )}
 
       <div style={{ color: 'var(--term-fg-muted)', fontSize: 11 }}>
-        Finnhub peer set · Last & Chg % refresh live (~20s) while this
-        panel is open; Mkt Cap / P/E / Div / Beta are a ~15m
-        fundamentals snapshot. Focus row highlighted · click any row to
-        open its DES.
+        <span style={{ color: PEER_SOURCE.filing.color }}>10-K named</span>
+        {' · '}
+        <span style={{ color: PEER_SOURCE.peer.color }}>READ our judgement</span>
+        {' · '}
+        <span>GICS classification only</span>
+        {' — '}
+        Last &amp; Chg % refresh live (~20s) while this panel is open;
+        Mkt Cap / P/E / Div / Beta are a ~15m fundamentals snapshot.
+        Focus row highlighted · click any row to open its DES.
+        {data.caveat ? <div style={{ marginTop: 2 }}>{data.caveat}</div> : null}
       </div>
     </div>
   );

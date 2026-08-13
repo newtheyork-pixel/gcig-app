@@ -196,18 +196,81 @@ final class Session: ObservableObject {
     /// back. Without it the app looks idle while the whole flow is
     /// happening in another application.
     @Published var awaitingBrowser = false
+    /// Signed in, but the last attempt to reach the API did not land.
+    /// A third state, because it is neither of the other two and used to
+    /// be rendered as the wrong one.
+    @Published var offline = false
 
+    /// Bring back the session the token file already represents.
+    ///
+    /// The rule, same as the web client's: ONLY THE SERVER MAY END A
+    /// SESSION. This used to be `catch { user = nil }`, which meant a
+    /// laptop that woke on a network it had not joined yet — or an API
+    /// still cold-starting, which takes Render the better part of a
+    /// minute — was shown the sign-in screen while holding a token
+    /// nobody had refused. From the chair that is indistinguishable
+    /// from being logged out, so people signed in again, and the fact
+    /// that it worked the second time hid the cause for months.
+    ///
+    /// A 401 is a verdict and clears everything, including the token
+    /// file: leaving a refused token on disk is how the app gets stuck
+    /// re-presenting a session that will never work again. Anything
+    /// else keeps the session and says the server is unreachable.
     func restore() async {
         checking = true
         defer { checking = false }
         guard await API.shared.isSignedIn else { user = nil; return }
-        do { user = try await API.shared.me() } catch { user = nil }
+        do {
+            let me = try await API.shared.me()
+            user = me
+            Self.remember(me)
+            offline = false
+        } catch API.Failure.unauthorized {
+            await API.shared.signOut()
+            Self.remember(nil)
+            user = nil
+            offline = false
+        } catch {
+            // Could not ask. Render the terminal off what we knew last
+            // time and let the panels report their own failures — each
+            // of them can already tell a reader the server is not
+            // answering, which is far more use than a login box.
+            user = Self.remembered()
+            offline = user != nil
+        }
+    }
+
+    /// The last identity the server confirmed, so an unreachable API on
+    /// launch does not look like a logout. Not a credential — the token
+    /// file is still the only thing that authorizes anything, and this
+    /// is discarded the moment a 401 says the session is over.
+    private static let rememberKey = "griffin.lastKnownUser"
+
+    private static func remember(_ me: API.Me?) {
+        guard let me else {
+            UserDefaults.standard.removeObject(forKey: rememberKey)
+            return
+        }
+        let dict: [String: Any] = ["id": me.id, "name": me.name, "email": me.email, "role": me.role]
+        UserDefaults.standard.set(dict, forKey: rememberKey)
+    }
+
+    private static func remembered() -> API.Me? {
+        guard let d = UserDefaults.standard.dictionary(forKey: rememberKey),
+              let id = d["id"] as? Int else { return nil }
+        return API.Me(id: id,
+                      name: d["name"] as? String ?? "",
+                      email: d["email"] as? String ?? "",
+                      role: d["role"] as? String ?? "")
     }
 
     func signIn(email: String, password: String) async {
         signInError = nil
         do {
-            user = try await API.shared.signIn(email: email, password: password)
+            let me = try await API.shared.signIn(email: email, password: password)
+            user = me
+            Self.remember(me)
+            offline = false
         } catch {
             signInError = error.localizedDescription
             user = nil
@@ -232,7 +295,10 @@ final class Session: ObservableObject {
         FileHandle.standardError.write("[auth] completeHandoff entered\n".data(using: .utf8)!)
         signInError = nil
         do {
-            user = try await API.shared.exchangeHandoff(code: code)
+            let me = try await API.shared.exchangeHandoff(code: code)
+            user = me
+            Self.remember(me)
+            offline = false
         } catch {
             FileHandle.standardError.write("[auth] exchange failed: \(error.localizedDescription)\n".data(using: .utf8)!)
             signInError = error.localizedDescription
@@ -243,8 +309,18 @@ final class Session: ObservableObject {
 
     func signOut() async {
         await API.shared.signOut()
+        Self.remember(nil)
         user = nil
+        offline = false
         awaitingBrowser = false
+    }
+
+    /// Try the API again after an unreachable start. Bound to the banner
+    /// the offline state paints, and to nothing automatic — a laptop
+    /// that cannot see the network does not benefit from being asked
+    /// every few seconds, and the panels each retry on their own.
+    func retryConnection() async {
+        await restore()
     }
 }
 
@@ -261,7 +337,32 @@ struct RootView: View {
             } else if session.user == nil {
                 LoginView()
             } else {
-                TerminalView()
+                VStack(spacing: 0) {
+                    // Said once, at the top, rather than by twenty
+                    // panels each reporting the same outage as if it
+                    // were their own. Only appears when the session
+                    // survived a failed check — a live terminal never
+                    // sees it.
+                    if session.offline {
+                        HStack(spacing: 8) {
+                            Text("OFFLINE")
+                                .font(Term.mono(9, weight: .bold))
+                                .foregroundStyle(Term.bg)
+                                .padding(.horizontal, 5).padding(.vertical, 1)
+                                .background(Term.amber)
+                            Text("Signed in, but the server did not answer. Your session is intact.")
+                                .font(Term.mono(10)).foregroundStyle(Term.fgMuted)
+                            Button("RETRY") { Task { await session.retryConnection() } }
+                                .buttonStyle(.plain)
+                                .font(Term.mono(9, weight: .bold))
+                                .foregroundStyle(Term.cyan)
+                            Spacer()
+                        }
+                        .padding(.horizontal, 10).padding(.vertical, 4)
+                        .background(Term.amber.opacity(0.12))
+                    }
+                    TerminalView()
+                }
             }
         }
         .task { await session.restore() }

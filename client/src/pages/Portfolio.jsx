@@ -135,6 +135,9 @@ export default function Portfolio() {
   const canSeeRisk = (CLIENT_ROLE_RANK[user?.role] || 0) >= 7;
   const [data, setData] = useState(null);
   const [history, setHistory] = useState([]);
+  /// SPY's daily closes, for the benchmark line. Null while loading and
+  /// after a failure alike — the chart says which.
+  const [benchmark, setBenchmark] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   // YTD cash-interest simulation (BDA + FGTXX). Fetched alongside the
@@ -162,6 +165,14 @@ export default function Portfolio() {
       ]);
       setData(quotes.data);
       setHistory(hist.data);
+      // Fetched separately and never awaited alongside the two above:
+      // the benchmark is a comparison, and a comparison being
+      // unavailable is not a reason to withhold the portfolio. The
+      // chart draws our line alone and says the comparison is missing.
+      api
+        .get('/holdings/benchmark')
+        .then((r) => setBenchmark(r.data))
+        .catch(() => setBenchmark(null));
     } catch (err) {
       setError(err.response?.data?.error || 'Failed to load portfolio');
       // Preserve the prior source so a transient failure doesn't flip db-mode
@@ -488,12 +499,53 @@ export default function Portfolio() {
     return { diff, pct, cashFlowInRange };
   }, [chartData, range]);
 
+  // The S&P 500 over the same window, indexed to the same zero.
+  //
+  // "Up 11%" is a good year or a bad one depending entirely on this
+  // line, and the chart had no way to tell a reader which. Both series
+  // are rebased to the FIRST DAY OF THE VISIBLE RANGE, so switching to
+  // 1M asks "how have we done this month against the index" and not
+  // "how have we done since inception, redrawn".
+  //
+  // The benchmark is matched to our own snapshot dates by taking its
+  // last close on or before each one, rather than by zipping two arrays
+  // — the club's snapshots skip days the market was open and the market
+  // has days we took no snapshot, and zipping would slide the index by
+  // however many days the two calendars had drifted apart.
+  const benchSeries = useMemo(() => {
+    if (!benchmark?.bars?.length || percentSeries.length === 0) return null;
+    const bars = benchmark.bars;
+    let cursor = 0;
+    let base = null;
+    const out = new Map();
+    for (const point of percentSeries) {
+      const iso = format(point.date, 'yyyy-MM-dd');
+      while (cursor + 1 < bars.length && bars[cursor + 1].date <= iso) cursor += 1;
+      const bar = bars[cursor];
+      if (!bar || bar.date > iso) continue; // benchmark history starts later
+      if (base == null) base = bar.close;
+      if (!(base > 0)) continue;
+      out.set(+point.date, ((bar.close - base) / base) * 100);
+    }
+    return out.size > 1 ? out : null;
+  }, [benchmark, percentSeries]);
+
   // Build display data with a short date label. For long ranges we thin labels out.
   const displayData = percentSeries.map((d) => ({
     ...d,
+    benchmark: benchSeries?.get(+d.date) ?? null,
     label: format(d.date, percentSeries.length > 90 ? 'MMM yyyy' : 'MMM d'),
     tooltipLabel: format(d.date, 'MMM d, yyyy'),
   }));
+
+  // How far ahead or behind we finished the window. The single number
+  // the whole chart exists to produce.
+  const versusBenchmark = useMemo(() => {
+    if (!benchSeries) return null;
+    const last = displayData[displayData.length - 1];
+    if (!last || last.benchmark == null) return null;
+    return { ours: last.percent, theirs: last.benchmark, gap: last.percent - last.benchmark };
+  }, [benchSeries, displayData]);
 
   return (
     <>
@@ -673,7 +725,52 @@ export default function Portfolio() {
             </div>
           </div>
 
-          <div className="mb-4" />
+          {/* The answer, in words, above the picture of it. A reader
+              should not have to measure the gap between two lines with
+              their eye to learn whether the club beat the index. */}
+          <div className="mb-4 mt-3 flex items-center gap-3 text-xs">
+            {versusBenchmark ? (
+              <>
+                <span className="inline-flex items-center gap-1.5">
+                  <span className="inline-block h-0.5 w-4 rounded bg-navy" />
+                  <span className="font-semibold text-navy">The Griffin Fund</span>
+                  <span className="text-navy-400">
+                    {versusBenchmark.ours >= 0 ? '+' : ''}
+                    {versusBenchmark.ours.toFixed(1)}%
+                  </span>
+                </span>
+                <span className="inline-flex items-center gap-1.5">
+                  <span
+                    className="inline-block h-0 w-4 border-t-2 border-dashed"
+                    style={{ borderColor: '#8C99BB' }}
+                  />
+                  <span className="font-semibold text-navy-400">S&P 500</span>
+                  <span className="text-navy-400">
+                    {versusBenchmark.theirs >= 0 ? '+' : ''}
+                    {versusBenchmark.theirs.toFixed(1)}%
+                  </span>
+                </span>
+                <span
+                  className={`rounded-full px-2 py-0.5 font-semibold ${
+                    versusBenchmark.gap >= 0
+                      ? 'bg-emerald-50 text-emerald-700'
+                      : 'bg-rose-50 text-rose-700'
+                  }`}
+                >
+                  {versusBenchmark.gap >= 0 ? 'Ahead by ' : 'Behind by '}
+                  {Math.abs(versusBenchmark.gap).toFixed(1)} pts
+                </span>
+              </>
+            ) : (
+              // Not silence. A chart that quietly drops the comparison
+              // looks like a chart that never had one.
+              <span className="text-navy-400">
+                {benchmark === null
+                  ? 'S&P 500 comparison unavailable right now.'
+                  : 'S&P 500 comparison loading…'}
+              </span>
+            )}
+          </div>
 
           {displayData.length > 1 ? (
             <div style={{ width: '100%', height: 320 }}>
@@ -706,10 +803,14 @@ export default function Portfolio() {
                     width={55}
                   />
                   <Tooltip
-                    formatter={(v, _name, entry) => [
-                      `${v >= 0 ? '+' : ''}${v.toFixed(2)}% (${fmtMoney(entry?.payload?.dollarDelta)})`,
-                      'Return',
-                    ]}
+                    formatter={(v, name, entry) =>
+                      name === 'S&P 500'
+                        ? [`${v >= 0 ? '+' : ''}${Number(v).toFixed(2)}%`, 'S&P 500']
+                        : [
+                            `${v >= 0 ? '+' : ''}${Number(v).toFixed(2)}% (${fmtMoney(entry?.payload?.dollarDelta)})`,
+                            'The Griffin Fund',
+                          ]
+                    }
                     labelFormatter={(_, payload) => payload?.[0]?.payload?.tooltipLabel || ''}
                     contentStyle={{
                       borderRadius: 8,
@@ -720,12 +821,33 @@ export default function Portfolio() {
                   <Area
                     type="monotone"
                     dataKey="percent"
+                    name="The Griffin Fund"
                     stroke={NAVY.DEFAULT}
                     strokeWidth={2.5}
                     fill="url(#navyFill)"
                     dot={false}
                     activeDot={{ r: 5, fill: GOLD.DEFAULT, stroke: NAVY.DEFAULT, strokeWidth: 2 }}
                   />
+                  {benchSeries ? (
+                    // Drawn as a thin dashed line with no fill, and
+                    // second, so it reads as the reference it is rather
+                    // than as a second portfolio. `connectNulls` because
+                    // the index has no close on days we snapshotted and
+                    // the market was shut — a gap there is a calendar
+                    // artefact, not missing data.
+                    <Area
+                      type="monotone"
+                      dataKey="benchmark"
+                      name="S&P 500"
+                      stroke="#8C99BB"
+                      strokeWidth={1.5}
+                      strokeDasharray="4 3"
+                      fill="none"
+                      dot={false}
+                      connectNulls
+                      activeDot={{ r: 4, fill: '#8C99BB' }}
+                    />
+                  ) : null}
                 </AreaChart>
               </ResponsiveContainer>
             </div>

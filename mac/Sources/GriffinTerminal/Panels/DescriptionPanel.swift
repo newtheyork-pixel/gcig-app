@@ -155,6 +155,10 @@ struct DescriptionPanel: View {
     @State private var consensus: Consensus.Row?
     @State private var leadership: Leadership?
     @State private var coverage: Coverage?
+    /// Whether the raw Item 1 is unfolded. Off by default: the summary
+    /// above it is the answer for almost every reader, and the filing is
+    /// for the one checking it.
+    @State private var showFiled = false
 
     private var changePct: Double? {
         guard case .loaded(let i) = state,
@@ -608,6 +612,18 @@ struct DescriptionPanel: View {
             VStack(alignment: .leading, spacing: 6) {
                 HStack(spacing: 8) {
                     SectionLabel(text: "Business")
+                    // Say where the paragraph came from, in words. The
+                    // panel used to print the summary and then the raw
+                    // Item 1 straight underneath it behind an "AS FILED"
+                    // tag, which read as the same company described
+                    // twice for no stated reason. One is ours, one is
+                    // theirs, and a reader cannot be expected to infer
+                    // that from a two-word label.
+                    if i.description?.isEmpty == false {
+                        Text("summarised from the filing")
+                            .font(Term.mono(9)).foregroundStyle(Term.fgMuted)
+                            .help("Written by our own model from the 10-K's Item 1 and nothing else — it is not allowed to add a fact the filing does not state. The filing's own wording is underneath, unedited.")
+                    }
                     if let src = i.summarySource, let filed = src.filedAt {
                         // The company's own words, and which filing they
                         // are from — a description with no date is an
@@ -637,16 +653,49 @@ struct DescriptionPanel: View {
                 }
                 if let s = i.summary, !s.isEmpty {
                     if i.description?.isEmpty == false {
-                        Text("AS FILED")
-                            .font(Term.mono(8, weight: .bold))
-                            .foregroundStyle(Term.fgMuted)
-                            .padding(.top, 4)
+                        // FOLDED AWAY, not deleted. Item 1 is the
+                        // primary source and it has to stay reachable —
+                        // but it runs to thousands of words of the
+                        // company's own first-person prose (General
+                        // Dynamics opens "We offer a broad portfolio of
+                        // products and services in business aviation"),
+                        // and pasting all of it under a four-sentence
+                        // summary of itself is what made this section
+                        // look like a mistake.
+                        Button {
+                            showFiled.toggle()
+                        } label: {
+                            HStack(spacing: 4) {
+                                Text(showFiled ? "▾" : "▸")
+                                Text(showFiled
+                                     ? "Hide the filing's own words"
+                                     : "Read the filing's own words (Item 1, \(s.count.formatted()) characters)")
+                            }
+                            .font(Term.mono(9)).foregroundStyle(Term.blue)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .padding(.top, 4)
+                        .onHover { $0 ? NSCursor.pointingHand.push() : NSCursor.pop() }
+
+                        if showFiled {
+                            Text(s)
+                                .font(Term.mono(10))
+                                .foregroundStyle(Term.fgDim)
+                                .lineSpacing(2)
+                                .textSelection(.enabled)
+                        }
+                    } else {
+                        // No summary was produced, so the filing IS the
+                        // description. Shown outright and at full size —
+                        // hiding the only text there is behind a
+                        // disclosure would leave an empty panel.
+                        Text(s)
+                            .font(Term.mono(11))
+                            .foregroundStyle(Term.fgDim)
+                            .lineSpacing(2)
+                            .textSelection(.enabled)
                     }
-                    Text(s)
-                        .font(Term.mono(i.description?.isEmpty == false ? 10 : 11))
-                        .foregroundStyle(Term.fgDim)
-                        .lineSpacing(2)
-                        .textSelection(.enabled)
                 }
             }
         } else {
@@ -667,6 +716,10 @@ struct DescriptionPanel: View {
         state = .loading
         chart = []
         chartRange = nil
+        // Folded back up on every new ticker. @State outlives the load,
+        // so without this an expanded Item 1 stays expanded into the
+        // next company and the disclosure reads as the panel's default.
+        showFiled = false
         estimates = nil
         consensus = nil
         leadership = nil

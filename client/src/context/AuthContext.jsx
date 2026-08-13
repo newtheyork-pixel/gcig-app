@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useState } from 'react';
-import api from '../api/client.js';
+import api, { isSessionOver } from '../api/client.js';
 
 const AuthContext = createContext(null);
 
@@ -29,35 +29,80 @@ export function AuthProvider({ children }) {
     }
   });
   const [loading, setLoading] = useState(!!localStorage.getItem('gcig_token'));
+  // Whether the API answered us at all. Distinct from being signed out,
+  // and that distinction is the fix below: a member who cannot reach the
+  // server is still a member.
+  const [serverReachable, setServerReachable] = useState(true);
 
+  // Bootstrap the session from the stored token.
+  //
+  // THE RULE THIS ENFORCES: only the server may end a session. It used
+  // to be that any failure here ran clearSession() — so a 429, a 502
+  // while Render woke the API up, or a dropped connection deleted a
+  // token the server had never once refused. The member was bounced to
+  // /login, signed in again, and hit the same wall on the next reload.
+  // That is the bug, and it was in the client the entire time.
+  //
+  // What replaces it: a verdict (`code: 'AUTH'`) clears the session and
+  // nothing else does. A transient failure stops blocking the UI —
+  // there is a cached user and an unrejected token, which is enough to
+  // render — and retries quietly behind it. Render's free dyno can take
+  // most of a minute to wake, so the backoff is sized to outlast a cold
+  // start rather than to look busy.
   useEffect(() => {
     const initialToken = localStorage.getItem('gcig_token');
     if (!initialToken) {
       setLoading(false);
-      return;
+      return undefined;
     }
-    api
-      .get('/auth/me')
-      .then((res) => {
-        // 304 with an empty body would set user to undefined and kick
-        // the user to /login on the next render. The /auth/me route
-        // sets Cache-Control: no-store so 304 shouldn't happen here,
-        // but be defensive in case a proxy or older deploy serves one.
-        if (!res || !res.data || typeof res.data !== 'object') return;
-        setUser(res.data);
-        localStorage.setItem('gcig_user', JSON.stringify(res.data));
-      })
-      .catch(() => {
-        // Only clear if the token in localStorage is still the one we
-        // sent. If something else (e.g. a concurrent Google sign-in)
-        // wrote a fresh token mid-flight, this 401 is for the OLD
-        // session — clearing would clobber the new login and kick the
-        // user out on their first click.
-        if (localStorage.getItem('gcig_token') !== initialToken) return;
-        clearSession();
-        setUser(null);
-      })
-      .finally(() => setLoading(false));
+    let cancelled = false;
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+    (async () => {
+      for (let attempt = 0; !cancelled; attempt += 1) {
+        try {
+          const res = await api.get('/auth/me');
+          if (cancelled) return;
+          // 304 with an empty body would set user to undefined and kick
+          // the user to /login on the next render. The /auth/me route
+          // sets Cache-Control: no-store so 304 shouldn't happen here,
+          // but be defensive in case a proxy or older deploy serves one.
+          if (res && res.data && typeof res.data === 'object') {
+            setUser(res.data);
+            localStorage.setItem('gcig_user', JSON.stringify(res.data));
+          }
+          setServerReachable(true);
+          setLoading(false);
+          return;
+        } catch (err) {
+          if (cancelled) return;
+          // Something else signed us in while this was in flight (a
+          // concurrent Google sign-in on Safari is the observed case).
+          // This answer is about the previous session; drop it.
+          if (localStorage.getItem('gcig_token') !== initialToken) {
+            setLoading(false);
+            return;
+          }
+          if (isSessionOver(err)) {
+            clearSession();
+            setUser(null);
+            setLoading(false);
+            return;
+          }
+          // Could not ask. Let the app render on what we already know
+          // and keep trying — roughly 1.5s, 3s, 6s, 12s, then stop and
+          // leave it to the next navigation.
+          setServerReachable(false);
+          setLoading(false);
+          if (attempt >= 3) return;
+          await sleep(1500 * 2 ** attempt);
+        }
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   // Returns either { user } on full success, or { twoFactorRequired, challengeToken }
@@ -169,6 +214,7 @@ export function AuthProvider({ children }) {
       value={{
         user,
         loading,
+        serverReachable,
         login,
         verifyTwoFactor,
         googleSignIn,

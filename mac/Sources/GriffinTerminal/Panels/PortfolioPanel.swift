@@ -255,6 +255,7 @@ struct PortfolioPanel: View {
             SectionLabel(text: "Portfolio")
             Text("\(n) positions")
                 .font(Term.mono(10)).foregroundStyle(Term.fgMuted)
+            clubLegend
             Spacer()
             // Said once, here, rather than in the YTD cells: the bar
             // cache carries no distributions, so a dividend payer's YTD
@@ -301,7 +302,11 @@ struct PortfolioPanel: View {
             switch self {
             case .ticker:   return "TICKER"
             case .name:     return "NAME"
-            case .club:     return "CLUB"
+            // The letters themselves, so each one stands directly over
+            // the flag it labels. "CLUB" named the column and described
+            // none of its contents; the legend in the header does the
+            // naming now.
+            case .club:     return "P V R"
             case .shares:   return "SHARES"
             case .avgCost:  return "AVG COST"
             case .last:     return "LAST"
@@ -408,6 +413,30 @@ struct PortfolioPanel: View {
             mark("R", on: (c?.reports ?? 0) > 0,
                  help: (c?.reports ?? 0) > 0 ? "\(c!.reports!) report(s) in the archive" : "No written report")
         }
+    }
+
+    /// The key to the CLUB column, on screen at all times.
+    ///
+    /// The column paints three one-letter flags and its heading said
+    /// "CLUB", so what a reader actually saw was a stack of PV, PV, PV
+    /// down the page with nothing anywhere explaining it — and the only
+    /// explanation that existed was a tooltip, which requires already
+    /// suspecting there is something to hover. An abbreviation nobody
+    /// can expand is not compression, it is noise, and this column was
+    /// carrying real information (which of our own holdings we have
+    /// never written a word about) entirely illegibly.
+    private var clubLegend: some View {
+        HStack(spacing: 4) {
+            Text("CLUB")
+                .font(Term.mono(9, weight: .bold)).foregroundStyle(Term.fgDim)
+            ForEach([("P", "pitched"), ("V", "voted"), ("R", "report")], id: \.0) { pair in
+                HStack(spacing: 2) {
+                    Text(pair.0).font(Term.mono(9, weight: .bold)).foregroundStyle(Term.amber)
+                    Text(pair.1).font(Term.mono(9)).foregroundStyle(Term.fgMuted)
+                }
+            }
+        }
+        .help("Each holding carries three flags for our own record of it: P if anyone has pitched it, V if a vote on it has closed, R if there is a written report in the archive. Lit means yes, dim means we checked and the answer is no.")
     }
 
     private func mark(_ letter: String, on: Bool, help: String) -> some View {

@@ -449,6 +449,56 @@ export async function getPeers(ticker) {
   return data;
 }
 
+/**
+ * Market capitalisation for a list of symbols, and nothing else.
+ *
+ * A separate, cheaper call than getPeerSnapshot on purpose. Ranking a
+ * peer cohort by size needs one number per candidate and the cohort can
+ * run to twenty names; going through the snapshot would cost three
+ * Finnhub calls each and blow the free tier's sixty-a-minute budget on
+ * data that is thrown away. profile2 alone is one call, and the answer
+ * moves slowly enough to hold for a day.
+ *
+ * Sequential rather than parallel, for the same reason the quote
+ * scheduler is: a burst that gets rate-limited is a burst that has to
+ * be repeated. Missing symbols are absent from the result rather than
+ * null — a caller ranking by size must be able to tell "small" from
+ * "not known", and those sort differently.
+ */
+const capCache = new Map(); // ticker → { at, cap }
+const CAP_TTL_MS = 24 * 60 * 60 * 1000;
+
+export async function getMarketCaps(tickers) {
+  const key = process.env.FINNHUB_API_KEY;
+  const wanted = [...new Set((tickers || [])
+    .map((t) => String(t || '').trim().toUpperCase())
+    .filter(Boolean))];
+  const out = {};
+  if (!key) return out;
+
+  for (const sym of wanted) {
+    const hit = capCache.get(sym);
+    if (hit && Date.now() - hit.at < CAP_TTL_MS) {
+      if (hit.cap != null) out[sym] = hit.cap;
+      continue;
+    }
+    try {
+      const p = await finnhubFetch(
+        `${FINNHUB_BASE}/stock/profile2?symbol=${encodeURIComponent(sym)}` +
+        `&token=${encodeURIComponent(key)}`
+      );
+      const cap = p?.marketCapitalization != null ? p.marketCapitalization * 1e6 : null;
+      capCache.set(sym, { at: cap != null ? Date.now() : failureAt(CAP_TTL_MS), cap });
+      if (cap != null) out[sym] = cap;
+    } catch {
+      // One symbol the vendor will not price is normal and must not
+      // take the ranking down with it; it simply sorts as unknown.
+      capCache.set(sym, { at: failureAt(CAP_TTL_MS), cap: null });
+    }
+  }
+  return out;
+}
+
 // Compact one-ticker snapshot for the PEER grid — just the comparison
 // columns. Same Finnhub call set as the holding-detail fetch (quote +
 // profile2 + metric); profile/metric failures degrade to blanks

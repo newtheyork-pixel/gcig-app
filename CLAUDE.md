@@ -56,7 +56,11 @@ both services on push.
 Native SwiftUI client for the terminal — **the goal, in Thomas's words:
 a Bloomberg terminal the club gives its members for free.** Full
 27-function parity with the web terminal. No web view, no third-party
-packages, macOS 15+, Swift 6.
+packages, **macOS 14+** (lowered from 15 in 0.2.4.3 — the only 15-only
+API was the popout `WindowDragGesture`, now availability-gated; going
+below 14 is a big job because the app leans on macOS-14-era SwiftUI —
+`foregroundStyle`, two-arg `onChange`, `KeyPress`/`onKeyPress`, `Map`,
+Charts), Swift 6.
 
 Rules that keep it sane:
 - `Core/Parser.swift` is a PORT of `client/src/terminal/parser.js`;
@@ -78,6 +82,128 @@ Rules that keep it sane:
   annotate / parse-command / chat; data routes share a 900/10min cap
   sized for the native app's polling. Do not remount the AI limiter
   router-wide.
+- **App Translocation is why an update can "revert" (Aug '26)**: a
+  quarantined app opened from where it was unzipped (Downloads) runs as
+  a read-only translocated copy under `$TMPDIR/AppTranslocation`, so
+  `Bundle.main.bundleURL` points at a ghost — the updater's mv failed
+  silently, the app quit, and reopening launched the untouched old
+  version. Updater.swift resolves the original path via the
+  SecTranslocate SPI (dlsym, degrade-to-refuse with instructions),
+  verifies the staged bundle's version, passes script paths as argv,
+  and leaves a failure note the next launch reports. The permanent cure
+  for a member is moving the app to /Applications with Finder, which
+  ends translocation; the download page says so, and so should any
+  release notes while 0.2.0/0.2.1 updaters are still in the field.
+
+## Quant research (`/quant`)
+
+A **research** repository for a long-only, cash-account, daily-rebalance
+multi-asset system — no shorting, no margin, gross exposure never above
+100% of NAV, T+1 settlement enforced by an explicit ledger. Not a
+trading system and not wired to anything: nothing here places an order
+or touches the Fund's money. Render only builds `rootDir` server/ and
+client/, so pushing `/quant` redeploys nothing.
+
+Python 3.12 in `quant/.venv`, created with `uv` — the mac's system
+python is 3.9 and cannot run it. Deps are pandas 3 (copy-on-write always
+on, native `str` dtype), pyarrow, exchange_calendars, typer, rich.
+
+Built in five gated stages, stopping for review after each: data audit →
+engine with cost model and settlement ledger → sleeves (Layers 1-2) →
+single names (Layer 3) → validation and the final holdout. **Stage 1 is
+delivered; nothing past it should be started without a go-ahead.**
+
+**Not the club's money.** This is a learning project — no endowment
+capital is in it and none is going in. The four constraints below are
+still binding, because Thomas chose them deliberately to model a real
+retail account, not because an account currently enforces them.
+
+**The goal, in Thomas's words: a high Sharpe ratio and holding up
+during downturns. High returns, low risk.** Worth writing down
+alongside the one rule that keeps it from eating the project.
+
+Wanting a high Sharpe is just wanting a good strategy, and every
+sensible designer does. It turns destructive the moment it starts
+choosing parameters. So the line is not "do not want it" — it is
+**never tune toward it**: no lookback, band or cap may be selected
+because the number improved, every parameter needs a prior
+justification written before it is tested, and any adjustment made
+after seeing a metric gets logged as a trial and deflates the headline.
+The Deflated Sharpe exists precisely to price in how many times we
+looked.
+
+And one economic fact that shapes what the goal can mean here: high
+return AND low risk is what leverage buys. You build the best
+risk-adjusted return you can and then lever it to the return you want.
+This account cannot lever, so a good Sharpe arrives as **moderate
+return at low volatility** and cannot be converted upward. Expect to
+trail SPY on return and beat it substantially on drawdown. The
+downturn half of the goal is the achievable half, and it is what the
+trend overlay is actually for.
+
+Rules that keep it honest:
+- **`permaticker` is the key, never `ticker`.** Symbols are recycled —
+  GM was old General Motors then new, CC was Circuit City then Chemours,
+  WB was Wachovia then Weibo. Joining on the symbol grafts a dead
+  company's history onto a living one's and produces a stock that fell
+  99% and recovered, which backtests beautifully.
+- **Prices are stored adjusted AND as-traded.** Returns read `close_adj`;
+  price and liquidity screens read `*_unadj`. A $5 floor on a
+  back-adjusted series admits names that really traded at $2, and the
+  audit measures that leak rather than assuming it away.
+- **`UNPROVABLE` is a verdict and never rolls up into a pass.** A source
+  that carries no delisting dates has not passed the delisting check, it
+  declined to sit it. `data_audit.py` exits 2 there, so "we could not
+  check" can never read as green in a pipeline. Same reasoning as
+  `modelAvailable:false` on the MNPI screen.
+- Data is **Sharadar via Nasdaq Data Link** (`NASDAQ_DATA_LINK_API_KEY`).
+  There is no key yet, so the real audit returns UNPROVABLE. Never reach
+  for yfinance or Alpha Vantage for the single-name layer — they are
+  survivorship-biased and not point-in-time, which is the exact defect
+  the audit exists to catch.
+- `griffinquant/data/synthetic.py` generates panels with ONE deliberate
+  defect injected, so the suite proves each check catches the bias it
+  claims to and that a clean panel trips nothing. It is test apparatus,
+  flagged `is_smoke_test_only`, and must never reach a reported result.
+- `quant/trials.jsonl` is deliberately NOT gitignored. It is the
+  append-only count of every configuration tested and it feeds the
+  Deflated Sharpe; a version where it can be quietly reset is one where
+  the headline number is unfalsifiable.
+
+**For the bond sleeves, price return is not a slightly worse number, it
+is the wrong number.** Measured 2004-2026: TLT returned **-2.6% on
+price and +105.8% on total return**; LQD **-3.2% and +141.4%**. Nearly
+all of it is coupon. Any path computing a sleeve return from
+`close_unadj` does not understate the defensive half of the strategy,
+it deletes it — and Layer 2 then learns to hold no bonds for a reason
+that lives in our code. Returns read `close_adj`; price and liquidity
+screens read `close_unadj`; mixing them is the bug.
+
+**Yahoo's chart endpoint IP-throttles, and the free path has exactly one
+of them (Aug '26).** Every Yahoo API host — query1, query2, the v7
+quote host, even the crumb endpoint — returns 429 together while
+`finance.yahoo.com` and unrelated hosts return 200, so it is a targeted
+API block rather than an egress problem. It survived a deliberate
+ten-minute silence, so it is not simply our own burst clearing. Two
+things learned the hard way:
+  - `SleeveETFSource` retries five times internally, so a "patient"
+    outer loop over nine sleeves fires **45** requests per round. Poll
+    the throttle with ONE cheap request and only pull once it answers.
+  - A missing User-Agent also returns **429**, not 401 or 403 — so a
+    retry loop can back off politely forever against a header it never
+    sent. Check the header before believing the throttle.
+There is no keyless alternative: Stooq now serves a JavaScript
+proof-of-work challenge, and Nasdaq's API returns dividends but zero
+price rows.
+
+**If a key is ever needed, it is Tiingo — not Alpha Vantage.** AV's
+`TIME_SERIES_DAILY_ADJUSTED` is the only function carrying an adjusted
+close and it is a **premium** endpoint; the free `TIME_SERIES_DAILY`
+has as-traded OHLCV and nothing adjusted, which per the paragraph above
+is useless here. Tiingo's free tier carries both series plus `divCash`
+and `splitFactor`. `data/keyedsleeves.py` implements both behind the
+same contract and refuses AV's free function loudly rather than falling
+back to price return.
 
 ## Stack
 
@@ -126,6 +252,34 @@ Rules that keep it sane:
   no React state race.
 - ProtectedRoute waits on `loading` and falls back to localStorage
   before kicking to /login.
+
+**ONLY THE SERVER MAY END A SESSION (Aug '26).** This is the rule
+behind the longest-running bug in the app — "people log in and then
+they can't see anything", on the website and in the terminal both. The
+token was never the problem; the clients threw it away.
+
+`AuthContext`'s bootstrap ran `clearSession()` from a bare `.catch()`,
+so ANY failed `/auth/me` deleted a valid login: a 429, a 502 while
+Render woke the dyno, a request that died between two access points.
+The Mac's `Session.restore()` had the same shape (`catch { user = nil }`)
+and showed a sign-in screen to somebody holding a good token. Both now
+key off one predicate — `isSessionOver(err)` in `client.js`, which is
+true only for a 401 carrying `code: 'AUTH'` from verifyJwt. Everything
+else keeps the session: the web renders from the cached user and retries
+behind it (1.5/3/6/12s, sized to outlast a cold start), the Mac renders
+the terminal with an OFFLINE strip and a RETRY. `err.response` being
+absent is the case to get right — no response means we never asked.
+
+**Rate limits are keyed per caller, NOT per IP (Aug '26)** — and this
+is what was TRIGGERING the above. The club is a school: in the building
+every member is behind one public address, so an IP bucket was one
+allowance the whole club shared. `generalLimiter` (200/min, in front of
+every route) meant a handful of members on school Wi-Fi 429'd each
+other, and `authLimiter` (10 per 5 min) meant one person fumbling their
+password locked everyone else out of logging in. `perCallerKey` hashes
+the bearer token (never stores it raw); `perAccountKey` keys login on
+address AND account, so grinding one account is still capped at ten.
+Pinned by `middleware/rateLimit.test.js`.
 
 If something feels weird with auth on Safari, check that order in
 `AuthContext.jsx` + `client.js` first.
@@ -302,13 +456,46 @@ Sidebar, Landing, and `index.html`.
   interviews stay for the audit trail but leave every citable read path.
   Needs `ELEVENLABS_API_KEY` (scribe_v2; scribe_v1 was withdrawn July
   '26) — absent it, interviews still log and transcribe later.
+- **People and bios (Aug '26)** — `PersonProfile` (Postgres) is the
+  durable record of executives and directors; parses refresh rows and
+  never have to succeed twice. MGMT's exec-bios is a trust ladder:
+  the 10-K's own officer section → `services/filingBio.js` (SEC
+  documents found per person) → `services/wikipediaBio.js` (searched
+  WITH the company name, rejected unless the article ties the person
+  to the company). Three lessons encoded there: **efts.sec.gov
+  (full-text search) refuses datacenter IPs** while data.sec.gov
+  serves them, so filingBio falls back to enumerating appointment
+  8-Ks by their Item 5.02 flag in the submissions feed; **a successor
+  announcement mentions the departing officer at length** and must
+  not become their bio (the appointment verbs' subject decides whose
+  block it is); and directors file Forms 3/4 too, so a roster is not
+  an officer list until `isOfficer`/office filters it. Directors get
+  the same ladder in the background after a governance open; the
+  route serves the union of the live parse and everything stored.
+  Boot + 22:15 ET cron pre-warm people and descriptions for the book.
 - `server/src/services/newsFeeds.js` — keyless public RSS wires (Federal
-  Reserve press releases, WSJ Markets, CNBC, MarketWatch) merged into
-  `/terminal/top-news` alongside Finnhub. The Fed feed is the point: it
-  carries central-bank events the finance-trade feed is slow on. Regex
-  parser, no XML dependency. Strip markup BEFORE decoding entities — the
-  other order turns an escaped `&lt;word&gt;` into live tags that the
-  stripper then deletes.
+  Reserve press releases, WSJ Markets, CNBC, MarketWatch, GlobeNewswire,
+  PR Newswire) merged into `/terminal/top-news` alongside Finnhub. The
+  Fed feed carries central-bank events the finance-trade feed is slow
+  on; the PR wires carry company releases minutes before anyone writes
+  them up. Regex parser, no XML dependency. Strip markup BEFORE decoding
+  entities — the other order turns an escaped `&lt;word&gt;` into live
+  tags that the stripper then deletes.
+  **A feed's HTTP status says nothing about whether it is alive (Aug
+  '26)**: the old WSJ endpoint froze in January 2025 and served 200 with
+  the same 15 DeepSeek-selloff items for eighteen months, and because
+  only *errors* skipped a feed it counted as healthy the whole time.
+  Liveness is now enforced structurally — items older than 7 days are
+  dropped at parse, `/top-news` age-gates its merge at 48h before the
+  breaking scorer (which judges headline text alone and cannot know a
+  crash headline is stale), and the payload's `sources.feeds` block is a
+  per-feed roll call (items + newest timestamp) so a dead wire is
+  visible in the terminal rather than eighteen months later.
+  **Any service skipping LLM work must gate on `llmConfigured()` from
+  llm.js, never its own env-var list**: two services checked only
+  LOCAL_LLM_URL/OPENAI_API_KEY and silently disabled article ranking and
+  Day in Review in the exact deploy where Anthropic was the working
+  provider.
 - `server/src/services/breakingClassifier.js` — scores each headline 0–10
   on how genuinely *breaking* it is (urgency), which is a different
   question from `articleRanker.js`'s materiality (thesis impact). The
@@ -806,6 +993,34 @@ Hit-rate stats count `Approved` toward Voted Yes too.
   backed by the same host and see whether they fail together. If one
   fails and the rest answer, the problem is the size or rate of what WE
   ask for, not their availability.
+- **A classification is not a competitive judgement (Aug '26)**: PEER
+  passed Finnhub's `/stock/peers` straight through, and that endpoint
+  returns the GICS sub-industry cohort. Since the 2023 GICS revision
+  the department stores (Dillard's, Macy's, Kohl's) sit in Broadline
+  Retail beside Amazon, while Walmart, Costco and Target were moved to
+  Consumer Staples Merchandise Retail in a different SECTOR — so AMZN
+  PEER led with a $4bn department store and could never show Walmart.
+  Both facts are correct GICS and neither answers the panel's question.
+  We compounded it by `.slice(0, 6)`-ing the vendor's list in arrival
+  order, so even within the cohort the six shown were the first six.
+  `services/peerSet.js` now merges three sources and labels every row:
+  named in the filer's own 10-K competition discussion (best evidence
+  there is), our own read (a judgement, declared as one, every ticker
+  verified against EDGAR so relevance can be wrong but the company
+  cannot be invented), then the cohort ranked by log market-cap
+  distance. **Reject a model's prose wholesale rather than sieving
+  tickers out of it** — "The filing does not name any competitors."
+  parses into FILING/DOES/NOT/NAME/ANY, five tokens that satisfy any
+  ticker pattern, and no blocklist of English is ever complete. A
+  lowercase letter anywhere means the model wrote a sentence.
+- **`company_tickers.json` is NOT wholly market-cap ordered (Aug '26)**:
+  the head is (NVDA, AAPL, GOOGL, MSFT, AMZN…), but past roughly index
+  5000 there is a second block where Target sits at 7074, AutoZone at
+  7112 and Dillard's at 7122 — size tells you nothing there. The `rank`
+  field in `secFilings.js` is documented as a market-cap ordinal and is
+  used as a search tiebreaker; that premise holds only for the head of
+  the file, so never use `rank` as a size proxy. Real market caps come
+  from `getMarketCaps` (profile2 only, one call per symbol, 24h cache).
 - **The website and PM disagree on the fund's value on purpose (Aug
   '26)**: the site shows $137,070 and PM $135,464, and the difference is
   exactly `estimatedInterestEarned` from `/holdings/cash-yield` —

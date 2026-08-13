@@ -117,7 +117,10 @@ import { getSheetPortfolio, withResolvedDayChange } from '../services/sheetPortf
 import { getNewsForTicker, extractArticle } from '../services/news.js';
 import { getBusinessProfile } from '../services/secBusinessSummary.js';
 import { tickerWhere, groupByTicker, tickerKey } from '../services/tickerKey.js';
-import { buildScoreboard, summarize } from '../services/decisionRecord.js';
+// BENCHMARK is shared with the decision scoreboard on purpose: the club
+// is measured against one index, and two files each naming their own
+// would eventually name different ones.
+import { buildScoreboard, summarize, BENCHMARK } from '../services/decisionRecord.js';
 import { computeTally } from './votes.js';
 import { getCompanyIdentity } from '../services/secFilings.js';
 import {
@@ -1439,6 +1442,45 @@ router.get('/history', async (_req, res) => {
   // double-counted money the club had actually spent. Return the raw
   // snapshots untouched.
   res.json(snapshots);
+});
+
+/**
+ * The benchmark's own path, for drawing beside ours.
+ *
+ * The club's stated benchmark is the S&P 500, and until now the
+ * portfolio chart showed a line with nothing to judge it against — a
+ * number that goes up is not the same as a number that went up more
+ * than doing nothing would have. Up eleven percent is a good year or a
+ * bad one depending entirely on this line.
+ *
+ * Raw closes rather than a computed relative series, deliberately. The
+ * client already decides the window and already handles the awkward
+ * part — subtracting contributions so money we ADDED does not read as
+ * money we MADE — and a second place computing returns is a second
+ * place for the two answers to disagree.
+ *
+ * SPY rather than ^GSPC: the index itself is not in the bar cache, the
+ * ETF is the thing anyone could actually have bought instead, and its
+ * tracking difference is far below the resolution of this chart.
+ */
+router.get('/benchmark', async (_req, res) => {
+  try {
+    const bars = await getHistory(BENCHMARK, '5y');
+    res.json({
+      ticker: BENCHMARK,
+      label: 'S&P 500',
+      bars: (bars || [])
+        .filter((b) => b && b.date && b.close != null)
+        .map((b) => ({ date: b.date, close: b.close })),
+    });
+  } catch (err) {
+    console.error('holdings/benchmark failed:', err.message);
+    // A missing benchmark must not take the portfolio chart with it.
+    // The client draws our line alone and says the comparison is
+    // unavailable, which is honest; a silent absence would read as "we
+    // have no benchmark", which is not true.
+    res.status(503).json({ error: 'Benchmark history unavailable', ticker: BENCHMARK });
+  }
 });
 
 // Per-equity returns across timeframes for the Portfolio holdings table:

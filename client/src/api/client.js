@@ -93,11 +93,29 @@ function maybeRotateToken(res) {
 // fanning out a dozen GETs in parallel made this matter: one stray 401
 // from a single data endpoint would wipe localStorage and bounce the
 // user mid-render, even though every other call on the page succeeded.
-const AUTH_VERDICT_PATHS = ['/auth/me', '/auth/verify-token'];
-
-function isAuthVerdictRequest(config) {
-  const url = config?.url || '';
-  return AUTH_VERDICT_PATHS.some((p) => url === p || url.endsWith(p));
+/**
+ * Did the SERVER say this session is over?
+ *
+ * This is the one question allowed to end a session, and it has exactly
+ * one right answer: verifyJwt tags every verdict it reaches about the
+ * token itself — absent, malformed, expired, revoked, user deleted —
+ * with `code: 'AUTH'`. Nothing else qualifies.
+ *
+ * Everything else is us failing to ask. A 429 because fifteen members
+ * share the school's public address, a 502 while Render wakes the API
+ * up, a request that died in a stairwell between two access points: not
+ * one of those is evidence about the token, and treating them as
+ * evidence is how a valid login got thrown away. That is the whole of
+ * the bug people described as "I sign in and then I can't see
+ * anything" — the token was fine every time, and we deleted it.
+ *
+ * `err.response` being absent is the important case and the easiest to
+ * get wrong: no response means the question never reached anybody.
+ */
+export function isSessionOver(err) {
+  const res = err?.response;
+  if (!res || res.status !== 401) return false;
+  return res.data?.code === 'AUTH';
 }
 
 api.interceptors.response.use(
@@ -115,18 +133,16 @@ api.interceptors.response.use(
         // promise rejection.
         return Promise.reject(err);
       }
-      // Treat the 401 as "session is over" when: the server tagged it as
-      // an auth verdict (`code: 'AUTH'` — a dead/revoked/absent token from
-      // verifyJwt, authoritative on ANY endpoint), OR it came from a
-      // request actually checking the session, OR no token was sent at
-      // all. Without the code check, an expired token 401s every data
-      // endpoint but none are "verdict paths", so the user is never logged
-      // out — they just see "invalid or expired token" on every page,
-      // stuck. A data route's OWN 401 carries no code and still bubbles up
-      // to the caller (the Calendar fan-out case) rather than nuking
-      // storage.
-      const authCode = err.response?.data?.code === 'AUTH';
-      const sessionVerdict = authCode || isAuthVerdictRequest(err.config) || !sent;
+      // The server's tag, on ANY endpoint, or no token was sent at all.
+      //
+      // The path list is deliberately no longer part of this. It used to
+      // be, so that a 401 on /auth/me ended the session whatever the
+      // body said — but verifyJwt is the only thing that can 401 that
+      // route and it always tags, so the only 401s the path rule could
+      // still catch were the ones NOBODY of ours sent: a proxy's error
+      // page, a gateway between us and Render. Those are outages, and an
+      // outage must never be able to log the club out.
+      const sessionVerdict = isSessionOver(err) || !sent;
       if (!sessionVerdict) {
         return Promise.reject(err);
       }
@@ -135,7 +151,10 @@ api.interceptors.response.use(
       const path = window.location.pathname;
       const publicPaths = ['/login', '/accept-invite', '/forgot-password', '/reset-password'];
       if (!publicPaths.includes(path)) {
-        window.location.href = '/login';
+        // Carry where they were, so signing back in returns them to the
+        // page they lost rather than to the dashboard.
+        const next = encodeURIComponent(path + window.location.search);
+        window.location.href = `/login?next=${next}`;
       }
     }
     return Promise.reject(err);
