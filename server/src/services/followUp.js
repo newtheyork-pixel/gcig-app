@@ -175,8 +175,17 @@ export function assessTarget(target, now = new Date()) {
   // holiday achieves nothing except arriving in a full inbox.
   const auto = inbound.filter((m) => m.kind === 'AutoReply')
     .sort((a, b) => new Date(b.occurredAt) - new Date(a.occurredAt))[0];
-  const from = auto && new Date(auto.occurredAt) > new Date(lastOutboundAt)
+  let from = auto && new Date(auto.occurredAt) > new Date(lastOutboundAt)
     ? auto.occurredAt : lastOutboundAt;
+
+  // A human may have read the actual sentence. "Returning August 24" is
+  // information the arrival time of the auto-reply does not contain, and
+  // resetting to arrival alone produced chases into empty desks. When
+  // followUpAfter is set it is a FLOOR, not a trigger: we take whichever
+  // is later, so recording a return date can only ever delay a chase,
+  // never pull one forward into somebody's holiday.
+  const floor = target?.followUpAfter;
+  if (floor && new Date(floor) > new Date(from)) from = floor;
 
   const attempt = stamps.length;           // 1 = original, 2 = first chase
   if (attempt > WAITS.length) {

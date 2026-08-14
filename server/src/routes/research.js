@@ -1091,6 +1091,21 @@ router.patch('/targets/:id', canResearch, async (req, res) => {
   if (req.body?.tier !== undefined) {
     data.tier = req.body.tier ? String(req.body.tier).slice(0, 40) : null;
   }
+  // "Do not chase before this date", read by a human out of the
+  // out-of-office. Rejected rather than silently dropped when it is not
+  // a date: a follow-up floor that quietly failed to save would show a
+  // chase recommendation somebody thinks they already moved.
+  if (req.body?.followUpAfter !== undefined) {
+    if (req.body.followUpAfter === null || req.body.followUpAfter === '') {
+      data.followUpAfter = null;
+    } else {
+      const d = new Date(req.body.followUpAfter);
+      if (Number.isNaN(d.getTime())) {
+        return res.status(400).json({ error: 'followUpAfter must be a date' });
+      }
+      data.followUpAfter = d;
+    }
+  }
   try {
     res.json(await prisma.researchTarget.update({ where: { id }, data }));
   } catch (err) {

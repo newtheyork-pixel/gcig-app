@@ -1212,6 +1212,22 @@ model ResearchTarget {
   source        ResearchSource?   @relation(fields: [sourceId], references: [id], onDelete: SetNull)
   notes         String?
   lastContactAt DateTime?
+
+  // Do not chase before this date.
+  //
+  // followUp.js resets the clock when an out-of-office comes back, but it
+  // resets to the day the AUTO-REPLY ARRIVED, because the day the person
+  // said they return lives in English prose in the body and nothing parses
+  // it. That is close enough for a week away and wrong for a long one: a
+  // reply saying "back on the 24th" still produced a chase on the 21st,
+  // into an empty desk.
+  //
+  // So a human reads the sentence and puts the date here. Set from what the
+  // recipient actually said, it beats anything inferred from arrival time,
+  // and the computed clock still runs underneath: this is a floor, never a
+  // trigger. Whichever is later wins, so setting it can only ever delay a
+  // chase, never bring one forward into somebody's holiday.
+  followUpAfter DateTime?
   createdById   Int?
   createdBy     User?             @relation("ResearchTargetCreator", fields: [createdById], references: [id], onDelete: SetNull)
   drafts        OutreachDraft[]
