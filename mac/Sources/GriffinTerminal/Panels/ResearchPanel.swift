@@ -2488,6 +2488,13 @@ private struct DraftCard: View {
                 }
                 .buttonStyle(.plain)
 
+                // Copy sits on the closed row as well. Collapsing the card
+                // must not cost the one action the screen exists for.
+                if !isExpanded {
+                    Button(copied ? "Copied" : "Copy to send") { copyBlock(d) }
+                        .buttonStyle(TermButtonStyle())
+                }
+
                 if isExpanded {
                     ScrollView {
                         Text(d.body)
@@ -2516,41 +2523,7 @@ private struct DraftCard: View {
                     // Copy is the send button. It stays shut only when the
                     // draft cannot go out at all — rejected, or blocked by
                     // the compliance screen.
-                    Button(copied ? "Copied" : "Copy to send") {
-                        // Address, subject and body in one block, in the
-                        // order the compose window asks for them. Pasting
-                        // the address separately from the text it belongs
-                        // to is a chance to put the right email in front
-                        // of the wrong person, and that failure does not
-                        // get taken back: internal research lands in a
-                        // stranger's inbox and an apology does not unsend
-                        // it.
-                        //
-                        // The To line names who they are as well as where
-                        // they are. A hundred of these go out over five
-                        // days and they are not interchangeable; seeing
-                        // "Co-Owner, Princess Bride Diamonds" at the
-                        // moment of sending is the last cheap chance to
-                        // notice the clipboard holds somebody else's
-                        // draft.
-                        let who = [target.role, target.employer]
-                            .compactMap { $0 }
-                            .filter { !$0.isEmpty }
-                            .joined(separator: ", ")
-                        let to: String
-                        if let addr = target.email, !addr.isEmpty {
-                            to = who.isEmpty
-                                ? "To: \(addr)"
-                                : "To: \(addr)   (\(target.name), \(who))"
-                        } else {
-                            to = "To: NO ADDRESS ON FILE for \(target.name), do not send"
-                        }
-                        let text = "\(to)\nSubject: \(d.subject)\n\n\(d.body)"
-                        NSPasteboard.general.clearContents()
-                        NSPasteboard.general.setString(text, forType: .string)
-                        copied = true
-                        Task { try? await Task.sleep(nanoseconds: 2_000_000_000); copied = false }
-                    }
+                    Button(copied ? "Copied" : "Copy to send") { copyBlock(d) }
                     .buttonStyle(TermButtonStyle())
                     .disabled(d.fullyApproved != true)
                     .help(d.fullyApproved == true
@@ -2618,6 +2591,27 @@ private struct DraftCard: View {
     /// answer. A card that showed none of them made a sent email and a
     /// silent one identical, which is how a batch of thirteen reads as
     /// progress on a week when every address bounced.
+    /// Address, subject and body in one block, in the order the compose
+    /// window asks for them. Shared by the open card and the closed row,
+    /// because copying is the whole point of this screen and should never
+    /// be more than one click away.
+    private func copyBlock(_ d: Draft) {
+        let who = [target.role, target.employer]
+            .compactMap { $0 }
+            .filter { !$0.isEmpty }
+            .joined(separator: ", ")
+        let to: String
+        if let addr = target.email, !addr.isEmpty {
+            to = who.isEmpty ? "To: \(addr)" : "To: \(addr)   (\(target.name), \(who))"
+        } else {
+            to = "To: NO ADDRESS ON FILE for \(target.name), do not send"
+        }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString("\(to)\nSubject: \(d.subject)\n\n\(d.body)", forType: .string)
+        copied = true
+        Task { try? await Task.sleep(nanoseconds: 2_000_000_000); copied = false }
+    }
+
     @ViewBuilder
     private func replyLog(_ d: Draft) -> some View {
         let heard = messages.filter { !$0.outbound && $0.kind != "AutoReply" }
