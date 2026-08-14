@@ -2379,6 +2379,12 @@ private struct DraftCard: View {
     @Binding var busy: Bool
     let run: RunAction
 
+    /// A sent email is history. It collapses to one line so the draft you
+    /// can still act on is not buried under four hundred words already
+    /// gone. nil means "use the default for this draft"; a tap pins it.
+    @State private var expandedOverride: Bool? = nil
+    private var isExpanded: Bool { expandedOverride ?? (draft.sentAt == nil) }
+
     @State private var logging = false
     @State private var replyKind = "AutoReply"
     @State private var replyOut = false
@@ -2402,7 +2408,7 @@ private struct DraftCard: View {
 
             HStack(spacing: 6) {
                 ScreenChip(draft: d)
-                if let r = d.screenReason {
+                if let r = d.screenReason, isExpanded {
                     Text(r).font(Term.mono(9)).foregroundStyle(Term.fgMuted).lineLimit(2)
                 }
                 if d.screenState == "clear-keyword-only" || d.screenState == "unscreened" {
@@ -2459,16 +2465,39 @@ private struct DraftCard: View {
                     Button("Cancel") { editing = false }.buttonStyle(TermButtonStyle())
                 }
             } else {
-                Text(d.subject).font(Term.mono(11, weight: .medium)).foregroundStyle(Term.white)
-                    .textSelection(.enabled)
-                ScrollView {
-                    Text(d.body)
-                        .font(Term.mono(10)).foregroundStyle(Term.fgDim)
-                        .lineSpacing(3)
-                        .textSelection(.enabled)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                Button { expandedOverride = !isExpanded } label: {
+                    HStack(spacing: 6) {
+                        Text(isExpanded ? "v" : ">")
+                            .font(Term.mono(9)).foregroundStyle(Term.fgMuted)
+                        Text(d.subject).font(Term.mono(11, weight: .medium))
+                            .foregroundStyle(Term.white).lineLimit(1)
+                        Spacer(minLength: 4)
+                        // What a closed row has to answer: when did it go,
+                        // and did anything come back.
+                        if !isExpanded {
+                            if let sent = d.sentAt {
+                                Text("sent \(Fmt.date(sent))")
+                                    .font(Term.mono(9)).foregroundStyle(Term.fgMuted)
+                            }
+                            if !messages.isEmpty {
+                                Text("\(messages.count) reply\(messages.count == 1 ? "" : "s")")
+                                    .font(Term.mono(9)).foregroundStyle(Term.positive)
+                            }
+                        }
+                    }
                 }
-                .frame(maxHeight: 260)
+                .buttonStyle(.plain)
+
+                if isExpanded {
+                    ScrollView {
+                        Text(d.body)
+                            .font(Term.mono(10)).foregroundStyle(Term.fgDim)
+                            .lineSpacing(3)
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .frame(maxHeight: 260)
+                }
             }
 
             if !editing && d.sentAt == nil {
@@ -2556,7 +2585,7 @@ private struct DraftCard: View {
                 }
             }
 
-            if d.sentAt != nil { replyLog(d) }
+            if d.sentAt != nil && isExpanded { replyLog(d) }
 
             if rejecting {
                 HStack(spacing: 6) {
@@ -2789,7 +2818,15 @@ private struct DraftCard: View {
             Text("BLOCKED by the compliance screen — cannot be approved or sent as written")
                 .font(Term.mono(9, weight: .bold)).tracking(0.5).foregroundStyle(Term.negative)
         } else if d.fullyApproved == true {
-            Text("APPROVED by \((d.approvedByNames ?? []).joined(separator: " and ")) — ready to send")
+            // Never claim a person signed this off when nobody did.
+            // REQUIRED_APPROVALS is 0 by decision, so fullyApproved is true
+            // the moment a draft exists, and printing "APPROVED by" with an
+            // empty name list made an unread email look reviewed, directly
+            // above an orange compliance flag.
+            let names = d.approvedByNames ?? []
+            Text(names.isEmpty
+                 ? "READY TO SEND, no approval required"
+                 : "APPROVED by \(names.joined(separator: " and ")), ready to send")
                 .font(Term.mono(9, weight: .bold)).tracking(0.5).foregroundStyle(Term.positive)
         } else {
             let names = d.approvedByNames ?? []
