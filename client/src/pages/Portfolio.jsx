@@ -292,22 +292,57 @@ export default function Portfolio() {
   const [range, setRange] = useState('6M');
   const [selectedHolding, setSelectedHolding] = useState(null);
 
-  // Normalize history (with real Date objects) once.
+  // The book as it stands right now, shaped like a snapshot.
+  //
+  // Snapshots are written by a scheduled job, so the newest row in the
+  // table is yesterday. Every card on this page reads live. The chart
+  // read the table — which is why it drew +14.4% underneath a header
+  // saying +15.7%, and why the benchmark badge reported a gap that was
+  // a full trading day stale. The line now ends on today.
+  //
+  // Raw sheet total, deliberately. The snapshots carry no simulated cash
+  // interest (the server stopped overlaying it), so adding it to this
+  // one point would draw a step of roughly a year's accrual across the
+  // last segment. The interest lives on the cards, where it is labelled
+  // an estimate.
+  const livePoint = useMemo(() => {
+    const total = data?.totals?.totalValue;
+    if (total == null) return null;
+    const value = Number(Number(total).toFixed(2));
+    const cash = Number(Number(data.totals.cashValue ?? 0).toFixed(2));
+    return {
+      date: new Date(),
+      value,
+      cash,
+      equity: Math.max(value - cash, 0),
+      live: true,
+    };
+  }, [data]);
+
+  // Normalize history (with real Date objects) once, then extend it to now.
   // equity = totalValue - cashValue (falls back to total if cash is unknown).
-  const fullHistory = useMemo(
-    () =>
-      history.map((s) => {
-        const total = Number(s.totalValue.toFixed(2));
-        const cash = s.cashValue != null ? Number(s.cashValue.toFixed(2)) : 0;
-        return {
-          date: new Date(s.date),
-          value: total,
-          cash,
-          equity: Math.max(total - cash, 0),
-        };
-      }),
-    [history]
-  );
+  //
+  // A snapshot already written for today is SUPERSEDED rather than kept:
+  // two points on one date give the chart a vertical tick and Sharpe a
+  // same-day pair whose return is meaningless.
+  const fullHistory = useMemo(() => {
+    const rows = history.map((s) => {
+      const total = Number(s.totalValue.toFixed(2));
+      const cash = s.cashValue != null ? Number(s.cashValue.toFixed(2)) : 0;
+      return {
+        date: new Date(s.date),
+        value: total,
+        cash,
+        equity: Math.max(total - cash, 0),
+      };
+    });
+    if (!livePoint) return rows;
+    const todayIso = livePoint.date.toISOString().slice(0, 10);
+    return [
+      ...rows.filter((r) => r.date.toISOString().slice(0, 10) !== todayIso),
+      livePoint,
+    ];
+  }, [history, livePoint]);
 
   // Average cash sleeve we've actually carried, day by day. The club only
   // meets weekly, so the book usually holds a meaningful idle balance — this
@@ -417,28 +452,30 @@ export default function Portfolio() {
   // Dollar change = total change (cash contributes ~0 to day-over-day movement).
   // Percent = dollar change / yesterday's equity base.
   //
-  // Both the historical snapshots and the live /quotes total are raw
-  // sheet totals now (the server no longer overlays simulated cash
-  // interest), so they're directly comparable day-over-day.
+  // Both sides are raw sheet totals and nothing is layered on either.
+  // This used to add the whole lifetime cash-interest estimate to today
+  // and compare it against a snapshot carrying none, so a flat market
+  // still printed a gain of about a year's accrual — every day, and the
+  // comment directly above it asserted the two were comparable. That add
+  // was a leftover from when the server overlaid interest on the history
+  // as well; the server stopped, this did not.
   const dailyChange = useMemo(() => {
-    if (!data || fullHistory.length < 2) return null;
-    const liveTotal = data.totals?.totalValue;
-    if (liveTotal == null) return null;
-    const todayTotal = liveTotal + estimatedCashInterest;
-    const todayIso = new Date().toISOString().slice(0, 10);
-    for (let i = fullHistory.length - 1; i >= 0; i--) {
+    if (fullHistory.length < 2) return null;
+    const today = fullHistory[fullHistory.length - 1];
+    if (!today.live) return null;
+    const todayIso = today.date.toISOString().slice(0, 10);
+    for (let i = fullHistory.length - 2; i >= 0; i--) {
       const snap = fullHistory[i];
-      const snapIso = snap.date.toISOString().slice(0, 10);
-      if (snapIso === todayIso) continue;
+      if (snap.date.toISOString().slice(0, 10) === todayIso) continue;
       const day = snap.date.getDay();
       if (day === 0 || day === 6) continue;
-      const diff = todayTotal - snap.value;
+      const diff = today.value - snap.value;
       const base = snap.equity;
       const pct = base > 0 ? (diff / base) * 100 : 0;
       return { diff, pct };
     }
     return null;
-  }, [data, fullHistory, estimatedCashInterest]);
+  }, [fullHistory]);
 
   // Annualized Sharpe. Numerator comes from the Adjusted Return tile's
   // lifetime % (annualized by trading days in the sample) so the headline
@@ -481,7 +518,11 @@ export default function Portfolio() {
     if (chartData.length < 2) return null;
     const end = chartData[chartData.length - 1];
 
-    // ALL range: the header should match the Total Gain/Loss card.
+    // ALL range: measured against capital invested, like the Total
+    // Gain/Loss card. It lands slightly below that card because the line
+    // is drawn on marked value alone and the card adds the simulated
+    // cash interest on top. That difference is deliberate and is named
+    // in the footnote under this figure rather than reconciled away.
     if (range === 'ALL') {
       const diff = end.value - TOTAL_INVESTED;
       const pct = TOTAL_INVESTED > 0 ? (diff / TOTAL_INVESTED) * 100 : 0;
@@ -699,6 +740,11 @@ export default function Portfolio() {
                   {range === 'ALL' ? (
                     <div className="mt-0.5 text-[11px] text-navy-400">
                       vs. {fmtMoney(TOTAL_INVESTED)} invested
+                      {estimatedCashInterest > 0
+                        ? `, marked value only (Total Gain/Loss adds ${fmtMoney(
+                            estimatedCashInterest
+                          )} estimated cash interest)`
+                        : ''}
                     </div>
                   ) : rangeChange.cashFlowInRange > 0 ? (
                     <div className="mt-0.5 text-[11px] text-navy-400">
