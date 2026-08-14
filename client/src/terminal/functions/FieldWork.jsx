@@ -3064,9 +3064,22 @@ function Drafts({ target, onChanged }) {
   }
 
   async function copy(d) {
-    // Subject and body together, because pasting them separately is two
-    // chances to paste the wrong one.
-    const text = `Subject: ${d.subject}\n\n${d.body}`;
+    // Address, subject and body in one block, in the order the compose
+    // window asks for them. Pasting these separately is three chances to
+    // put the right email in front of the wrong person, and the failure
+    // is unrecoverable: internal research lands in a stranger's inbox
+    // and no amount of apologising takes it back.
+    //
+    // The To line names who they are as well as where they are. Ninety
+    // three of these go out over five days and they are not
+    // interchangeable; seeing "Co-Owner, Princess Bride Diamonds" at the
+    // moment of sending is the last cheap chance to notice the draft in
+    // the clipboard is not the one meant for this person.
+    const who = [target?.role, target?.employer].filter(Boolean).join(', ');
+    const to = target?.email
+      ? `To: ${target.email}${who ? `   (${target.name}, ${who})` : ''}`
+      : `To: NO ADDRESS ON FILE for ${target?.name || 'this target'} — do not send`;
+    const text = `${to}\nSubject: ${d.subject}\n\n${d.body}`;
     try {
       await navigator.clipboard.writeText(text);
       setCopied(d.id);
