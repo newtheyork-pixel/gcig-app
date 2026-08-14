@@ -175,17 +175,8 @@ export function assessTarget(target, now = new Date()) {
   // holiday achieves nothing except arriving in a full inbox.
   const auto = inbound.filter((m) => m.kind === 'AutoReply')
     .sort((a, b) => new Date(b.occurredAt) - new Date(a.occurredAt))[0];
-  let from = auto && new Date(auto.occurredAt) > new Date(lastOutboundAt)
+  const from = auto && new Date(auto.occurredAt) > new Date(lastOutboundAt)
     ? auto.occurredAt : lastOutboundAt;
-
-  // A human may have read the actual sentence. "Returning August 24" is
-  // information the arrival time of the auto-reply does not contain, and
-  // resetting to arrival alone produced chases into empty desks. When
-  // followUpAfter is set it is a FLOOR, not a trigger: we take whichever
-  // is later, so recording a return date can only ever delay a chase,
-  // never pull one forward into somebody's holiday.
-  const floor = target?.followUpAfter;
-  if (floor && new Date(floor) > new Date(from)) from = floor;
 
   const attempt = stamps.length;           // 1 = original, 2 = first chase
   if (attempt > WAITS.length) {
@@ -194,9 +185,24 @@ export function assessTarget(target, now = new Date()) {
   }
 
   const wait = WAITS[attempt - 1];
-  const dueDate = addWorkingDays(from, wait);
+  let dueDate = addWorkingDays(from, wait);
+
+  // A human may have read the actual sentence. "Returning August 24" is
+  // information the ARRIVAL TIME of an auto-reply does not contain, and
+  // resetting to arrival alone sent chases at empty desks.
+  //
+  // followUpAfter caps the DUE DATE, not the start of the countdown.
+  // Starting the clock there instead would push a chase five working
+  // days past the day somebody got back, which is the opposite of the
+  // point. It only ever moves the date later: whichever of the computed
+  // date and the floor is further out wins, so recording a return date
+  // can delay a chase and never pull one forward into a holiday.
+  const floor = target?.followUpAfter ? new Date(target.followUpAfter) : null;
+  if (floor && !Number.isNaN(floor.getTime()) && floor > dueDate) dueDate = floor;
+
   const elapsed = workingDaysBetween(from, now);
-  const state = elapsed >= wait ? (elapsed >= wait + 3 ? 'overdue' : 'due') : 'waiting';
+  const overdueFrom = addWorkingDays(dueDate, 3);
+  const state = now >= dueDate ? (now >= overdueFrom ? 'overdue' : 'due') : 'waiting';
 
   const which = attempt === 1 ? 'follow-up' : 'second follow-up';
   const dueISO = iso(dueDate);
