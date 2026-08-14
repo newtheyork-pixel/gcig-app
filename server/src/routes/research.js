@@ -1136,6 +1136,61 @@ const DRAFT_VIEW = {
   sentBy: { select: { id: true, name: true } },
 };
 
+// The sign-off is whoever is actually sending, not whoever wrote the
+// draft.
+//
+// Outreach goes out of a person's own mailbox, so a draft signed by
+// the author and sent by somebody else is a small forgery: the
+// recipient replies to a name that did not write to them. Two people
+// carry this at the moment and there will be more, so the body stores
+// the token below and the name is resolved per reader instead of
+// being baked in at write time.
+const SIGNATURE_TOKEN = '{{SIGNATURE}}';
+
+// Titles as a recipient should read them. Role names are internal
+// vocabulary and JuniorAnalyst under a school crest reads like a
+// hierarchy nobody outside the club needs explained.
+const OUTREACH_TITLE = {
+  President: 'President',
+  CIO: 'Chief Investment Officer',
+  SeniorPortfolioManager: 'Portfolio Manager',
+  PortfolioManager: 'Portfolio Manager',
+  SeniorAnalyst: 'Analyst',
+  Analyst: 'Analyst',
+  JuniorAnalyst: 'Analyst',
+  FacultyAdvisor: 'Faculty Advisor',
+  AdvisoryBoardMember: 'Advisory Board',
+  ChiefOfCommunication: 'Communications',
+};
+
+function signatureFor(user) {
+  if (!user) return SIGNATURE_TOKEN;
+  const title = OUTREACH_TITLE[user.role] || 'Analyst';
+  return [user.name, `${title}, The Griffin Fund`, 'Grace Church School', user.email]
+    .filter(Boolean)
+    .join('\n');
+}
+
+// Swap the token for the reader's own block. Every read path already
+// runs through decorate(), including the copy-to-clipboard the client
+// builds from d.body, so doing it here means no caller has to remember.
+function renderSignature(body, user) {
+  if (typeof body !== 'string' || !body.includes(SIGNATURE_TOKEN)) return body;
+  return body.split(SIGNATURE_TOKEN).join(signatureFor(user));
+}
+
+// The other half, and the one that is easy to forget: an edit round
+// trips through a textarea showing the RENDERED body, so saving it
+// back would write one person's name into storage permanently and
+// silently un-personalise the draft for everyone else. Put the token
+// back before persisting.
+function tokeniseSignature(body, user) {
+  if (typeof body !== 'string') return body;
+  const sig = signatureFor(user);
+  if (sig === SIGNATURE_TOKEN || !body.includes(sig)) return body;
+  return body.split(sig).join(SIGNATURE_TOKEN);
+}
+
 // Everything the UI needs to decide what to show THIS user, computed
 // server-side. A client that works out for itself whether it may send
 // is a client that can be talked into being wrong about it; the server
@@ -1146,6 +1201,10 @@ function decorate(d, user) {
   const blocked = d.screenRisk === 'prohibited';
   return {
     ...d,
+    body: renderSignature(d.body, user),
+    // Named so a client can show "signing as ..." without re-deriving
+    // the rule and getting a different answer.
+    signature: signatureFor(user),
     approvalCount: approvals.length,
     approvalsNeeded: REQUIRED_APPROVALS,
     fullyApproved: approvals.length >= REQUIRED_APPROVALS && !d.rejectedAt && !blocked,
@@ -1226,7 +1285,7 @@ router.post('/targets/:id/drafts', canResearch, async (req, res) => {
       data: {
         targetId,
         subject: String(subject).slice(0, 300),
-        body: String(body).slice(0, 20_000),
+        body: tokeniseSignature(String(body).slice(0, 20_000), req.user),
         authorId: req.user?.id ?? null,
       },
     });
@@ -1285,7 +1344,10 @@ router.patch('/drafts/:id', canResearch, async (req, res) => {
     }
 
     const subject = req.body?.subject !== undefined ? String(req.body.subject).slice(0, 300) : existing.subject;
-    const body = req.body?.body !== undefined ? String(req.body.body).slice(0, 20_000) : existing.body;
+    const body =
+      req.body?.body !== undefined
+        ? tokeniseSignature(String(req.body.body).slice(0, 20_000), req.user)
+        : existing.body;
     const changed = subject !== existing.subject || body !== existing.body;
 
     await prisma.$transaction(async (tx) => {
