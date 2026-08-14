@@ -414,7 +414,12 @@ router.get('/projects/:id', async (req, res) => {
         return {
           awaitingReview: all.filter((d) => !d.sentAt && !d.rejectedAt && !d.fullyApproved).length,
           awaitingMe: all.filter((d) => d.canIApprove).length,
-          readyToSend: all.filter((d) => d.fullyApproved && !d.sentAt).length,
+          // Ready means nobody has touched it. Queued means it is
+          // written into a mailbox waiting on a clock. Counting the two
+          // together would tell whoever opens this that there is more
+          // left to do than there is.
+          readyToSend: all.filter((d) => d.fullyApproved && !d.sentAt && !d.queuedAt).length,
+          queued: all.filter((d) => d.queuedAt && !d.sentAt).length,
           rejected: all.filter((d) => d.rejectedAt && !d.sentAt).length,
           sent: all.filter((d) => d.sentAt).length,
           // Compliance state has to be countable at the top level too,
@@ -1134,6 +1139,7 @@ const DRAFT_VIEW = {
   author: { select: { id: true, name: true } },
   rejectedBy: { select: { id: true, name: true } },
   sentBy: { select: { id: true, name: true } },
+  queuedBy: { select: { id: true, name: true } },
 };
 
 // The sign-off is whoever is actually sending, not whoever wrote the
@@ -1232,6 +1238,11 @@ function decorate(d, user) {
       ? 'rejected'
       : blocked
       ? 'blocked'
+      // Queued outranks ready because it is further along: the letter
+      // exists in a mail client and is waiting on a clock. It sits below
+      // sent because nothing has reached anybody yet.
+      : d.queuedAt
+      ? 'queued'
       : approvals.length >= REQUIRED_APPROVALS
       ? 'ready'
       : approvals.length > 0
@@ -1487,6 +1498,48 @@ router.post('/drafts/:id/reject', canResearch, async (req, res) => {
 // The gate. Marking a draft sent is what moves the funnel, so this is
 // where two-approvals is enforced — and it is enforced by counting rows
 // at the moment of the call, never by trusting a flag the client sent.
+// Parked in a mail client, not yet gone.
+//
+// The counterpart to marking sent, and deliberately weaker than it. It
+// records that a person has pasted this into their mail client and
+// scheduled it, which is real progress worth seeing in a list of a
+// hundred, but it moves NOTHING on the target: no Contacted status, no
+// lastContactAt, no follow-up clock. A scheduled email has reached
+// nobody, and starting the chase timer on it would produce a follow-up
+// that arrives before the first letter does.
+//
+// Idempotent and reversible in the same call: sending the same request
+// again un-queues it, because the common correction is "I queued the
+// wrong one" and that should not need a second endpoint.
+router.post('/drafts/:id/queued', canResearch, async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) return res.status(400).json({ error: 'Bad id' });
+  try {
+    const d = await prisma.outreachDraft.findUnique({ where: { id } });
+    if (!d) return res.status(404).json({ error: 'No such draft' });
+    if (d.sentAt) return res.status(409).json({ error: 'That draft has already been sent.' });
+    if (d.rejectedAt) return res.status(409).json({ error: 'That draft was rejected. Edit it first.' });
+    // The compliance screen is a gate here too. Queueing is the step
+    // right before a human hits send, so a blocked draft must not be
+    // allowed to sit in a mailbox looking approved.
+    if (d.screenRisk === 'prohibited') {
+      return res.status(409).json({
+        error: `The compliance screen will not pass this: ${d.screenReason || 'no reason recorded'}. Edit it, which re-screens.`,
+      });
+    }
+    const on = !d.queuedAt;
+    const updated = await prisma.outreachDraft.update({
+      where: { id },
+      data: { queuedAt: on ? new Date() : null, queuedById: on ? req.user?.id ?? null : null },
+      include: DRAFT_VIEW,
+    });
+    res.json(decorate(updated, req.user));
+  } catch (err) {
+    console.error('research/draft queued failed:', err.message);
+    res.status(500).json({ error: 'Could not update that draft' });
+  }
+});
+
 router.post('/drafts/:id/sent', canResearch, async (req, res) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id)) return res.status(400).json({ error: 'Bad id' });

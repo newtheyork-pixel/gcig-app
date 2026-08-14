@@ -670,7 +670,23 @@ def check_unexplained_price_jumps(ctx: AuditContext) -> CheckResult:
         key=key,
         title=title,
         verdict=verdict,
-        blocking=False,
+        # Blocking, and the tiering above is why. A handful of odd bars
+        # in a million is noise and lands on WARN, which colours the
+        # report without vetoing it. Getting past WARN means the rate is
+        # systematic, and a systematic gap between the prices and the
+        # action record is almost always unrecorded splits — which is
+        # not a cosmetic defect. An unrecorded 4:1 split prints a 75%
+        # single-day loss on a day nothing happened, and it is precisely
+        # the kind of return a cross-sectional strategy hunts: momentum
+        # reads catastrophe, reversion reads a screaming buy, and both
+        # trade it. The check is the largest fake returns in the panel,
+        # sorted by size.
+        #
+        # The empty and unprovable paths above stay advisory on purpose.
+        # A window with no ±50% moves at all has not hidden anything; it
+        # has nothing to hide, and vetoing an ETF-only sleeve backtest
+        # for lacking a defect it cannot have would be the wrong answer.
+        blocking=True,
         headline=(
             f"{n_unexplained:,} of {n_jumps:,} moves beyond "
             f"±{int(JUMP_THRESHOLD * 100)}% have no action within "

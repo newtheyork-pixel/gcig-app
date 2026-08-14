@@ -19,6 +19,14 @@ dependencies = [
     # hole in the data. Without a genuine calendar the quality checks
     # cry wolf on every long weekend until nobody reads them.
     "exchange-calendars>=4.5",
+    # Shiller and Damodaran publish Excel and nothing else — one .xls
+    # and two .xlsx, which need different readers. Declared rather than
+    # left to whatever happens to be in the venv: `longhistory.py` is
+    # the century of history every regime claim in this repository is
+    # tested against, and an undeclared import means it works on the
+    # machine that pulled it and nowhere else.
+    "openpyxl>=3.1",
+    "xlrd>=2.0",
 ]
 
 # Deliberately absent: yfinance, and every other free price API.

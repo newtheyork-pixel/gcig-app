@@ -17,6 +17,18 @@ dropped and counted on `unresolved_rows` rather than guessed at — a
 guess there splices two companies into one price series, and the
 result backtests beautifully.
 
+Prices come from two tables, not one. SEP is common stock and
+EXCLUDES ETFs, CEFs and ETNs; those live in SHARADAR/SFP, which
+Nasdaq sells apart from the Core US Equities bundle. TICKERS.table
+names the one table each entity belongs to, which is the fact that
+makes reading both and concatenating them safe — and `prices()`
+asserts it rather than trusting it. Every sleeve this project trades
+is an ETF and so is the SPY benchmark, so SFP is a requirement here
+and not a garnish: a key that bought only the equities bundle gets a
+403 on SFP while SEP answers perfectly, and the entire point of the
+message that raises is that the failure reads nothing whatsoever
+like "there is no ETF data".
+
 And "adjusted" means three different things inside a single SEP row.
 Per the SEP documentation: `closeadj` is adjusted for stock splits,
 stock dividends, cash dividends and spinoffs — a total-return series,
@@ -36,6 +48,7 @@ import json
 import os
 import time
 from collections.abc import Callable, Iterable, Sequence
+from dataclasses import replace
 from datetime import date
 from typing import TYPE_CHECKING, Any
 
@@ -51,6 +64,24 @@ if TYPE_CHECKING:  # the cache module is owned elsewhere; see _via_cache
 
 API_BASE = "https://data.nasdaq.com/api/v3/datatables"
 VENDOR = "SHARADAR"
+
+#: The two end-of-day price tables, in the order they are read. SEP is
+#: common stock; SFP is ETFs, CEFs, ETNs and exchange-traded debt. SEP
+#: first is deliberate — when a key has bought neither, the refusal we
+#: report should be about the table nearly every user has, and when it
+#: has bought only the equities bundle we want SEP's success already in
+#: hand before SFP's refusal is explained.
+PRICE_TABLES = ("SEP", "SFP")
+
+#: The half of that split the Core US Equities bundle does not include.
+#: A set, because knowing which side of the line a refusal fell on is
+#: the difference between "buy the add-on" and "check your key".
+FUND_PRICE_TABLES = frozenset({"SFP"})
+
+#: Which table a bar came from, carried through the concatenation and
+#: dropped by `_typed` on the way out. Nothing above this file sees it;
+#: it exists so the one-table-per-entity check has something to read.
+_SOURCE_TABLE = "_price_table"
 
 #: The API answers at most 10,000 rows per call whatever you ask for,
 #: so pagination is not an optimisation — a single unpaged call to SEP
@@ -127,7 +158,17 @@ _TICKERS_REQUIRED = (
     "firstpricedate",
     "lastpricedate",
 )
-_SEP_REQUIRED = (
+#: One tuple for both price tables, and that is a checked claim rather
+#: than an assumption. SFP's own documentation page lists `ticker`,
+#: `date` and `lastupdated` as its filter columns, uses
+#: `open,high,low,close,volume,closeadj` in its column example, and
+#: reprints the CloseAdj / CloseUnadj adjustment definitions word for
+#: word from SEP's page — the two pages differ only in coverage prose
+#: and worked examples. `_require` is still called per table, so if
+#: that ever stops being true the error names SFP rather than blaming
+#: a column of ours for failing to appear.
+#: https://data.nasdaq.com/databases/SFP/documentation
+_PRICE_REQUIRED = (
     "ticker",
     "date",
     "open",
@@ -138,6 +179,15 @@ _SEP_REQUIRED = (
     "closeadj",
     "closeunadj",
 )
+
+#: Vendor column -> ours, for the price columns we take when offered.
+#: Handled as a set rather than one at a time because they are kept
+#: only where EVERY table that returned rows carried them. Neither
+#: vendor page documents `dividends` at all, so whether SFP publishes
+#: it is genuinely unverified — and a column that is real for stocks
+#: and absent for funds concatenates into NaNs that read as "this ETF
+#: paid nothing", which is a worse answer than no column.
+_PRICE_OPTIONAL = {"dividends": "dividends", "lastupdated": "last_updated"}
 
 #: TICKERS columns we pass through when present. Absent ones are left
 #: out of the frame entirely rather than filled with nulls — the
@@ -165,6 +215,21 @@ class SharadarApiError(RuntimeError):
     """
 
 
+class SharadarNotEntitled(SourceUnavailable):
+    """The key is fine. This table is not part of what it bought.
+
+    A subtype rather than a message, because the caller a level up has
+    to be able to ask *which* table was refused while the rest of the
+    pull was succeeding. Sharadar sells prices as two products, and the
+    interesting failure is the partial one.
+    """
+
+    def __init__(self, message: str, *, table: str, status: int) -> None:
+        super().__init__(message)
+        self.table = table
+        self.status = status
+
+
 class SharadarSource(DataSource):
     capabilities = SourceCapabilities(
         name="Sharadar (Nasdaq Data Link)",
@@ -183,7 +248,10 @@ class SharadarSource(DataSource):
         # documentation does not enumerate it where we could read it.
         # Claiming the capability would let the delisting-reason check
         # run and report a pass on evidence nobody has seen; declining
-        # it makes that check say UNPROVABLE, which is the truth.
+        # it makes that check say UNPROVABLE, which is the truth. SFP's
+        # page is a shade worse than unenumerated: where SEP's lists
+        # "delist reasons" among the actions it describes, SFP's does
+        # not mention them at all.
         provides_delisting_reasons=False,
         provides_permanent_ids=True,
         # Sharadar does sell historical S&P 500 membership as its own
@@ -202,7 +270,13 @@ class SharadarSource(DataSource):
         *,
         api_key: str | None = None,
         cache: "ParquetCache | None" = None,
-        tables: Sequence[str] = ("SEP",),
+        # Both price tables by default, because a default of SEP alone
+        # cannot return a single ETF bar and every sleeve in this
+        # project is an ETF. Still an argument: a caller doing
+        # single-name work can narrow it and skip a product they have
+        # not bought, and saying so explicitly is much better than
+        # discovering it through a 403.
+        tables: Sequence[str] = PRICE_TABLES,
         session: requests.Session | None = None,
         timeout: float = 60.0,
         max_pages: int = 20_000,
@@ -222,10 +296,38 @@ class SharadarSource(DataSource):
         self.unresolved_by_frame: dict[str, int] = {}
         self.unadjustable_rows: int = 0
         self.collapsed_rows: dict[str, int] = {}
+        #: Optional column -> the tables that actually published it,
+        #: for the columns we then withheld because the others did not.
+        self.partial_columns: dict[str, tuple[str, ...]] = {}
 
         self._master: pd.DataFrame | None = None
         self._ticker_to_permaticker: pd.Series | None = None
         self._ambiguous_tickers: frozenset[str] = frozenset()
+        #: Which of `self._tables` the master actually has entities in,
+        #: and which table each entity belongs to. None in both cases
+        #: means TICKERS did not tell us, not that the answer is empty.
+        self._tables_present: frozenset[str] | None = None
+        self._entity_tables: dict[int, str] | None = None
+
+        # A source that cannot price a fund is not a lesser Sharadar,
+        # it is a source that cannot answer the question the sleeve
+        # layer asks. There is no capability flag for it and inventing
+        # one would mean amending the contract every source signs, so
+        # it goes in the name — the one string every report prints.
+        if not self.serves_fund_prices:
+            declared = type(self).capabilities
+            self.capabilities = replace(
+                declared,
+                name=(
+                    f"{declared.name} [{'+'.join(self._tables) or 'no price tables'} "
+                    "only — no fund prices, cannot price ETF sleeves]"
+                ),
+            )
+
+    @property
+    def serves_fund_prices(self) -> bool:
+        """Whether this source can return a bar for an ETF at all."""
+        return bool(FUND_PRICE_TABLES.intersection(self._tables))
 
     # -- the four frames ------------------------------------------------
 
@@ -251,6 +353,7 @@ class SharadarSource(DataSource):
         if "table" in raw.columns:
             raw = raw.loc[raw["table"].isin(self._tables)]
             rank = raw["table"].map({t: i for i, t in enumerate(self._tables)})
+            self._tables_present = frozenset(raw["table"].dropna().unique().tolist())
         else:
             rank = pd.Series(0, index=raw.index)
 
@@ -264,6 +367,18 @@ class SharadarSource(DataSource):
         keep = keep.sort_values(
             ["permaticker", "_rank", "_last"], ascending=[True, True, False]
         ).drop_duplicates(subset=["permaticker"], keep="first")
+
+        # Where an entity's bars live. Not a schema column — it is a
+        # fact about the vendor's plumbing, not about the security —
+        # but it is what lets a ticker filter go to the one table that
+        # can answer it instead of to both.
+        if "table" in keep.columns:
+            self._entity_tables = dict(
+                zip(
+                    keep["permaticker"].astype("int64").tolist(),
+                    keep["table"].astype("str").tolist(),
+                )
+            )
 
         cols: dict[str, pd.Series] = {
             "permaticker": keep["permaticker"],
@@ -303,44 +418,27 @@ class SharadarSource(DataSource):
         wanted = None if permatickers is None else [int(p) for p in permatickers]
 
         params = {"date.gte": start.isoformat(), "date.lte": end.isoformat()}
-        raw = self._pull_by_ticker("SEP", params, wanted)
-        if raw.empty:
+
+        frames: list[pd.DataFrame] = []
+        carried: dict[str, set[str]] = {}
+        served: list[str] = []
+        for table in self._populated_price_tables():
+            raw, answered = self._pull_prices(table, params, wanted, served)
+            if answered:
+                served.append(table)
+            if raw.empty:
+                continue
+            _require(raw, _PRICE_REQUIRED, table)
+            carried[table] = {c for c in _PRICE_OPTIONAL if c in raw.columns}
+            frames.append(self._bars(raw, table))
+
+        if not frames:
             return self._check(schema.PRICES.empty(), schema.PRICES)
 
-        _require(raw, _SEP_REQUIRED, "SEP")
-
-        close = _num(raw["close"])
-        close_unadj = _num(raw["closeunadj"])
-        factor = _split_factor(close, close_unadj)
-        self.unadjustable_rows += int((factor.isna() & close.notna()).sum())
-
-        cols: dict[str, pd.Series] = {
-            "ticker": raw["ticker"],
-            "date": raw["date"],
-            "open_unadj": _num(raw["open"]) / factor,
-            "high_unadj": _num(raw["high"]) / factor,
-            "low_unadj": _num(raw["low"]) / factor,
-            "close_unadj": close_unadj,
-            # Volume moves the other way: a 2-for-1 split doubles the
-            # historical share count in the adjusted series, so the
-            # as-traded figure is the adjusted one scaled BY the factor
-            # rather than divided by it.
-            "volume_unadj": _num(raw["volume"]) * factor,
-            "close_adj": _num(raw["closeadj"]),
-            "split_factor": factor,
-        }
-        if "dividends" in raw.columns:
-            # The vendor does not say which basis `dividends` is quoted
-            # on. It sits in a row of split-adjusted columns, so it is
-            # passed through on the conservative assumption that it
-            # shares their basis — which means nothing should compute a
-            # yield against `close_unadj` from it without first looking
-            # at a name that has split since.
-            cols["dividends"] = _num(raw["dividends"])
-        if "lastupdated" in raw.columns:
-            cols["last_updated"] = raw["lastupdated"]
-
-        out = self._attach_permaticker(pd.DataFrame(cols), "prices")
+        out = pd.concat(frames, ignore_index=True)
+        out = self._align_optional(out, carried)
+        out = self._attach_permaticker(out, "prices")
+        self._one_price_table_per_entity(out)
         out = _typed(out, schema.PRICES)
         # Re-apply everything we asked the API for. A filter that did
         # not mean what we thought it meant is the failure that leaves
@@ -462,6 +560,146 @@ class SharadarSource(DataSource):
         ).reset_index(drop=True)
         return self._check(out, schema.FUNDAMENTALS)
 
+    # -- prices, read across both tables --------------------------------
+
+    def _populated_price_tables(self) -> tuple[str, ...]:
+        """The configured price tables the master has entities in.
+
+        A pull against a table holding none of our entities can only
+        return rows the join would drop, and it costs the whole table
+        to find that out. Where TICKERS carries no `table` column we
+        cannot know which is which, and pulling all of them is then the
+        only honest answer — a skip on a guess would look exactly like
+        a vendor with no funds in it.
+        """
+        self.security_master()
+        present = self._tables_present
+        if present is None:
+            return self._tables
+        return tuple(t for t in self._tables if t in present)
+
+    def _pull_prices(
+        self,
+        table: str,
+        params: dict[str, str],
+        wanted: Sequence[int] | None,
+        served: Sequence[str],
+    ) -> tuple[pd.DataFrame, bool]:
+        """One table's rows, and whether the table actually answered.
+
+        The second half of that is not bookkeeping. `served` is the
+        evidence the fund-price receipt cites — SEP answered in the
+        same call, so your key is fine, so what you are missing is a
+        product — and a table nobody asked has corroborated nothing. A
+        request for one ETF is the ordinary case here and it is exactly
+        the case where SEP holds none of the wanted entities and is
+        skipped without a round trip, so the unqualified version of
+        that sentence is at its most confident precisely when it is
+        least entitled to be. A dead key would then read as an unbought
+        add-on.
+        """
+        if wanted is not None and not self._tickers_for(wanted, table):
+            return pd.DataFrame(), False
+        try:
+            return self._pull_by_ticker(table, params, wanted, home_table=table), True
+        except SharadarNotEntitled as refusal:
+            if refusal.table not in FUND_PRICE_TABLES:
+                raise
+            raise _unbought_fund_prices(refusal, served) from refusal
+
+    def _bars(self, raw: pd.DataFrame, table: str) -> pd.DataFrame:
+        """One table's rows, in our columns, tagged with their origin."""
+        close = _num(raw["close"])
+        close_unadj = _num(raw["closeunadj"])
+        factor = _split_factor(close, close_unadj)
+        self.unadjustable_rows += int((factor.isna() & close.notna()).sum())
+
+        cols: dict[str, pd.Series] = {
+            "ticker": raw["ticker"],
+            "date": raw["date"],
+            "open_unadj": _num(raw["open"]) / factor,
+            "high_unadj": _num(raw["high"]) / factor,
+            "low_unadj": _num(raw["low"]) / factor,
+            "close_unadj": close_unadj,
+            # Volume moves the other way: a 2-for-1 split doubles the
+            # historical share count in the adjusted series, so the
+            # as-traded figure is the adjusted one scaled BY the factor
+            # rather than divided by it.
+            "volume_unadj": _num(raw["volume"]) * factor,
+            "close_adj": _num(raw["closeadj"]),
+            "split_factor": factor,
+        }
+        if "dividends" in raw.columns:
+            # The vendor does not say which basis `dividends` is quoted
+            # on. It sits in a row of split-adjusted columns, so it is
+            # passed through on the conservative assumption that it
+            # shares their basis — which means nothing should compute a
+            # yield against `close_unadj` from it without first looking
+            # at a name that has split since.
+            cols["dividends"] = _num(raw["dividends"])
+        if "lastupdated" in raw.columns:
+            cols["last_updated"] = raw["lastupdated"]
+
+        frame = pd.DataFrame(cols)
+        frame[_SOURCE_TABLE] = table
+        return frame
+
+    def _align_optional(
+        self, df: pd.DataFrame, carried: dict[str, set[str]]
+    ) -> pd.DataFrame:
+        """Withhold an optional column only one of the tables published.
+
+        Concatenation fills the gap with nulls, and a null in
+        `dividends` is indistinguishable from a fund that paid nothing.
+        Dropping the column says "we do not have this" once, loudly,
+        instead of saying "zero" a million times; `partial_columns`
+        keeps the names of the tables that did publish it, so the loss
+        is countable rather than folklore.
+        """
+        if len(carried) < 2:
+            return df
+        for vendor, ours in _PRICE_OPTIONAL.items():
+            have = tuple(t for t, cols in carried.items() if vendor in cols)
+            if have and len(have) < len(carried) and ours in df.columns:
+                self.partial_columns[ours] = have
+                df = df.drop(columns=[ours])
+        return df
+
+    def _one_price_table_per_entity(self, df: pd.DataFrame) -> None:
+        """Hold the vendor to the rule the concatenation depends on.
+
+        TICKERS puts every security in exactly one price table, which
+        is the only reason SEP and SFP can be stacked without checking
+        for collisions row by row. If that ever stopped being true the
+        schema would catch it a few lines later as a duplicate
+        (permaticker, date) — and say nothing about which two rows, or
+        why, or that two products had both priced one security. One
+        hash pass over a frame we have just spent minutes downloading
+        is a cheap price for an error that names the entity.
+
+        Note this is a check on ENTITIES, not on symbols. A dead
+        company's ticker being reissued to an ETF puts the same string
+        in both tables legitimately; the permaticker is what says
+        whether it is the same security, and the ambiguous-ticker drop
+        already handles the string.
+        """
+        if len(self._tables) < 2 or df.empty:
+            return
+        pairs = df[["permaticker", _SOURCE_TABLE]].drop_duplicates()
+        doubled = pairs["permaticker"].duplicated()
+        if not bool(doubled.any()):
+            return
+        offenders = sorted({int(p) for p in pairs.loc[doubled, "permaticker"]})
+        shown = ", ".join(str(p) for p in offenders[:5])
+        raise SharadarApiError(
+            f"{len(offenders):,} entity(ies) were priced by more than one of "
+            f"{list(self._tables)} over this range — permaticker {shown}"
+            f"{' and others' if len(offenders) > 5 else ''}. A security "
+            "belongs to exactly one price table, so this is a vendor "
+            "contradiction and not a duplicate to be collapsed: nothing "
+            "here can say which of the two bars is the real one."
+        )
+
     # -- permaticker resolution -----------------------------------------
 
     def _attach_permaticker(self, df: pd.DataFrame, frame: str) -> pd.DataFrame:
@@ -506,11 +744,20 @@ class SharadarSource(DataSource):
         self._ticker_map()
         return self._ambiguous_tickers
 
-    def _tickers_for(self, permatickers: Sequence[int]) -> list[str]:
+    def _tickers_for(
+        self, permatickers: Sequence[int], home_table: str | None = None
+    ) -> list[str]:
         wanted = {int(p) for p in permatickers}
         master = self.security_master()
-        hit = master.loc[master["permaticker"].isin(wanted), "ticker"]
-        return sorted(hit.dropna().tolist())
+        hit = master.loc[master["permaticker"].isin(wanted)]
+        if home_table is not None and self._entity_tables:
+            # Asking SEP for three thousand ETF symbols is not wrong so
+            # much as expensive: at fifty tickers a request it is sixty
+            # paginated round trips against a rate limit, spent being
+            # told what TICKERS had already said. SF1 passes no home
+            # table and is therefore never narrowed this way.
+            hit = hit.loc[hit["permaticker"].map(self._entity_tables).eq(home_table)]
+        return sorted(hit["ticker"].dropna().tolist())
 
     # -- HTTP -----------------------------------------------------------
 
@@ -519,15 +766,19 @@ class SharadarSource(DataSource):
         table: str,
         params: dict[str, str],
         permatickers: Sequence[int] | None,
+        *,
+        home_table: str | None = None,
     ) -> pd.DataFrame:
         if permatickers is None:
             return self._pull_cached(table, params)
 
-        tickers = self._tickers_for(permatickers)
+        tickers = self._tickers_for(permatickers, home_table)
         if not tickers:
             # An explicit empty selection is a request for nothing, not
             # a request for everything. Getting this backwards pulls
-            # the entire panel and looks like a slow network.
+            # the entire panel and looks like a slow network. The same
+            # holds when none of the requested entities live in this
+            # table — a fund table with no funds asked of it.
             return pd.DataFrame()
 
         pages = [
@@ -640,10 +891,12 @@ class SharadarSource(DataSource):
             # Everything below is an answer. Asking again returns it
             # again, more slowly, against the same rate limit.
             if response.status_code in (401, 403):
-                raise SourceUnavailable(
+                raise SharadarNotEntitled(
                     f"Nasdaq Data Link refused the key for SHARADAR/{table} "
                     f"(HTTP {response.status_code}) — {detail}. This is a "
-                    "credentials or subscription problem, not an empty result."
+                    "credentials or subscription problem, not an empty result.",
+                    table=table,
+                    status=response.status_code,
                 )
             if response.status_code == 404:
                 raise SharadarApiError(
@@ -707,6 +960,45 @@ def _api_key_from_env() -> str:
         "QUANDL_API_KEY is set in the environment. This is a missing key, "
         "NOT an empty result — an unconfigured source and a range with no "
         "rows in it look identical one layer down and mean opposite things."
+    )
+
+
+def _unbought_fund_prices(
+    refusal: SharadarNotEntitled, served: Sequence[str]
+) -> SourceUnavailable:
+    """Say which PRODUCT is missing, not just which call failed.
+
+    This is the message the whole two-table split exists to get right.
+    Sharadar sells stock prices and fund prices separately, so the
+    ordinary way to arrive here is with a perfectly good key that
+    bought the equities bundle — SEP answers, SFP does not, and the
+    ETFs simply are not there. Left to the generic wording that is a
+    403 on a table nobody has heard of, which reads as our bug or as
+    an empty vendor, and costs somebody a day of reading this file
+    before they think to check what was purchased. It is a receipt,
+    and it should say so.
+    """
+    others = ", ".join(f"SHARADAR/{t}" for t in served)
+    corroboration = (
+        f"{others} answered normally in the same call, so the key itself "
+        "is fine and this is a product you have not bought"
+        if served
+        else "No other price table was read first, so check the key as well "
+        "— but a key that works everywhere else and fails here is a "
+        "product you have not bought"
+    )
+    return SourceUnavailable(
+        f"SHARADAR/{refusal.table} refused the key (HTTP {refusal.status}). "
+        f"{corroboration}. SFP — ETFs, closed-end funds and ETNs — is sold "
+        "as its own Nasdaq Data Link product; the Core US Equities bundle "
+        "(SEP, SF1, ACTIONS, TICKERS) does NOT include fund prices, and SEP "
+        "excludes funds by design rather than by omission. So this is NOT "
+        "'there is no ETF data': every sleeve in this project and the SPY "
+        "benchmark price out of SFP and nowhere else, and none of them can "
+        "be backtested until the fund-price product is on the key. Buy it, "
+        'or pass tables=("SEP",) to state out loud that this run is '
+        "single-name equities only — that source can never return an ETF "
+        f"bar. Vendor said: {refusal}"
     )
 
 

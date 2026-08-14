@@ -174,16 +174,22 @@ def test_a_blocking_defect_costs_the_dataset_its_certificate(bias: Bias):
         assert not report.usable_for_research
 
 
-def test_an_unrecorded_split_is_advisory_and_says_so():
-    # Worth pinning because it is the surprising one: the panel still
-    # certifies. An unexplained 75% move is a bad bar rather than a
-    # structurally invalid dataset, and a check that vetoed the whole
-    # pull over one would teach people to ignore the headline.
+def test_an_unrecorded_split_costs_the_dataset_its_certificate():
+    # Advisory until the reasoning was looked at again, and the tiering
+    # is what makes blocking safe: a handful of odd bars in a million
+    # lands on WARN and only colours the report. Getting past WARN means
+    # the gap between the prices and the action record is systematic,
+    # and that is nearly always splits nobody wrote down. Those print a
+    # 75% single-session loss on a day nothing happened — the largest
+    # fake returns in the panel, and exactly what a cross-sectional
+    # strategy hunts. Momentum reads catastrophe, reversion reads a
+    # screaming buy, and both of them trade it.
     report = audit(Bias.UNRECORDED_SPLITS)
     jumps = by_key(report, "quality.unexplained_jumps")
     assert jumps.verdict is Verdict.FAIL
-    assert not jumps.blocking
-    assert report.verdict is Verdict.PASS
+    assert jumps.blocking
+    assert report.verdict is Verdict.FAIL
+    assert not report.usable_for_research
 
 
 # -- the biases are distinguishable from one another ---------------------

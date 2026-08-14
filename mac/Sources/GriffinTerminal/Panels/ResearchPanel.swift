@@ -621,6 +621,8 @@ struct Draft: Decodable, Identifiable {
     let screenReason: String?
     let screenFindings: Findings?
     let sentAt: String?
+    // Written into a mail client and scheduled, not yet gone.
+    let queuedAt: String?
     let rejectedAt: String?
     let reviewNote: String?
     let sentBy: ProjectFull.Person?
@@ -2528,6 +2530,21 @@ private struct DraftCard: View {
                              : "The compliance screen blocks this — edit it"))
 
                     if d.fullyApproved == true {
+                        // Sending is manual, so a letter can sit
+                        // written and scheduled for days. Without this
+                        // the list reads "ready" for something already
+                        // queued, and the cure for that ambiguity is
+                        // pasting it a second time.
+                        Button(d.queuedAt == nil ? "Mark in drafts" : "In drafts \u{2713}") {
+                            Task { await run {
+                                _ = try await API.shared.post("/research/drafts/\(d.id)/queued", json: [:])
+                            } }
+                        }
+                        .buttonStyle(TermButtonStyle()).disabled(busy)
+                        .help(d.queuedAt == nil
+                              ? "Pasted into your mail client and scheduled, but not gone yet"
+                              : "Queued. Press again if it is not actually sitting in your drafts.")
+
                         Button("Mark sent") {
                             Task { await run {
                                 _ = try await API.shared.post("/research/drafts/\(d.id)/sent", json: [:])

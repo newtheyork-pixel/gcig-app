@@ -112,6 +112,7 @@ model User {
   outreachDraftsWritten     OutreachDraft[]       @relation("OutreachDraftAuthor")
   outreachDraftsRejected    OutreachDraft[]       @relation("OutreachDraftRejecter")
   outreachDraftsSent        OutreachDraft[]       @relation("OutreachDraftSender")
+  outreachDraftsQueued      OutreachDraft[]       @relation("OutreachDraftQueuer")
   outreachDraftsMinorEdited OutreachDraft[]       @relation("OutreachDraftMinorEditor")
   outreachApprovals         OutreachApproval[]    @relation("OutreachApprover")
   outreachMessagesLogged    OutreachMessage[]     @relation("OutreachReplyRecorder")
@@ -1298,6 +1299,23 @@ model OutreachDraft {
   minorEditById Int?
   minorEditBy   User?     @relation("OutreachDraftMinorEditor", fields: [minorEditById], references: [id], onDelete: SetNull)
   minorEditNote String?
+
+  // Sitting in somebody's mail client, written but not gone.
+  //
+  // Sending is manual here: the app never touches a mailbox, a person
+  // copies the draft and pastes it. Across a hundred letters queued over
+  // five days that leaves a gap the funnel could not see, because "not
+  // sent" covered both "nobody has touched this" and "this is scheduled
+  // to leave on Tuesday". Those need different work from the person
+  // looking at the list, and conflating them is how a draft gets pasted
+  // twice.
+  //
+  // Deliberately NOT a status on the target. The target is Contacted
+  // when something actually reached them; a scheduled send has reached
+  // nobody yet and must not start a follow-up clock.
+  queuedAt   DateTime?
+  queuedById Int?
+  queuedBy   User?     @relation("OutreachDraftQueuer", fields: [queuedById], references: [id], onDelete: SetNull)
 
   sentAt   DateTime?
   sentById Int?

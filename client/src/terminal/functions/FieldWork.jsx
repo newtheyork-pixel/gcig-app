@@ -3515,9 +3515,26 @@ function DraftCard({ d, target, replies = [], busy, copied, onCopy, onRun }) {
             {copied ? 'Copied' : 'Copy to send'}
           </TermButton>
           {d.fullyApproved ? (
-            <TermButton disabled={busy} onClick={() => onRun(() => api.post(`/research/drafts/${d.id}/sent`))}>
-              Mark sent
-            </TermButton>
+            <>
+              {/* Sending is manual, so a letter can sit written and
+                  scheduled in a mail client for days. Without this the
+                  list says "ready" for something already queued, and the
+                  cure for that ambiguity is pasting it a second time. */}
+              <TermButton
+                disabled={busy}
+                title={
+                  d.queuedAt
+                    ? 'Queued. Press again if it is not actually sitting in your drafts.'
+                    : 'Pasted into your mail client and scheduled, but not gone yet'
+                }
+                onClick={() => onRun(() => api.post(`/research/drafts/${d.id}/queued`))}
+              >
+                {d.queuedAt ? 'In drafts ✓' : 'Mark in drafts'}
+              </TermButton>
+              <TermButton disabled={busy} onClick={() => onRun(() => api.post(`/research/drafts/${d.id}/sent`))}>
+                Mark sent
+              </TermButton>
+            </>
           ) : null}
         </div>
       ) : null}

@@ -6,8 +6,19 @@ a test can stand in for both, and a suite that needed a key would only
 ever run on the one machine that has one — which is the same as not
 running.
 
-Four vendor facts are on trial here, and each of them has already cost
+Five vendor facts are on trial here, and each of them has already cost
 somebody a dataset.
+
+Prices come from two products, not one. SEP is common stock and
+excludes ETFs, CEFs and ETNs; SFP is where those live, and Nasdaq sells
+it separately. Every sleeve this project trades is an ETF and so is the
+SPY benchmark, so the tests below care about three things in that
+order: that both tables are read, that a security priced by both is an
+error rather than a duplicate, and — most of all — that a key which
+bought only the equities bundle is told it bought only the equities
+bundle. The last one is a message test, deliberately, because the
+failure it guards against is not a wrong number. It is a right number
+that never arrives, dressed up as a market with no ETFs in it.
 
 Pagination is not an optimisation. The API answers at most ten thousand
 rows whatever you ask for and says nothing about the truncation, so an
@@ -42,6 +53,7 @@ from griffinquant.data.base import SourceUnavailable
 from griffinquant.data.sharadar import (
     MAX_ATTEMPTS,
     SharadarApiError,
+    SharadarNotEntitled,
     SharadarSource,
 )
 
@@ -142,10 +154,30 @@ TICKERS_ROWS = [
      "N", "2015-07-01", "2020-12-31", "Materials", "USD"],
 ]
 
+#: The other half of the panel, and the half that is a separate
+#: purchase. Nothing in the four rows above is an ETF, because SEP
+#: contains none — which is why every SEP-only test in this file still
+#: passes on a source configured for both tables.
+SFP_TICKERS_ROWS = [
+    ["SFP", 200_001, "SPY", "SPDR S&P 500 ETF Trust", "NYSEARCA", "ETF",
+     "N", "2005-01-03", "2020-12-31", "", "USD"],
+    ["SFP", 200_002, "IEF", "iShares 7-10 Year Treasury Bond ETF", "NASDAQ", "ETF",
+     "N", "2005-01-03", "2020-12-31", "", "USD"],
+]
+
+BOTH_TABLES_ROWS = TICKERS_ROWS + SFP_TICKERS_ROWS
+
 SEP_COLUMNS = [
     "ticker", "date", "open", "high", "low", "close", "volume",
     "closeadj", "closeunadj", "dividends", "lastupdated",
 ]
+
+#: SFP publishes the same bar. Its documentation page lists the same
+#: filter columns, uses the same column example and reprints SEP's
+#: adjustment definitions word for word, so one row builder serves
+#: both — and `_require` is still called per table, so the day that
+#: stops being true the error will name SFP.
+SFP_COLUMNS = SEP_COLUMNS
 
 
 def sep_row(ticker: str, day: str, *, close: float, unadj: float) -> list[Any]:
@@ -569,6 +601,367 @@ def test_a_selection_is_re_applied_after_the_join():
 
     assert list(prices["permaticker"]) == [100_001]
     assert session.query("SEP")["ticker"] == "AAA"
+
+
+# -- two price tables ----------------------------------------------------
+
+
+def test_the_master_spans_both_price_tables_by_default():
+    # A default of SEP alone cannot return a single ETF bar, and every
+    # sleeve in this project is an ETF.
+    src, _, _ = source(serve(tickers=datatable(TICKERS_COLUMNS, BOTH_TABLES_ROWS)))
+
+    master = src.security_master()
+
+    assert sorted(master["permaticker"]) == [
+        100_001, 100_002, 100_003, 100_004, 200_001, 200_002,
+    ]
+    assert src.serves_fund_prices is True
+    assert "cannot price ETF sleeves" not in src.capabilities.name
+
+
+@pytest.mark.parametrize(
+    "tables, expected",
+    [
+        (("SEP",), [100_001, 100_002, 100_003, 100_004]),
+        (("SFP",), [200_001, 200_002]),
+    ],
+)
+def test_narrowing_the_tables_narrows_the_master(tables, expected):
+    # The master is filtered to the tables bars will actually be pulled
+    # from, so an entity appearing in it is a promise we can price it.
+    # A master listing ETFs `prices()` will never ask for reads
+    # downstream as a coverage hole rather than as a decision made here.
+    src, _, _ = source(
+        serve(tickers=datatable(TICKERS_COLUMNS, BOTH_TABLES_ROWS)), tables=tables
+    )
+    assert sorted(src.security_master()["permaticker"]) == expected
+
+
+def test_a_source_that_cannot_price_a_fund_says_so_in_its_own_name():
+    # There is no capability flag for this and inventing one would mean
+    # amending the contract every source signs, so it goes in the one
+    # string every report prints.
+    src, _, _ = source(serve(), tables=("SEP",))
+
+    assert src.serves_fund_prices is False
+    assert "SEP only" in src.capabilities.name
+    assert "cannot price ETF sleeves" in src.capabilities.name
+    assert "cannot price ETF sleeves" in src.label
+
+
+def test_prices_reads_both_tables_and_the_fund_bars_come_back():
+    src, session, _ = source(
+        serve(
+            tickers=datatable(TICKERS_COLUMNS, BOTH_TABLES_ROWS),
+            sep=datatable(
+                SEP_COLUMNS, [sep_row("AAA", "2008-06-02", close=50.0, unadj=50.0)]
+            ),
+            sfp=datatable(
+                SFP_COLUMNS, [sep_row("SPY", "2008-06-02", close=130.0, unadj=130.0)]
+            ),
+        )
+    )
+
+    prices = src.prices(date(2008, 1, 1), date(2008, 12, 31))
+
+    schema.PRICES.validate(prices)
+    assert session.tables_called() == ["TICKERS", "SEP", "SFP"]
+    assert list(prices["ticker"]) == ["AAA", "SPY"]
+    fund = prices.loc[prices["ticker"] == "SPY"].iloc[0]
+    assert fund["permaticker"] == 200_001
+    assert fund["close_unadj"] == pytest.approx(130.0)
+    assert fund["close_adj"] == pytest.approx(136.5)
+    # The column tagging each bar with the table it came from is
+    # plumbing, not a fact about the security. Nothing above the
+    # adapter should ever be able to read it.
+    named = set(schema.PRICES.required) | set(schema.PRICES.optional)
+    assert set(prices.columns) <= named
+
+
+def test_each_table_is_asked_only_for_the_tickers_that_live_in_it():
+    # Asking SEP for three thousand ETF symbols is not wrong so much as
+    # expensive: sixty paginated round trips against a rate limit, spent
+    # being told what TICKERS had already said.
+    src, session, _ = source(
+        serve(
+            tickers=datatable(TICKERS_COLUMNS, BOTH_TABLES_ROWS),
+            sep=datatable(
+                SEP_COLUMNS, [sep_row("AAA", "2008-06-02", close=50.0, unadj=50.0)]
+            ),
+            sfp=datatable(
+                SFP_COLUMNS, [sep_row("SPY", "2008-06-02", close=130.0, unadj=130.0)]
+            ),
+        )
+    )
+
+    prices = src.prices(
+        date(2008, 1, 1), date(2008, 12, 31), permatickers=[100_001, 200_001]
+    )
+
+    assert session.query("SEP")["ticker"] == "AAA"
+    assert session.query("SFP")["ticker"] == "SPY"
+    assert list(prices["ticker"]) == ["AAA", "SPY"]
+
+
+def test_an_optional_column_only_one_table_publishes_is_withheld_and_recorded():
+    # Concatenation fills the gap with nulls, and a null in `dividends`
+    # is indistinguishable from a fund that paid nothing. Saying "we do
+    # not have this" once is better than saying "zero" a million times.
+    without = [c for c in SFP_COLUMNS if c != "dividends"]
+    fund = [
+        v
+        for c, v in zip(SFP_COLUMNS, sep_row("SPY", "2008-06-02", close=130.0, unadj=130.0))
+        if c != "dividends"
+    ]
+    src, _, _ = source(
+        serve(
+            tickers=datatable(TICKERS_COLUMNS, BOTH_TABLES_ROWS),
+            sep=datatable(
+                SEP_COLUMNS, [sep_row("AAA", "2008-06-02", close=50.0, unadj=50.0)]
+            ),
+            sfp=datatable(without, [fund]),
+        )
+    )
+
+    prices = src.prices(date(2008, 1, 1), date(2008, 12, 31))
+
+    assert "dividends" not in prices.columns
+    assert src.partial_columns == {"dividends": ("SEP",)}
+    # A column BOTH tables published survives; the withholding is per
+    # column, not a blanket retreat to the intersection of the schemas.
+    assert "last_updated" in prices.columns
+
+
+def test_one_entity_priced_by_both_tables_is_named_rather_than_collapsed():
+    # A security belongs to exactly one price table, and that is the
+    # only reason SEP and SFP can be stacked without checking for
+    # collisions row by row. Left to the schema this surfaces four
+    # lines later as a duplicate (permaticker, date) that says nothing
+    # about which two rows, or why, or that two products had both
+    # priced one security.
+    fund = sep_row("SPY", "2008-06-02", close=130.0, unadj=130.0)
+    src, _, _ = source(
+        serve(
+            tickers=datatable(TICKERS_COLUMNS, BOTH_TABLES_ROWS),
+            sep=datatable(
+                SEP_COLUMNS,
+                [sep_row("AAA", "2008-06-02", close=50.0, unadj=50.0), fund],
+            ),
+            sfp=datatable(SFP_COLUMNS, [fund]),
+        )
+    )
+
+    with pytest.raises(SharadarApiError) as exc:
+        src.prices(date(2008, 1, 1), date(2008, 12, 31))
+
+    message = str(exc.value)
+    assert "1 entity(ies)" in message
+    assert "permaticker 200001" in message
+    assert "['SEP', 'SFP']" in message
+    assert "vendor contradiction and not a duplicate to be collapsed" in message
+
+
+def test_the_same_symbol_in_both_tables_is_not_the_same_security():
+    # A dead company's ticker reissued to an ETF puts one string in both
+    # tables legitimately. The permaticker is what says whether it is
+    # one security, and the ambiguous-symbol drop already handles the
+    # string — so this must not trip the contradiction check.
+    reissued = list(SFP_TICKERS_ROWS[0])
+    reissued[2] = "ZZZ"
+    src, _, _ = source(
+        serve(
+            tickers=datatable(TICKERS_COLUMNS, TICKERS_ROWS + [reissued]),
+            sep=datatable(
+                SEP_COLUMNS, [sep_row("ZZZ", "2008-06-02", close=50.0, unadj=50.0)]
+            ),
+            sfp=datatable(
+                SFP_COLUMNS, [sep_row("ZZZ", "2008-06-03", close=130.0, unadj=130.0)]
+            ),
+        )
+    )
+
+    prices = src.prices(date(2008, 1, 1), date(2008, 12, 31))
+
+    # Two entities wore ZZZ, so neither bar can be attributed from the
+    # string. Both are dropped and both are counted — which is a very
+    # different outcome from being merged into one series.
+    assert len(prices) == 0
+    assert src.unresolved_rows == 2
+    assert src.ambiguous_tickers == frozenset({"DUP", "ZZZ"})
+
+
+def test_a_refusal_on_the_fund_table_names_the_product_it_is_missing():
+    # This is the test that protects the person who bought the wrong
+    # bundle. The generic wording is a 403 on a table nobody has heard
+    # of, which reads as our bug or as a vendor with no ETFs in it, and
+    # costs somebody a day of reading the adapter before they think to
+    # check what was purchased.
+    src, session, _ = source(
+        serve(
+            tickers=datatable(TICKERS_COLUMNS, BOTH_TABLES_ROWS),
+            sep=datatable(
+                SEP_COLUMNS, [sep_row("AAA", "2008-06-02", close=50.0, unadj=50.0)]
+            ),
+            sfp=vendor_error(403, "QEPx05", "You do not have permission"),
+        )
+    )
+
+    with pytest.raises(SourceUnavailable) as exc:
+        src.prices(date(2008, 1, 1), date(2008, 12, 31))
+
+    message = str(exc.value)
+    # Which table was refused, and the corroboration that the key is not
+    # the problem.
+    assert "SHARADAR/SFP refused the key (HTTP 403)" in message
+    assert "SHARADAR/SEP answered normally in the same call" in message
+    assert "this is a product you have not bought" in message
+    # The product, by name, and what its absence costs.
+    assert "sold as its own Nasdaq Data Link product" in message
+    assert "Core US Equities bundle" in message
+    assert "SPY benchmark price out of SFP and nowhere else" in message
+    assert 'pass tables=("SEP",)' in message
+    # And the sentence the whole two-table split exists to get right.
+    assert "this is NOT 'there is no ETF data'" in message
+    # A refusal is an answer. Retrying it burns the rate limit and turns
+    # a subscription gap into a reported outage.
+    assert session.tables_called() == ["TICKERS", "SEP", "SFP"]
+    # The receipt is a rewording, never a replacement: the vendor's own
+    # refusal is still underneath it, table and status intact.
+    assert isinstance(exc.value.__cause__, SharadarNotEntitled)
+    assert exc.value.__cause__.table == "SFP"
+    assert exc.value.__cause__.status == 403
+
+
+def test_a_table_we_never_asked_cannot_corroborate_a_refusal():
+    # Requesting a single ETF is the ordinary case here — it is what
+    # every Layer 1 sleeve does — and it is exactly the case where none
+    # of the wanted entities live in SEP, so SEP is never called at all.
+    # Citing its success there cites a call that did not happen, and it
+    # would talk somebody out of checking a key that is genuinely dead.
+    src, session, _ = source(
+        serve(
+            tickers=datatable(TICKERS_COLUMNS, BOTH_TABLES_ROWS),
+            sfp=vendor_error(403, "QEPx05", "You do not have permission"),
+        )
+    )
+
+    with pytest.raises(SourceUnavailable) as exc:
+        src.prices(date(2008, 1, 1), date(2008, 12, 31), permatickers=[200_001])
+
+    message = str(exc.value)
+    assert session.tables_called() == ["TICKERS", "SFP"]
+    assert "answered normally in the same call" not in message
+    assert "No other price table was read first, so check the key as well" in message
+
+
+def test_a_refusal_on_the_stock_table_is_not_dressed_up_as_a_fund_product():
+    # SEP is in the bundle everybody has. A 403 there is a credentials
+    # problem, and telling that person to go and buy SFP sends them to
+    # spend money on the wrong thing.
+    src, session, _ = source(
+        serve(
+            tickers=datatable(TICKERS_COLUMNS, BOTH_TABLES_ROWS),
+            sep=vendor_error(401, "QEPx01", "invalid key"),
+        )
+    )
+
+    with pytest.raises(SharadarNotEntitled) as exc:
+        src.prices(date(2008, 1, 1), date(2008, 12, 31))
+
+    message = str(exc.value)
+    assert "SHARADAR/SEP" in message
+    assert "not an empty result" in message
+    assert "bought" not in message
+    # The loop stops on the first table it cannot read: there is nothing
+    # to learn from asking the second, and a second 403 would be a
+    # second misleading sentence.
+    assert session.tables_called() == ["TICKERS", "SEP"]
+
+
+def test_a_404_on_the_fund_table_is_a_bug_here_and_not_an_unbought_product():
+    # A table code we got wrong and a product we did not buy are both
+    # 4xx and mean opposite things: one is fixed in this file, the other
+    # on an invoice.
+    src, session, _ = source(
+        serve(
+            tickers=datatable(TICKERS_COLUMNS, BOTH_TABLES_ROWS),
+            sep=datatable(
+                SEP_COLUMNS, [sep_row("AAA", "2008-06-02", close=50.0, unadj=50.0)]
+            ),
+            sfp=vendor_error(404, "QECx02", "no table"),
+        )
+    )
+
+    with pytest.raises(SharadarApiError) as exc:
+        src.prices(date(2008, 1, 1), date(2008, 12, 31))
+
+    assert "SHARADAR/SFP does not exist (404)" in str(exc.value)
+    assert "bought" not in str(exc.value)
+    assert session.tables_called().count("SFP") == 1
+
+
+def test_the_fund_table_is_paginated_and_throttled_exactly_as_the_stock_one_is():
+    # SFP is a second product, not a second code path — the cursor and
+    # the retry policy are the adapter's, not the table's.
+    pages = [
+        datatable(
+            SFP_COLUMNS,
+            [sep_row("SPY", "2008-06-02", close=130.0, unadj=130.0)],
+            cursor="page-2",
+        ),
+        vendor_error(429, "QELx01", "too many requests"),
+        datatable(
+            SFP_COLUMNS, [sep_row("IEF", "2008-06-03", close=82.0, unadj=82.0)]
+        ),
+    ]
+    seen: list[dict[str, str]] = []
+
+    def sfp(query, attempt):
+        seen.append(query)
+        return pages[len(seen) - 1]
+
+    src, _, slept = source(
+        serve(tickers=datatable(TICKERS_COLUMNS, BOTH_TABLES_ROWS), sfp=sfp),
+        tables=("SFP",),
+    )
+
+    prices = src.prices(date(2008, 1, 1), date(2008, 12, 31))
+
+    assert list(prices["ticker"]) == ["SPY", "IEF"]
+    assert "qopts.cursor_id" not in seen[0]
+    assert seen[1]["qopts.cursor_id"] == "page-2"
+    assert slept == [0.5]
+
+
+def test_a_sep_only_source_never_reaches_for_the_fund_table():
+    # `serve` refuses any call a test did not plan for, so leaving SFP
+    # out of the routing table is the assertion.
+    src, session, _ = source(
+        serve(
+            tickers=datatable(TICKERS_COLUMNS, BOTH_TABLES_ROWS),
+            sep=datatable(
+                SEP_COLUMNS, [sep_row("AAA", "2008-06-02", close=50.0, unadj=50.0)]
+            ),
+        ),
+        tables=("SEP",),
+    )
+
+    prices = src.prices(date(2008, 1, 1), date(2008, 12, 31))
+
+    schema.PRICES.validate(prices)
+    assert list(prices["ticker"]) == ["AAA"]
+    assert session.tables_called() == ["TICKERS", "SEP"]
+
+
+def test_the_two_price_tables_do_not_share_a_cache_key():
+    # Same range, same filter, different product. A shared key would
+    # serve SEP's stocks to a query for funds and the frame would
+    # validate perfectly on the way out.
+    from griffinquant.data.sharadar import _cache_key
+
+    params = {"date.gte": "2008-01-01", "date.lte": "2008-12-31"}
+    assert _cache_key("SEP", params) != _cache_key("SFP", params)
 
 
 # -- the network stays out -----------------------------------------------
