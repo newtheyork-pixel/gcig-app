@@ -2486,7 +2486,35 @@ private struct DraftCard: View {
                     // draft cannot go out at all — rejected, or blocked by
                     // the compliance screen.
                     Button(copied ? "Copied" : "Copy to send") {
-                        let text = "Subject: \(d.subject)\n\n\(d.body)"
+                        // Address, subject and body in one block, in the
+                        // order the compose window asks for them. Pasting
+                        // the address separately from the text it belongs
+                        // to is a chance to put the right email in front
+                        // of the wrong person, and that failure does not
+                        // get taken back: internal research lands in a
+                        // stranger's inbox and an apology does not unsend
+                        // it.
+                        //
+                        // The To line names who they are as well as where
+                        // they are. A hundred of these go out over five
+                        // days and they are not interchangeable; seeing
+                        // "Co-Owner, Princess Bride Diamonds" at the
+                        // moment of sending is the last cheap chance to
+                        // notice the clipboard holds somebody else's
+                        // draft.
+                        let who = [target.role, target.employer]
+                            .compactMap { $0 }
+                            .filter { !$0.isEmpty }
+                            .joined(separator: ", ")
+                        let to: String
+                        if let addr = target.email, !addr.isEmpty {
+                            to = who.isEmpty
+                                ? "To: \(addr)"
+                                : "To: \(addr)   (\(target.name), \(who))"
+                        } else {
+                            to = "To: NO ADDRESS ON FILE for \(target.name), do not send"
+                        }
+                        let text = "\(to)\nSubject: \(d.subject)\n\n\(d.body)"
                         NSPasteboard.general.clearContents()
                         NSPasteboard.general.setString(text, forType: .string)
                         copied = true
