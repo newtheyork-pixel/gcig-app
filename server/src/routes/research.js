@@ -1596,9 +1596,23 @@ router.post('/drafts/:id/sent', canResearch, async (req, res) => {
       // Leaving the target on "Identified" after an email went out is
       // how someone gets written to twice.
       if (draft.targetId) {
+        // Contacted, but only as a floor. Sending a REPLY to somebody who
+        // has already agreed to talk must not drag them back down the
+        // funnel: Joshua Kanter said yes, was moved to Scheduled, and
+        // then answering him reset him to Contacted, which reads as
+        // nobody having heard from him. The timestamp always advances;
+        // the status only advances.
+        const t = await tx.researchTarget.findUnique({
+          where: { id: draft.targetId },
+          select: { status: true },
+        });
+        const AHEAD = new Set(['Scheduled', 'Completed', 'Declined']);
         await tx.researchTarget.update({
           where: { id: draft.targetId },
-          data: { status: 'Contacted', lastContactAt: new Date() },
+          data: {
+            ...(AHEAD.has(t?.status) ? {} : { status: 'Contacted' }),
+            lastContactAt: new Date(),
+          },
         });
       }
       return draft;
