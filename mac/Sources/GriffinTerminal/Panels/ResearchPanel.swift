@@ -2246,7 +2246,11 @@ private struct DraftsSection: View {
     @State private var bodyText = ""
 
     var body: some View {
-        let drafts = target.drafts ?? []
+        // Oldest first. A contact is a conversation and it reads forwards:
+        // the email we sent, the reply that came back underneath it, then
+        // whatever we sent next. Newest-first put our answer above the
+        // question it answered.
+        let drafts = (target.drafts ?? []).sorted { $0.id < $1.id }
         // Correspondence that never came from a draft in this app: a
         // thread run out of Outlook before the log existed, or one
         // started by a colleague. Without this it is stored and
@@ -2490,10 +2494,13 @@ private struct DraftCard: View {
 
                 // Copy sits on the closed row as well. Collapsing the card
                 // must not cost the one action the screen exists for.
-                if !isExpanded {
-                    Button(copied ? "Copied" : "Copy to send") { copyBlock(d) }
-                        .buttonStyle(TermButtonStyle())
-                }
+                // Copy is the action this screen exists for and it must
+                // never depend on whether the card is open or whether the
+                // email already went. Re-sending, forwarding and quoting a
+                // sent email are all real, and hunting for a button that
+                // moved is not a feature.
+                Button(copied ? "Copied" : "Copy to send") { copyBlock(d) }
+                    .buttonStyle(TermButtonStyle())
 
                 if isExpanded {
                     ScrollView {
