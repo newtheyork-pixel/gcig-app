@@ -165,22 +165,52 @@ enum Fmt {
         return f.string(from: NSNumber(value: v)) ?? "—"
     }
 
+    /// Twelve-hour, because that is the clock everyone here reads and the
+    /// one the mail client sitting next to these panels prints.
+    static let localStampFormat = "yyyy-MM-dd h:mm a"
+
+    /// What the old 24-hour stamps looked like. Still parsed, never written:
+    /// a year of muscle memory does not retire the day the format changes.
+    private static let legacyStampFormat = "yyyy-MM-dd HH:mm"
+
+    static let localStampHint = "YYYY-MM-DD H:MM AM/PM"
+
     /// Local wall-clock, which is what somebody reading a calendar is
     /// looking at. Converted to an instant on the way out so the server
     /// stores a real point in time and not a timezone-less string.
+    ///
+    /// The POSIX locale is not decoration. A fixed format string is parsed
+    /// against the user's own locale unless told otherwise, so `h:mm a`
+    /// stops matching the moment somebody turns on 24-Hour Time in System
+    /// Settings, and the AM/PM we wrote stops being the AM/PM it looks for.
     static func localStamp(_ date: Date = Date()) -> String {
         let f = DateFormatter()
-        f.dateFormat = "yyyy-MM-dd HH:mm"
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.dateFormat = localStampFormat
         return f.string(from: date)
     }
 
+    /// Accepts what we print and what we used to print.
+    ///
+    /// Order matters and is load-bearing: DateFormatter will happily match
+    /// a prefix and ignore the rest, so trying the 24-hour form first would
+    /// read "8:27 PM" as 08:27 and file a report eight hours before dinner
+    /// with nothing to show anything went wrong.
     static func isoFromLocal(_ local: String) -> String? {
+        let text = local.trimmingCharacters(in: .whitespaces)
+        guard !text.isEmpty else { return nil }
         let f = DateFormatter()
-        f.dateFormat = "yyyy-MM-dd HH:mm"
-        guard let d = f.date(from: local.trimmingCharacters(in: .whitespaces)) else { return nil }
-        let out = ISO8601DateFormatter()
-        out.formatOptions = [.withInternetDateTime]
-        return out.string(from: d)
+        f.locale = Locale(identifier: "en_US_POSIX")
+        for fmt in [localStampFormat, legacyStampFormat] {
+            f.dateFormat = fmt
+            // Uppercased second pass so a typed "pm" is not a failed save.
+            if let d = f.date(from: text) ?? f.date(from: text.uppercased()) {
+                let out = ISO8601DateFormatter()
+                out.formatOptions = [.withInternetDateTime]
+                return out.string(from: d)
+            }
+        }
+        return nil
     }
 
     static func pct(_ v: Double?, decimals: Int = 2, signed: Bool = true) -> String {

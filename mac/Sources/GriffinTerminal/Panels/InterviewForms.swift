@@ -133,7 +133,7 @@ struct NewInterviewForm: View {
         VStack(alignment: .leading, spacing: 6) {
             SourcePicker(sourceId: $sourceId, busy: $busy, run: run)
             FormRow("TITLE") { TermTextField(text: $title, placeholder: "Who, and what it was about") }
-            FormRow("WHEN") { TermTextField(text: $whenText, placeholder: "YYYY-MM-DD HH:MM") }
+            FormRow("WHEN") { TermTextField(text: $whenText, placeholder: Fmt.localStampHint) }
 
             Toggle(isOn: $consent) {
                 Text("They agreed to be recorded")
@@ -173,7 +173,7 @@ struct NewInterviewForm: View {
     private func submit() {
         guard let sid = sourceId else { return }
         guard let iso = Fmt.isoFromLocal(whenText) else {
-            error = "When did it happen? Use YYYY-MM-DD HH:MM."
+            error = "When did it happen? Use \(Fmt.localStampHint)."
             return
         }
         // Built inside the task rather than captured: [String: Any] is

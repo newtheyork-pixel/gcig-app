@@ -2554,7 +2554,7 @@ private struct DraftCard: View {
                               ? "Pasted into your mail client and scheduled, but not gone yet"
                               : "Queued. Press again if it is not actually sitting in your drafts.")
 
-                        Button("Mark sent") {
+                        Button("Mark as sent") {
                             Task { await run {
                                 _ = try await API.shared.post("/research/drafts/\(d.id)/sent", json: [:])
                             } }
@@ -2629,9 +2629,12 @@ private struct DraftCard: View {
                 Text("CORRESPONDENCE")
                     .font(Term.mono(9, weight: .bold)).tracking(0.6)
                     .foregroundStyle(Term.white)
+                // Only inbound gets logged by hand. "Log what we sent" was
+                // a second way to record an outbound email alongside Mark as
+                // sent, and two doors onto one fact is how the funnel and
+                // the thread end up disagreeing about whether we wrote.
+                // Marking the draft sent is the record of what we sent.
                 Button("Log a reply") { beginLog(out: false) }
-                    .buttonStyle(TermButtonStyle()).disabled(busy)
-                Button("Log what we sent") { beginLog(out: true) }
                     .buttonStyle(TermButtonStyle()).disabled(busy)
                 Spacer()
             }
@@ -2703,7 +2706,7 @@ private struct DraftCard: View {
                     // typed in. Logging a day late is normal and a
                     // defaulted stamp would put a false number under
                     // every interval measured off it.
-                    TextField("YYYY-MM-DD HH:MM", text: $replyWhen)
+                    TextField(Fmt.localStampHint, text: $replyWhen)
                         .textFieldStyle(.plain)
                         .font(Term.mono(10)).foregroundStyle(Term.white)
                         .padding(5).background(Term.bg).termBorder()
@@ -2792,20 +2795,13 @@ private struct DraftCard: View {
 
     /// Local wall-clock, which is what someone reading their inbox is
     /// looking at. Converted to an instant on the way out.
-    private static func nowLocal() -> String {
-        let f = DateFormatter()
-        f.dateFormat = "yyyy-MM-dd HH:mm"
-        return f.string(from: Date())
-    }
+    ///
+    /// Both defer to Fmt rather than keeping a second copy of the format:
+    /// this panel and the interview form ask the same question of the same
+    /// person, and two copies is how one of them ends up in another clock.
+    private static func nowLocal() -> String { Fmt.localStamp() }
 
-    private static func iso(from local: String) -> String? {
-        let f = DateFormatter()
-        f.dateFormat = "yyyy-MM-dd HH:mm"
-        guard let d = f.date(from: local.trimmingCharacters(in: .whitespaces)) else { return nil }
-        let out = ISO8601DateFormatter()
-        out.formatOptions = [.withInternetDateTime]
-        return out.string(from: d)
-    }
+    private static func iso(from local: String) -> String? { Fmt.isoFromLocal(local) }
 
     @ViewBuilder
     private func stateLine(_ d: Draft) -> some View {
