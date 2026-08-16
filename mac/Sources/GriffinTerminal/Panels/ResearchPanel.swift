@@ -1904,6 +1904,11 @@ private struct OutreachTab: View {
             // than at the moment somebody presses send.
             GmailConnectionRow()
 
+            // The batch and what has come back, next to the queue counts
+            // they refer to rather than on a screen of their own.
+            SendAllControl(projectID: p.id)
+            InboxSection()
+
             // Approval and compliance state on one line, because
             // "approved" and "screened" are different claims and a
             // reader who sees only the first will assume the second.
