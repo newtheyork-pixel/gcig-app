@@ -1813,6 +1813,153 @@ router.post('/drafts/:id/queued', canResearch, async (req, res) => {
  * message id, and the unique constraint on that id makes a second attempt
  * safe rather than duplicative.
  */
+/**
+ * Send every draft on a project that is genuinely ready.
+ *
+ * DRY RUN IS THE DEFAULT. `{"confirm": true}` is required to send anything,
+ * and the response to a dry run is the exact list that would go, by name
+ * and address, with a count. One click firing fifty irreversible actions
+ * deserves a preview that costs nothing and a commitment that is typed on
+ * purpose; making the safe call the default is the only version of that
+ * which survives somebody being in a hurry.
+ *
+ * Every draft passes the SAME gates as a single send, re-read from the
+ * database at the moment of sending rather than trusted from whatever the
+ * client last saw. A batch is not a reason to check less.
+ *
+ * Sends are sequential and paced. Gmail's per-user rate limit answers a
+ * burst with a 429 that would leave a batch half-delivered and no clear
+ * record of where it stopped, and a loop firing fifty concurrent requests
+ * is the shape that provokes it.
+ *
+ * Each result is reported individually. A batch that says "43 sent" and
+ * nothing else hides the seven that did not, and those seven are the only
+ * ones anybody needs to know about.
+ */
+router.post('/projects/:id/send-all', canResearch, async (req, res) => {
+  const projectId = Number(req.params.id);
+  if (!Number.isInteger(projectId)) return res.status(400).json({ error: 'Bad id' });
+  if (!gmailConfigured()) return res.status(503).json({ error: 'Gmail is not configured on this server' });
+  if (!maySendMail(req.user)) {
+    return res.status(403).json({ error: 'Sending mail from the terminal is limited to named senders.' });
+  }
+  const confirm = req.body?.confirm === true;
+  // A ceiling per call, not per day. Fifty is roughly a sitting, and a
+  // number somebody can still read before agreeing to it.
+  const LIMIT = Math.min(Number(req.body?.limit) || 50, 50);
+
+  try {
+    const drafts = await prisma.outreachDraft.findMany({
+      where: {
+        target: { projectId },
+        sentAt: null,
+        rejectedAt: null,
+        screenedAt: { not: null },
+        NOT: { screenRisk: 'prohibited' },
+      },
+      orderBy: { id: 'asc' },
+      include: { target: true },
+    });
+
+    // Sorted into what will go and what will not, with a reason on each
+    // exclusion. A draft silently missing from a batch is how somebody
+    // concludes a contact was written to when they were not.
+    const ready = [], skipped = [];
+    const seen = new Set();
+    for (const d of drafts) {
+      const to = (d.target?.email || '').trim();
+      if (!to || !/^[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}$/.test(to)) {
+        skipped.push({ draftId: d.id, name: d.target?.name, why: `no usable address (${to || 'blank'})` });
+      } else if (seen.has(to.toLowerCase())) {
+        // Two drafts to one address in one batch is a mistake upstream,
+        // and sending both is the version of it nobody can take back.
+        skipped.push({ draftId: d.id, name: d.target?.name, why: `duplicate address in this batch (${to})` });
+      } else if (ready.length >= LIMIT) {
+        skipped.push({ draftId: d.id, name: d.target?.name, why: `over the ${LIMIT} limit for one batch` });
+      } else {
+        seen.add(to.toLowerCase());
+        ready.push({ draft: d, to });
+      }
+    }
+
+    if (!confirm) {
+      return res.json({
+        dryRun: true,
+        wouldSend: ready.length,
+        from: req.user?.name,
+        recipients: ready.map((r) => ({ draftId: r.draft.id, name: r.draft.target?.name,
+                                        email: r.to, subject: r.draft.subject,
+                                        screenRisk: r.draft.screenRisk })),
+        skipped,
+        note: 'Nothing was sent. Repeat with {"confirm": true} to send this exact list.',
+      });
+    }
+
+    const sent = [], failed = [];
+    for (const { draft, to } of ready) {
+      // Re-read immediately before sending. Another member may have sent
+      // or rejected this draft while the batch was in flight, and the
+      // cheap check is the one that stops a duplicate email.
+      const fresh = await prisma.outreachDraft.findUnique({
+        where: { id: draft.id },
+        select: { sentAt: true, rejectedAt: true, screenRisk: true, screenedAt: true, body: true, subject: true },
+      });
+      if (!fresh || fresh.sentAt || fresh.rejectedAt || !fresh.screenedAt || fresh.screenRisk === 'prohibited') {
+        failed.push({ draftId: draft.id, name: draft.target?.name, error: 'changed while the batch was running' });
+        continue;
+      }
+
+      const body = renderSignature(fresh.body, req.user);
+      let out;
+      try {
+        out = await sendAs(req.user.id, { to, subject: fresh.subject, body, fromName: req.user?.name });
+      } catch (err) {
+        failed.push({ draftId: draft.id, name: draft.target?.name, error: err.message });
+        // A refused credential will refuse every remaining send, so stop
+        // rather than generating fifty identical failures.
+        if (/reconnect|refused the saved/i.test(err.message)) break;
+        continue;
+      }
+
+      try {
+        await prisma.$transaction(async (tx) => {
+          await tx.outreachDraft.update({
+            where: { id: draft.id },
+            data: { sentAt: new Date(), sentById: req.user?.id ?? null,
+                    gmailThreadId: out.threadId, gmailMessageId: out.messageId, sentVia: 'gmail' },
+          });
+          await tx.outreachMessage.create({
+            data: { targetId: draft.targetId, draftId: draft.id, direction: 'out', kind: 'Other',
+                    occurredAt: new Date(), body: body.slice(0, 20_000),
+                    gmailMessageId: out.messageId, recordedById: req.user?.id ?? null },
+          });
+          const t = await tx.researchTarget.findUnique({ where: { id: draft.targetId }, select: { status: true } });
+          const AHEAD = new Set(['Scheduled', 'Completed', 'Declined']);
+          await tx.researchTarget.update({
+            where: { id: draft.targetId },
+            data: { ...(AHEAD.has(t?.status) ? {} : { status: 'Contacted' }), lastContactAt: new Date() },
+          });
+        });
+        sent.push({ draftId: draft.id, name: draft.target?.name, email: to, gmailMessageId: out.messageId });
+      } catch (err) {
+        // Sent but unrecorded. Named loudly with the id, because the only
+        // wrong response here is one that invites a retry.
+        console.error('send-all delivered but not recorded:', draft.id, out.messageId, err.message);
+        failed.push({ draftId: draft.id, name: draft.target?.name, gmailMessageId: out.messageId,
+                      error: 'SENT but not recorded. Do not resend.' });
+      }
+      // Paced against Gmail's per-user limit rather than fired in a burst.
+      await new Promise((r) => setTimeout(r, 1200));
+    }
+
+    res.json({ dryRun: false, sent: sent.length, failedCount: failed.length,
+               sentTo: sent, failed, skipped });
+  } catch (err) {
+    console.error('research/send-all failed:', err.message);
+    res.status(500).json({ error: 'Could not run the batch' });
+  }
+});
+
 router.post('/drafts/:id/deliver', canResearch, async (req, res) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id)) return res.status(400).json({ error: 'Bad id' });
