@@ -1268,6 +1268,9 @@ function decorate(d, user) {
       ? 'queued'
       : approvals.length >= REQUIRED_APPROVALS
       ? 'ready'
+      // Reachable only if the two-signature policy is switched back on.
+      // While REQUIRED_APPROVALS is 0 these never occur, and both clients
+      // have now dropped the render arms for them.
       : approvals.length > 0
       ? 'one-approval'
       : 'awaiting',

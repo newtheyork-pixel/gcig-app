@@ -2452,10 +2452,17 @@ function TierChip({ tier }) {
 //
 // "No draft" is a real state and gets said, rather than rendered as an
 // empty cell that reads like a rendering bug.
+//
+// The two approval stages are gone rather than merely unused. With
+// REQUIRED_APPROVALS at 0 neither can occur, and leaving them meant the
+// table advertised a review step that does not run, with a hardcoded "of
+// 2" that would lie the moment the policy changed to anything else.
 const STAGE_TONE = {
-  awaiting: ['var(--term-fg-dim)', '0 of 2'],
-  'one-approval': ['var(--term-amber, var(--term-white))', '1 of 2'],
   ready: ['var(--term-positive)', 'READY'],
+  // Cyan: sitting in a mailbox waiting on a clock is neither "do
+  // something" nor "gone". Without an entry here it fell through and
+  // printed the raw word "queued" in grey.
+  queued: ['var(--term-cyan, var(--term-white))', 'QUEUED'],
   sent: ['var(--term-fg-muted)', 'SENT'],
   rejected: ['var(--term-negative)', 'REJECTED'],
   blocked: ['var(--term-negative)', 'BLOCKED'],
