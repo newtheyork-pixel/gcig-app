@@ -121,6 +121,7 @@ model User {
   watchlistOwned            WatchlistItem[]       @relation("WatchlistOwner")
   siteVisits                SiteVisit[]           @relation("SiteVisitVisitor")
   gmailAccount              GmailAccount?         @relation("GmailAccountOwner")
+  scheduledDrafts           OutreachDraft[]       @relation("OutreachDraftScheduler")
 }
 
 // Chat channels are addressed by a simple string:
@@ -687,7 +688,7 @@ model GmailAccount {
   // The address Google says these tokens belong to. Checked on every send:
   // a member who reconnects a different mailbox must not silently start
   // sending club outreach from it.
-  address      String   @unique
+  address      String    @unique
   accessToken  String?
   refreshToken String
   expiresAt    DateTime?
@@ -1328,6 +1329,19 @@ model OutreachDraft {
   // mail by sender address would attach a reply to the wrong draft the
   // moment somebody is written to twice, and would ingest anything else
   // they ever send us. A thread we started is a thread we may read.
+  // When this should go out on its own, and who it goes out AS.
+  //
+  // Both, because a scheduled send still has to be signed by, and sent
+  // from, a person's own mailbox. A queue that forgot whose it was would
+  // either send from nobody or from whoever the scheduler happened to run
+  // as, and the second is worse.
+  scheduledFor  DateTime?
+  scheduledById Int?
+  scheduledBy   User?     @relation("OutreachDraftScheduler", fields: [scheduledById], references: [id], onDelete: SetNull)
+  // Why the scheduler gave up, if it did. A draft that silently stopped
+  // being scheduled is indistinguishable from one nobody scheduled.
+  scheduleError String?
+
   gmailThreadId  String?
   gmailMessageId String? @unique
   sentVia        String? // "gmail" when the terminal sent it, null when a person did

@@ -1836,6 +1836,77 @@ router.post('/drafts/:id/queued', canResearch, async (req, res) => {
  * nothing else hides the seven that did not, and those seven are the only
  * ones anybody needs to know about.
  */
+/**
+ * Queue a send for later, one draft or a whole project.
+ *
+ * Arrival time is the point. A cold email that lands at eight on a Monday
+ * gets read; the same words at eleven on a Saturday are archived unread,
+ * and nobody is going to sit at a desk at 8am pressing send forty times.
+ *
+ * The time is taken as an ISO instant, so the client owns the timezone
+ * question. "8am Monday" means something different in two places and the
+ * server is the wrong layer to guess which one somebody meant.
+ *
+ * Nothing about scheduling relaxes a gate. The scheduler re-checks all of
+ * them at the moment of sending, because a draft can be edited, rejected
+ * or re-screened in the days between, and the verdict at schedule time is
+ * not evidence about the words that would leave now.
+ */
+router.post('/projects/:id/schedule', canResearch, async (req, res) => {
+  const projectId = Number(req.params.id);
+  if (!Number.isInteger(projectId)) return res.status(400).json({ error: 'Bad id' });
+  if (!maySendMail(req.user)) {
+    return res.status(403).json({ error: 'Sending mail from the terminal is limited to named senders.' });
+  }
+  const at = req.body?.at ? new Date(req.body.at) : null;
+  if (!at || Number.isNaN(at.getTime())) {
+    return res.status(400).json({ error: 'at must be an ISO timestamp, for example 2026-08-17T12:00:00Z' });
+  }
+  // A time already past would fire on the next tick, which is a send now
+  // wearing a schedule. If that is what somebody wants, send-all says so.
+  if (at.getTime() < Date.now() + 60_000) {
+    return res.status(400).json({ error: 'That time is in the past. Use send-all to send now.' });
+  }
+
+  const ids = Array.isArray(req.body?.draftIds) ? req.body.draftIds.map(Number).filter(Number.isInteger) : null;
+  const where = {
+    target: { projectId },
+    sentAt: null,
+    rejectedAt: null,
+    screenedAt: { not: null },
+    NOT: { screenRisk: 'prohibited' },
+    ...(ids ? { id: { in: ids } } : {}),
+  };
+  const drafts = await prisma.outreachDraft.findMany({
+    where, select: { id: true, target: { select: { name: true, email: true } } },
+  });
+  const sendable = drafts.filter((d) => /^[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}$/.test((d.target?.email || '').trim()));
+
+  if (req.body?.confirm !== true) {
+    return res.json({
+      dryRun: true, wouldSchedule: sendable.length, at: at.toISOString(),
+      recipients: sendable.slice(0, 60).map((d) => ({ draftId: d.id, name: d.target?.name, email: d.target?.email })),
+      note: 'Nothing was scheduled. Repeat with {"confirm": true}.',
+    });
+  }
+
+  const { count } = await prisma.outreachDraft.updateMany({
+    where: { id: { in: sendable.map((d) => d.id) } },
+    data: { scheduledFor: at, scheduledById: req.user.id, scheduleError: null },
+  });
+  res.json({ scheduled: count, at: at.toISOString() });
+});
+
+/** Take it back off the queue. */
+router.post('/projects/:id/unschedule', canResearch, async (req, res) => {
+  const projectId = Number(req.params.id);
+  const { count } = await prisma.outreachDraft.updateMany({
+    where: { target: { projectId }, sentAt: null, scheduledFor: { not: null } },
+    data: { scheduledFor: null, scheduledById: null },
+  });
+  res.json({ unscheduled: count });
+});
+
 router.post('/projects/:id/send-all', canResearch, async (req, res) => {
   const projectId = Number(req.params.id);
   if (!Number.isInteger(projectId)) return res.status(400).json({ error: 'Bad id' });

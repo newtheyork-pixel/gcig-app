@@ -45,6 +45,7 @@ import terminalRoutes, { execBiosHandler } from './routes/terminal.js';
 import { getBusinessProfile } from './services/secBusinessSummary.js';
 import { readableDescription } from './services/companyDescription.js';
 import watchlistRoutes from './routes/watchlist.js';
+import { runDueSends } from './services/outreachScheduler.js';
 import gmailRoutes from './routes/gmail.js';
 import davRoutes from './routes/dav.js';
 import subscriptionRoutes from './routes/subscriptions.js';
@@ -303,6 +304,16 @@ async function warmPeopleAndDescriptions() {
   }
 }
 setTimeout(() => { warmPeopleAndDescriptions(); }, 4 * 60_000);
+// Scheduled outreach, every five minutes. Not every minute: the whole
+// point is a send that lands in a morning window, and five minutes of
+// imprecision against that is invisible while a tighter loop is forty
+// times the database traffic for nothing.
+cron.schedule('*/5 * * * *', () => {
+  runDueSends().then((r) => {
+    if (r?.sent || r?.failed) console.log('scheduled outreach:', JSON.stringify(r));
+  }).catch((e) => console.error('scheduled outreach failed:', e.message));
+});
+
 cron.schedule('15 22 * * *', () => { warmPeopleAndDescriptions(); },
   { timezone: 'America/New_York' });
 
