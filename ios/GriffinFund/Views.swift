@@ -119,11 +119,18 @@ struct TodayView: View {
         loading = tasks.isEmpty; failed = nil
         do {
             let projects = try await s.get("/research/projects", as: [ProjectStub].self)
-            let open = projects.filter { ($0.status ?? "") != "Closed" }.prefix(6)
+            let open = projects.filter { ($0.status ?? "") != "Closed" }
             var out: [WorkItem] = []
+            var skipped: [String] = []
             for p in open {
+                // A project that fails to load is NAMED, never silently
+                // dropped. Swallowing it left the green "Nothing owed
+                // today" standing while an overdue chase sat in the one
+                // that 429'd.
                 guard let full = try? await s.get("/research/projects/\(p.id)", as: ProjectFull.self),
-                      let rows = full.followUps?.rows else { continue }
+                      let rows = full.followUps?.rows else {
+                    skipped.append(p.ticker ?? "#\(p.id)"); continue
+                }
                 for r in rows where r.urgent || r.due {
                     out.append(WorkItem(
                         id: "\(p.id)-\(r.id)",
@@ -134,9 +141,17 @@ struct TodayView: View {
                         source: "\(p.ticker ?? "—") outreach"))
                 }
             }
-            tasks = out.sorted { ($0.due ?? "") < ($1.due ?? "") }
-        } catch URLError.userAuthenticationRequired {
-            failed = "Signed out. Sign in again."
+            // assessOutreach already ranks these overdue, due, owed and
+            // then by date. Re-sorting on the raw string put every owed row
+            // at the top under the empty string by accident, and let a
+            // merely-due chase outrank an overdue one. The server's order
+            // is the order.
+            tasks = out
+            if !skipped.isEmpty {
+                failed = "Could not read \(skipped.joined(separator: ", ")). This list is incomplete."
+            }
+        } catch let e as APIError {
+            failed = e.errorDescription
         } catch {
             failed = error.localizedDescription
         }
@@ -156,14 +171,31 @@ struct BookView: View {
                 T.bg.ignoresSafeArea()
                 if loading && book == nil { ProgressView().tint(T.amber) }
                 else if let failed, book == nil {
-                    Text(failed).font(T.mono(11)).foregroundStyle(T.negative).padding()
+                    VStack(spacing: 8) {
+                        Text("COULD NOT LOAD").font(T.mono(12, .bold)).foregroundStyle(T.negative)
+                        Text(failed).font(T.mono(11)).foregroundStyle(T.dim)
+                            .multilineTextAlignment(.center)
+                        Button("Retry") { Task { await load() } }
+                            .font(T.mono(12)).foregroundStyle(T.amber)
+                    }.padding()
                 } else if let b = book {
                     List {
+                        // A refresh that failed over an already-loaded book
+                        // used to show nothing, leaving yesterday's marks on
+                        // screen as if current. A price screen must never do
+                        // that silently.
+                        if let failed {
+                            Section {
+                                Text("Stale. \(failed)")
+                                    .font(T.mono(10)).foregroundStyle(T.negative)
+                                    .listRowBackground(T.panel)
+                            }
+                        }
                         Section {
                             HStack {
                                 Text("TOTAL").font(T.mono(10, .bold)).foregroundStyle(T.dim)
                                 Spacer()
-                                Text(Fmt.money(b.totals?.totalValue ?? 0))
+                                Text(Fmt.money(b.totals?.totalValue))
                                     .font(T.mono(17, .bold)).foregroundStyle(T.amber)
                             }.listRowBackground(T.panel)
                         }
@@ -178,7 +210,7 @@ struct BookView: View {
                                     }
                                     Spacer()
                                     VStack(alignment: .trailing, spacing: 2) {
-                                        Text(Fmt.money(h.marketValue ?? 0))
+                                        Text(Fmt.money(h.marketValue))
                                             .font(T.mono(12)).foregroundStyle(T.white)
                                         if let d = h.dayChangePct {
                                             Text(Fmt.pct(d)).font(T.mono(10))
@@ -208,6 +240,7 @@ struct BookView: View {
     private func load() async {
         failed = nil
         do { book = try await s.get("/holdings/quotes", as: Book.self) }
+        catch let e as APIError { failed = e.errorDescription }
         catch { failed = error.localizedDescription }
         loading = false
     }

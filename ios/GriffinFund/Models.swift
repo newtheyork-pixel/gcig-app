@@ -8,8 +8,25 @@ struct Totals: Decodable { let totalValue: Double?; let cashValue: Double? }
 struct Holding: Decodable, Identifiable {
     let ticker: String?; let name: String?; let shares: Double?
     let price: Double?; let marketValue: Double?; let costBasis: Double?
-    let dayChangePct: Double?; let isCash: Bool?
-    var id: String { (ticker ?? name ?? UUID().uuidString) }
+    // The server sends dayChange, an absolute per-share dollar move, and
+    // no percentage anywhere. dayChangePct exists only as a local inside
+    // HoldingDetailModal.jsx, which is exactly the JSX this file is
+    // forbidden to read models from: the wrong key decodes to nil and the
+    // column silently never renders.
+    let dayChange: Double?; let isCash: Bool?
+    /// Identity must be stable across reads. A UUID() fallback mints a new
+    /// one on every diff pass, so SwiftUI tears the row down and rebuilds
+    /// it forever. Absent both keys, the row has no identity and says so.
+    var id: String { ticker ?? name ?? "unidentified" }
+    /// Percent of position value, derived rather than trusted, and nil
+    /// unless both halves are present and the base is real.
+    var dayChangePct: Double? {
+        guard let dc = dayChange, let sh = shares, let mv = marketValue,
+              mv != 0, sh != 0 else { return nil }
+        let prior = mv - (dc * sh)
+        guard prior > 0 else { return nil }
+        return (mv - prior) / prior * 100
+    }
 }
 struct Book: Decodable { let holdings: [Holding]?; let totals: Totals? }
 
@@ -17,7 +34,9 @@ struct ChaseRow: Decodable, Identifiable {
     let targetId: Int?; let name: String?; let state: String?
     let dueAt: String?; let dueDay: String?; let recommendation: String?
     let attempts: Int?; let autoReplyReset: Bool?
-    var id: Int { targetId ?? name.hashValue }
+    /// String.hashValue is seeded per process, so it is not stable across
+    /// launches and collides for two rows with the same nil targetId.
+    var id: String { targetId.map(String.init) ?? "n:\(name ?? "?")" }
     /// The three states worth a colour. `owed` means they answered and we
     /// have not, which outranks anything on a clock.
     var urgent: Bool { state == "overdue" || state == "owed" }
