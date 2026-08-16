@@ -811,6 +811,63 @@ Hit-rate stats count `Approved` toward Voted Yes too.
 
 ---
 
+## The outreach screen, and what five reviews said about it (Aug '26)
+
+Five independent audits of FLD's outreach surface, each on a different
+lens. Three of them found the same defects without seeing each other,
+which is why these are recorded as facts rather than taste.
+
+**Fixed in 0.2.6.0**: an ungated Copy button that would put a
+compliance-BLOCKED draft on the clipboard two lines above the disabled
+twin that existed to stop it (a veto you can copy past reads as oversight
+that is not happening); `queued` falling through to approval arithmetic
+and printing "0 of 0"; edits and rejections leaving `queuedAt` set, so a
+draft could sit scheduled to send words nobody screened and land in two
+counters at once; `fullyApproved` ignoring `screenedAt`, so green READY
+printed above a grey "unscreened" chip; the reply picker defaulting to
+AutoReply, the one kind that does not count as being heard from, with no
+plain "Reply" kind at all; `lastContactAt` stamped on any status change,
+so a refusal logged from last week read as contact today; and an identity
+annotation on the copied To line that broke Gmail's address parser.
+
+**Still open, in the order they should be done.**
+
+*Delete the dead approval machinery.* `REQUIRED_APPROVALS` is 0 and
+neither client has ever built an Approve button, so the endpoints are
+unreachable and `canIApprove` gates only Reject. The comment promising
+that flipping the constant back to 2 restores the old policy is FALSE for
+the Mac: at 2, `fullyApproved` could never become true and Mark as sent
+would 409 forever. Remove it rather than revive it; git remembers.
+
+*The list is a status display, not a workbench, and that is the real
+answer to "I do not understand how it works".* Every action lives one or
+two levels below where the work happens, so twenty sends is ~110 clicks
+and 40 screen changes. Returning from a send is punished three ways: the
+filter resets because the tab unmounts, scroll is lost, and the row
+reorders because the server sorts by `updatedAt desc`. Every one-bit write
+refetches the entire project INCLUDING every interview transcript. The fix
+is clickable queue chips that set filter and sort together
+(SEND/CHASE/REPLIED/WAITING), the row carrying its own next action, detail
+as a right-hand pane rather than a page, and a batch cursor. Estimated at
+~40 presses for twenty sends against ~110 today.
+
+*Server capability with no UI.* `followUpAfter` (the out-of-office chase
+floor) has zero references in the Swift client. Outbound message logging
+is dead code: `beginLog(out:)` is never called, so recording a two-line
+chase sent from Gmail costs eight clicks through the full draft pipeline.
+Wiring that is a second door onto "did we write", which Thomas
+deliberately closed once already, so it needs his call.
+
+*The model underneath.* A contact's progress is expressed four
+overlapping ways (`status`, draft `stage`, the follow-up state, the queue
+counters) and they can disagree; the counters are not a partition, so
+totals can exceed the number of drafts. Whether somebody was written to
+lives in four places. There is no status for "agreed to talk, no date
+set", which is why Kanter and Adam Small sit wrongly at Scheduled. The
+proposed shape is one human-owned disposition including `Agreed`, with
+contact DERIVED from the message ledger, and `/sent` writing its ledger
+row in the same transaction.
+
 ## Known issues (open)
 
 - **GSAM Daily Rates PDF returns HTTP 403 from Render (May '26)**: the
