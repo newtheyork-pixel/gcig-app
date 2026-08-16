@@ -66,6 +66,38 @@ function readState(state, cookieNonce) {
   return Number(userId);
 }
 
+/**
+ * The first-party hop. Validates the ninety-second handoff, sets the nonce
+ * cookie on the API's own origin, and sends the browser on to Google.
+ *
+ * Unauthenticated by necessity, like the callback: this is a top-level
+ * navigation and carries no bearer header. The handoff token is signed with
+ * a different prefix from the state MAC so one can never be replayed as the
+ * other.
+ */
+router.get('/start', (req, res) => {
+  const [userId, ts, mac] = String(req.query.t || '').split('.');
+  if (!userId || !ts || !mac) return res.status(400).send('Bad link. Start again from the terminal.');
+  const expect = crypto.createHmac('sha256', process.env.JWT_SECRET)
+    .update(`start.${userId}.${ts}`).digest('hex');
+  const a = Buffer.from(mac), b = Buffer.from(expect);
+  if (a.length !== b.length || !crypto.timingSafeEqual(a, b)) {
+    return res.status(400).send('Bad link. Start again from the terminal.');
+  }
+  // Ninety seconds, the same window the app's native sign-in handoff uses.
+  // A link that opens a consent screen should be used immediately or not
+  // at all.
+  if (Date.now() - Number(ts) > 90_000) {
+    return res.status(400).send('That link expired. Start again from the terminal.');
+  }
+  const { state, nonce } = signState(Number(userId));
+  res.cookie('gmail_oauth_nonce', nonce, {
+    httpOnly: true, secure: true, sameSite: 'lax',
+    path: '/api/gmail', maxAge: 10 * 60_000,
+  });
+  res.redirect(consentUrl(state));
+});
+
 function nonceCookie(req) {
   const raw = req.headers.cookie || '';
   const hit = raw.split(';').map((c) => c.trim()).find((c) => c.startsWith('gmail_oauth_nonce='));
@@ -110,17 +142,30 @@ router.get('/status', async (req, res) => {
              ...(await connectionFor(req.user.id)) });
 });
 
+/**
+ * Hand the member a URL to OPEN, rather than one to follow in the
+ * background.
+ *
+ * The first version set the nonce cookie on this response and returned
+ * Google's URL directly, and it could never have worked. The client lives
+ * on thegriffinfund.org and the API on gcig-api.onrender.com, which are
+ * different sites, so a cookie set on a cross-site XHR response is dropped
+ * by the browser unless it is SameSite=None. Making it None would work and
+ * would also mean shipping a cross-site cookie for one flow.
+ *
+ * So the browser goes to the API itself instead. /start below is a
+ * top-level navigation, which makes the cookie first-party to the API, and
+ * the callback then arrives at the same origin that set it. No cross-site
+ * cookie anywhere, and the nonce binding still holds.
+ */
 router.get('/connect', senderOnly, async (req, res) => {
   if (!gmailConfigured()) return res.status(503).json({ error: 'Gmail is not configured on this server' });
-  const { state, nonce } = signState(req.user.id);
-  // Lax rather than Strict: Google's redirect is a cross-site top-level
-  // navigation, and Strict would withhold the cookie exactly when it is
-  // needed. Scoped to this router so it is not sent with anything else.
-  res.cookie('gmail_oauth_nonce', nonce, {
-    httpOnly: true, secure: true, sameSite: 'lax',
-    path: '/api/gmail', maxAge: 10 * 60_000,
-  });
-  res.json({ url: consentUrl(state) });
+  const payload = `${req.user.id}.${Date.now()}`;
+  const mac = crypto.createHmac('sha256', process.env.JWT_SECRET)
+    .update(`start.${payload}`).digest('hex');
+  const base = (process.env.API_PUBLIC_URL || 'https://gcig-api.onrender.com').replace(/\/+$/, '');
+  res.json({ url: `${base}/api/gmail/start?t=${encodeURIComponent(`${payload}.${mac}`)}`,
+             open: 'browser' });
 });
 
 router.delete('/connection', senderOnly, async (req, res) => {
