@@ -19,11 +19,36 @@ final class HoldingStore: ObservableObject {
     /// missing line is a missing line, not a failed name.
     @Published private(set) var chart: [ChartPoint] = []
     @Published private(set) var chartFailed = false
+    /// Three more best-effort reads, each silent on failure for the same
+    /// reason the coverage query is: they are context around the name, and
+    /// a missing analyst count must never be why the company does not
+    /// appear.
+    @Published private(set) var filings: [Filing] = []
+    @Published private(set) var estimates: Estimates?
+    @Published private(set) var consensus: Consensus.Row?
 
     func load(_ ticker: String) async {
+        // Concurrent rather than sequential: five independent reads, and
+        // the slowest of them should be the wait, not the sum.
         async let a: Void = loadInfo(ticker)
         async let b: Void = loadCoverage(ticker)
-        _ = await (a, b)
+        async let c: Void = loadFilings(ticker)
+        async let d: Void = loadEstimates(ticker)
+        async let e: Void = loadConsensus(ticker)
+        _ = await (a, b, c, d, e)
+    }
+
+    private func loadFilings(_ ticker: String) async {
+        let p = try? await API.shared.get("/holdings/\(ticker)/filings", as: FilingsPayload.self)
+        filings = p?.filings ?? []
+    }
+
+    private func loadEstimates(_ ticker: String) async {
+        estimates = try? await API.shared.get("/terminal/earnings/\(ticker)", as: Estimates.self)
+    }
+
+    private func loadConsensus(_ ticker: String) async {
+        consensus = (try? await API.shared.get("/terminal/consensus/\(ticker)", as: Consensus.self))?.latest
     }
 
     private func loadInfo(_ ticker: String) async {
@@ -77,6 +102,9 @@ struct TickerScreen: View, Hashable {
                 chartSection
                 positionSection
                 marketSection
+                earningsSection
+                consensusSection
+                filingsSection
                 clubSection
                 aboutSection
             }
@@ -263,6 +291,97 @@ struct TickerScreen: View, Hashable {
             }
         } header: {
             SectionHeader(text: "Market")
+        }
+    }
+
+    /// Next report, then how the last four went. The beat/miss column is
+    /// derived from the two EPS figures rather than read from surprisePct,
+    /// which older rows do not carry.
+    @ViewBuilder private var earningsSection: some View {
+        if let e = store.estimates, e.upcoming != nil || !(e.history ?? []).isEmpty {
+            Section {
+                VStack(spacing: 0) {
+                    if let u = e.upcoming, u.date != nil {
+                        StatLine(label: "NEXT REPORT", value: Fmt.day(u.date))
+                        if let est = u.epsEstimate {
+                            StatLine(label: "EPS ESTIMATE", value: String(format: "%.2f", est))
+                        }
+                    }
+                    ForEach((e.history ?? []).prefix(4)) { h in
+                        StatLine(
+                            label: h.period.map { Fmt.day($0) } ?? "—",
+                            value: h.epsActual == nil ? "—"
+                                : "\(String(format: "%.2f", h.epsActual!)) vs \(h.epsEstimate.map { String(format: "%.2f", $0) } ?? "—")",
+                            tone: h.beat == nil ? T.white : (h.beat! ? T.positive : T.negative))
+                    }
+                }
+                .padding(.horizontal, Space.l).padding(.vertical, Space.s)
+                .background(T.card)
+                .hairline()
+            } header: {
+                SectionHeader(text: "Earnings")
+            }
+        }
+    }
+
+    /// A bar rather than five numbers. The only question a reader has here
+    /// is which way the street leans and how many of them there are.
+    @ViewBuilder private var consensusSection: some View {
+        if let c = store.consensus, c.total > 0 {
+            Section {
+                VStack(alignment: .leading, spacing: Space.s) {
+                    GeometryReader { geo in
+                        HStack(spacing: 1) {
+                            block(c.bullish, c.total, geo.size.width, T.positive)
+                            block(c.hold ?? 0, c.total, geo.size.width, T.muted)
+                            block(c.bearish, c.total, geo.size.width, T.negative)
+                        }
+                    }
+                    .frame(height: 10)
+                    HStack {
+                        Text("\(c.bullish) buy").font(Type.meta).foregroundStyle(T.positive)
+                        Text("\(c.hold ?? 0) hold").font(Type.meta).foregroundStyle(T.muted)
+                        Text("\(c.bearish) sell").font(Type.meta).foregroundStyle(T.negative)
+                        Spacer()
+                        Text("\(c.total) analysts").font(Type.meta).foregroundStyle(T.muted)
+                    }
+                }
+                .padding(Space.l)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(T.card)
+                .hairline()
+            } header: {
+                SectionHeader(text: "The street")
+            }
+        }
+    }
+
+    private func block(_ n: Int, _ total: Int, _ width: CGFloat, _ tone: Color) -> some View {
+        Rectangle().fill(tone)
+            .frame(width: total > 0 ? width * CGFloat(n) / CGFloat(total) : 0)
+    }
+
+    /// What the company has actually told the SEC, newest first. An 8-K is
+    /// marked because it is the one form that behaves like news: something
+    /// happened and they had four days to say so.
+    @ViewBuilder private var filingsSection: some View {
+        if !store.filings.isEmpty {
+            Section {
+                ForEach(store.filings.prefix(8)) { f in
+                    Link(destination: URL(string: f.url ?? "") ?? URL(string: "https://www.sec.gov")!) {
+                        Row(title: f.form ?? "Filing",
+                            subtitle: f.description,
+                            meta: Fmt.day(f.filingDate),
+                            strip: f.isEvent ? T.orange : nil) {
+                            if f.isAnnual { Chip(text: "Annual", tone: T.blue) }
+                            else if f.isEvent { Chip(text: "Event", tone: T.orange) }
+                        }
+                    }
+                    .buttonStyle(.plain)
+                }
+            } header: {
+                SectionHeader(text: "Filings", trailing: "\(store.filings.count)")
+            }
         }
     }
 

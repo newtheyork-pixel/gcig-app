@@ -453,3 +453,66 @@ struct AddReceipt: Decodable {
     let id: Int?
     let ticker: String?
 }
+
+// MARK: What a company files and reports
+
+struct FilingsPayload: Decodable {
+    let ticker: String?
+    let filings: [Filing]?
+}
+
+struct Filing: Decodable, Identifiable {
+    let form: String?
+    let filingDate: String?
+    let description: String?
+    let accessionNumber: String?
+    let url: String?
+    /// The accession number is the only genuinely unique thing here: one
+    /// company files several 8-Ks on one day, so form-plus-date collides.
+    var id: String { accessionNumber ?? "\(form ?? "?")-\(filingDate ?? "?")" }
+
+    /// The forms worth noticing at a glance. An 8-K is an event, and an
+    /// event is the only filing that behaves like news.
+    var isEvent: Bool { (form ?? "").hasPrefix("8-K") }
+    var isAnnual: Bool { (form ?? "").hasPrefix("10-K") }
+}
+
+struct Estimates: Decodable {
+    let upcoming: Upcoming?
+    let history: [Past]?
+
+    struct Upcoming: Decodable {
+        let date: String?
+        let epsEstimate: Double?
+    }
+    struct Past: Decodable, Identifiable {
+        let period: String?
+        let date: String?
+        let epsEstimate: Double?
+        let epsActual: Double?
+        let surprisePct: Double?
+        var id: String { period ?? date ?? "?" }
+        /// Beat, missed, or neither. Derived from the two numbers rather
+        /// than from surprisePct, which is absent on older rows.
+        var beat: Bool? {
+            guard let a = epsActual, let e = epsEstimate else { return nil }
+            return a == e ? nil : a > e
+        }
+    }
+}
+
+struct Consensus: Decodable {
+    let latest: Row?
+    struct Row: Decodable {
+        let strongBuy: Int?
+        let buy: Int?
+        let hold: Int?
+        let sell: Int?
+        let strongSell: Int?
+        var total: Int {
+            (strongBuy ?? 0) + (buy ?? 0) + (hold ?? 0) + (sell ?? 0) + (strongSell ?? 0)
+        }
+        var bullish: Int { (strongBuy ?? 0) + (buy ?? 0) }
+        var bearish: Int { (sell ?? 0) + (strongSell ?? 0) }
+    }
+}
