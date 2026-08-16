@@ -15,6 +15,10 @@ final class HoldingStore: ObservableObject {
     /// Silent on failure. The club record is context, not the subject, and a
     /// coverage query that fails should leave no wreckage on the screen.
     @Published private(set) var coverage: Coverage?
+    /// The chart is a second request and must never gate the screen: a
+    /// missing line is a missing line, not a failed name.
+    @Published private(set) var chart: [ChartPoint] = []
+    @Published private(set) var chartFailed = false
 
     func load(_ ticker: String) async {
         async let a: Void = loadInfo(ticker)
@@ -36,6 +40,17 @@ final class HoldingStore: ObservableObject {
     private func loadCoverage(_ ticker: String) async {
         coverage = try? await API.shared.get("/holdings/coverage/\(ticker)", as: Coverage.self)
     }
+
+    func loadChart(_ ticker: String, range: ChartRange) async {
+        let payload = try? await API.shared.get("/terminal/chart/\(ticker)?range=\(range.rawValue)",
+                                                as: ChartPayload.self)
+        let pts = (payload?.points ?? []).compactMap { p -> ChartPoint? in
+            guard let t = p.t, let c = p.close else { return nil }
+            return ChartPoint(t: t, close: c)
+        }
+        chart = pts
+        chartFailed = payload == nil
+    }
 }
 
 /// A single name. Reachable from the book, the wire and the watchlist, so
@@ -48,6 +63,7 @@ struct TickerScreen: View, Hashable {
     var holding: Holding? = nil
 
     @StateObject private var store = HoldingStore()
+    @State private var range: ChartRange = .m6
 
     private var ticker: String { symbol.uppercased() }
 
@@ -58,6 +74,7 @@ struct TickerScreen: View, Hashable {
         ScrollView {
             LazyVStack(spacing: 0, pinnedViews: [.sectionHeaders]) {
                 quoteBlock
+                chartSection
                 positionSection
                 marketSection
                 clubSection
@@ -78,6 +95,34 @@ struct TickerScreen: View, Hashable {
         .toolbarBackground(.visible, for: .navigationBar)
         .toolbarColorScheme(.dark, for: .navigationBar)
         .task { await store.load(ticker) }
+        .task(id: range) { await store.loadChart(ticker, range: range) }
+    }
+
+    /// Priced against what we paid, when we own it. A line with no cost
+    /// rule answers "what did the market do"; with one it answers "how are
+    /// we doing", which is the question somebody opening our app has.
+    @ViewBuilder private var chartSection: some View {
+        VStack(spacing: Space.s) {
+            if store.chartFailed && store.chart.isEmpty {
+                Text("No price history available for this name.")
+                    .font(Type.meta).foregroundStyle(T.muted)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.vertical, Space.l)
+            } else {
+                PriceChart(points: store.chart, averageCost: holding?.costBasis)
+                if holding?.costBasis != nil && !store.chart.isEmpty {
+                    HStack(spacing: Space.xs) {
+                        Rectangle().fill(T.amber.opacity(0.7)).frame(width: 10, height: 1)
+                        Text("Our average cost").font(Type.meta).foregroundStyle(T.muted)
+                        Spacer()
+                    }
+                }
+            }
+            RangePicker(range: $range)
+        }
+        .padding(Space.l)
+        .background(T.card)
+        .hairline()
     }
 
     // MARK: the number

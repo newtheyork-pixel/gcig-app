@@ -394,94 +394,6 @@ struct Draft: Decodable {
     let fullyApproved: Bool?
 }
 
-// MARK: Voting
-
-struct VoteSession: Decodable {
-    let id: Int?
-    let title: String?
-    let ticker: String?
-    let status: String?
-    let deadline: String?
-    /// "buy" or "sell". A sell vote offers Sell or Hold and carries no
-    /// amount: we are exiting a position we already have and its size is
-    /// not up for a vote.
-    let kind: String?
-    /// "average" or "fixed". In fixed mode the amount is already pinned
-    /// and the question collapses to supporting it or not.
-    let amountMode: String?
-    let fixedAmount: Double?
-    let pitch: Pitch?
-    let ballots: [Ballot]?
-    let myBallot: Ballot?
-    let tally: Tally?
-    let synthesis: String?
-
-    struct Pitch: Decodable {
-        let id: Int?
-        let ticker: String?
-        let pitcherName: String?
-    }
-
-    var isOpen: Bool { status == "open" }
-    var isSell: Bool { kind == "sell" }
-    var isFixed: Bool { amountMode == "fixed" }
-
-    /// The choices this session actually accepts. Derived here, once, so a
-    /// screen cannot offer an option the server will refuse.
-    var choices: [Choice] {
-        if isSell {
-            return [
-                Choice("Sell", "Sell", "Exit the position."),
-                Choice("Hold", "Hold", "Maintain the position."),
-            ]
-        }
-        if isFixed {
-            let amt = Fmt.money(fixedAmount)
-            return [
-                Choice("Buy", "Buy", "Support buying \(amt)."),
-                // Persisted as Hold on the server, so the tally never has
-                // to learn a fourth answer. Named honestly here anyway.
-                Choice("Hold", "No", "Do not support it."),
-            ]
-        }
-        return [
-            Choice("Buy", "Buy", "Open a position, at the amount you set below."),
-            Choice("Hold", "Hold", "Not now."),
-            Choice("Sell", "Sell", "Against the position."),
-        ]
-    }
-
-    struct Choice { 
-        let action: String, label: String, detail: String
-        init(_ a: String, _ l: String, _ d: String) { action = a; label = l; detail = d }
-    }
-}
-
-struct Ballot: Decodable {
-    let action: String?
-    let note: String?
-    let investmentAmount: Double?
-    let castAt: String?
-}
-
-struct Tally: Decodable {
-    let result: String?
-    let buyAmountStats: BuyStats?
-    struct BuyStats: Decodable {
-        let avg: Double?
-        let min: Double?
-        let max: Double?
-        let fixed: Bool?
-    }
-}
-
-/// What the ballot POST returns. All-optional like everything else: the
-/// screen re-reads the session afterwards and does not depend on this.
-struct BallotReceipt: Decodable {
-    let id: Int?
-    let action: String?
-}
-
 // MARK: Dashboard glances
 
 /// The post-close summary. Written once a day by a cron at 4:05pm ET and
@@ -518,4 +430,26 @@ struct Mover: Decodable, Identifiable {
 
     var id: String { ticker ?? name ?? "?" }
     var changePercent: Double? { changePct.map { $0 * 100 } }
+}
+
+// MARK: Price history
+
+struct ChartPayload: Decodable {
+    let ticker: String?
+    let range: String?
+    let points: [Point]?
+    /// The handler forwards the whole OHLCV bar. Only the close is decoded
+    /// here: a phone line chart has no use for the other four, and every
+    /// field decoded is a field that can change shape underneath us.
+    struct Point: Decodable {
+        let t: Double?
+        let close: Double?
+    }
+}
+
+/// What a watchlist add returns. Not depended on: the screen re-reads the
+/// list afterwards, so this only has to decode without throwing.
+struct AddReceipt: Decodable {
+    let id: Int?
+    let ticker: String?
 }

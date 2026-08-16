@@ -15,9 +15,9 @@
 		A875C0E1182E0FC8CFF4F3DF /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = F0DBAD9A0DB8EE1797090F67 /* Models.swift */; };
 		8752837976531F8C8BDE69C3 /* NewsScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = FFD9EBE17970BED52DC58185 /* NewsScreen.swift */; };
 		F31129F3B0388F01A754287D /* PersonScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = A6463820EBBDE0242858CDCA /* PersonScreen.swift */; };
+		78E6839393CDF2EF59BE0F1E /* PriceChart.swift in Sources */ = {isa = PBXBuildFile; fileRef = 87FE1C736DDA2251E65051A0 /* PriceChart.swift */; };
 		ED3A0686984A0397FD21BF02 /* Theme.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2CC291573C4C53EC8FC7976C /* Theme.swift */; };
 		24A9AF16B9912B92B178C2A8 /* Views.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9CE0D3AFB99C0EB3073B80B5 /* Views.swift */; };
-		D2E18B93869899114B7FAD81 /* VoteScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0FF7377C111843A7D725FD26 /* VoteScreen.swift */; };
 		3BFF4C23E907FAE3E9E74242 /* WatchScreen.swift in Sources */ = {isa = PBXBuildFile; fileRef = 48B960E233838C0336385645 /* WatchScreen.swift */; };
 		C5D472479FCE6713AC3BFA26 /* App.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = App.swift; sourceTree = "<group>"; };
 		232DD6063ACDCD8A966164F0 /* BookScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BookScreen.swift; sourceTree = "<group>"; };
@@ -29,9 +29,9 @@
 		F0DBAD9A0DB8EE1797090F67 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
 		FFD9EBE17970BED52DC58185 /* NewsScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NewsScreen.swift; sourceTree = "<group>"; };
 		A6463820EBBDE0242858CDCA /* PersonScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PersonScreen.swift; sourceTree = "<group>"; };
+		87FE1C736DDA2251E65051A0 /* PriceChart.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PriceChart.swift; sourceTree = "<group>"; };
 		2CC291573C4C53EC8FC7976C /* Theme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Theme.swift; sourceTree = "<group>"; };
 		9CE0D3AFB99C0EB3073B80B5 /* Views.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views.swift; sourceTree = "<group>"; };
-		0FF7377C111843A7D725FD26 /* VoteScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoteScreen.swift; sourceTree = "<group>"; };
 		48B960E233838C0336385645 /* WatchScreen.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchScreen.swift; sourceTree = "<group>"; };
 		1D38637870287646A60BB987 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		8D562B3E40B6C9EC53F38F07 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
@@ -55,9 +55,9 @@
 				F0DBAD9A0DB8EE1797090F67 /* Models.swift */,
 				FFD9EBE17970BED52DC58185 /* NewsScreen.swift */,
 				A6463820EBBDE0242858CDCA /* PersonScreen.swift */,
+				87FE1C736DDA2251E65051A0 /* PriceChart.swift */,
 				2CC291573C4C53EC8FC7976C /* Theme.swift */,
 				9CE0D3AFB99C0EB3073B80B5 /* Views.swift */,
-				0FF7377C111843A7D725FD26 /* VoteScreen.swift */,
 				48B960E233838C0336385645 /* WatchScreen.swift */,
 				1D38637870287646A60BB987 /* Info.plist */,
 				8D562B3E40B6C9EC53F38F07 /* Assets.xcassets */,
@@ -85,9 +85,9 @@
 				A875C0E1182E0FC8CFF4F3DF /* Models.swift in Sources */,
 				8752837976531F8C8BDE69C3 /* NewsScreen.swift in Sources */,
 				F31129F3B0388F01A754287D /* PersonScreen.swift in Sources */,
+				78E6839393CDF2EF59BE0F1E /* PriceChart.swift in Sources */,
 				ED3A0686984A0397FD21BF02 /* Theme.swift in Sources */,
 				24A9AF16B9912B92B178C2A8 /* Views.swift in Sources */,
-				D2E18B93869899114B7FAD81 /* VoteScreen.swift in Sources */,
 				3BFF4C23E907FAE3E9E74242 /* WatchScreen.swift in Sources */,
 			); runOnlyForDeploymentPostprocessing = 0; };
 		9A4C70B3EC18B4C4F5876282 = {isa = XCBuildConfiguration; buildSettings = {
@@ -102,21 +102,21 @@
 		476A0B8E71A6A82A0C1AE88E = {isa = XCBuildConfiguration; buildSettings = {
 			ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon; CODE_SIGN_STYLE = Automatic;
 			DEVELOPMENT_TEAM = PW2VT56789;
-			CURRENT_PROJECT_VERSION = 4; GENERATE_INFOPLIST_FILE = NO;
+			CURRENT_PROJECT_VERSION = 5; GENERATE_INFOPLIST_FILE = NO;
 			INFOPLIST_FILE = GriffinFund/Info.plist;
 			INFOPLIST_KEY_CFBundleDisplayName = "Griffin Fund";
 			LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks");
-			MARKETING_VERSION = 0.3.0; PRODUCT_BUNDLE_IDENTIFIER = org.thegriffinfund.ios;
+			MARKETING_VERSION = 0.3.1; PRODUCT_BUNDLE_IDENTIFIER = org.thegriffinfund.ios;
 			PRODUCT_NAME = "$(TARGET_NAME)"; SWIFT_EMIT_LOC_STRINGS = YES;
 			TARGETED_DEVICE_FAMILY = "1,2"; }; name = Debug; };
 		704458A024DBE43A2085CA88 = {isa = XCBuildConfiguration; buildSettings = {
 			ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon; CODE_SIGN_STYLE = Automatic;
 			DEVELOPMENT_TEAM = PW2VT56789;
-			CURRENT_PROJECT_VERSION = 4; GENERATE_INFOPLIST_FILE = NO;
+			CURRENT_PROJECT_VERSION = 5; GENERATE_INFOPLIST_FILE = NO;
 			INFOPLIST_FILE = GriffinFund/Info.plist;
 			INFOPLIST_KEY_CFBundleDisplayName = "Griffin Fund";
 			LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks");
-			MARKETING_VERSION = 0.3.0; PRODUCT_BUNDLE_IDENTIFIER = org.thegriffinfund.ios;
+			MARKETING_VERSION = 0.3.1; PRODUCT_BUNDLE_IDENTIFIER = org.thegriffinfund.ios;
 			PRODUCT_NAME = "$(TARGET_NAME)"; SWIFT_EMIT_LOC_STRINGS = YES;
 			TARGETED_DEVICE_FAMILY = "1,2"; }; name = Release; };
 		69928A538C279294B2B0A8FA = {isa = XCConfigurationList; buildConfigurations = (9A4C70B3EC18B4C4F5876282, 368E70629B2AEFD4259AA6A8); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };

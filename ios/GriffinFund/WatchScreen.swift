@@ -23,6 +23,39 @@ final class WatchStore: ObservableObject {
 
     func refresh() async { await fetch(keepOld: true) }
 
+    /// Named for what it is, not for the sheet: the screen has its own
+    /// `adding` meaning "the sheet is open", and two different booleans
+    /// with one name is how a disabled button ends up wired to the wrong
+    /// one.
+    @Published private(set) var submitting = false
+    @Published var addError: String?
+
+    /// Adding is the watchlist's real value on a phone: somebody names a
+    /// company at dinner and it takes four seconds. Reading the list is
+    /// the secondary use.
+    ///
+    /// `scope` is passed explicitly rather than left to the server's
+    /// default, which is the SHARED club list. That default is right for
+    /// the web client and wrong to inherit silently here: a member tapping
+    /// + on a phone should know whether they just added a name for
+    /// everybody, so the screen asks.
+    func add(_ ticker: String, shared: Bool) async -> Bool {
+        submitting = true
+        addError = nil
+        defer { submitting = false }
+        do {
+            _ = try await API.shared.post("/watchlist",
+                                          body: ["ticker": ticker.uppercased(),
+                                                 "scope": shared ? "club" : "mine"],
+                                          as: AddReceipt.self)
+            await refresh()
+            return true
+        } catch {
+            addError = error.localizedDescription
+            return false
+        }
+    }
+
     private func fetch(keepOld: Bool) async {
         let previous = state.value
         do {
@@ -38,6 +71,10 @@ final class WatchStore: ObservableObject {
 
 struct WatchScreen: View {
     @StateObject private var store = WatchStore()
+    @State private var adding = false
+    @State private var newTicker = ""
+    @State private var shared = true
+    @FocusState private var tickerFocused: Bool
 
     var body: some View {
         VStack(spacing: 0) {
@@ -53,6 +90,87 @@ struct WatchScreen: View {
         .toolbar(.hidden, for: .navigationBar)
         .navigationDestination(for: TickerScreen.self) { $0 }
         .task { if store.state.value == nil { await store.load() } }
+        .overlay(alignment: .bottomTrailing) { addButton }
+        .sheet(isPresented: $adding) { addSheet }
+    }
+
+    private var addButton: some View {
+        Button { adding = true } label: {
+            Text("+ ADD")
+                .font(Type.chip).tracking(0.8)
+                .padding(.horizontal, Space.m).padding(.vertical, Space.m)
+                .background(T.amber).foregroundStyle(T.bg)
+        }
+        .buttonStyle(.plain)
+        .padding(Space.l)
+    }
+
+    private var addSheet: some View {
+        NavigationStack {
+            VStack(alignment: .leading, spacing: Space.m) {
+                Text("TICKER").font(Type.label).tracking(0.8).foregroundStyle(T.muted)
+                TextField("e.g. LISN", text: $newTicker)
+                    .textInputAutocapitalization(.characters)
+                    .autocorrectionDisabled()
+                    .font(Font.data(20, .bold)).foregroundStyle(T.amber)
+                    .padding(Space.m).background(T.card)
+                    .overlay(Rectangle().strokeBorder(T.border, lineWidth: 1))
+                    .focused($tickerFocused)
+
+                // Said as a sentence rather than a toggle labelled "scope",
+                // because the consequence is the part that matters.
+                Toggle(isOn: $shared) {
+                    VStack(alignment: .leading, spacing: Space.xs) {
+                        Text(shared ? "Adding for the whole club" : "Adding just for you")
+                            .font(Type.body).foregroundStyle(T.white)
+                        Text(shared ? "Everyone will see this name on the list."
+                                    : "Nobody else will see it.")
+                            .font(Type.meta).foregroundStyle(T.muted)
+                    }
+                }
+                .tint(T.amber)
+
+                if let e = store.addError {
+                    Text(e).font(Type.footnote).foregroundStyle(T.negative)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                Button {
+                    Task {
+                        if await store.add(newTicker, shared: shared) {
+                            newTicker = ""
+                            adding = false
+                        }
+                    }
+                } label: {
+                    Text(store.submitting ? "ADDING…" : "ADD TO WATCHLIST")
+                        .font(Type.chip).tracking(0.8)
+                        .frame(maxWidth: .infinity).padding(.vertical, 14)
+                        .background(newTicker.isEmpty ? T.card : T.amber)
+                        .foregroundStyle(newTicker.isEmpty ? T.muted : T.bg)
+                }
+                .disabled(newTicker.isEmpty || store.submitting)
+
+                Spacer()
+            }
+            .padding(Space.l)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(T.bg)
+            .navigationTitle("")
+            .toolbar {
+                ToolbarItem(placement: .principal) {
+                    Text("ADD A NAME").font(Type.screenCode).foregroundStyle(T.white)
+                }
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { adding = false }.foregroundStyle(T.dim)
+                }
+            }
+            .toolbarBackground(T.redBar, for: .navigationBar)
+            .toolbarBackground(.visible, for: .navigationBar)
+            .toolbarColorScheme(.dark, for: .navigationBar)
+        }
+        .presentationDetents([.height(340)])
+        .task { tickerFocused = true }
     }
 
     private func content(_ list: Watchlist) -> some View {

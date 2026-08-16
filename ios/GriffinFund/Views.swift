@@ -130,8 +130,8 @@ struct MainTabs: View {
                 .tabItem { Label("Watch", systemImage: "eye") }
             NavigationStack { BookScreen() }
                 .tabItem { Label("Book", systemImage: "chart.pie") }
-            NavigationStack { ClubScreen() }
-                .tabItem { Label("Club", systemImage: "person.2") }
+            NavigationStack { AccountScreen() }
+                .tabItem { Label("Account", systemImage: "person.crop.circle") }
         }
         .tint(T.amber)
         .toolbarBackground(T.bg, for: .tabBar)
@@ -147,7 +147,6 @@ final class TodayStore: ObservableObject {
     /// The three below are context, not the subject, so each fails
     /// silently. A summary the model could not write must never be the
     /// reason the chase list does not appear.
-    @Published private(set) var pendingVote: VoteSession?
     @Published private(set) var review: DayInReview?
     @Published private(set) var movers: Movers?
 
@@ -165,10 +164,6 @@ final class TodayStore: ObservableObject {
     }
 
     private func loadExtras() async {
-        // /votes/pending answers with the session itself or a bare null,
-        // and a null body is a valid answer meaning "nothing open" rather
-        // than a failure, so the decode is allowed to come back nil.
-        pendingVote = try? await API.shared.get("/votes/pending", as: VoteSession?.self) ?? nil
         review = try? await API.shared.get("/dashboard/day-in-review", as: DayInReview.self)
         movers = try? await API.shared.get("/terminal/movers", as: Movers.self)
     }
@@ -216,7 +211,6 @@ struct TodayScreen: View {
         .background(T.bg)
         .toolbar(.hidden, for: .navigationBar)
         .navigationDestination(for: PersonScreen.self) { $0 }
-        .navigationDestination(for: VoteScreen.self) { $0 }
         .navigationDestination(for: TickerScreen.self) { $0 }
         .task { if store.state.value == nil { await store.load() } }
     }
@@ -239,26 +233,6 @@ struct TodayScreen: View {
                 // The rows arrive ranked by the server and are rendered in
                 // that order. The client used to sort them itself and
                 // disagreed with the desk about which chase mattered most.
-                // An open ballot leads, above every chase. A vote closes
-                // on a deadline and a chase does not, and the club's
-                // recurring failure is quorum rather than follow-up.
-                if let v = store.pendingVote, v.isOpen, let id = v.id {
-                    Section {
-                        NavigationLink(value: VoteScreen(sessionId: id, knownTicker: v.ticker)) {
-                            Row(title: v.ticker.map { "Vote on \($0)" } ?? "A vote is open",
-                                subtitle: v.isSell ? "Sell or hold. You have not cast a ballot."
-                                                   : "You have not cast a ballot.",
-                                meta: v.deadline.map { "Closes \(Fmt.shortDateTime($0))" },
-                                strip: T.amber) {
-                                Chip(text: "Vote", tone: T.amber, style: .solid)
-                            }
-                        }
-                        .buttonStyle(.plain)
-                    } header: {
-                        SectionHeader(text: "Open ballot")
-                    }
-                }
-
                 let rows = f.rows ?? []
                 Section {
                     if rows.isEmpty {
@@ -385,21 +359,26 @@ struct TodayScreen: View {
 
 // MARK: Club
 
-/// The record and the housekeeping. Deliberately last and deliberately
-/// small: without it, signing out squats in the Book's toolbar, which is
-/// where it was, so from Today you could not sign out at all.
-struct ClubScreen: View {
+/// Who is signed in, and how to stop being signed in. Deliberately just
+/// that: the club's own administration — votes, attendance, the roster,
+/// events — is not in this app at all, so this is an account screen and
+/// not a members' area.
+///
+/// It still earns a tab. Without one, signing out squats in the Book's
+/// toolbar, which is where it was, and from any other screen you could
+/// not sign out at all.
+struct AccountScreen: View {
     @EnvironmentObject var s: Session
     @State private var confirmingSignOut = false
 
     var body: some View {
         VStack(spacing: 0) {
-            FunctionBar(code: "CLUB", title: "Account")
+            FunctionBar(code: "ACCT", title: "Signed in")
             ScrollView {
                 LazyVStack(spacing: 0, pinnedViews: [.sectionHeaders]) {
                     Section {
                         Row(title: s.name ?? "Signed in",
-                            subtitle: "The Griffin Fund, Grace Church School")
+                            subtitle: "The Griffin Fund")
                     } header: {
                         SectionHeader(text: "You")
                     }
@@ -417,7 +396,7 @@ struct ClubScreen: View {
         }
         .background(T.bg)
         .toolbar(.hidden, for: .navigationBar)
-        .confirmationDialog("Sign out of the Griffin Fund?",
+        .confirmationDialog("Sign out?",
                             isPresented: $confirmingSignOut, titleVisibility: .visible) {
             Button("Sign out", role: .destructive) { s.signOut() }
             Button("Cancel", role: .cancel) { }
