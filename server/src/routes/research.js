@@ -1048,9 +1048,12 @@ router.patch('/targets/:id', canResearch, async (req, res) => {
       return res.status(400).json({ error: `status must be one of: ${[...TARGET_STATUSES].join(', ')}` });
     }
     data.status = req.body.status;
-    // Any movement off "Identified" is contact, so stamp it — "when did
-    // we last try this person" is the question that paces follow-up.
-    if (req.body.status !== 'Identified') data.lastContactAt = new Date();
+    // Deliberately does NOT stamp lastContactAt. Hand-marking somebody
+    // Declined for a refusal that arrived last week is not contact today,
+    // and stamping it made the column read "last contact: today" for an
+    // event nobody had. Contact is evidenced by a sent draft or a logged
+    // message; followUp.js already computes the clock from those two and
+    // has never read this column.
   }
   if (req.body?.notes !== undefined) {
     data.notes = req.body.notes ? String(req.body.notes).slice(0, 20_000) : null;
@@ -1228,7 +1231,12 @@ function decorate(d, user) {
     signature: signatureFor(user),
     approvalCount: approvals.length,
     approvalsNeeded: REQUIRED_APPROVALS,
-    fullyApproved: approvals.length >= REQUIRED_APPROVALS && !d.rejectedAt && !blocked,
+    // An unscreened draft is NOT ready. The card used to print a green
+    // READY directly above a grey "unscreened" chip: go and stop in the
+    // same three lines. modelAvailable:false is a weaker claim than a low
+    // risk and has never been a clearance, so it must not gate as one.
+    fullyApproved:
+      approvals.length >= REQUIRED_APPROVALS && !d.rejectedAt && !blocked && !!d.screenedAt,
     iApproved: mine,
     canIApprove: canApproveOutreach(user) && !mine && !d.sentAt && !d.rejectedAt && !blocked,
     screenBlocked: blocked,
@@ -1402,6 +1410,13 @@ router.patch('/drafts/:id', canResearch, async (req, res) => {
           ...(changed
             ? { screenRisk: null, screenReason: null, screenFindings: null, screenModelOk: false, screenedAt: null }
             : {}),
+          // Queueing is voided by an edit for the same reason approvals
+          // are: the words that were pasted into a mailbox are not these
+          // words. Left standing, a draft edited after queueing sits
+          // scheduled to send text nobody screened, and if the re-screen
+          // comes back prohibited it counts as queued AND blocked while
+          // the blocked version is still on a timer.
+          ...(changed ? { queuedAt: null, queuedById: null } : {}),
         },
       });
     });
@@ -1499,6 +1514,11 @@ router.post('/drafts/:id/reject', canResearch, async (req, res) => {
           rejectedById: req.user.id,
           rejectedAt: new Date(),
           reviewNote: String(req.body.note).slice(0, 1000),
+          // A vetoed draft is not still scheduled to send. Left set,
+          // queuedAt put the same draft in the queued AND the rejected
+          // counter, so the totals summed to more drafts than exist.
+          queuedAt: null,
+          queuedById: null,
         },
         include: DRAFT_VIEW,
       });
@@ -1632,7 +1652,11 @@ router.post('/drafts/:id/sent', canResearch, async (req, res) => {
 // answer and closes the target, and interest is the only one that leads
 // anywhere. Anything genuinely ambiguous is Other, on purpose, so the
 // four that carry consequences stay trustworthy.
-const REPLY_KINDS = ['AutoReply', 'Bounce', 'Declined', 'Interested', 'Other'];
+// Reply leads because it is the commonest real event and the picker
+// defaults to whatever comes first. AutoReply led, so anyone who did not
+// touch the control filed a human answer as a robot, and the chase clock
+// went on hunting somebody who had already written back.
+const REPLY_KINDS = ['Reply', 'AutoReply', 'Bounce', 'Declined', 'Interested', 'Other'];
 // What we sent. Separate list because none of these say anything about
 // the target's intent and none of them may move the funnel: chasing
 // somebody four times is not progress, and a status that improved every
