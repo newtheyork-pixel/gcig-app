@@ -1,0 +1,73 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {};
+	objectVersion = 56;
+	objects = {
+		80B40DD461DC991525EB1139 /* App.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0104EEA69BD8EED54BBDA5AC /* App.swift */; };
+		43473D878C22DADF8C56D23A /* Core.swift in Sources */ = {isa = PBXBuildFile; fileRef = D1E6375831A1DEC4C09CCA6C /* Core.swift */; };
+		805A6232D3EC900D44609D82 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = 74A5E9BA8482415525970AE5 /* Models.swift */; };
+		ACEF0D14F2618932A4009D86 /* Views.swift in Sources */ = {isa = PBXBuildFile; fileRef = 124CA9BC5B6923FBF456604E /* Views.swift */; };
+		0104EEA69BD8EED54BBDA5AC /* App.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = App.swift; sourceTree = "<group>"; };
+		D1E6375831A1DEC4C09CCA6C /* Core.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Core.swift; sourceTree = "<group>"; };
+		74A5E9BA8482415525970AE5 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
+		124CA9BC5B6923FBF456604E /* Views.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views.swift; sourceTree = "<group>"; };
+		7ECA4F52C504D53520A02786 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		D2A57DC1D883FD21FB995169 /* GriffinFund.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = GriffinFund.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		DAF6AA633395B1B76148E35B = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+		63A9F0EA7BB98050796B649E = {isa = PBXGroup; children = (
+				AAE3C71672121C2397F9F81F /* GriffinFund */,
+				D6E4A9B6646C62FC48BAA6DD /* Products */,
+			); sourceTree = "<group>"; };
+		D6E4A9B6646C62FC48BAA6DD /* Products */ = {isa = PBXGroup; children = (
+				D2A57DC1D883FD21FB995169 /* GriffinFund.app */,
+			); name = Products; sourceTree = "<group>"; };
+		AAE3C71672121C2397F9F81F /* GriffinFund */ = {isa = PBXGroup; children = (
+				0104EEA69BD8EED54BBDA5AC /* App.swift */,
+				D1E6375831A1DEC4C09CCA6C /* Core.swift */,
+				74A5E9BA8482415525970AE5 /* Models.swift */,
+				124CA9BC5B6923FBF456604E /* Views.swift */,
+				7ECA4F52C504D53520A02786 /* Info.plist */,
+			); path = GriffinFund; sourceTree = "<group>"; };
+		42AEFBAE01D2DFD981F7DA7D /* GriffinFund */ = {isa = PBXNativeTarget; buildConfigurationList = 6D7D0810131F860C94427E6C; buildPhases = (
+				0F78FE532035D122ED352DBA,
+				DAF6AA633395B1B76148E35B,
+				943E4BBD9B51C81965501BA3,
+			); buildRules = (); dependencies = (); name = GriffinFund; productName = GriffinFund; productReference = D2A57DC1D883FD21FB995169; productType = "com.apple.product-type.application"; };
+		A7B8DCE6D15E654B8F721AE2 /* Project object */ = {isa = PBXProject; attributes = { BuildIndependentTargetsInParallel = 1; LastSwiftUpdateCheck = 2600; LastUpgradeCheck = 2600; };
+			buildConfigurationList = 7A49C2C32796D2E3B1F51AD5; compatibilityVersion = "Xcode 14.0"; developmentRegion = en; hasScannedForEncodings = 0;
+			knownRegions = (en, Base); mainGroup = 63A9F0EA7BB98050796B649E; productRefGroup = D6E4A9B6646C62FC48BAA6DD; projectDirPath = ""; projectRoot = "";
+			targets = (42AEFBAE01D2DFD981F7DA7D /* GriffinFund */); };
+		943E4BBD9B51C81965501BA3 = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+		0F78FE532035D122ED352DBA = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (
+				80B40DD461DC991525EB1139 /* App.swift in Sources */,
+				43473D878C22DADF8C56D23A /* Core.swift in Sources */,
+				805A6232D3EC900D44609D82 /* Models.swift in Sources */,
+				ACEF0D14F2618932A4009D86 /* Views.swift in Sources */,
+			); runOnlyForDeploymentPostprocessing = 0; };
+		BDBC475092EF64D21C5DE60B = {isa = XCBuildConfiguration; buildSettings = {
+			ALWAYS_SEARCH_USER_PATHS = NO; CLANG_ENABLE_MODULES = YES; ENABLE_STRICT_OBJC_MSGSEND = YES;
+			IPHONEOS_DEPLOYMENT_TARGET = 17.0; SDKROOT = iphoneos; SWIFT_VERSION = 5.0;
+			ONLY_ACTIVE_ARCH = YES; SWIFT_OPTIMIZATION_LEVEL = "-Onone"; DEBUG_INFORMATION_FORMAT = dwarf;
+			GCC_OPTIMIZATION_LEVEL = 0; }; name = Debug; };
+		80D34FDBFC214A62DA2B7427 = {isa = XCBuildConfiguration; buildSettings = {
+			ALWAYS_SEARCH_USER_PATHS = NO; CLANG_ENABLE_MODULES = YES; ENABLE_STRICT_OBJC_MSGSEND = YES;
+			IPHONEOS_DEPLOYMENT_TARGET = 17.0; SDKROOT = iphoneos; SWIFT_VERSION = 5.0;
+			SWIFT_COMPILATION_MODE = wholemodule; DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym"; }; name = Release; };
+		40EE942D4E7DF005E21C0771 = {isa = XCBuildConfiguration; buildSettings = {
+			ASSETCATALOG_COMPILER_APPICON_NAME = ""; CODE_SIGN_STYLE = Automatic;
+			CURRENT_PROJECT_VERSION = 1; GENERATE_INFOPLIST_FILE = NO; INFOPLIST_FILE = GriffinFund/Info.plist;
+			LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks");
+			MARKETING_VERSION = 0.1.0; PRODUCT_BUNDLE_IDENTIFIER = org.thegriffinfund.terminal;
+			PRODUCT_NAME = "$(TARGET_NAME)"; SWIFT_EMIT_LOC_STRINGS = YES; TARGETED_DEVICE_FAMILY = "1,2"; }; name = Debug; };
+		29B64A418306CC02D181FEE4 = {isa = XCBuildConfiguration; buildSettings = {
+			ASSETCATALOG_COMPILER_APPICON_NAME = ""; CODE_SIGN_STYLE = Automatic;
+			CURRENT_PROJECT_VERSION = 1; GENERATE_INFOPLIST_FILE = NO; INFOPLIST_FILE = GriffinFund/Info.plist;
+			LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks");
+			MARKETING_VERSION = 0.1.0; PRODUCT_BUNDLE_IDENTIFIER = org.thegriffinfund.terminal;
+			PRODUCT_NAME = "$(TARGET_NAME)"; SWIFT_EMIT_LOC_STRINGS = YES; TARGETED_DEVICE_FAMILY = "1,2"; }; name = Release; };
+		7A49C2C32796D2E3B1F51AD5 = {isa = XCConfigurationList; buildConfigurations = (BDBC475092EF64D21C5DE60B, 80D34FDBFC214A62DA2B7427); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+		6D7D0810131F860C94427E6C = {isa = XCConfigurationList; buildConfigurations = (40EE942D4E7DF005E21C0771, 29B64A418306CC02D181FEE4); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+	};
+	rootObject = A7B8DCE6D15E654B8F721AE2 /* Project object */;
+}

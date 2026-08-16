@@ -1,0 +1,136 @@
+{
+  "source": "/Users/thomasseirer/repos/gcig-app/ios/GriffinFund/Views.swift",
+  "tables": {
+    "Localizable": [
+      {
+        "comment": "",
+        "key": "THE GRIFFIN FUND",
+        "location": {
+          "startingColumn": 22,
+          "startingLine": 21
+        }
+      },
+      {
+        "comment": "",
+        "key": "Grace Church School",
+        "location": {
+          "startingColumn": 22,
+          "startingLine": 22
+        }
+      },
+      {
+        "comment": "",
+        "key": "school email",
+        "location": {
+          "startingColumn": 27,
+          "startingLine": 24
+        }
+      },
+      {
+        "comment": "",
+        "key": "password",
+        "location": {
+          "startingColumn": 29,
+          "startingLine": 27
+        }
+      },
+      {
+        "comment": "",
+        "key": "SIGNING IN…",
+        "location": {
+          "startingColumn": 35,
+          "startingLine": 34
+        }
+      },
+      {
+        "comment": "",
+        "key": "SIGN IN",
+        "location": {
+          "startingColumn": 53,
+          "startingLine": 34
+        }
+      },
+      {
+        "comment": "",
+        "key": "Today",
+        "location": {
+          "startingColumn": 41,
+          "startingLine": 50
+        }
+      },
+      {
+        "comment": "",
+        "key": "Book",
+        "location": {
+          "startingColumn": 40,
+          "startingLine": 51
+        }
+      },
+      {
+        "comment": "",
+        "key": "Today",
+        "location": {
+          "startingColumn": 30,
+          "startingLine": 107
+        }
+      },
+      {
+        "comment": "",
+        "key": "Nothing owed today.",
+        "location": {
+          "startingColumn": 30,
+          "startingLine": 83
+        }
+      },
+      {
+        "comment": "",
+        "key": "COULD NOT LOAD",
+        "location": {
+          "startingColumn": 34,
+          "startingLine": 74
+        }
+      },
+      {
+        "comment": "",
+        "key": "Retry",
+        "location": {
+          "startingColumn": 36,
+          "startingLine": 77
+        }
+      },
+      {
+        "comment": "",
+        "key": "Book",
+        "location": {
+          "startingColumn": 30,
+          "startingLine": 196
+        }
+      },
+      {
+        "comment": "",
+        "key": "HOLDINGS",
+        "location": {
+          "startingColumn": 33,
+          "startingLine": 170
+        }
+      },
+      {
+        "comment": "",
+        "key": "TOTAL",
+        "location": {
+          "startingColumn": 38,
+          "startingLine": 164
+        }
+      },
+      {
+        "comment": "",
+        "key": "Sign out",
+        "location": {
+          "startingColumn": 28,
+          "startingLine": 199
+        }
+      }
+    ]
+  },
+  "version": 1
+}
