@@ -10,7 +10,19 @@
   <key>CFBundleShortVersionString</key><string>0.1.0</string>
   <key>CFBundleVersion</key><string>1</string>
   <key>UILaunchScreen</key><dict/>
+  <!-- All four, because TARGETED_DEVICE_FAMILY includes iPad and iPad
+       multitasking requires every orientation to be declared. Upload
+       rejects the bundle otherwise. The iPhone key below stays portrait
+       only: this is a reader and an alerter, and a rotating one-column
+       list buys nothing. -->
   <key>UISupportedInterfaceOrientations</key>
+  <array>
+    <string>UIInterfaceOrientationPortrait</string>
+    <string>UIInterfaceOrientationPortraitUpsideDown</string>
+    <string>UIInterfaceOrientationLandscapeLeft</string>
+    <string>UIInterfaceOrientationLandscapeRight</string>
+  </array>
+  <key>UISupportedInterfaceOrientations~iphone</key>
   <array><string>UIInterfaceOrientationPortrait</string></array>
 </dict>
 </plist>
