@@ -16,12 +16,32 @@
        encryption within Apple's own operating system, which is exactly
        what the exemption covers. -->
   <key>ITSAppUsesNonExemptEncryption</key><false/>
-  <key>UILaunchScreen</key><dict/>
+  <!-- A launch screen is not decoration: without one the app flashes
+       white for the second before SwiftUI paints, which on a dark
+       terminal app reads as a bug. Same ground colour as T.bg, so the
+       hand-off from launch image to first frame is invisible. -->
+  <key>UILaunchScreen</key>
+  <dict>
+    <key>UIColorName</key><string>LaunchBG</string>
+    <key>UIImageName</key><string>LaunchMark</string>
+    <key>UIImageRespectsSafeAreaInsets</key><true/>
+  </dict>
   <!-- All four, because TARGETED_DEVICE_FAMILY includes iPad and iPad
        multitasking requires every orientation to be declared. Upload
        rejects the bundle otherwise. The iPhone key below stays portrait
        only: this is a reader and an alerter, and a rotating one-column
        list buys nothing. -->
+  <!-- Same scheme the Mac registers. NativeAuth.jsx hardcodes
+       griffin-terminal://auth, so the phone must answer to it or the
+       browser hand-back lands nowhere. -->
+  <key>CFBundleURLTypes</key>
+  <array>
+    <dict>
+      <key>CFBundleURLName</key><string>org.thegriffinfund.ios.auth</string>
+      <key>CFBundleURLSchemes</key>
+      <array><string>griffin-terminal</string></array>
+    </dict>
+  </array>
   <key>UISupportedInterfaceOrientations</key>
   <array>
     <string>UIInterfaceOrientationPortrait</string>

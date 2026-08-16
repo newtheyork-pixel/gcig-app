@@ -7,6 +7,14 @@ struct RootView: View {
             if s.token == nil { LoginView() } else { MainTabs() }
         }
         .preferredColorScheme(.dark)
+        .onOpenURL { url in
+            // griffin-terminal://auth?code=… coming back from Safari.
+            guard url.scheme == "griffin-terminal",
+                  let code = URLComponents(url: url, resolvingAgainstBaseURL: false)?
+                      .queryItems?.first(where: { $0.name == "code" })?.value
+            else { return }
+            Task { await s.exchange(code: code) }
+        }
     }
 }
 
@@ -18,24 +26,56 @@ struct LoginView: View {
         ZStack {
             T.bg.ignoresSafeArea()
             VStack(alignment: .leading, spacing: 14) {
-                Text("THE GRIFFIN FUND").font(T.mono(15, .bold)).foregroundStyle(T.amber)
+                Spacer()
+                Text("THE GRIFFIN FUND").font(T.mono(17, .bold)).foregroundStyle(T.amber)
+                    .tracking(1.5)
                 Text("Grace Church School").font(T.mono(11)).foregroundStyle(T.dim)
-                    .padding(.bottom, 10)
+                    .tracking(0.5)
+                Spacer().frame(height: 18)
+
+                // The browser route is first because it is the one that
+                // works for everybody: Google, two-factor and password all
+                // happen on a page that already handles them.
+                Link(destination: Session.handoffURL) {
+                    Text("SIGN IN WITH BROWSER")
+                        .font(T.mono(12, .bold)).tracking(0.8)
+                        .frame(maxWidth: .infinity).padding(.vertical, 13)
+                        .background(T.amber).foregroundStyle(Color.black)
+                        .clipShape(RoundedRectangle(cornerRadius: 6))
+                }
+                Text("Opens the website. Works with Google and two-factor.")
+                    .font(T.mono(9)).foregroundStyle(T.muted)
+
+                HStack(spacing: 8) {
+                    Rectangle().fill(T.border).frame(height: 1)
+                    Text("OR").font(T.mono(9)).foregroundStyle(T.muted)
+                    Rectangle().fill(T.border).frame(height: 1)
+                }.padding(.vertical, 6)
+
                 TextField("school email", text: $email)
                     .textInputAutocapitalization(.never).autocorrectionDisabled()
-                    .keyboardType(.emailAddress)
+                    .keyboardType(.emailAddress).textContentType(.username)
+                    .padding(11).background(T.panel)
+                    .clipShape(RoundedRectangle(cornerRadius: 6))
                 SecureField("password", text: $password)
+                    .textContentType(.password)
+                    .padding(11).background(T.panel)
+                    .clipShape(RoundedRectangle(cornerRadius: 6))
                 if let e = s.error {
                     Text(e).font(T.mono(11)).foregroundStyle(T.negative)
                 }
                 Button {
                     Task { await s.logIn(email: email, password: password) }
                 } label: {
-                    Text(s.busy ? "SIGNING IN…" : "SIGN IN")
-                        .font(T.mono(12, .bold)).frame(maxWidth: .infinity)
+                    Text(s.busy ? "SIGNING IN…" : "SIGN IN WITH PASSWORD")
+                        .font(T.mono(11, .bold)).tracking(0.5)
+                        .frame(maxWidth: .infinity).padding(.vertical, 11)
+                        .background(T.panel).foregroundStyle(T.white)
+                        .clipShape(RoundedRectangle(cornerRadius: 6))
+                        .overlay(RoundedRectangle(cornerRadius: 6).stroke(T.border, lineWidth: 1))
                 }
                 .disabled(s.busy || email.isEmpty || password.isEmpty)
-                .padding(.top, 6)
+                Spacer()
             }
             .textFieldStyle(.plain)
             .font(T.mono(13)).foregroundStyle(T.white)

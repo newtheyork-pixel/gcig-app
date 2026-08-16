@@ -82,6 +82,37 @@ final class Session: ObservableObject {
 
     init() { token = Self.keychainRead() }
 
+    /// Hand sign-in to the website.
+    ///
+    /// The password path cannot do Google and cannot do two-factor: the
+    /// server answers 2FA with a 200 carrying no token, and there is no
+    /// sane way to reimplement either flow in a first build. The website
+    /// already does both, so it does them, mints a 90-second single-use
+    /// code, and hands it back over the same custom scheme the Mac
+    /// registers. Every login method the club has works for free.
+    static let handoffURL = URL(string: "https://thegriffinfund.org/native-auth")!
+
+    func exchange(code: String) async {
+        busy = true; error = nil
+        defer { busy = false }
+        do {
+            var r = URLRequest(url: URL(string: "\(Self.base)/auth/native/exchange")!)
+            r.httpMethod = "POST"
+            r.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            r.httpBody = try JSONSerialization.data(withJSONObject: ["code": code])
+            let (d, resp) = try await URLSession.shared.data(for: r)
+            let j = try? JSONSerialization.jsonObject(with: d) as? [String: Any]
+            guard (resp as? HTTPURLResponse)?.statusCode == 200,
+                  let tok = j?["token"] as? String else {
+                error = (j?["error"] as? String) ?? "That sign-in link did not work. Try again."
+                return
+            }
+            Self.keychainWrite(tok)
+            token = tok
+            name = ((j?["user"] as? [String: Any])?["name"] as? String)
+        } catch { self.error = error.localizedDescription }
+    }
+
     func logIn(email: String, password: String) async {
         busy = true; error = nil
         defer { busy = false }

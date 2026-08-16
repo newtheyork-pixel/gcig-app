@@ -61,15 +61,15 @@
 			SWIFT_COMPILATION_MODE = wholemodule; DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym"; }; name = Release; };
 		40EE942D4E7DF005E21C0771 = {isa = XCBuildConfiguration; buildSettings = {
 			ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon; CODE_SIGN_STYLE = Automatic;
-			CURRENT_PROJECT_VERSION = 1; GENERATE_INFOPLIST_FILE = NO; INFOPLIST_FILE = GriffinFund/Info.plist;
+			CURRENT_PROJECT_VERSION = 2; GENERATE_INFOPLIST_FILE = NO; INFOPLIST_FILE = GriffinFund/Info.plist;
 			LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks");
-			MARKETING_VERSION = 0.1.0; PRODUCT_BUNDLE_IDENTIFIER = org.thegriffinfund.ios;
+			MARKETING_VERSION = 0.1.1; PRODUCT_BUNDLE_IDENTIFIER = org.thegriffinfund.ios;
 			PRODUCT_NAME = "$(TARGET_NAME)"; SWIFT_EMIT_LOC_STRINGS = YES; TARGETED_DEVICE_FAMILY = "1,2"; }; name = Debug; };
 		29B64A418306CC02D181FEE4 = {isa = XCBuildConfiguration; buildSettings = {
 			ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon; CODE_SIGN_STYLE = Automatic;
-			CURRENT_PROJECT_VERSION = 1; GENERATE_INFOPLIST_FILE = NO; INFOPLIST_FILE = GriffinFund/Info.plist;
+			CURRENT_PROJECT_VERSION = 2; GENERATE_INFOPLIST_FILE = NO; INFOPLIST_FILE = GriffinFund/Info.plist;
 			LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks");
-			MARKETING_VERSION = 0.1.0; PRODUCT_BUNDLE_IDENTIFIER = org.thegriffinfund.ios;
+			MARKETING_VERSION = 0.1.1; PRODUCT_BUNDLE_IDENTIFIER = org.thegriffinfund.ios;
 			PRODUCT_NAME = "$(TARGET_NAME)"; SWIFT_EMIT_LOC_STRINGS = YES; TARGETED_DEVICE_FAMILY = "1,2"; }; name = Release; };
 		7A49C2C32796D2E3B1F51AD5 = {isa = XCConfigurationList; buildConfigurations = (BDBC475092EF64D21C5DE60B, 80D34FDBFC214A62DA2B7427); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
 		6D7D0810131F860C94427E6C = {isa = XCConfigurationList; buildConfigurations = (40EE942D4E7DF005E21C0771, 29B64A418306CC02D181FEE4); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
