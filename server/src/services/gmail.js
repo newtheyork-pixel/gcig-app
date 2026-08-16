@@ -38,6 +38,29 @@ const SCOPES = [
 
 const API = 'https://gmail.googleapis.com/gmail/v1/users/me';
 
+/**
+ * Who may connect a mailbox at all.
+ *
+ * Deliberately NOT a role. Sending real email from a real inbox, and
+ * reading what comes back, is not something that should arrive with a
+ * promotion: an Analyst gaining terminal access should not also silently
+ * gain the ability to send mail as the club. It is a named list of people,
+ * and today that list is two.
+ *
+ * FAILS CLOSED. An unset GMAIL_SENDERS means nobody may connect, not
+ * everybody. The opposite default is how a config that never got set on a
+ * new environment quietly opens the feature to the whole club.
+ */
+export function gmailSenders() {
+  return (process.env.GMAIL_SENDERS || '')
+    .split(',').map((x) => x.trim().toLowerCase()).filter(Boolean);
+}
+
+export function maySendMail(user) {
+  const email = String(user?.email || '').toLowerCase();
+  return Boolean(email) && gmailSenders().includes(email);
+}
+
 export function gmailConfigured() {
   return Boolean(process.env.GOOGLE_OAUTH_CLIENT_ID && process.env.GOOGLE_OAUTH_CLIENT_SECRET);
 }
@@ -91,6 +114,11 @@ async function mayBind(userId, address) {
   const a = String(address || '').toLowerCase();
   const domain = a.split('@')[1] || '';
   const u = await prisma.user.findUnique({ where: { id: userId }, select: { email: true } });
+  // The account doing the binding must itself be a permitted sender. This
+  // repeats the route gate on purpose: the callback is reached by a browser
+  // redirect rather than by a client we control, so it is the one door that
+  // must be able to refuse on its own.
+  if (!maySendMail(u)) return false;
   if (a && a === String(u?.email || '').toLowerCase()) return true;
   const extra = (process.env.GMAIL_ALLOWED_ADDRESSES || '')
     .split(',').map((x) => x.trim().toLowerCase()).filter(Boolean);

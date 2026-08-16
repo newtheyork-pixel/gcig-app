@@ -4,7 +4,7 @@ import { PrismaClient } from '@prisma/client';
 import { verifyJwt, requireRole } from '../middleware/auth.js';
 import {
   gmailConfigured, consentUrl, exchangeCode, connectionFor, disconnect,
-  inboundOnThread, classify,
+  inboundOnThread, classify, maySendMail, gmailSenders,
 } from '../services/gmail.js';
 
 const prisma = new PrismaClient();
@@ -90,12 +90,27 @@ router.get('/callback', async (req, res) => {
 
 router.use(verifyJwt);
 
+// Says plainly that this is not for you, rather than showing a Connect
+// button that 403s. A permission you can see and cannot use reads as a bug.
+const senderOnly = (req, res, next) => {
+  if (!maySendMail(req.user)) {
+    return res.status(403).json({
+      error: 'Sending mail from the terminal is limited to named senders.',
+      code: 'NOT_A_SENDER',
+    });
+  }
+  next();
+};
+
 router.get('/status', async (req, res) => {
-  if (!gmailConfigured()) return res.json({ configured: false, connected: false });
-  res.json({ configured: true, ...(await connectionFor(req.user.id)) });
+  if (!gmailConfigured()) return res.json({ configured: false, connected: false, allowed: false });
+  const allowed = maySendMail(req.user);
+  if (!allowed) return res.json({ configured: true, allowed: false, connected: false });
+  res.json({ configured: true, allowed: true, senders: gmailSenders().length,
+             ...(await connectionFor(req.user.id)) });
 });
 
-router.get('/connect', async (req, res) => {
+router.get('/connect', senderOnly, async (req, res) => {
   if (!gmailConfigured()) return res.status(503).json({ error: 'Gmail is not configured on this server' });
   const { state, nonce } = signState(req.user.id);
   // Lax rather than Strict: Google's redirect is a cross-site top-level
@@ -108,7 +123,7 @@ router.get('/connect', async (req, res) => {
   res.json({ url: consentUrl(state) });
 });
 
-router.delete('/connection', async (req, res) => {
+router.delete('/connection', senderOnly, async (req, res) => {
   await disconnect(req.user.id);
   res.json({ ok: true });
 });
@@ -125,7 +140,7 @@ router.delete('/connection', async (req, res) => {
  * they did not connect, and the query below can only find threads their own
  * drafts recorded.
  */
-router.post('/sync', requireRole('Analyst'), async (req, res) => {
+router.post('/sync', senderOnly, async (req, res) => {
   try {
     const drafts = await prisma.outreachDraft.findMany({
       where: {

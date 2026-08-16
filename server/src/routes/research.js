@@ -9,7 +9,7 @@ import { scanForAnswer } from '../services/answerScan.js';
 import { assessTopics, formatCitation } from '../services/corroboration.js';
 import { assessCoverage, funnel } from '../services/questionCoverage.js';
 import { assessOutreach, assessTarget } from '../services/followUp.js';
-import { sendAs, gmailConfigured } from '../services/gmail.js';
+import { sendAs, gmailConfigured, maySendMail } from '../services/gmail.js';
 import { extractForArtifact } from '../services/artifactText.js';
 import { synthesize } from '../services/synthesis.js';
 import { screenTranscript, RISK } from '../services/mnpiScreen.js';
@@ -1736,6 +1736,12 @@ router.post('/drafts/:id/deliver', canResearch, async (req, res) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id)) return res.status(400).json({ error: 'Bad id' });
   if (!gmailConfigured()) return res.status(503).json({ error: 'Gmail is not configured on this server' });
+  // Checked here as well as on /gmail/connect. canResearch lets any Analyst
+  // reach this route, and being allowed to WRITE a draft is not the same
+  // permission as being allowed to put it in somebody's inbox.
+  if (!maySendMail(req.user)) {
+    return res.status(403).json({ error: 'Sending mail from the terminal is limited to named senders.' });
+  }
   try {
     const d = await prisma.outreachDraft.findUnique({
       where: { id },
