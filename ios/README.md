@@ -58,6 +58,42 @@ Running it needs a simulator runtime (`xcodebuild -downloadPlatform iOS`)
 or a signed device build. TestFlight needs the paid membership on team
 PW2VT56789, not just the Developer ID used for Mac notarization.
 
+## Publishing to TestFlight
+
+Two commands, and the second one is the whole trick.
+
+    xcodebuild -project ios/GriffinFund.xcodeproj -scheme GriffinFund \
+      -destination 'generic/platform=iOS' -configuration Release \
+      -archivePath /tmp/GF.xcarchive archive \
+      CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=
+
+    xcodebuild -exportArchive -archivePath /tmp/GF.xcarchive \
+      -exportPath /tmp/GF-out -exportOptionsPlist ios/ExportOptions.plist \
+      -allowProvisioningUpdates
+
+**The archive is unsigned on purpose and signing happens at export.**
+Automatic signing during an archive reaches for a DEVELOPMENT profile,
+which needs a registered device, and the team has none: "your team has
+no devices from which to generate a provisioning profile". App Store
+distribution needs no device, so the archive goes out bare and
+`exportArchive` signs it with method `app-store-connect`. Pinning
+`CODE_SIGN_IDENTITY=Apple Distribution` on the archive does not rescue
+it either — Xcode rejects the combination outright as conflicting with
+automatic signing.
+
+**`destination` must be `upload`, not `export`.** With `upload`,
+xcodebuild delivers straight to App Store Connect using the account
+already signed into Xcode: no API key, no app-specific password, no
+Transporter. With `export` you get a valid .ipa on disk and no way to
+hand it over, which is a dead end worth naming — the archive it came
+from records no team, so **Xcode's Organizer refuses it** with "No Team
+Found in Archive" and cannot be used as a fallback. The .ipa is fine;
+the archive simply is not distributable by hand.
+
+Version and build number come from `generate_project.py`. Bump
+`BUILD_NUMBER` before every upload — App Store Connect rejects a
+duplicate build number outright.
+
 ## Rules carried over from the Mac client
 
 - Decodables are written from the server handler, never from the JSX,
