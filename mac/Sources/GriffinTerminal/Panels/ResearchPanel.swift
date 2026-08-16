@@ -1897,6 +1897,13 @@ private struct OutreachTab: View {
             Text("\(fn?.identified ?? 0) not yet tried · \(fn?.contacted ?? 0) contacted · \(fn?.scheduled ?? 0) scheduled · \(fn?.completed ?? 0) done · \((fn?.declined ?? 0) + (fn?.unreachable ?? 0)) dead\(fn?.conversionPct.map { " · \($0)% conversion" } ?? "")")
                 .font(Term.mono(10)).foregroundStyle(Term.fgMuted)
 
+            // Whether the terminal can actually put any of this in
+            // somebody's inbox, above the queue counts. A ready-to-send
+            // number is a promise, and a promise the app cannot keep
+            // because no mailbox is connected should say so here rather
+            // than at the moment somebody presses send.
+            GmailConnectionRow()
+
             // Approval and compliance state on one line, because
             // "approved" and "screened" are different claims and a
             // reader who sees only the first will assume the second.

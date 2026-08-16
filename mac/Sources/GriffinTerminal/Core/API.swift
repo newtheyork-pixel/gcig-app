@@ -92,6 +92,13 @@ actor API {
         return try await send("POST", path, query: [:], body: body)
     }
 
+    /// DELETE, for the two routes that remove something rather than
+    /// creating it. No body, because a delete that carries one is a delete
+    /// somebody will eventually treat as an update.
+    func delete(_ path: String) async throws -> Data {
+        try await send("DELETE", path, query: [:], body: nil)
+    }
+
     /// multipart/form-data, for the one route that takes a file.
     ///
     /// Hand-rolled because URLSession has no multipart builder and the
