@@ -9,6 +9,7 @@ import { scanForAnswer } from '../services/answerScan.js';
 import { assessTopics, formatCitation } from '../services/corroboration.js';
 import { assessCoverage, funnel } from '../services/questionCoverage.js';
 import { assessOutreach, assessTarget } from '../services/followUp.js';
+import { sendAs, gmailConfigured } from '../services/gmail.js';
 import { extractForArtifact } from '../services/artifactText.js';
 import { synthesize } from '../services/synthesis.js';
 import { screenTranscript, RISK } from '../services/mnpiScreen.js';
@@ -1712,6 +1713,130 @@ router.post('/drafts/:id/queued', canResearch, async (req, res) => {
   } catch (err) {
     console.error('research/draft queued failed:', err.message);
     res.status(500).json({ error: 'Could not update that draft' });
+  }
+});
+
+/**
+ * Send it, for real, from the member's own mailbox.
+ *
+ * Same gates as marking it sent by hand, because the gates are the point
+ * and an automated door that skips them is worse than no door. Screened,
+ * not prohibited, not rejected, not already sent, and the target must have
+ * a real address.
+ *
+ * The order is deliberate and the failure mode is stated rather than
+ * hidden. Gmail is called BEFORE the transaction, because an external call
+ * inside a transaction holds a database lock open across the network. That
+ * leaves one bad window: the mail goes and the record does not. It cannot
+ * be closed, only reported, so it is reported loudly and with the Gmail
+ * message id, and the unique constraint on that id makes a second attempt
+ * safe rather than duplicative.
+ */
+router.post('/drafts/:id/deliver', canResearch, async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) return res.status(400).json({ error: 'Bad id' });
+  if (!gmailConfigured()) return res.status(503).json({ error: 'Gmail is not configured on this server' });
+  try {
+    const d = await prisma.outreachDraft.findUnique({
+      where: { id },
+      include: { approvals: true, target: true },
+    });
+    if (!d) return res.status(404).json({ error: 'No such draft' });
+    if (d.sentAt) return res.status(409).json({ error: 'Already sent.' });
+    if (d.rejectedAt) return res.status(409).json({ error: 'That draft was rejected. Edit it and it re-screens.' });
+    if (d.screenRisk === 'prohibited') {
+      return res.status(409).json({
+        error: `The compliance screen will not pass this: ${d.screenReason || 'no reason recorded'}. Edit it, which re-screens.`,
+      });
+    }
+    // Unscreened is not the same as clean, and this is the one door where
+    // the difference is irreversible. Marking something sent by hand can
+    // be undone in the record; an email cannot be recalled.
+    if (!d.screenedAt) {
+      return res.status(409).json({ error: 'Nothing has screened this draft yet. Edit it to trigger a screen.' });
+    }
+    const to = (d.target?.email || '').trim();
+    if (!to || !/^[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}$/.test(to)) {
+      return res.status(409).json({ error: `No usable address on this target (${to || 'blank'}).` });
+    }
+
+    // The signature is resolved for the SENDER here, not the reader. A
+    // draft carries a token rather than a name so the desk can show each
+    // person their own; the copy that actually leaves has to be signed by
+    // whoever pressed the button.
+    const body = renderSignature(d.body, req.user);
+
+    let sent;
+    try {
+      // expectAddress is passed rather than left as a decorative parameter.
+      // The client echoes the address /gmail/status last showed it, so a
+      // member whose binding changed under them gets a refusal instead of a
+      // delivered email from a mailbox they did not mean to use.
+      sent = await sendAs(req.user.id, {
+        to, subject: d.subject, body,
+        expectAddress: req.body?.expectAddress,
+      });
+    } catch (err) {
+      return res.status(502).json({ error: `Gmail refused it: ${err.message}` });
+    }
+
+    try {
+      const updated = await prisma.$transaction(async (tx) => {
+        const draft = await tx.outreachDraft.update({
+          where: { id },
+          data: {
+            sentAt: new Date(),
+            sentById: req.user?.id ?? null,
+            gmailThreadId: sent.threadId,
+            gmailMessageId: sent.messageId,
+            sentVia: 'gmail',
+          },
+          include: DRAFT_VIEW,
+        });
+        // The outbound ledger row is written in the SAME transaction, which
+        // is the fix CLAUDE.md already names: whether somebody was written
+        // to lived in four places and they could disagree.
+        await tx.outreachMessage.create({
+          data: {
+            targetId: draft.targetId,
+            draftId: draft.id,
+            direction: 'out',
+            kind: 'Other',
+            occurredAt: new Date(),
+            body: body.slice(0, 20_000),
+            gmailMessageId: sent.messageId,
+            recordedById: req.user?.id ?? null,
+          },
+        });
+        if (draft.targetId) {
+          const t = await tx.researchTarget.findUnique({
+            where: { id: draft.targetId }, select: { status: true },
+          });
+          const AHEAD = new Set(['Scheduled', 'Completed', 'Declined']);
+          await tx.researchTarget.update({
+            where: { id: draft.targetId },
+            data: {
+              ...(AHEAD.has(t?.status) ? {} : { status: 'Contacted' }),
+              lastContactAt: new Date(),
+            },
+          });
+        }
+        return draft;
+      });
+      res.json({ ...decorate(updated, req.user), deliveredFrom: sent.from });
+    } catch (err) {
+      // The email HAS gone. Say so plainly rather than returning a generic
+      // failure that invites somebody to press send again.
+      console.error('draft delivered but not recorded:', id, sent.messageId, err.message);
+      res.status(500).json({
+        error: 'The email was sent but the record did not save. Do not send it again.',
+        gmailMessageId: sent.messageId,
+        gmailThreadId: sent.threadId,
+      });
+    }
+  } catch (err) {
+    console.error('research/draft deliver failed:', err.message);
+    res.status(500).json({ error: 'Could not send it' });
   }
 });
 

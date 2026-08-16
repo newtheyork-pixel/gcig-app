@@ -120,6 +120,7 @@ model User {
   watchlistItems            WatchlistItem[]       @relation("WatchlistAdder")
   watchlistOwned            WatchlistItem[]       @relation("WatchlistOwner")
   siteVisits                SiteVisit[]           @relation("SiteVisitVisitor")
+  gmailAccount              GmailAccount?         @relation("GmailAccountOwner")
 }
 
 // Chat channels are addressed by a simple string:
@@ -671,6 +672,34 @@ model FileSummary {
 // refresh token; access tokens expire hourly, refresh token is the
 // long-lived credential used to mint new ones. If this row is empty,
 // uploads are unavailable until a super admin runs the OAuth flow.
+// One member's Gmail, connected so the terminal can send as them and read
+// back what comes in.
+//
+// Per USER, not per provider, which is the difference from
+// FileProviderToken above: outreach is signed by whoever sent it, so a
+// single shared mailbox would put Sander's name on Thomas's email. The
+// refresh token is the credential; the access token is a fifty-minute
+// convenience and is allowed to be stale.
+model GmailAccount {
+  id           Int       @id @default(autoincrement())
+  userId       Int       @unique
+  user         User      @relation("GmailAccountOwner", fields: [userId], references: [id], onDelete: Cascade)
+  // The address Google says these tokens belong to. Checked on every send:
+  // a member who reconnects a different mailbox must not silently start
+  // sending club outreach from it.
+  address      String   @unique
+  accessToken  String?
+  refreshToken String
+  expiresAt    DateTime?
+  scope        String?
+  // Set when Google refuses the refresh token. A connection that has gone
+  // bad and still looks connected is how a send fails silently.
+  revokedAt    DateTime?
+  lastSyncAt   DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+}
+
 model FileProviderToken {
   id           Int      @id @default(autoincrement())
   provider     String   @unique // 'onedrive'
@@ -1057,24 +1086,24 @@ model ResearchProject {
 // project artifact as a PDF they dragged over, and forcing the second
 // shape on the first just makes people keep scripts in Notes instead.
 model ResearchArtifact {
-  id           Int             @id @default(autoincrement())
+  id                 Int             @id @default(autoincrement())
   // Owner-only when set: the artifact is filtered out of every read
   // path except the super admin's. Used for material the club holds but
   // should not circulate — a transcription of somebody else's
   // copyrighted research being the case that prompted it.
-  ownerOnly    Boolean         @default(false)
-  projectId    Int
-  project      ResearchProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  ownerOnly          Boolean         @default(false)
+  projectId          Int
+  project            ResearchProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
   // guide | script | document | data | photo | memo | other. A string,
   // so adding a category is a code change rather than a migration.
-  kind         String          @default("document")
-  title        String
+  kind               String          @default("document")
+  title              String
   // "onedrive:ITEM_ID" for uploads; null for inline text.
-  fileRef      String?
-  filename     String?
+  fileRef            String?
+  filename           String?
   // Inline text, for guides and memos written in the app.
-  body         String?
-  note         String?
+  body               String?
+  note               String?
   // The handful that actually carry the argument: the model, the DCF,
   // the final report. A project accumulates dozens of files and the
   // three somebody needs are the ones newest-first ordering buries
@@ -1084,7 +1113,7 @@ model ResearchArtifact {
   // matters is a judgement about the work, and a heuristic that
   // promoted everything called "model" would quietly demote the one
   // that mattered by drowning it.
-  keyDoc       Boolean         @default(false)
+  keyDoc             Boolean         @default(false)
   // The words inside an uploaded file, pulled out and kept.
   //
   // Deliberately NOT `body`. A row can carry both: artifact 234 on the
@@ -1102,7 +1131,7 @@ model ResearchArtifact {
   // returns nothing and would otherwise render as a blank pane with no
   // explanation; `unsupported` is a type we cannot parse; `failed` is a
   // transport or parser error worth retrying.
-  extractStatus      String    @default("never")
+  extractStatus      String          @default("never")
   // Length of the FULL extraction. extractedText is capped, so a stored
   // text shorter than this is a truncated one and can say so.
   extractChars       Int?
@@ -1110,9 +1139,9 @@ model ResearchArtifact {
   // Stamped on every attempt, success or not, so a permanently broken
   // file backs off instead of being retried forever.
   extractAttemptedAt DateTime?
-  extractAttempts    Int       @default(0)
-  uploadedById Int?
-  uploadedBy   User?           @relation("ResearchArtifactUploader", fields: [uploadedById], references: [id], onDelete: SetNull)
+  extractAttempts    Int             @default(0)
+  uploadedById       Int?
+  uploadedBy         User?           @relation("ResearchArtifactUploader", fields: [uploadedById], references: [id], onDelete: SetNull)
   // Dragged to the Trash on the Griffin Fund volume, or removed in the
   // app. SOFT, and the softness is the point: the sync engine's founding
   // rule was that nothing is ever deleted, because a file vanishing from
@@ -1124,11 +1153,11 @@ model ResearchArtifact {
   // counts, the volume's own file list, the assistant's retrieval — so
   // to a member the file is gone. It is still on disk and still in
   // OneDrive, and /restore brings it back whole.
-  trashedAt    DateTime?
-  trashedById  Int?
-  trashedBy    User?           @relation("ResearchArtifactTrasher", fields: [trashedById], references: [id], onDelete: SetNull)
-  createdAt    DateTime        @default(now())
-  updatedAt    DateTime        @updatedAt
+  trashedAt          DateTime?
+  trashedById        Int?
+  trashedBy          User?           @relation("ResearchArtifactTrasher", fields: [trashedById], references: [id], onDelete: SetNull)
+  createdAt          DateTime        @default(now())
+  updatedAt          DateTime        @updatedAt
 
   @@index([projectId, kind])
   @@index([extractStatus])
@@ -1176,9 +1205,9 @@ model ResearchQuestion {
 // list with people who never replied, or lose the record of everyone we
 // failed to reach — which is itself a finding about a company.
 model ResearchTarget {
-  id            Int               @id @default(autoincrement())
+  id            Int             @id @default(autoincrement())
   projectId     Int
-  project       ResearchProject   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  project       ResearchProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
   name          String
   // Where they sit in the value chain: FormerEmployee, Distributor,
   // Customer, Supplier, Competitor, Landlord, IndustryExpert, Other.
@@ -1205,11 +1234,11 @@ model ResearchTarget {
   // answer different questions and must not be worked as one bucket.
   tier          String?
   // Identified | Contacted | Scheduled | Completed | Declined | Unreachable
-  status        String            @default("Identified")
+  status        String          @default("Identified")
   // Set once outreach converts, so a completed target points at the
   // source record it became.
   sourceId      Int?
-  source        ResearchSource?   @relation(fields: [sourceId], references: [id], onDelete: SetNull)
+  source        ResearchSource? @relation(fields: [sourceId], references: [id], onDelete: SetNull)
   notes         String?
   lastContactAt DateTime?
 
@@ -1292,6 +1321,16 @@ model OutreachDraft {
   screenFindings Json?
   screenModelOk  Boolean   @default(false)
   screenedAt     DateTime?
+
+  // Gmail's own identifiers, written when the terminal sends it.
+  //
+  // The thread id is what makes the reply loop precise. Matching inbound
+  // mail by sender address would attach a reply to the wrong draft the
+  // moment somebody is written to twice, and would ingest anything else
+  // they ever send us. A thread we started is a thread we may read.
+  gmailThreadId  String?
+  gmailMessageId String? @unique
+  sentVia        String? // "gmail" when the terminal sent it, null when a person did
 
   // A rejection is as much a record as an approval — "we decided not to
   // send this, and why" is worth keeping. One rejection parks the draft
@@ -1413,29 +1452,34 @@ model OutreachScreenLabel {
 // their original names via @@map, so honest naming in code cost no
 // migration.
 model OutreachMessage {
-  id           Int            @id @default(autoincrement())
-  targetId     Int
-  target       ResearchTarget @relation(fields: [targetId], references: [id], onDelete: Cascade)
+  id             Int            @id @default(autoincrement())
+  targetId       Int
+  target         ResearchTarget @relation(fields: [targetId], references: [id], onDelete: Cascade)
   // The draft it answers, when we know. Nullable and SetNull because a
   // reply can arrive on a forwarded thread, or long after, and losing
   // the draft must never delete the record that somebody responded.
-  draftId      Int?
-  draft        OutreachDraft? @relation(fields: [draftId], references: [id], onDelete: SetNull)
+  draftId        Int?
+  draft          OutreachDraft? @relation(fields: [draftId], references: [id], onDelete: SetNull)
   /// "in" = they wrote to us. "out" = we wrote to them. Defaulting to
   /// "in" is what makes this a pure column add: every row that exists
   /// was an inbound reply logged before the log went two-way.
-  direction    String         @default("in")
+  direction      String         @default("in")
   // in:  AutoReply | Bounce | Declined | Interested | Other
   // out: FollowUp | Reply | Scheduling | Other
-  kind         String
-  occurredAt   DateTime       @map("receivedAt")
-  body         String?
+  kind           String
+  occurredAt     DateTime       @map("receivedAt")
+  body           String?
   // What we decided to do about it, which is the part a reader needs
   // three weeks later when the reply itself is no longer surprising.
-  action       String?
-  recordedById Int?
-  recordedBy   User?          @relation("OutreachReplyRecorder", fields: [recordedById], references: [id], onDelete: SetNull)
-  createdAt    DateTime       @default(now())
+  action         String?
+  // Gmail's message id, when the poller found this rather than a person
+  // typing it. Unique, because a poller that runs twice must not log a
+  // reply twice, and "did they answer" is a question the whole follow-up
+  // clock is built on.
+  gmailMessageId String?        @unique
+  recordedById   Int?
+  recordedBy     User?          @relation("OutreachReplyRecorder", fields: [recordedById], references: [id], onDelete: SetNull)
+  createdAt      DateTime       @default(now())
 
   @@index([targetId, occurredAt])
   // The table and every constraint keep their original names. Without
@@ -1531,43 +1575,43 @@ model SiteObservation {
 // nobody's number at all. Keeping both in one project makes the
 // difference visible instead of letting them look alike in a model.
 model ResearchValuation {
-  id           Int             @id @default(autoincrement())
-  projectId    Int
-  project      ResearchProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
-  ticker       String?
+  id              Int             @id @default(autoincrement())
+  projectId       Int
+  project         ResearchProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  ticker          String?
   // dcf | merger | comps | other. A merger model asks different
   // questions of the same company — what multiple was paid, not what the
   // cash flows are worth — so the kind changes which assumptions the UI
   // asks for.
-  kind         String          @default("dcf")
-  name         String
+  kind            String          @default("dcf")
+  name            String
   // The three cases. Nullable because a model in progress has a base
   // long before it has a defensible bear, and forcing a placeholder in
   // would put a made-up number where a missing one belongs.
-  bear         Float?
-  base         Float?
-  bull         Float?
+  bear            Float?
+  base            Float?
+  bull            Float?
   // Share price the targets were struck against, so an upside figure
   // stays honest as the market moves.
-  priceAtWrite Float?
+  priceAtWrite    Float?
   // The currency the three cases are in. Lindt trades at CHF 95,600 a
   // registered share; rendering that with a dollar sign is not a
   // cosmetic slip, it is a different number. Defaults to USD because
   // most of the book is, but it is stored rather than assumed.
-  currency     String          @default("USD")
+  currency        String          @default("USD")
   // The price we would actually want to be told about. A valuation that
   // concludes the shares are worth more than they cost is an opinion
   // until somebody is watching the gap close — and nobody refreshes a
   // quote daily for a name they do not own.
-  buyBelow     Float?
+  buyBelow        Float?
   // Set when the level was last announced, so a name that sits below it
   // for a fortnight is reported once rather than every morning. Cleared
   // when it climbs back above, so the NEXT crossing is news again.
-  alertedAt    DateTime?
+  alertedAt       DateTime?
   // A model is only good until the facts under it move. Set to the next
   // reporting date, this is what makes the panel say a valuation is
   // stale rather than letting a March DCF look current in August.
-  reviewBy     DateTime?
+  reviewBy        DateTime?
   // When the past-review-date alert went out, so it goes out once.
   // Cleared when reviewBy moves forward, so the NEXT staleness is news
   // again — the same one-shot pattern alertedAt uses for buy levels.
@@ -1577,18 +1621,18 @@ model ResearchValuation {
   // role: the President of a student club changes every year, so a
   // role-based list would quietly hand next year's officers a watch
   // they never set and drop the people who did the work.
-  watchers     String[]
+  watchers        String[]
   // [{ label, value, unit?, claimId?, note? }] — the inputs that drive
   // the cases. claimId points at a ResearchClaim when the assumption
   // came from primary research rather than being picked; validated on
   // write against claims in this same project.
-  assumptions  Json?
-  note         String?
-  asOf         DateTime        @default(now())
-  createdById  Int?
-  createdBy    User?           @relation("ResearchValuationAuthor", fields: [createdById], references: [id], onDelete: SetNull)
-  createdAt    DateTime        @default(now())
-  updatedAt    DateTime        @updatedAt
+  assumptions     Json?
+  note            String?
+  asOf            DateTime        @default(now())
+  createdById     Int?
+  createdBy       User?           @relation("ResearchValuationAuthor", fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
 
   @@index([projectId])
   @@index([ticker, asOf(sort: Desc)])

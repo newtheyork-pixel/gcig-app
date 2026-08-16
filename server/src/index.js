@@ -45,6 +45,7 @@ import terminalRoutes, { execBiosHandler } from './routes/terminal.js';
 import { getBusinessProfile } from './services/secBusinessSummary.js';
 import { readableDescription } from './services/companyDescription.js';
 import watchlistRoutes from './routes/watchlist.js';
+import gmailRoutes from './routes/gmail.js';
 import davRoutes from './routes/dav.js';
 import subscriptionRoutes from './routes/subscriptions.js';
 import secDocProxyRoutes from './routes/secDocProxy.js';
@@ -176,6 +177,11 @@ app.use('/api/halts', haltsRoutes);
 app.use('/api/terminal', terminalRoutes);
 app.use('/dav', davRoutes);
 app.use('/api/watchlist', watchlistRoutes);
+// Gmail's OAuth callback is inside this router and is deliberately
+// unauthenticated: Google redirects a browser to it and a top-level
+// navigation carries no bearer header. Identity rides in a signed state
+// parameter instead. Every other route in there is behind verifyJwt.
+app.use('/api/gmail', gmailRoutes);
 app.use('/api/subscriptions', subscriptionRoutes);
 app.use('/api/notes', notesRoutes);
 app.use('/api/research', researchRoutes);
