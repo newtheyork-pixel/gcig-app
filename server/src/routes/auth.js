@@ -17,7 +17,27 @@ import { signChallenge } from './twoFactor.js';
 
 const router = Router();
 
-const ALLOWED_SIGNUP_DOMAIN = '@gcschool.org';
+// Which domains may create an account for themselves.
+//
+// Two now, and the second one is the club's own. thegriffinfund.org is a
+// Workspace we control, so an address there is as much a proof of
+// membership as a school one, and the officers' accounts live on it.
+//
+// A LIST rather than a string because the single-string version was
+// endsWith('@gcschool.org'), and a second domain bolted on as
+// `a || b` is how one of the two eventually gets dropped from an error
+// message and nobody notices which check is live.
+const ALLOWED_SIGNUP_DOMAINS = ['@gcschool.org', '@thegriffinfund.org'];
+
+// The suffix must include the @, or "notgcschool.org" would pass a bare
+// endsWith and self-signup would be open to any domain ending in those
+// characters.
+function allowedSignupEmail(email) {
+  const e = String(email || '').trim().toLowerCase();
+  return ALLOWED_SIGNUP_DOMAINS.some((d) => e.endsWith(d));
+}
+
+const ALLOWED_SIGNUP_LABEL = ALLOWED_SIGNUP_DOMAINS.join(' or ');
 const CODE_EXPIRY_MINUTES = 10;
 const RESET_EXPIRY_MINUTES = 30;
 
@@ -60,9 +80,9 @@ router.post('/signup', authLimiter, async (req, res) => {
     return res.status(400).json({ error: 'Name, email, and password required' });
   }
   const normalized = String(email).trim().toLowerCase();
-  if (!normalized.endsWith(ALLOWED_SIGNUP_DOMAIN)) {
+  if (!allowedSignupEmail(normalized)) {
     return res.status(403).json({
-      error: `Self-signup is restricted to ${ALLOWED_SIGNUP_DOMAIN} email addresses.`,
+      error: `Self-signup is restricted to ${ALLOWED_SIGNUP_LABEL} email addresses.`,
     });
   }
   if (password.length < 8) {
@@ -367,7 +387,7 @@ router.post('/login', authLimiter, async (req, res) => {
 // Three behaviors in one endpoint:
 //   1. If a User matches by googleId → sign in.
 //   2. If a User matches by email (no googleId yet) → auto-link and sign in.
-//   3. Otherwise, if the Google email ends in ALLOWED_SIGNUP_DOMAIN, create
+//   3. Otherwise, if the Google email is on an allowed domain, create
 //      a new JuniorAnalyst account. Non-school emails are rejected.
 //
 // Google sign-in skips our local 2FA — Google enforces its own and the
@@ -412,13 +432,13 @@ router.post('/google', authLimiter, async (req, res) => {
   }
 
   if (!user) {
-    if (!email.endsWith(ALLOWED_SIGNUP_DOMAIN)) {
+    if (!allowedSignupEmail(email)) {
       await auditReq(req, 'google.signup_rejected', 'user', null, {
         email,
         reason: 'domain',
       });
       return res.status(403).json({
-        error: `Sign-in is restricted to ${ALLOWED_SIGNUP_DOMAIN} Google accounts.`,
+        error: `Sign-in is restricted to ${ALLOWED_SIGNUP_LABEL} Google accounts.`,
       });
     }
     user = await prisma.user.create({
