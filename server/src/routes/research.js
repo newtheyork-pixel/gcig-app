@@ -1781,6 +1781,9 @@ router.post('/drafts/:id/deliver', canResearch, async (req, res) => {
       sent = await sendAs(req.user.id, {
         to, subject: d.subject, body,
         expectAddress: req.body?.expectAddress,
+        // Without this the recipient sees the local part of the address,
+        // so outreach signed "Thomas Seirer" arrives from "tcs".
+        fromName: req.user?.name,
       });
     } catch (err) {
       return res.status(502).json({ error: `Gmail refused it: ${err.message}` });

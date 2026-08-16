@@ -226,10 +226,29 @@ async function call(c, path, init = {}) {
  * recipient's inbox, which is the single rudest thing an automated sender
  * does.
  */
+/**
+ * A display name, quoted the way RFC 5322 wants it.
+ *
+ * Without one the recipient's client shows the local part of the address,
+ * so a message from tcs@thegriffinfund.org arrives from "tcs". A cold
+ * email whose sender reads as three lowercase letters looks automated
+ * before the subject line gets a chance.
+ *
+ * Always quoted rather than quoted-when-necessary: a bare display name
+ * containing a comma, a full stop or a colon is a malformed header, and
+ * "Seirer, Thomas" is exactly the shape somebody eventually types.
+ */
+function displayFrom(name, address) {
+  const addr = String(address).replace(/[\r\n]/g, '').trim();
+  const n = String(name || '').replace(/[\r\n]/g, ' ').trim();
+  if (!n) return addr;
+  return `"${n.replace(/["\\]/g, '')}" <${addr}>`;
+}
+
 function mime({ to, from, subject, body, inReplyTo, references }) {
   const esc = (v) => String(v).replace(/[\r\n]/g, ' ').trim();
   const headers = [
-    `From: ${esc(from)}`,
+    `From: ${from}`,
     `To: ${esc(to)}`,
     `Subject: ${esc(subject)}`,
     'MIME-Version: 1.0',
@@ -252,7 +271,7 @@ function mime({ to, from, subject, body, inReplyTo, references }) {
  * consent screen is a mistake nobody would notice until a reply arrived
  * somewhere unexpected.
  */
-export async function sendAs(userId, { to, subject, body, threadId, inReplyTo, expectAddress }) {
+export async function sendAs(userId, { to, subject, body, threadId, inReplyTo, expectAddress, fromName }) {
   const { c, acct } = await clientFor(userId);
   if (expectAddress && acct.address.toLowerCase() !== String(expectAddress).toLowerCase()) {
     throw new Error(`Connected mailbox is ${acct.address}, not ${expectAddress}. Reconnect Gmail.`);
@@ -260,7 +279,8 @@ export async function sendAs(userId, { to, subject, body, threadId, inReplyTo, e
   const sent = await call(c, '/messages/send', {
     method: 'POST',
     body: {
-      raw: mime({ to, from: acct.address, subject, body, inReplyTo, references: inReplyTo }),
+      raw: mime({ to, from: displayFrom(fromName, acct.address), subject, body,
+                  inReplyTo, references: inReplyTo }),
       ...(threadId ? { threadId } : {}),
     },
   });
