@@ -39,3 +39,14 @@ quant/.pytest_cache/
 # number is unfalsifiable.
 !quant/reports/
 !quant/trials.jsonl
+
+# Xcode build output. 112 MB of it reached a commit once: module caches,
+# XCBuildData and the built .app. Machine- and Xcode-version-specific, so
+# it conflicts on the next build and can only be removed from history by
+# rewriting it. mac/ was only ever clean by luck; now it is by rule.
+ios/build/
+ios/dist/
+mac/build/
+mac/dist/
+*.xcuserdatad/
+DerivedData/
