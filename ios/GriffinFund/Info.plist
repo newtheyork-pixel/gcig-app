@@ -7,8 +7,14 @@
   <key>CFBundleIdentifier</key><string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
   <key>CFBundleName</key><string>$(PRODUCT_NAME)</string>
   <key>CFBundlePackageType</key><string>APPL</string>
-  <key>CFBundleShortVersionString</key><string>0.1.0</string>
-  <key>CFBundleVersion</key><string>1</string>
+  <key>CFBundleDisplayName</key><string>Griffin Fund</string>
+  <!-- Both read from the build settings rather than being written here.
+       Hardcoding them next to GENERATE_INFOPLIST_FILE = NO is why the
+       commit titled 0.1.1 shipped an app that still called itself 0.1.0
+       build 1: the MARKETING_VERSION bump had nothing to apply to, and
+       the next upload would have been rejected as a duplicate build. -->
+  <key>CFBundleShortVersionString</key><string>$(MARKETING_VERSION)</string>
+  <key>CFBundleVersion</key><string>$(CURRENT_PROJECT_VERSION)</string>
   <!-- Answers the export-compliance question at build time instead of
        in the console on every upload. It is false because the app
        implements no cryptography of its own: HTTPS goes through

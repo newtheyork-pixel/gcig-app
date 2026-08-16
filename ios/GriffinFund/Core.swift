@@ -7,69 +7,129 @@ import SwiftUI
 // multi-panel grid stay on the desk. The same logic applies here: a
 // six-inch screen holds a reader, an alerter and a messenger. Anything
 // with columns belongs on the Mac.
-enum T {
-    static let bg       = Color(red: 0.043, green: 0.043, blue: 0.047)
-    static let panel    = Color(red: 0.078, green: 0.078, blue: 0.086)
-    static let border   = Color(red: 0.18,  green: 0.18,  blue: 0.20)
-    static let amber    = Color(red: 1.0,   green: 0.686, blue: 0.196)
-    static let white    = Color(red: 0.93,  green: 0.93,  blue: 0.94)
-    static let dim      = Color(red: 0.62,  green: 0.62,  blue: 0.65)
-    static let muted    = Color(red: 0.42,  green: 0.42,  blue: 0.45)
-    static let positive = Color(red: 0.31,  green: 0.82,  blue: 0.51)
-    static let negative = Color(red: 0.94,  green: 0.36,  blue: 0.36)
-    static let cyan     = Color(red: 0.35,  green: 0.78,  blue: 0.86)
-    static func mono(_ s: CGFloat, _ w: Font.Weight = .regular) -> Font {
-        .system(size: s, weight: w, design: .monospaced)
+// The palette, type scale and formatters live in Theme.swift and Fmt.swift.
+// They used to live here as eyeballed hex and a currency formatter pinned to
+// the POSIX locale, which is how the book came to read $ 137070.
+
+enum APIError: LocalizedError {
+    case noResponse, sessionOver, cancelled
+    case server(Int, String)
+    var errorDescription: String? {
+        switch self {
+        case .noResponse:            return "No response from the server."
+        case .sessionOver:           return "Signed out. Sign in again."
+        case .cancelled:             return "Cancelled."
+        case .server(let c, let m):  return "\(m) (\(c))"
+        }
     }
 }
 
-enum Fmt {
-    /// Optional in, dash out. A missing figure rendered as "$0" is a
-    /// fabricated number in 17pt bold, and the all-optional decodables
-    /// mean a renamed key produces exactly that.
-    static func money(_ v: Double?) -> String {
-        guard let v else { return "—" }
-        let f = NumberFormatter()
-        f.numberStyle = .currency; f.maximumFractionDigits = 0
-        f.currencyCode = "USD"; f.locale = Locale(identifier: "en_US_POSIX")
-        return f.string(from: NSNumber(value: v)) ?? "—"
+/// The networking layer, deliberately NOT on the main actor.
+///
+/// It used to be a method on `Session`, which is `@MainActor`, so every
+/// response was JSON-decoded on the UI thread. With payloads that carry full
+/// interview transcripts, that is the hitching: the main thread parses
+/// hundreds of kilobytes while it is supposed to be scrolling.
+///
+/// Session keeps auth lifecycle and the keychain. Everything else is here.
+actor API {
+    static let shared = API()
+    static let base = "https://gcig-api.onrender.com/api"
+
+    /// Set once at launch. Called when, and only when, the server says the
+    /// token itself is dead.
+    private var onSessionOver: (@Sendable () async -> Void)?
+    /// Called with a rotated token so Session can persist it.
+    private var onFreshToken: (@Sendable (String) async -> Void)?
+    private var token: String?
+
+    func configure(token: String?,
+                   onSessionOver: @escaping @Sendable () async -> Void,
+                   onFreshToken: @escaping @Sendable (String) async -> Void) {
+        self.token = token
+        self.onSessionOver = onSessionOver
+        self.onFreshToken = onFreshToken
     }
-    static func pct(_ v: Double) -> String { String(format: "%@%.2f%%", v >= 0 ? "+" : "", v) }
-    /// "2026-08-19" to "19 Aug", the house short form. Returns the input
-    /// untouched rather than a wrong date when it will not parse.
-    static func day(_ iso: String?) -> String {
-        guard let iso, iso.count >= 10 else { return "—" }
-        let inF = DateFormatter(); inF.dateFormat = "yyyy-MM-dd"
-        // The POSIX locale is not decoration. A fixed format string is
-        // parsed against the user's own calendar unless told otherwise, so
-        // a Thai Buddhist or Japanese Imperial phone reads yyyy in that era
-        // and lands centuries off, or fails and prints the raw ISO string
-        // into a column sized for "31 Jul".
-        inF.locale = Locale(identifier: "en_US_POSIX")
-        inF.timeZone = TimeZone(identifier: "UTC")
-        guard let d = inF.date(from: String(iso.prefix(10))) else { return iso }
-        let out = DateFormatter(); out.dateFormat = "d MMM"
-        out.locale = Locale(identifier: "en_US_POSIX")
-        out.timeZone = TimeZone(identifier: "UTC")
-        return out.string(from: d)
+
+    func setToken(_ t: String?) { token = t }
+
+    /// One or two attempts, and the second exists for one specific reason:
+    /// the API sleeps on Render's free tier, so the first request of the day
+    /// wakes a cold dyno and returns 502 or times out. The web client already
+    /// retries for exactly this. Without it, the first open of the morning
+    /// greets a member with a full-screen error for a server that is fine.
+    ///
+    /// Only cold-start shapes are retried. A 403 is an answer, not a hiccup.
+    func get<R: Decodable>(_ path: String, as type: R.Type) async throws -> R {
+        do {
+            return try await attempt(path, as: type)
+        } catch let e as APIError {
+            guard case .server(let code, _) = e, code == 502 || code == 503 || code == 504 else { throw e }
+            try await Task.sleep(for: .seconds(3))
+            return try await attempt(path, as: type)
+        } catch let e as URLError where e.code == .timedOut || e.code == .networkConnectionLost {
+            try await Task.sleep(for: .seconds(3))
+            return try await attempt(path, as: type)
+        }
+    }
+
+    private func attempt<R: Decodable>(_ path: String, as: R.Type) async throws -> R {
+        guard let token else { throw APIError.sessionOver }
+        guard let url = URL(string: API.base + path) else { throw APIError.noResponse }
+        var r = URLRequest(url: url)
+        r.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        r.timeoutInterval = 30
+
+        let d: Data, resp: URLResponse
+        do {
+            (d, resp) = try await URLSession.shared.data(for: r)
+        } catch is CancellationError {
+            throw APIError.cancelled
+        } catch let e as URLError where e.code == .cancelled {
+            // Leaving a tab mid-load is not a failure and must never be
+            // reported as one. The old code caught this with `try?` and
+            // told the member it "could not read" three projects.
+            throw APIError.cancelled
+        }
+        guard let http = resp as? HTTPURLResponse else { throw APIError.noResponse }
+
+        // Silent rotation. verifyJwt mints a fresh token past the 12h
+        // half-life and returns it here; tokens hard-expire at 24h. A client
+        // that ignores this header signs an active member out every day.
+        if let fresh = http.value(forHTTPHeaderField: "X-New-Token"), !fresh.isEmpty {
+            self.token = fresh
+            await onFreshToken?(fresh)
+        }
+
+        // ONLY THE SERVER MAY END A SESSION, and only with the code that says
+        // the token itself is dead. A data route's own 401 carries no code and
+        // must not nuke the login: that distinction is the fix for the
+        // longest-running bug in this codebase.
+        if http.statusCode == 401 {
+            let body = try? JSONSerialization.jsonObject(with: d) as? [String: Any]
+            if (body?["code"] as? String) == "AUTH" {
+                self.token = nil
+                await onSessionOver?()
+                throw APIError.sessionOver
+            }
+            throw APIError.server(401, (body?["error"] as? String) ?? "Not permitted")
+        }
+
+        // Every field on every model is optional, so an error body decodes
+        // "successfully" into an empty object and the screen renders a
+        // fabricated zero as fact. The status is checked before the decode.
+        guard (200..<300).contains(http.statusCode) else {
+            let body = try? JSONSerialization.jsonObject(with: d) as? [String: Any]
+            throw APIError.server(http.statusCode,
+                                  (body?["error"] as? String) ?? "Request failed")
+        }
+        return try JSONDecoder().decode(R.self, from: d)
     }
 }
 
 /// The session. Token in the keychain, never UserDefaults: this one grants
 /// President-level access to the club's whole book, and a phone gets lost
 /// far more often than a laptop.
-enum APIError: LocalizedError {
-    case noResponse, sessionOver
-    case server(Int, String)
-    var errorDescription: String? {
-        switch self {
-        case .noResponse:            return "No response from the server."
-        case .sessionOver:           return "Signed out. Sign in again."
-        case .server(let c, let m):  return "\(m) (\(c))"
-        }
-    }
-}
-
 @MainActor
 final class Session: ObservableObject {
     @Published var token: String?
@@ -77,10 +137,37 @@ final class Session: ObservableObject {
     @Published var error: String?
     @Published var busy = false
 
-    static let base = "https://gcig-api.onrender.com/api"
+    static let base = API.base
     private static let account = "griffin.session"
 
-    init() { token = Self.keychainRead() }
+    init() {
+        token = Self.keychainRead()
+        wire()
+    }
+
+    /// Hands the API layer the token and the two callbacks it needs. Called
+    /// on launch and after every token change, so the actor and the keychain
+    /// never disagree about what the current token is.
+    private func wire() {
+        let t = token
+        Task {
+            await API.shared.configure(
+                token: t,
+                onSessionOver: { @Sendable in await MainActor.run { self.signOut() } },
+                onFreshToken: { @Sendable fresh in
+                    await MainActor.run {
+                        Session.keychainWrite(fresh)
+                        self.token = fresh
+                    }
+                })
+        }
+    }
+
+    private func adopt(_ t: String) {
+        Self.keychainWrite(t)
+        token = t
+        Task { await API.shared.setToken(t) }
+    }
 
     /// Hand sign-in to the website.
     ///
@@ -107,8 +194,7 @@ final class Session: ObservableObject {
                 error = (j?["error"] as? String) ?? "That sign-in link did not work. Try again."
                 return
             }
-            Self.keychainWrite(tok)
-            token = tok
+            adopt(tok)
             name = ((j?["user"] as? [String: Any])?["name"] as? String)
         } catch { self.error = error.localizedDescription }
     }
@@ -133,53 +219,14 @@ final class Session: ObservableObject {
                 }
                 return
             }
-            Self.keychainWrite(tok)
-            token = tok
+            adopt(tok)
             name = ((j?["user"] as? [String: Any])?["name"] as? String)
         } catch { self.error = error.localizedDescription }
     }
 
-    func signOut() { Self.keychainDelete(); token = nil; name = nil }
-
-    func get<T: Decodable>(_ path: String, as: T.Type) async throws -> T {
-        guard let token else { throw URLError(.userAuthenticationRequired) }
-        var r = URLRequest(url: URL(string: Self.base + path)!)
-        r.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        r.timeoutInterval = 45
-        let (d, resp) = try await URLSession.shared.data(for: r)
-        guard let http = resp as? HTTPURLResponse else { throw APIError.noResponse }
-
-        // Silent rotation. verifyJwt mints a fresh token past the 12h
-        // half-life and returns it here; tokens hard-expire at 24h. A
-        // client that ignores this header signs an active member out every
-        // single day for no reason.
-        if let fresh = http.value(forHTTPHeaderField: "X-New-Token"), !fresh.isEmpty {
-            Self.keychainWrite(fresh)
-            await MainActor.run { self.token = fresh }
-        }
-
-        // ONLY THE SERVER MAY END A SESSION, and only with the code that
-        // says the token itself is dead. A data route's own 401 carries no
-        // code and must not nuke the login: that distinction is the fix for
-        // the longest-running bug in this codebase.
-        if http.statusCode == 401 {
-            let body = try? JSONSerialization.jsonObject(with: d) as? [String: Any]
-            if (body?["code"] as? String) == "AUTH" {
-                await MainActor.run { self.signOut() }
-                throw APIError.sessionOver
-            }
-            throw APIError.server(401, (body?["error"] as? String) ?? "Not permitted")
-        }
-
-        // Every field on every model is optional, so an error body decodes
-        // "successfully" into an empty object and the screen renders a
-        // fabricated zero as fact. The status is checked before the decode.
-        guard (200..<300).contains(http.statusCode) else {
-            let body = try? JSONSerialization.jsonObject(with: d) as? [String: Any]
-            throw APIError.server(http.statusCode,
-                                  (body?["error"] as? String) ?? "Request failed")
-        }
-        return try JSONDecoder().decode(T.self, from: d)
+    func signOut() {
+        Self.keychainDelete(); token = nil; name = nil
+        Task { await API.shared.setToken(nil) }
     }
 
     // MARK: keychain

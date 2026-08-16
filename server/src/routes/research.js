@@ -189,6 +189,88 @@ router.get('/projects', async (req, res) => {
  * 2KB for the whole club. Both are needed: the timestamp alone misses a
  * removal, and the count alone misses an edit in place.
  */
+/**
+ * Every chase that is actionable right now, across every project the
+ * caller can see, ranked, in one small response.
+ *
+ * This exists because the only other way to ask the question was to GET
+ * /projects/:id for each open project and read `followUps` out of it —
+ * and that payload carries every artifact, every claim, and the full text
+ * of every interview transcript. The phone was doing exactly that, once
+ * per project, serially, on every visit to its first screen: the same
+ * 11.8MB/41-request pattern the manifest route above was written to kill.
+ *
+ * Two things are deliberately different from the per-project shape:
+ *
+ * `rows` here is the RANKED actionable list, not the full per-target map.
+ * assessOutreach computes that ranking and then returns it only as a
+ * count, so every client that wanted urgency order was re-deriving it and
+ * they did not agree with each other. The order is the server's.
+ *
+ * The select is narrow on purpose. assessTarget reads five things off a
+ * target and three off each message; sending anything more would put the
+ * transcripts back.
+ */
+router.get('/follow-ups', async (req, res) => {
+  try {
+    const visible = isSuperAdminEmail(req.user?.email)
+      ? {}
+      : { ownerOnly: false };
+    const projects = await prisma.researchProject.findMany({
+      where: req.user?.isGuest
+        ? { ownerOnly: false, ticker: { in: GUEST_RESEARCH_TICKERS } }
+        : visible,
+      select: {
+        id: true,
+        name: true,
+        ticker: true,
+        targets: {
+          select: {
+            id: true,
+            name: true,
+            status: true,
+            followUpAfter: true,
+            drafts: { select: { sentAt: true } },
+            messages: {
+              orderBy: { occurredAt: 'asc' },
+              select: { direction: true, kind: true, occurredAt: true },
+            },
+          },
+        },
+      },
+    });
+
+    const rows = [];
+    const counts = {};
+    let nextDueAt = null;
+    for (const p of projects) {
+      const chase = assessOutreach(p.targets);
+      for (const [state, n] of Object.entries(chase.counts || {})) {
+        counts[state] = (counts[state] || 0) + n;
+      }
+      if (chase.nextDueAt && (!nextDueAt || chase.nextDueAt < nextDueAt)) {
+        nextDueAt = chase.nextDueAt;
+      }
+      for (const r of chase.rows) {
+        if (!['overdue', 'due', 'owed'].includes(r.state)) continue;
+        rows.push({ ...r, projectId: p.id, projectName: p.name, ticker: p.ticker });
+      }
+    }
+
+    // The same ordering assessOutreach uses internally, applied across
+    // projects rather than within one, so a client can render top to
+    // bottom and be right.
+    const rank = { overdue: 0, due: 1, owed: 2 };
+    rows.sort((a, b) =>
+      (rank[a.state] - rank[b.state]) || String(a.dueAt || '').localeCompare(String(b.dueAt || '')));
+
+    res.json({ rows, counts, nextDueAt, dueNow: rows.length });
+  } catch (err) {
+    console.error('research/follow-ups failed:', err.message);
+    res.status(500).json({ error: 'Could not load the follow-ups' });
+  }
+});
+
 router.get('/projects/manifest', async (req, res) => {
   try {
     // The same visibility rules the real payload uses. A fingerprint
