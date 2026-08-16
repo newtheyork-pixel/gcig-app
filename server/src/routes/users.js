@@ -580,6 +580,76 @@ const PRESIDENT_ONLY_ROLES = new Set(['AdvisoryBoardMember', 'FacultyAdvisory'])
 //     the leader's own rank. Cannot touch AB/Faculty (either to assign or to
 //     modify someone already in those roles).
 //   - Everyone else: forbidden.
+/**
+ * Move a member onto a different address, once, deliberately.
+ *
+ * PUT /:id above refuses to write `email` and is right to: repointing an
+ * address and then using the public forgot-password flow is an
+ * account-takeover primitive. This route exists because the club moved its
+ * officers onto its own Workspace and the alternative was editing the
+ * production database by hand.
+ *
+ * It is super admin only, by email match rather than by role, so a CIO or a
+ * President cannot reach it.
+ *
+ * Three things happen together, and doing fewer is the bug.
+ *
+ * `googleId` is CLEARED. Google sign-in checks it before it checks the
+ * address, so a record that keeps it stays reachable from the old Google
+ * account no matter what the email says, which is exactly the "I signed in
+ * with my school account again" this was reported as. Cleared, the first
+ * sign-in on the new address falls through to the email branch and
+ * auto-links there.
+ *
+ * `passwordHash` is CLEARED, because the point is that the old account
+ * stops working, and a local password is a second door that survives the
+ * move. The member signs in with Google or resets deliberately.
+ *
+ * `tokenVersion` is BUMPED, which invalidates every JWT already issued. A
+ * session minted against the old identity should not outlive it.
+ */
+router.post('/:id/migrate-email', requireSuperAdmin, async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) return res.status(400).json({ error: 'Bad id' });
+
+  const next = String(req.body?.email || '').trim().toLowerCase();
+  // The same allowlist self-signup uses, so this cannot move somebody onto
+  // a domain they could not have signed up from.
+  const ALLOWED = ['@gcschool.org', '@thegriffinfund.org'];
+  if (!next || !/^[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}$/.test(next) || !ALLOWED.some((d) => next.endsWith(d))) {
+    return res.status(400).json({ error: `email must be a valid address on ${ALLOWED.join(' or ')}` });
+  }
+
+  const target = await prisma.user.findUnique({ where: { id }, select: { id: true, email: true, name: true } });
+  if (!target) return res.status(404).json({ error: 'No such user' });
+  if (target.email.toLowerCase() === next) {
+    return res.status(409).json({ error: 'That is already their address.' });
+  }
+  // Checked rather than left to the unique constraint, so the answer is a
+  // sentence instead of a P2002. Merging two accounts is a different and
+  // much larger operation and this route will not pretend to do it.
+  const taken = await prisma.user.findUnique({ where: { email: next }, select: { id: true, name: true } });
+  if (taken) {
+    return res.status(409).json({ error: `${next} already belongs to ${taken.name}. Merging accounts is not something this does.` });
+  }
+
+  const updated = await prisma.user.update({
+    where: { id },
+    data: {
+      email: next,
+      googleId: null,
+      passwordHash: null,
+      tokenVersion: { increment: 1 },
+    },
+    select: { id: true, name: true, email: true, role: true },
+  });
+  await auditReq(req, 'user.email_migrated', 'user', id, { from: target.email, to: next });
+  res.json({
+    ...updated,
+    note: 'Google link and password cleared. Next Google sign-in on the new address links the account.',
+  });
+});
+
 router.put('/:id/role', async (req, res) => {
   const targetId = Number(req.params.id);
   const { role: newRole } = req.body || {};
