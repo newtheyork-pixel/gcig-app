@@ -272,6 +272,87 @@ router.get('/follow-ups', async (req, res) => {
   }
 });
 
+/**
+ * Everything anybody has said to us, across every project, newest first.
+ *
+ * The per-target thread answers "what did we say to this person". This
+ * answers the question somebody actually opens the app with, which is
+ * "what came in". Until now that had no route at all: replies were only
+ * reachable by opening the target they belonged to, so a member had to
+ * already know who had written in order to find out who had written.
+ *
+ * Inbound only by default. The outbound half is the record of what we
+ * sent and belongs on the target; mixing both here would make the count
+ * at the top of an inbox mean nothing.
+ *
+ * Bodies are already stripped of quoted tails at ingest, so a four
+ * message exchange does not carry the first message four times.
+ */
+router.get('/inbox', async (req, res) => {
+  try {
+    const visibility = isSuperAdminEmail(req.user?.email) ? {} : { ownerOnly: false };
+    const projectWhere = req.user?.isGuest
+      ? { ownerOnly: false, ticker: { in: GUEST_RESEARCH_TICKERS } }
+      : visibility;
+
+    const take = Math.min(Number(req.query.limit) || 100, 300);
+    const direction = req.query.direction === 'out' ? 'out'
+      : req.query.direction === 'all' ? undefined : 'in';
+
+    const rows = await prisma.outreachMessage.findMany({
+      where: {
+        ...(direction ? { direction } : {}),
+        target: { project: projectWhere },
+      },
+      orderBy: { occurredAt: 'desc' },
+      take,
+      select: {
+        id: true, direction: true, kind: true, occurredAt: true, body: true,
+        action: true, draftId: true,
+        target: {
+          select: {
+            id: true, name: true, employer: true, role: true, email: true, status: true,
+            project: { select: { id: true, name: true, ticker: true } },
+          },
+        },
+      },
+    });
+
+    // Which of these are still owed an answer. Computed from the same
+    // service the desk uses rather than inferred from the row, so the
+    // inbox and the chase list cannot disagree about who is waiting.
+    const targetIds = [...new Set(rows.map((r) => r.target?.id).filter(Boolean))];
+    const targets = targetIds.length
+      ? await prisma.researchTarget.findMany({
+          where: { id: { in: targetIds } },
+          select: {
+            id: true, status: true, followUpAfter: true,
+            drafts: { select: { sentAt: true } },
+            messages: {
+              orderBy: { occurredAt: 'asc' },
+              select: { direction: true, kind: true, occurredAt: true },
+            },
+          },
+        })
+      : [];
+    const state = new Map(targets.map((t) => [t.id, assessTarget(t)]));
+
+    res.json({
+      messages: rows.map((m) => ({
+        ...m,
+        followUp: state.get(m.target?.id) || null,
+      })),
+      counts: {
+        total: rows.length,
+        owed: rows.filter((m) => state.get(m.target?.id)?.state === 'owed').length,
+      },
+    });
+  } catch (err) {
+    console.error('research/inbox failed:', err.message);
+    res.status(500).json({ error: 'Could not load the inbox' });
+  }
+});
+
 router.get('/projects/manifest', async (req, res) => {
   try {
     // The same visibility rules the real payload uses. A fingerprint

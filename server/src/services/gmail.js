@@ -337,11 +337,56 @@ export async function inboundOnThread(userId, threadId) {
         from,
         subject: header(msg.payload, 'Subject'),
         occurredAt: msg.internalDate ? new Date(Number(msg.internalDate)) : new Date(),
-        body: plainText(msg.payload).trim(),
+        body: withoutQuotedTail(plainText(msg.payload)),
         isFromUs: from.toLowerCase().includes(mine),
       };
     })
     .filter((m) => !m.isFromUs);
+}
+
+/**
+ * The part of a reply the person actually wrote.
+ *
+ * Mail clients quote the entire thread beneath every response, so storing
+ * the raw body means a four message exchange holds the first message four
+ * times. That is not merely wasteful: an inbox built on it is unreadable,
+ * and the MNPI screen would be re-reading our own words back as though
+ * they were the source's.
+ *
+ * Conservative on purpose. Each pattern below is a separator mail clients
+ * WRITE, not a guess at prose, and if none matches the body is returned
+ * whole. Losing a sentence somebody wrote is worse than keeping a quote.
+ */
+const QUOTE_MARKERS = [
+  // Gmail and Apple Mail. The date is locale-formatted and can contain a
+  // narrow no-break space, which is why this is not anchored tightly.
+  /^\s*On .{6,120}\s+wrote:\s*$/im,
+  // Outlook, both the divider and the header block that follows it.
+  /^-{2,}\s*Original Message\s*-{2,}\s*$/im,
+  /^\s*_{10,}\s*$/m,
+  /^\s*From:\s.+$\n^\s*Sent:\s.+$/im,
+  // Mobile signatures that precede a quote more often than not.
+  /^\s*Sent from my (iPhone|iPad|Android|Samsung).*$/im,
+];
+
+export function withoutQuotedTail(raw) {
+  const body = String(raw || '').replace(/\r\n/g, '\n');
+  let cut = body.length;
+  for (const re of QUOTE_MARKERS) {
+    const m = body.match(re);
+    if (m && m.index != null && m.index < cut) cut = m.index;
+  }
+  // A run of quoted lines is its own signal, but only when it is not the
+  // whole message: somebody who replies entirely inline deserves to keep
+  // what they wrote.
+  const quoted = body.match(/^(>.*\n?){2,}/m);
+  if (quoted && quoted.index != null && quoted.index > 0 && quoted.index < cut) {
+    cut = quoted.index;
+  }
+  const kept = body.slice(0, cut).trim();
+  // Never return nothing. A reply that is only a quote is still evidence
+  // that they answered, and the clock keys off that.
+  return kept || body.trim();
 }
 
 /**
