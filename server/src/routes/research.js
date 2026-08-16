@@ -8,7 +8,7 @@ import { extractClaims } from '../services/claimExtraction.js';
 import { scanForAnswer } from '../services/answerScan.js';
 import { assessTopics, formatCitation } from '../services/corroboration.js';
 import { assessCoverage, funnel } from '../services/questionCoverage.js';
-import { assessOutreach } from '../services/followUp.js';
+import { assessOutreach, assessTarget } from '../services/followUp.js';
 import { extractForArtifact } from '../services/artifactText.js';
 import { synthesize } from '../services/synthesis.js';
 import { screenTranscript, RISK } from '../services/mnpiScreen.js';
@@ -1118,6 +1118,61 @@ router.post('/projects/:id/targets', canResearch, async (req, res) => {
   } catch (err) {
     console.error('research/target create failed:', err.message);
     res.status(500).json({ error: 'Could not add target' });
+  }
+});
+
+/**
+ * One person, and the correspondence with them.
+ *
+ * The phone's Today screen lists who is owed an answer and who is due a
+ * chase, and until now a row could not be opened: the only way to see what
+ * had actually been said to somebody was to pull their whole project,
+ * transcripts included. This is the same reasoning as /follow-ups, one
+ * level down.
+ *
+ * Drafts go through `decorate` rather than out raw, because a draft's
+ * blocked / screened / approved state is computed there and a client that
+ * re-derived it would eventually disagree with the desk about whether a
+ * message was cleared to send.
+ *
+ * Visibility is inherited from the parent project, checked as a filter on
+ * the query rather than on the response — not sending it beats hoping the
+ * client does not render it.
+ */
+router.get('/targets/:id', canResearch, async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) return res.status(400).json({ error: 'Bad id' });
+  try {
+    const visibility = isSuperAdminEmail(req.user?.email) ? {} : { ownerOnly: false };
+    const project = req.user?.isGuest
+      ? { ownerOnly: false, ticker: { in: GUEST_RESEARCH_TICKERS } }
+      : visibility;
+    const target = await prisma.researchTarget.findFirst({
+      where: { id, project },
+      include: {
+        project: { select: { id: true, name: true, ticker: true } },
+        drafts: { orderBy: { createdAt: 'desc' }, include: DRAFT_VIEW },
+        // Oldest first: this is a correspondence, and a thread that reads
+        // newest-down is a thread nobody can follow.
+        messages: {
+          orderBy: { occurredAt: 'asc' },
+          include: { recordedBy: { select: { id: true, name: true } } },
+        },
+      },
+    });
+    // A target the caller may not see and a target that does not exist are
+    // answered identically on purpose: the other way, a 403 confirms that
+    // an owner-only project has a person by that id.
+    if (!target) return res.status(404).json({ error: 'No such target' });
+
+    res.json({
+      ...target,
+      drafts: (target.drafts || []).map((d) => decorate(d, req.user)),
+      followUp: assessTarget(target),
+    });
+  } catch (err) {
+    console.error('research/target read failed:', err.message);
+    res.status(500).json({ error: 'Could not load the target' });
   }
 });
 

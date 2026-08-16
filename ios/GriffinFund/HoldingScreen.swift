@@ -38,11 +38,21 @@ final class HoldingStore: ObservableObject {
     }
 }
 
-struct HoldingScreen: View {
-    let holding: Holding
+/// A single name. Reachable from the book, the wire and the watchlist, so
+/// it cannot require a position: `holding` is nil for a ticker we do not
+/// own, and the "our position" section simply does not exist for it. That
+/// absence is the honest rendering — a zero-filled position block would
+/// claim we hold something we do not.
+struct TickerScreen: View, Hashable {
+    let symbol: String
+    var holding: Holding? = nil
+
     @StateObject private var store = HoldingStore()
 
-    private var ticker: String { holding.ticker ?? "—" }
+    private var ticker: String { symbol.uppercased() }
+
+    static func == (a: TickerScreen, b: TickerScreen) -> Bool { a.symbol == b.symbol }
+    func hash(into h: inout Hasher) { h.combine(symbol) }
 
     var body: some View {
         ScrollView {
@@ -77,13 +87,13 @@ struct HoldingScreen: View {
     /// a sheet mark is a number nobody can check.
     private var quoteBlock: some View {
         let live = store.info.value
-        let price = live?.price ?? holding.price
-        let chg = live?.dayChange ?? holding.dayChange
-        let pct = live?.dayChangePct ?? holding.dayChangePct
+        let price = live?.price ?? holding?.price
+        let chg = live?.dayChange ?? holding?.dayChange
+        let pct = live?.dayChangePct ?? holding?.dayChangePct
         let fromLive = live?.price != nil
 
         return VStack(alignment: .leading, spacing: Space.s) {
-            Text(holding.name ?? live?.name ?? ticker)
+            Text(holding?.name ?? live?.name ?? ticker)
                 .font(Type.headline)
                 .foregroundStyle(T.dim)
                 .fixedSize(horizontal: false, vertical: true)
@@ -145,20 +155,21 @@ struct HoldingScreen: View {
 
     // MARK: sections
 
-    private var positionSection: some View {
+    @ViewBuilder private var positionSection: some View {
+        if let h = holding {
         Section {
             VStack(spacing: 0) {
-                StatLine(label: "SHARES", value: Fmt.shares(holding.shares))
-                StatLine(label: "MARKET VALUE", value: Fmt.money(holding.marketValue, decimals: 2))
-                StatLine(label: "AVERAGE COST", value: Fmt.money(holding.costBasis, decimals: 2))
+                StatLine(label: "SHARES", value: Fmt.shares(h.shares))
+                StatLine(label: "MARKET VALUE", value: Fmt.money(h.marketValue, decimals: 2))
+                StatLine(label: "AVERAGE COST", value: Fmt.money(h.costBasis, decimals: 2))
                 StatLine(label: "UNREALISED",
-                         value: holding.gainLoss == nil ? "—"
-                            : "\(Fmt.moneyDelta(holding.gainLoss, decimals: 2))  \(Fmt.pct(holding.gainLossPct))",
-                         tone: T.delta(holding.gainLoss))
+                         value: h.gainLoss == nil ? "—"
+                            : "\(Fmt.moneyDelta(h.gainLoss, decimals: 2))  \(Fmt.pct(h.gainLossPct))",
+                         tone: T.delta(h.gainLoss))
                 StatLine(label: "TODAY",
-                         value: holding.dayChangeValue == nil ? "—"
-                            : Fmt.moneyDelta(holding.dayChangeValue, decimals: 2),
-                         tone: T.delta(holding.dayChange))
+                         value: h.dayChangeValue == nil ? "—"
+                            : Fmt.moneyDelta(h.dayChangeValue, decimals: 2),
+                         tone: T.delta(h.dayChange))
             }
             .padding(.horizontal, Space.l)
             .padding(.vertical, Space.s)
@@ -166,6 +177,7 @@ struct HoldingScreen: View {
             .hairline()
         } header: {
             SectionHeader(text: "Our position")
+        }
         }
     }
 

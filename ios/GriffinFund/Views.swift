@@ -117,9 +117,17 @@ struct LoginView: View {
 
 struct MainTabs: View {
     var body: some View {
+        // Today first because the phone is the interrupt device and this
+        // is the only screen that knows who you are. Club last: lowest
+        // frequency, but without it sign-out squats in another screen's
+        // toolbar and cannot be reached from most of the app.
         TabView {
             NavigationStack { TodayScreen() }
                 .tabItem { Label("Today", systemImage: "checklist") }
+            NavigationStack { NewsScreen() }
+                .tabItem { Label("Wire", systemImage: "newspaper") }
+            NavigationStack { WatchScreen() }
+                .tabItem { Label("Watch", systemImage: "eye") }
             NavigationStack { BookScreen() }
                 .tabItem { Label("Book", systemImage: "chart.pie") }
             NavigationStack { ClubScreen() }
@@ -136,13 +144,34 @@ struct MainTabs: View {
 @MainActor
 final class TodayStore: ObservableObject {
     @Published private(set) var state: Loadable<FollowUps> = .loading
+    /// The three below are context, not the subject, so each fails
+    /// silently. A summary the model could not write must never be the
+    /// reason the chase list does not appear.
+    @Published private(set) var pendingVote: VoteSession?
+    @Published private(set) var review: DayInReview?
+    @Published private(set) var movers: Movers?
 
     func load() async {
         state = .loading
-        await fetch(keepOld: false)
+        async let a: Void = fetch(keepOld: false)
+        async let b: Void = loadExtras()
+        _ = await (a, b)
     }
 
-    func refresh() async { await fetch(keepOld: true) }
+    func refresh() async {
+        async let a: Void = fetch(keepOld: true)
+        async let b: Void = loadExtras()
+        _ = await (a, b)
+    }
+
+    private func loadExtras() async {
+        // /votes/pending answers with the session itself or a bare null,
+        // and a null body is a valid answer meaning "nothing open" rather
+        // than a failure, so the decode is allowed to come back nil.
+        pendingVote = try? await API.shared.get("/votes/pending", as: VoteSession?.self) ?? nil
+        review = try? await API.shared.get("/dashboard/day-in-review", as: DayInReview.self)
+        movers = try? await API.shared.get("/terminal/movers", as: Movers.self)
+    }
 
     private func fetch(keepOld: Bool) async {
         let previous = state.value
@@ -180,15 +209,15 @@ struct TodayScreen: View {
         VStack(spacing: 0) {
             FunctionBar(code: "TODAY", title: "What needs you")
             ScreenState(state: store.state,
-                        emptyWhen: { ($0.rows ?? []).isEmpty },
-                        emptyText: emptyText,
-                        emptyIsGood: true,
                         retry: { Task { await store.load() } }) { f in
                 list(f)
             }
         }
         .background(T.bg)
         .toolbar(.hidden, for: .navigationBar)
+        .navigationDestination(for: PersonScreen.self) { $0 }
+        .navigationDestination(for: VoteScreen.self) { $0 }
+        .navigationDestination(for: TickerScreen.self) { $0 }
         .task { if store.state.value == nil { await store.load() } }
     }
 
@@ -210,16 +239,112 @@ struct TodayScreen: View {
                 // The rows arrive ranked by the server and are rendered in
                 // that order. The client used to sort them itself and
                 // disagreed with the desk about which chase mattered most.
+                // An open ballot leads, above every chase. A vote closes
+                // on a deadline and a chase does not, and the club's
+                // recurring failure is quorum rather than follow-up.
+                if let v = store.pendingVote, v.isOpen, let id = v.id {
+                    Section {
+                        NavigationLink(value: VoteScreen(sessionId: id, knownTicker: v.ticker)) {
+                            Row(title: v.ticker.map { "Vote on \($0)" } ?? "A vote is open",
+                                subtitle: v.isSell ? "Sell or hold. You have not cast a ballot."
+                                                   : "You have not cast a ballot.",
+                                meta: v.deadline.map { "Closes \(Fmt.shortDateTime($0))" },
+                                strip: T.amber) {
+                                Chip(text: "Vote", tone: T.amber, style: .solid)
+                            }
+                        }
+                        .buttonStyle(.plain)
+                    } header: {
+                        SectionHeader(text: "Open ballot")
+                    }
+                }
+
                 let rows = f.rows ?? []
                 Section {
-                    ForEach(rows) { row in chaseRow(row) }
+                    if rows.isEmpty {
+                        EmptyState(text: emptyText, good: true).frame(height: 90)
+                    } else {
+                        ForEach(rows) { row in
+                            NavigationLink(value: PersonScreen(targetId: row.targetId ?? -1,
+                                                               knownName: row.name)) {
+                                chaseRow(row)
+                            }
+                            .buttonStyle(.plain)
+                            // A row with no target id has nothing to open,
+                            // and a link that goes nowhere is worse than
+                            // no link.
+                            .disabled(row.targetId == nil)
+                        }
+                    }
                 } header: {
-                    SectionHeader(text: "Outreach", trailing: "\(rows.count)")
+                    SectionHeader(text: "Outreach", trailing: rows.isEmpty ? nil : "\(rows.count)")
                 }
+
+                moversSection
+                reviewSection
                 Spacer().frame(height: Space.xl)
             }
         }
         .refreshable { await store.refresh() }
+    }
+
+    /// What moved in our own book today. Not a market screen: these are
+    /// the club's positions, ranked, and every row opens the name.
+    @ViewBuilder private var moversSection: some View {
+        let all = store.movers?.rows ?? []
+        // Already sorted best-first by the server, so the two ends of the
+        // one array are the gainers and the losers.
+        let shown = all.count <= 6 ? all : Array(all.prefix(3)) + Array(all.suffix(3))
+        if !shown.isEmpty {
+            Section {
+                ForEach(shown) { m in
+                    NavigationLink(value: TickerScreen(symbol: m.ticker ?? "")) {
+                        TickerRow(ticker: m.ticker ?? "—", name: m.name) {
+                            Text(Fmt.pct(m.changePercent))
+                                .font(Type.value)
+                                .foregroundStyle(T.delta(m.changePercent))
+                        }
+                    }
+                    .buttonStyle(.plain)
+                }
+                // Saying which of the book this is, rather than letting six
+                // rows read as the whole thing.
+                if let n = store.movers?.unpriced, n > 0 {
+                    Text("\(n) position\(n == 1 ? "" : "s") could not be priced.")
+                        .font(Type.meta).foregroundStyle(T.muted)
+                        .padding(.horizontal, Space.l).padding(.vertical, Space.s)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            } header: {
+                SectionHeader(text: "Our movers",
+                              trailing: shown.count < all.count
+                                  ? "\(shown.count) of \(all.count)" : "\(all.count)")
+            }
+        }
+    }
+
+    /// The post-close summary, written once a day after the close. It is
+    /// the last thing on the screen on purpose: it is the thing you read,
+    /// not the thing you do.
+    @ViewBuilder private var reviewSection: some View {
+        if let text = store.review?.dayInReview, !text.isEmpty {
+            Section {
+                VStack(alignment: .leading, spacing: Space.s) {
+                    Text(text).font(Type.body).foregroundStyle(T.dim)
+                        .fixedSize(horizontal: false, vertical: true)
+                    if let g = store.review?.dayInReviewAt {
+                        Text("Written \(Fmt.shortDateTime(g))")
+                            .font(Type.meta).foregroundStyle(T.muted)
+                    }
+                }
+                .padding(Space.l)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(T.card)
+                .hairline()
+            } header: {
+                SectionHeader(text: "Day in review")
+            }
+        }
     }
 
     private func chaseRow(_ r: ChaseRow) -> some View {

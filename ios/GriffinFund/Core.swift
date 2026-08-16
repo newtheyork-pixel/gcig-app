@@ -73,11 +73,27 @@ actor API {
         }
     }
 
-    private func attempt<R: Decodable>(_ path: String, as: R.Type) async throws -> R {
+    /// A write. Deliberately NOT retried: the cold-start retry above is
+    /// safe because a GET can be repeated, and this cannot. A ballot that
+    /// arrives twice because the first response was slow is a bug nobody
+    /// would find, so a write that times out is reported as failed and the
+    /// person decides whether to try again.
+    func post<R: Decodable>(_ path: String, body: [String: Any], as type: R.Type) async throws -> R {
+        try await attempt(path, as: type, method: "POST", body: body)
+    }
+
+    private func attempt<R: Decodable>(_ path: String, as: R.Type,
+                                       method: String = "GET",
+                                       body: [String: Any]? = nil) async throws -> R {
         guard let token else { throw APIError.sessionOver }
         guard let url = URL(string: API.base + path) else { throw APIError.noResponse }
         var r = URLRequest(url: url)
+        r.httpMethod = method
         r.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        if let body {
+            r.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            r.httpBody = try JSONSerialization.data(withJSONObject: body)
+        }
         r.timeoutInterval = 30
 
         let d: Data, resp: URLResponse

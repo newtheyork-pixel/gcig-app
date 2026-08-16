@@ -262,3 +262,260 @@ struct WorkItem: Identifiable {
         }
     }
 }
+
+// MARK: The wire
+
+struct Wire: Decodable {
+    let articles: [Article]?
+    /// False means nobody scored these headlines, which is a different
+    /// fact from "nothing is breaking today" and must not be shown as one.
+    let classified: Bool?
+    let sources: Sources?
+
+    struct Sources: Decodable { let feeds: [Feed]? }
+}
+
+struct Article: Decodable, Identifiable {
+    let title: String?
+    let url: String?
+    let source: String?
+    let publishedAt: String?
+    /// 0 to 10, how genuinely breaking the headline is. Scored on the
+    /// headline text alone, which is why the server age-gates the merge
+    /// first: the scorer cannot know a crash headline is stale.
+    let breaking: Double?
+    let breakingReason: String?
+    /// Set when the headline mentions a portfolio company, so the club's
+    /// own names stand out on the wire.
+    let heldTicker: String?
+
+    var id: String { url ?? title ?? UUID().uuidString }
+    var isBreaking: Bool { (breaking ?? 0) >= 7 }
+}
+
+/// Per-feed roll call. A wire that returns zero items is not an error and
+/// will never throw, which is exactly how one served the same fifteen
+/// headlines for eighteen months and counted as healthy throughout.
+struct Feed: Decodable, Identifiable {
+    let id: String?
+    let source: String?
+    let items: Int?
+    let newest: String?
+}
+
+// MARK: The watchlist
+
+struct Watchlist: Decodable {
+    let items: [WatchItem]?
+    let quotesAvailable: Bool?
+}
+
+struct WatchItem: Decodable, Identifiable {
+    let id: String?
+    let ticker: String?
+    let name: String?
+    /// holding | seg13f | manual. Three different claims about how much
+    /// attention a name deserves, which is why the screen groups rather
+    /// than sorts.
+    let source: String?
+    let note: String?
+    let weight: Double?
+    let alsoHeld: Bool?
+    let quote: Quote?
+    let stats: Stats?
+
+    struct Quote: Decodable {
+        let last: Double?
+        let changePct: Double?
+        let prevClose: Double?
+        let asOf: String?
+        let stale: Bool?
+    }
+    struct Stats: Decodable {
+        let avgVolume20d: Double?
+        let pct1m: Double?
+        let pct3m: Double?
+        let pct1y: Double?
+        let ytd: Double?
+    }
+}
+
+// MARK: One contact
+
+struct Target: Decodable {
+    let id: Int?
+    let name: String?
+    let relationship: String?
+    let employer: String?
+    let role: String?
+    let channel: String?
+    let email: String?
+    let tier: String?
+    let status: String?
+    let project: Project?
+    let messages: [TargetMessage]?
+    let drafts: [Draft]?
+    let followUp: FollowUpState?
+
+    struct Project: Decodable {
+        let id: Int?
+        let name: String?
+        let ticker: String?
+    }
+}
+
+struct FollowUpState: Decodable {
+    let state: String?
+    let recommendation: String?
+    let dueAt: String?
+    let dueDay: String?
+}
+
+struct TargetMessage: Decodable {
+    /// "in" or "out". The single most important fact about a message and
+    /// the one a wall of grey text hides.
+    let direction: String?
+    let kind: String?
+    let subject: String?
+    let body: String?
+    let occurredAt: String?
+}
+
+/// Read-only, deliberately. The phone shows what state a draft is in and
+/// offers no way to act on it: sending lives at the desk, where the
+/// screening and the approvals are.
+struct Draft: Decodable {
+    let id: Int?
+    let subject: String?
+    let stage: String?
+    let sentAt: String?
+    let screenedAt: String?
+    let screenRisk: String?
+    let fullyApproved: Bool?
+}
+
+// MARK: Voting
+
+struct VoteSession: Decodable {
+    let id: Int?
+    let title: String?
+    let ticker: String?
+    let status: String?
+    let deadline: String?
+    /// "buy" or "sell". A sell vote offers Sell or Hold and carries no
+    /// amount: we are exiting a position we already have and its size is
+    /// not up for a vote.
+    let kind: String?
+    /// "average" or "fixed". In fixed mode the amount is already pinned
+    /// and the question collapses to supporting it or not.
+    let amountMode: String?
+    let fixedAmount: Double?
+    let pitch: Pitch?
+    let ballots: [Ballot]?
+    let myBallot: Ballot?
+    let tally: Tally?
+    let synthesis: String?
+
+    struct Pitch: Decodable {
+        let id: Int?
+        let ticker: String?
+        let pitcherName: String?
+    }
+
+    var isOpen: Bool { status == "open" }
+    var isSell: Bool { kind == "sell" }
+    var isFixed: Bool { amountMode == "fixed" }
+
+    /// The choices this session actually accepts. Derived here, once, so a
+    /// screen cannot offer an option the server will refuse.
+    var choices: [Choice] {
+        if isSell {
+            return [
+                Choice("Sell", "Sell", "Exit the position."),
+                Choice("Hold", "Hold", "Maintain the position."),
+            ]
+        }
+        if isFixed {
+            let amt = Fmt.money(fixedAmount)
+            return [
+                Choice("Buy", "Buy", "Support buying \(amt)."),
+                // Persisted as Hold on the server, so the tally never has
+                // to learn a fourth answer. Named honestly here anyway.
+                Choice("Hold", "No", "Do not support it."),
+            ]
+        }
+        return [
+            Choice("Buy", "Buy", "Open a position, at the amount you set below."),
+            Choice("Hold", "Hold", "Not now."),
+            Choice("Sell", "Sell", "Against the position."),
+        ]
+    }
+
+    struct Choice { 
+        let action: String, label: String, detail: String
+        init(_ a: String, _ l: String, _ d: String) { action = a; label = l; detail = d }
+    }
+}
+
+struct Ballot: Decodable {
+    let action: String?
+    let note: String?
+    let investmentAmount: Double?
+    let castAt: String?
+}
+
+struct Tally: Decodable {
+    let result: String?
+    let buyAmountStats: BuyStats?
+    struct BuyStats: Decodable {
+        let avg: Double?
+        let min: Double?
+        let max: Double?
+        let fixed: Bool?
+    }
+}
+
+/// What the ballot POST returns. All-optional like everything else: the
+/// screen re-reads the session afterwards and does not depend on this.
+struct BallotReceipt: Decodable {
+    let id: Int?
+    let action: String?
+}
+
+// MARK: Dashboard glances
+
+/// The post-close summary. Written once a day by a cron at 4:05pm ET and
+/// served from cache, which is exactly the shape of a thing worth putting
+/// on a phone: one paragraph, after the close, that you read and close.
+struct DayInReview: Decodable {
+    let dayInReview: String?
+    let dayInReviewAt: String?
+    let reviewDay: String?
+}
+
+/// MOVR. `rows` arrives already sorted by the day's move, best first, so
+/// the top and bottom of the same array are the gainers and the losers.
+struct Movers: Decodable {
+    let rows: [Mover]?
+    let asOf: String?
+    let positions: Int?
+    /// Positions the sheet could not price. A panel showing three of
+    /// thirteen holdings must not read as a three-holding book.
+    let unpriced: Int?
+}
+
+struct Mover: Decodable, Identifiable {
+    let ticker: String?
+    let name: String?
+    /// A FRACTION here, not a percentage. sheetPortfolio computes it as
+    /// dayUsd / prior and does not scale it, while /quotes and
+    /// /period-returns hand back percent — the units genuinely differ by
+    /// endpoint, and passing this straight to Fmt.pct renders a 2.34% move
+    /// as "+0.02%".
+    let changePct: Double?
+    let dayChange: Double?
+    let source: String?
+
+    var id: String { ticker ?? name ?? "?" }
+    var changePercent: Double? { changePct.map { $0 * 100 } }
+}

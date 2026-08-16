@@ -28,8 +28,8 @@ PBXPROJ = ROOT / "GriffinFund.xcodeproj" / "project.pbxproj"
 # version in Info.plist with GENERATE_INFOPLIST_FILE = NO, which meant the
 # commit titled "0.1.1" shipped an app still identifying itself as 0.1.0 (1)
 # and App Store Connect would have rejected the next upload as a duplicate.
-MARKETING_VERSION = "0.2.0"
-BUILD_NUMBER = "3"
+MARKETING_VERSION = "0.3.0"
+BUILD_NUMBER = "4"
 
 BUNDLE_ID = "org.thegriffinfund.ios"
 DISPLAY_NAME = "Griffin Fund"

@@ -65,7 +65,7 @@ struct BookScreen: View {
         }
         .background(T.bg)
         .toolbar(.hidden, for: .navigationBar)
-        .navigationDestination(for: Holding.self) { HoldingScreen(holding: $0) }
+        .navigationDestination(for: TickerScreen.self) { $0 }
         .task { if store.state.value == nil { await store.load() } }
         .task { await store.refreshIfStale() }
     }
@@ -84,7 +84,10 @@ struct BookScreen: View {
 
                 Section {
                     ForEach(Array(book.equities.enumerated()), id: \.offset) { _, h in
-                        NavigationLink(value: h) { holdingRow(h) }
+                        NavigationLink(value: TickerScreen(symbol: h.ticker ?? "",
+                                                          holding: h)) {
+                            holdingRow(h)
+                        }
                             .buttonStyle(.plain)
                     }
                 } header: {
