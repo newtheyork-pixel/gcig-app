@@ -504,6 +504,15 @@ struct ProjectFull: Decodable {
         let screenElevated: Int?
         let unscreened: Int?
         let keywordOnly: Int?
+        // The server has always computed these and the client never
+        // decoded them, so the one number the campaign exists to produce
+        // reached the wire and stopped there. Two replies out of
+        // fifty-seven sends was findable only by memory or by opening a
+        // hundred and ten contacts one at a time.
+        let queued: Int?
+        let replied: Int?
+        let autoRepliedOnly: Int?
+        let bounced: Int?
     }
 }
 
@@ -599,6 +608,7 @@ struct Message: Decodable, Identifiable {
         case "Interested": return ("INTERESTED", Term.positive, "They are willing to talk")
         case "Declined":   return ("DECLINED", Term.negative, "They said no. The target closes")
         case "Bounce":     return ("BOUNCED", Term.negative, "Dead address. The target is unreachable")
+        case "Reply":      return ("REPLIED", Term.positive, "A real answer. Our move")
         case "AutoReply":  return ("AUTO-REPLY", Term.amber, "Out of office. Nobody has read it yet, so this is still waiting")
         default:           return ("OTHER", Term.fgMuted, "Did not clearly fit the other kinds")
         }
@@ -829,6 +839,10 @@ private enum StageStyle {
         case "rejected":     return "REJECTED"
         case "blocked":      return "BLOCKED"
         case "ready":        return "READY"
+        // Queued is further along than ready and short of sent. Without
+        // this it fell through to the approval arithmetic below and the
+        // draft nearest to going out printed a dim grey "0 of 0".
+        case "queued":       return "QUEUED"
         case "one-approval": return "1 of \(d.approvalsNeeded ?? 2)"
         default:             return "\(d.approvalCount ?? 0) of \(d.approvalsNeeded ?? 2)"
         }
@@ -836,6 +850,9 @@ private enum StageStyle {
     static func tone(_ d: Draft) -> Color {
         switch d.stage {
         case "ready":               return Term.positive
+        // Cyan, not green: it is sitting in a mailbox waiting on a clock,
+        // which is neither "do something" nor "gone".
+        case "queued":              return Term.cyan
         case "rejected", "blocked": return Term.negative
         case "sent":                return Term.fgMuted
         case "one-approval":        return Term.amber
@@ -1930,10 +1947,26 @@ private struct OutreachTab: View {
     private func queueLine(_ q: ProjectFull.Queue?) -> some View {
         let notScreened = (q?.unscreened ?? 0) + (q?.keywordOnly ?? 0)
         if let q, (q.awaitingReview ?? 0) + (q.readyToSend ?? 0) + (q.rejected ?? 0)
-            + (q.screenBlocked ?? 0) + (q.screenElevated ?? 0) + notScreened > 0 {
+            + (q.screenBlocked ?? 0) + (q.screenElevated ?? 0) + notScreened
+            + (q.replied ?? 0) + (q.queued ?? 0) + (q.bounced ?? 0)
+            + (q.autoRepliedOnly ?? 0) > 0 {
             HStack(spacing: 12) {
+                // Answers first. A strip that only ever reports problems
+                // makes a campaign look like a list of failures.
+                if let n = q.replied, n > 0 {
+                    Text("\(n) replied").foregroundStyle(Term.positive).bold()
+                }
                 if let n = q.readyToSend, n > 0 {
                     Text("\(n) ready to send").foregroundStyle(Term.positive)
+                }
+                if let n = q.queued, n > 0 {
+                    Text("\(n) queued").foregroundStyle(Term.cyan)
+                }
+                if let n = q.bounced, n > 0 {
+                    Text("\(n) bounced").foregroundStyle(Term.negative)
+                }
+                if let n = q.autoRepliedOnly, n > 0 {
+                    Text("\(n) out of office").foregroundStyle(Term.amber)
                 }
                 if let n = q.rejected, n > 0 {
                     Text("\(n) rejected").foregroundStyle(Term.negative)
@@ -2494,13 +2527,24 @@ private struct DraftCard: View {
 
                 // Copy sits on the closed row as well. Collapsing the card
                 // must not cost the one action the screen exists for.
-                // Copy is the action this screen exists for and it must
-                // never depend on whether the card is open or whether the
-                // email already went. Re-sending, forwarding and quoting a
-                // sent email are all real, and hunting for a button that
-                // moved is not a feature.
+                // Copy lives here, on every card, open or closed, sent or
+                // not: re-sending, forwarding and quoting a sent email are
+                // all real, and a button that moves is not a feature.
+                //
+                // It carries the SAME gate as the action row it replaced.
+                // For a while both rendered on an unsent card, one gated
+                // and one not, and the ungated one would happily put the
+                // body of a compliance-BLOCKED draft on the clipboard two
+                // lines above the disabled twin that existed to stop it. A
+                // veto you can copy past is worse than no veto, because it
+                // reads as oversight that is not happening.
                 Button(copied ? "Copied" : "Copy to send") { copyBlock(d) }
                     .buttonStyle(TermButtonStyle())
+                    .disabled(d.fullyApproved != true)
+                    .help(d.fullyApproved == true
+                          ? "Copy, then send from your school address to \(target.email ?? "them")"
+                          : (d.stage == "rejected" ? "This draft was rejected, edit it to send"
+                             : "The compliance screen blocks this, edit it"))
 
                 if isExpanded {
                     ScrollView {
@@ -2609,7 +2653,13 @@ private struct DraftCard: View {
             .joined(separator: ", ")
         let to: String
         if let addr = target.email, !addr.isEmpty {
-            to = who.isEmpty ? "To: \(addr)" : "To: \(addr)   (\(target.name), \(who))"
+            // Bare address, nothing after it. The name and role used to
+            // ride along in brackets as a last check before sending, and
+            // Gmail's address parser chokes on them, so every one of 57
+            // pastes needed the annotation deleted by hand. The identity
+            // belongs on screen beside the button, not in the clipboard.
+            _ = who
+            to = "To: \(addr)"
         } else {
             to = "To: NO ADDRESS ON FILE for \(target.name), do not send"
         }
@@ -2770,7 +2820,7 @@ private struct DraftCard: View {
 
     private func beginLog(out: Bool) {
         replyOut = out
-        replyKind = out ? "Scheduling" : "AutoReply"
+        replyKind = out ? "Scheduling" : "Reply"
         replyWhen = Self.nowLocal()
         replyBody = ""
         replyAction = ""
@@ -2786,6 +2836,12 @@ private struct DraftCard: View {
     ]
 
     private static let replyKinds: [(String, String, String)] = [
+        // Reply leads because the picker defaults to whatever comes first
+        // and this is the commonest real event. AutoReply used to lead, so
+        // anyone who did not touch the control filed a human answer as a
+        // robot and the chase clock went on hunting somebody who had
+        // already written back.
+        ("Reply", "REPLIED", "A real answer. Neither a yes nor a no"),
         ("Interested", "INTERESTED", "They are willing to talk"),
         ("Declined", "DECLINED", "They said no. The target closes"),
         ("Bounce", "BOUNCED", "Dead address. The target becomes unreachable"),
