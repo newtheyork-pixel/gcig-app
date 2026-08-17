@@ -52,6 +52,7 @@ async function runWithTools(messages, temperature) {
 
   for (let round = 0; round < MAX_TOOL_ROUNDS; round += 1) {
     const out = await llmChatTools({
+    job: 'chat',
       messages: convo,
       tools: TOOL_SPECS,
       temperature,
@@ -139,6 +140,7 @@ async function runWithTools(messages, temperature) {
     });
   }
   const text = await llmChat({
+    job: 'chat',
     messages: convo, temperature, localModel: RESEARCH_LOCAL_MODEL,
     timeoutMs: CHAT_TIMEOUT_MS,
   });
@@ -530,6 +532,7 @@ router.post('/', chatLimiter, async (req, res) => {
     ? await runWithTools(modelMessages, temp)
     : {
         text: await llmChat({
+    job: 'chat',
           messages: modelMessages,
           temperature: temp,
           localModel: RESEARCH_LOCAL_MODEL,
@@ -564,6 +567,7 @@ router.post('/', chatLimiter, async (req, res) => {
     // Without tools it cannot leak a tool call, and an answer from
     // context is better than machine syntax in a member's chat window.
     reply = await llmChat({
+    job: 'chat',
       messages: modelMessages,
       temperature: temp,
       localModel: RESEARCH_LOCAL_MODEL,

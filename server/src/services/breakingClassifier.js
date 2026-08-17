@@ -79,6 +79,7 @@ function buildList(articles) {
 // strip.
 async function scoreBatch(articles) {
   const raw = await llmChat({
+    job: 'rank',
     messages: [
       { role: 'system', content: SYSTEM_PROMPT },
       { role: 'user', content: `Headlines:\n${buildList(articles)}` },

@@ -291,7 +291,8 @@ export async function getSupplyChain(ticker) {
           // twelve-thousand-character prompt, so the per-call budget is
           // generous — but the whole step is capped, because llmChat
           // walks its providers and each carries its own timeout.
-          const raw = await withDeadline(llmChat({ messages: [
+          const raw = await withDeadline(llmChat({
+    job: 'describe', messages: [
             { role: 'system', content: SYSTEM },
             { role: 'user', content: `Company: ${key}\n\n10-K excerpts:\n${passages}` },
           ], jsonMode: true, temperature: 0, timeoutMs: 40_000 }), LLM_DEADLINE_MS);

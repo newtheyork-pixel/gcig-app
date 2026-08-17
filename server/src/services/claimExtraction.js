@@ -278,6 +278,7 @@ async function repairQuote(chat, context, claim) {
   let raw;
   try {
     raw = await chat({
+    job: 'claims',
       messages: [
         { role: 'system', content: REPAIR_PROMPT },
         { role: 'user', content: `TRANSCRIPT\n${context}\n\nCLAIM\n${claim}` },
@@ -314,6 +315,7 @@ export async function extractClaims(interview, deps = {}) {
   for (const [i, window] of windows.entries()) {
     const label = windows.length > 1 ? ` (part ${i + 1} of ${windows.length})` : '';
     const raw = await chat({
+    job: 'claims',
       messages: [
         { role: 'system', content: SYSTEM_PROMPT },
         { role: 'user', content: `Transcript${label}:\n${renderTurns(window)}` },

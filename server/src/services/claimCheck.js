@@ -82,6 +82,7 @@ export async function entails(chat, question, quote, proposed, context = null) {
   let raw;
   try {
     raw = await chat({
+    job: 'claims',
       messages: [
         { role: 'system', content: question ? CHECK_PROMPT : STANDALONE_PROMPT },
         {

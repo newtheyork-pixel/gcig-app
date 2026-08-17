@@ -199,6 +199,7 @@ export async function screenOutreach(draft, target = {}, deps = {}) {
   const chat = deps.llmChat || llmChat;
   try {
     const raw = await chat({
+    job: 'screen',
       messages: [
         { role: 'system', content: SYSTEM_PROMPT },
         {

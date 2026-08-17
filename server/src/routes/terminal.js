@@ -1640,6 +1640,7 @@ router.post('/annotate', aiLimiter, async (req, res) => {
   // (cloud first, local fallback) — a weak local model makes the amber "AI
   // BRIEF" line read as filler instead of insight.
   const brief = await llmChat({
+    job: 'chat',
     messages,
     temperature: 0.3,
     timeoutMs: 20_000,
@@ -1680,6 +1681,7 @@ router.post('/parse-command', aiLimiter, async (req, res) => {
   ];
 
   const raw = await llmChat({
+    job: 'chat',
     messages,
     jsonMode: true,
     temperature: 0,
@@ -1785,6 +1787,7 @@ router.post('/chat', aiLimiter, async (req, res) => {
   }
 
   const reply = await llmChat({
+    job: 'chat',
     messages,
     temperature: 0.3,
     timeoutMs: 90_000,

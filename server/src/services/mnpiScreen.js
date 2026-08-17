@@ -127,6 +127,7 @@ export async function screenTranscript(transcript, opts = {}, deps = {}) {
   const chat = deps.llmChat || llmChat;
   try {
     const raw = await chat({
+    job: 'screen',
       messages: [
         { role: 'system', content: SYSTEM_PROMPT },
         { role: 'user', content: String(transcript || '').slice(0, 30_000) },

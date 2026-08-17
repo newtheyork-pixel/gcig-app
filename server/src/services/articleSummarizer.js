@@ -21,6 +21,7 @@ import { llmChat } from './llm.js';
 
 async function callChat(systemPrompt, userContent, { temperature = 0.2 } = {}) {
   const content = await llmChat({
+    job: 'review',
     messages: [
       { role: 'system', content: systemPrompt },
       { role: 'user', content: userContent },

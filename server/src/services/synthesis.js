@@ -195,6 +195,7 @@ export async function synthesize(project, coverage, deps = {}) {
 
   const chat = deps.llmChat || llmChat;
   const raw = await chat({
+    job: 'synthesis',
     messages: [
       { role: 'system', content: SYSTEM_PROMPT },
       { role: 'user', content: buildEvidence(project, coverage) },

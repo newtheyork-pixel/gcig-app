@@ -100,6 +100,7 @@ export async function scanForAnswer(interview, question, deps = {}) {
     let raw;
     try {
       raw = await chat({
+    job: 'claims',
         messages: [
           { role: 'system', content: SYSTEM_PROMPT },
           { role: 'user', content: `QUESTION\n${question}\n\nTRANSCRIPT\n${render(win)}` },

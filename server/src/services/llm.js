@@ -31,6 +31,38 @@ export const RESEARCH_LOCAL_MODEL =
   process.env.RESEARCH_LLM_MODEL || 'qwen2.5:14b-instruct-q4_K_M';
 const DEFAULT_ANTHROPIC_MODEL = 'claude-haiku-4-5-20251001';
 const DEFAULT_OPENAI_MODEL = 'gpt-4.1-mini';
+
+// What each job runs on, because they are not the same kind of work.
+//
+// Screening an outreach draft for MNPI and ranking a headline both call
+// "the model" and want opposite things from it: one is a compliance
+// judgement where being talked out of a flag is the failure mode, the
+// other is a cheap sort over twenty strings fifty times a day. Paying
+// frontier prices for the second is waste, and running the first on
+// whatever is cheapest is how the screen quietly stops screening.
+//
+// Every entry is an env var so a model can be moved without a deploy, and
+// the fallback is OPENAI_MODEL so an unset job simply inherits the house
+// default rather than failing.
+const JOB_MODELS = {
+  // Compliance and evidence. These decide whether words reach a stranger
+  // or whether a claim enters the ledger, and they get the best model.
+  screen:     () => process.env.OPENAI_MODEL_SCREEN,
+  claims:     () => process.env.OPENAI_MODEL_CLAIMS,
+  synthesis:  () => process.env.OPENAI_MODEL_SYNTHESIS,
+  // Prose somebody reads once a day.
+  review:     () => process.env.OPENAI_MODEL_REVIEW,
+  chat:       () => process.env.OPENAI_MODEL_CHAT,
+  // Bulk sorting. Cheap on purpose, and wrong answers here cost a
+  // headline's position rather than anything that matters.
+  rank:       () => process.env.OPENAI_MODEL_RANK,
+  describe:   () => process.env.OPENAI_MODEL_DESCRIBE,
+};
+
+export function modelForJob(job) {
+  const pick = job && JOB_MODELS[job];
+  return (pick && pick()) || process.env.OPENAI_MODEL || DEFAULT_OPENAI_MODEL;
+}
 const DEFAULT_TIMEOUT_MS = 25_000;
 
 function normalizeBase(raw) {
@@ -366,7 +398,7 @@ async function callOllamaNative({ endpoint, apiKey, model, messages, temperature
   return retry.ok && parses(retry.content) ? retry : first;
 }
 
-function runProvider(name, { messages, temperature, jsonMode, timeoutMs, localModel, tools }) {
+function runProvider(name, { messages, temperature, jsonMode, timeoutMs, localModel, job, tools }) {
   if (name === 'local') {
     if (!process.env.LOCAL_LLM_URL) return null;
     // Ollama's NATIVE api, not the OpenAI-compatible one, because the
@@ -425,7 +457,7 @@ function runProvider(name, { messages, temperature, jsonMode, timeoutMs, localMo
     return callEndpoint({
       endpoint: 'https://api.openai.com/v1/chat/completions',
       apiKey: process.env.OPENAI_API_KEY,
-      model: process.env.OPENAI_MODEL || DEFAULT_OPENAI_MODEL,
+      model: modelForJob(job),
       messages,
       temperature,
       jsonMode,
@@ -484,6 +516,10 @@ export async function llmChat({
   timeoutMs,
   preferQuality = false,
   localModel,
+  // Which KIND of work this is. Picks the model per job rather than per
+  // deployment, so a compliance screen and a headline sort stop sharing
+  // one setting purely because they share one function.
+  job,
 } = {}) {
   if (!Array.isArray(messages) || messages.length === 0) return null;
   const effectiveTimeoutMs =
@@ -499,6 +535,7 @@ export async function llmChat({
       jsonMode,
       timeoutMs: effectiveTimeoutMs,
       localModel,
+      job,
     });
     if (!result) continue; // provider not configured
     if (result.ok && result.content) return result.content;
@@ -616,7 +653,7 @@ export async function probeProviders({ timeoutMs = 6000, localTimeoutMs = LOCAL_
     const r = await callEndpoint({
       endpoint: 'https://api.openai.com/v1/chat/completions',
       apiKey: process.env.OPENAI_API_KEY,
-      model: process.env.OPENAI_MODEL || DEFAULT_OPENAI_MODEL,
+      model: modelForJob(job),
       messages: ping,
       temperature: 0,
       timeoutMs,

@@ -133,6 +133,7 @@ export async function rankArticles(articles, { ticker } = {}) {
   const compact = compactForRanking(unknown);
 
   const content = await llmChat({
+    job: 'rank',
     messages: [
       { role: 'system', content: SYSTEM_PROMPT },
       {
