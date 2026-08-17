@@ -46,6 +46,7 @@ import { getBusinessProfile } from './services/secBusinessSummary.js';
 import { readableDescription } from './services/companyDescription.js';
 import watchlistRoutes from './routes/watchlist.js';
 import { runDueSends } from './services/outreachScheduler.js';
+import { sweepAll } from './services/replySweep.js';
 import gmailRoutes from './routes/gmail.js';
 import davRoutes from './routes/dav.js';
 import subscriptionRoutes from './routes/subscriptions.js';
@@ -304,6 +305,16 @@ async function warmPeopleAndDescriptions() {
   }
 }
 setTimeout(() => { warmPeopleAndDescriptions(); }, 4 * 60_000);
+// Replies, pulled in on their own every ten minutes. This was a button,
+// and a button is the wrong shape: the promise of the reply loop is that
+// nobody has to remember, and a sweep that only runs when somebody presses
+// it runs on the days they were already paying attention.
+cron.schedule('*/10 * * * *', () => {
+  sweepAll().then((r) => {
+    if (r?.added) console.log('reply sweep:', JSON.stringify(r));
+  }).catch((e) => console.error('reply sweep failed:', e.message));
+});
+
 // Scheduled outreach, every five minutes. Not every minute: the whole
 // point is a send that lands in a morning window, and five minutes of
 // imprecision against that is invisible while a tighter loop is forty

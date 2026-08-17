@@ -1898,10 +1898,52 @@ router.post('/projects/:id/schedule', canResearch, async (req, res) => {
 });
 
 /** Take it back off the queue. */
+/**
+ * What is sitting in the queue, and when it goes.
+ *
+ * A schedule you cannot see is a schedule you cannot trust. Twenty emails
+ * queued for Monday morning with no way to list them means the only way to
+ * find out what was promised is to wait and read the sent folder.
+ *
+ * scheduleError rides along: a draft the scheduler gave up on has had its
+ * time cleared and its reason recorded, and that reason is worth exactly as
+ * much as the queue itself.
+ */
+router.get('/projects/:id/scheduled', canResearch, async (req, res) => {
+  const projectId = Number(req.params.id);
+  if (!Number.isInteger(projectId)) return res.status(400).json({ error: 'Bad id' });
+  const rows = await prisma.outreachDraft.findMany({
+    where: {
+      target: { projectId },
+      sentAt: null,
+      OR: [{ scheduledFor: { not: null } }, { scheduleError: { not: null } }],
+    },
+    orderBy: [{ scheduledFor: 'asc' }, { id: 'asc' }],
+    select: {
+      id: true, subject: true, scheduledFor: true, scheduleError: true,
+      scheduledBy: { select: { name: true } },
+      target: { select: { name: true, email: true } },
+    },
+  });
+  res.json({
+    queued: rows.filter((r) => r.scheduledFor).length,
+    failed: rows.filter((r) => !r.scheduledFor && r.scheduleError).length,
+    rows,
+  });
+});
+
 router.post('/projects/:id/unschedule', canResearch, async (req, res) => {
   const projectId = Number(req.params.id);
+  // A selection means exactly those. Taking one person back off Monday
+  // should not empty the whole queue.
+  const picked = Array.isArray(req.body?.draftIds)
+    ? req.body.draftIds.map(Number).filter(Number.isInteger)
+    : null;
   const { count } = await prisma.outreachDraft.updateMany({
-    where: { target: { projectId }, sentAt: null, scheduledFor: { not: null } },
+    where: {
+      target: { projectId }, sentAt: null, scheduledFor: { not: null },
+      ...(picked ? { id: { in: picked } } : {}),
+    },
     data: { scheduledFor: null, scheduledById: null },
   });
   res.json({ unscheduled: count });
@@ -1935,6 +1977,10 @@ router.post('/projects/:id/send-all', canResearch, async (req, res) => {
         rejectedAt: null,
         screenedAt: { not: null },
         NOT: { screenRisk: 'prohibited' },
+        // Already queued is not ready to send. Without this a member who
+        // scheduled twenty for Monday opens this list, sees them still
+        // ticked, presses send, and the schedule silently meant nothing.
+        scheduledFor: null,
         ...(picked ? { id: { in: picked } } : {}),
       },
       orderBy: { id: 'asc' },

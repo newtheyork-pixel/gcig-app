@@ -32,56 +32,53 @@ struct GmailConnectionRow: View {
     @State private var status: Loadable<GmailStatus> = .loading
     @State private var busy = false
     @State private var note: String?
-    /// Last sweep result, kept so the row can say what happened rather than
-    /// flashing a spinner and going quiet.
-    @State private var swept: String?
 
     var body: some View {
-        HStack(spacing: 8) {
-            SectionLabel(text: "Gmail")
-
+        // NOTHING when it is working.
+        //
+        // A connected mailbox with a recent sweep is not news, and a row
+        // announcing it every time somebody opens the panel is a line of
+        // chrome they learn to skip, which is exactly the line they will
+        // skip on the day it says the connection was refused. This appears
+        // only when there is something to do.
+        Group {
             switch status {
-            case .loading:
-                Text("checking").font(Term.mono(10)).foregroundStyle(Term.fgMuted)
-
-            case .failed(let msg):
-                Text(msg).font(Term.mono(10)).foregroundStyle(Term.negative).lineLimit(1)
-                Button("RETRY") { Task { await load() } }.buttonStyle(TermButtonStyle())
-
-            case .loaded(let s):
-                if s.configured != true {
-                    Text("not configured on the server")
-                        .font(Term.mono(10)).foregroundStyle(Term.fgMuted)
-                } else if s.allowed != true {
-                    // Named, not hidden. Somebody wondering why they cannot
-                    // send should find the answer here rather than in a 403.
-                    Text("sending is limited to named senders")
-                        .font(Term.mono(10)).foregroundStyle(Term.fgMuted)
-                } else if s.connected == true, let addr = s.address {
-                    Text(addr).font(Term.mono(10)).foregroundStyle(Term.positive)
-                    if let last = s.lastSyncAt {
-                        Text("swept \(Fmt.shortDateTime(last))")
-                            .font(Term.mono(10)).foregroundStyle(Term.fgMuted)
+            case .loading, .loaded:
+                if case .loaded(let s) = status, s.configured == true, s.allowed == true,
+                   s.connected == true, s.revokedAt == nil {
+                    EmptyView()
+                } else if case .loaded(let s) = status {
+                    HStack(spacing: 8) {
+                        SectionLabel(text: "Gmail")
+                        if s.configured != true {
+                            Text("not configured on the server")
+                                .font(Term.mono(10)).foregroundStyle(Term.fgMuted)
+                        } else if s.allowed != true {
+                            Text("sending is limited to named senders")
+                                .font(Term.mono(10)).foregroundStyle(Term.fgMuted)
+                        } else {
+                            Text(s.revokedAt != nil
+                                 ? "Google refused the connection, reconnect"
+                                 : "no mailbox connected")
+                                .font(Term.mono(10))
+                                .foregroundStyle(s.revokedAt != nil ? Term.negative : Term.fgMuted)
+                            Button(busy ? "OPENING" : "CONNECT") { Task { await connect() } }
+                                .buttonStyle(TermButtonStyle()).disabled(busy)
+                        }
+                        if let note {
+                            Text(note).font(Term.mono(10)).foregroundStyle(Term.negative).lineLimit(1)
+                        }
+                        Spacer()
                     }
-                    Button(busy ? "SWEEPING" : "SWEEP REPLIES") { Task { await sync() } }
-                        .buttonStyle(TermButtonStyle()).disabled(busy)
-                    Button("DISCONNECT") { Task { await disconnect() } }
-                        .buttonStyle(TermButtonStyle()).disabled(busy)
-                } else {
-                    // revokedAt is its own sentence. A connection that has
-                    // gone bad and still reads as absent sends somebody
-                    // looking for a setup step they already did.
-                    Text(s.revokedAt != nil ? "connection refused by Google, reconnect" : "not connected")
-                        .font(Term.mono(10))
-                        .foregroundStyle(s.revokedAt != nil ? Term.negative : Term.fgMuted)
-                    Button(busy ? "OPENING" : "CONNECT") { Task { await connect() } }
-                        .buttonStyle(TermButtonStyle()).disabled(busy)
+                }
+            case .failed(let msg):
+                HStack(spacing: 8) {
+                    SectionLabel(text: "Gmail")
+                    Text(msg).font(Term.mono(10)).foregroundStyle(Term.negative).lineLimit(1)
+                    Button("RETRY") { Task { await load() } }.buttonStyle(TermButtonStyle())
+                    Spacer()
                 }
             }
-
-            if let swept { Text(swept).font(Term.mono(10)).foregroundStyle(Term.fgDim).lineLimit(1) }
-            if let note { Text(note).font(Term.mono(10)).foregroundStyle(Term.negative).lineLimit(1) }
-            Spacer()
         }
         .task { await load() }
     }
@@ -108,25 +105,6 @@ struct GmailConnectionRow: View {
             guard let u = URL(string: link.url) else { note = "bad link from the server"; return }
             NSWorkspace.shared.open(u)
             note = "finish in the browser, then RETRY here"
-        } catch {
-            note = error.localizedDescription
-        }
-    }
-
-    private func sync() async {
-        busy = true; note = nil; swept = nil
-        defer { busy = false }
-        do {
-            let d = try await API.shared.post("/gmail/sync", json: [:])
-            struct R: Decodable { let threads: Int?; let added: Int?; let errorCount: Int? }
-            let r = try await API.shared.decode(R.self, from: d)
-            // The error count is shown rather than swallowed. A sweep that
-            // skipped half the threads and reported "0 new" is
-            // indistinguishable from a quiet week, and a quiet week is what
-            // ends a contact.
-            let errs = (r.errorCount ?? 0) > 0 ? ", \(r.errorCount!) failed" : ""
-            swept = "\(r.added ?? 0) new from \(r.threads ?? 0) threads\(errs)"
-            await load()
         } catch {
             note = error.localizedDescription
         }
@@ -174,6 +152,23 @@ struct SendPreview: Decodable {
     }
 }
 
+struct ScheduledQueue: Decodable {
+    let queued: Int?
+    let failed: Int?
+    let rows: [Row]?
+    struct Row: Decodable, Identifiable {
+        let id: Int
+        let subject: String?
+        let scheduledFor: String?
+        /// Set when the scheduler gave up. The time is cleared with it, so a
+        /// row with a reason and no time is one that will never send unless
+        /// somebody does something.
+        let scheduleError: String?
+        let target: T?
+        struct T: Decodable { let name: String?; let email: String? }
+    }
+}
+
 struct SendResult: Decodable {
     let sent: Int?
     let failedCount: Int?
@@ -200,9 +195,44 @@ struct SendAllControl: View {
     @State private var chosen: Set<Int> = []
     @State private var when = Date().addingTimeInterval(12 * 3600)
     @State private var scheduling = false
+    @State private var queue: ScheduledQueue?
+    @State private var picked: Set<Int> = []
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
+            // The queue is shown whether or not the send panel is open. A
+            // schedule you cannot see is a schedule you cannot trust, and
+            // the only other way to learn what was promised is to wait and
+            // read the sent folder on Monday.
+            if let q = queue, (q.queued ?? 0) > 0 || (q.failed ?? 0) > 0 {
+                HStack(spacing: 8) {
+                    SectionLabel(text: "Queued")
+                    Text("\(q.queued ?? 0) scheduled")
+                        .font(Term.mono(10)).foregroundStyle(Term.positive)
+                    if (q.failed ?? 0) > 0 {
+                        Text("\(q.failed ?? 0) gave up")
+                            .font(Term.mono(10)).foregroundStyle(Term.negative)
+                    }
+                    Button("UNSCHEDULE ALL") { Task { await unschedule(nil) } }
+                        .buttonStyle(TermButtonStyle()).disabled(busy)
+                    Spacer()
+                }
+                ForEach((q.rows ?? []).prefix(10)) { r in
+                    HStack(spacing: 6) {
+                        Text(r.target?.name ?? "?").font(Term.mono(10)).foregroundStyle(Term.fg)
+                        if let e = r.scheduleError {
+                            Text(e).font(Term.mono(10)).foregroundStyle(Term.negative).lineLimit(1)
+                        } else {
+                            Text(Fmt.shortDateTime(r.scheduledFor))
+                                .font(Term.mono(10)).foregroundStyle(Term.fgMuted)
+                            Button("CANCEL") { Task { await unschedule([r.id]) } }
+                                .buttonStyle(TermButtonStyle()).disabled(busy)
+                        }
+                        Spacer()
+                    }
+                }
+            }
+
             HStack(spacing: 8) {
                 SectionLabel(text: "Outreach")
                 Button(open ? "CLOSE" : "SEND") {
@@ -226,6 +256,26 @@ struct SendAllControl: View {
 
             if open { panel }
         }
+        .task { await loadQueue() }
+    }
+
+    private func loadQueue() async {
+        queue = try? await API.shared.decode(
+            ScheduledQueue.self,
+            from: try await API.shared.get("/research/projects/\(projectID)/scheduled"))
+    }
+
+    private func unschedule(_ ids: [Int]?) async {
+        busy = true; note = nil
+        defer { busy = false }
+        do {
+            _ = try await API.shared.post("/research/projects/\(projectID)/unschedule",
+                                          json: ids == nil ? [:] : ["draftIds": ids!])
+            await loadQueue()
+            // The send list changes the moment something leaves the queue,
+            // so it is re-read rather than left showing a stale count.
+            if open { await load() }
+        } catch { note = error.localizedDescription }
     }
 
     @ViewBuilder private var panel: some View {
@@ -344,6 +394,7 @@ struct SendAllControl: View {
                                                      "draftIds": Array(chosen)])
             result = try await API.shared.decode(SendResult.self, from: d)
             preview = nil; open = false; scheduling = false
+            await loadQueue()
         } catch { note = error.localizedDescription }
     }
 }
