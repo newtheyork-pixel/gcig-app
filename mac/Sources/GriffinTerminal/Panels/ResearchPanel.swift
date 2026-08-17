@@ -1884,7 +1884,7 @@ private struct OutreachTab: View {
     @State private var only: TFilter = .all
 
     private static let statuses = [
-        "Identified", "Contacted", "Scheduled", "Completed", "Declined", "Unreachable",
+        "Identified", "Queued", "Contacted", "Scheduled", "Completed", "Declined", "Unreachable",
     ]
 
     // The house vocabulary, same set the /sources route validates

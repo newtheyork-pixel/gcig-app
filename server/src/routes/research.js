@@ -1150,8 +1150,16 @@ router.post('/claims/:id/link', canResearch, async (req, res) => {
 
 // ── Targets: the outreach funnel ─────────────────────────────────────
 
+// Queued sits between Identified and Contacted: a letter is written and
+// waiting to leave, but nobody has been written to yet. It was previously
+// invisible on the row, so fifty people with mail going out at 8am read as
+// "not yet tried".
+//
+// It is set and cleared by the scheduler, never by hand, which is why it is
+// last in this list rather than in the middle: the dropdown a member picks
+// from should not offer a state the system owns.
 const TARGET_STATUSES = new Set([
-  'Identified', 'Contacted', 'Scheduled', 'Completed', 'Declined', 'Unreachable',
+  'Identified', 'Contacted', 'Scheduled', 'Completed', 'Declined', 'Unreachable', 'Queued',
 ]);
 
 // An email we cannot send to is worse than a blank — it looks like a
@@ -1900,6 +1908,17 @@ router.post('/projects/:id/schedule', canResearch, async (req, res) => {
     where: { id: { in: sendable.map((d) => d.id) } },
     data: { scheduledFor: at, scheduledById: req.user.id, scheduleError: null },
   });
+  // Only from Identified. Queueing a chase to somebody already Contacted,
+  // or who has agreed to a call, must not drag them back down the funnel:
+  // that is the same defect that once reset Kanter to Contacted for the
+  // crime of being answered.
+  const targetIds = [...new Set(sendable.map((d) => d.targetId).filter(Boolean))];
+  if (targetIds.length) {
+    await prisma.researchTarget.updateMany({
+      where: { id: { in: targetIds }, status: 'Identified' },
+      data: { status: 'Queued' },
+    });
+  }
   res.json({ scheduled: count, at: at.toISOString() });
 });
 
@@ -1951,6 +1970,17 @@ router.post('/projects/:id/unschedule', canResearch, async (req, res) => {
       ...(picked ? { id: { in: picked } } : {}),
     },
     data: { scheduledFor: null, scheduledById: null },
+  });
+  // Back to Identified, but only for rows the queue itself moved. A person
+  // marked Declined while their letter sat queued stays Declined.
+  const stillQueued = await prisma.outreachDraft.findMany({
+    where: { target: { projectId }, sentAt: null, scheduledFor: { not: null } },
+    select: { targetId: true },
+  });
+  const keep = new Set(stillQueued.map((d) => d.targetId));
+  await prisma.researchTarget.updateMany({
+    where: { projectId, status: 'Queued', id: { notIn: [...keep, -1] } },
+    data: { status: 'Identified' },
   });
   res.json({ unscheduled: count });
 });

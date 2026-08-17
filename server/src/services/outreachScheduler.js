@@ -97,6 +97,9 @@ export async function runDueSends(now = new Date()) {
           },
         });
         const t = await tx.researchTarget.findUnique({ where: { id: d.targetId }, select: { status: true } });
+        // Queued is BEHIND Contacted, so it must not be treated as ahead:
+        // a letter that has now actually left has to advance the row past
+        // the state that only meant it was waiting to.
         const AHEAD = new Set(['Scheduled', 'Completed', 'Declined']);
         await tx.researchTarget.update({
           where: { id: d.targetId },
