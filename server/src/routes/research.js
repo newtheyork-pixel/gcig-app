@@ -1920,6 +1920,14 @@ router.post('/projects/:id/send-all', canResearch, async (req, res) => {
   const LIMIT = Math.min(Number(req.body?.limit) || 50, 50);
 
   try {
+    // An explicit selection means EXACTLY those and nothing else. The
+    // client shows a list with checkboxes, and a server that ignored the
+    // ticks and sent the whole queue would be the worst possible way to
+    // learn that the selection was decorative.
+    const picked = Array.isArray(req.body?.draftIds)
+      ? req.body.draftIds.map(Number).filter(Number.isInteger)
+      : null;
+
     const drafts = await prisma.outreachDraft.findMany({
       where: {
         target: { projectId },
@@ -1927,6 +1935,7 @@ router.post('/projects/:id/send-all', canResearch, async (req, res) => {
         rejectedAt: null,
         screenedAt: { not: null },
         NOT: { screenRisk: 'prohibited' },
+        ...(picked ? { id: { in: picked } } : {}),
       },
       orderBy: { id: 'asc' },
       include: { target: true },

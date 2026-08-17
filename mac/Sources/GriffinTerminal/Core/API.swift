@@ -2,6 +2,35 @@ import Foundation
 import UniformTypeIdentifiers
 import Security
 
+// One session for everything we send to our own API, and the whole
+// point of it is that it does not cache.
+//
+// URLSession.shared writes to a shared on-disk cache, and every gcig-api
+// route answers with an ETag and no Cache-Control at all. CFNetwork
+// reads that combination as permission to store the response and
+// revalidate it later. When it does, the server answers 304 Not
+// Modified — and URLSession hands the app the STORED 200 instead,
+// headers included. The headers are the dangerous half: a response
+// cached at breakfast still carries that morning's X-New-Token, and
+// replaying it at lunch writes an expired credential over the live one.
+// That is how this app came to delete its own valid session at launch.
+// A stale rotation header was adopted, the next call 401'd with code
+// AUTH, the teardown fired, and a member who had done nothing wrong was
+// signed out with no way back.
+//
+// So: an ephemeral configuration with no URLCache at all, plus every
+// request asking for the network explicitly. Belt and braces, because
+// nothing about the failure is visible when it happens — the damage
+// shows up one call later, wearing the server's clothes.
+enum Net {
+    static let session: URLSession = {
+        let cfg = URLSessionConfiguration.ephemeral
+        cfg.urlCache = nil
+        cfg.requestCachePolicy = .reloadIgnoringLocalCacheData
+        return URLSession(configuration: cfg)
+    }()
+}
+
 // The client for gcig-api.
 //
 // Two things this has to get right, both learned the hard way on the web
@@ -33,10 +62,17 @@ actor API {
     /// disk rather than held in memory. The updater is the only one: a
     /// 4MB app bundle should not become a Data in RAM, and the download
     /// endpoint is members-only so it cannot be fetched anonymously.
+    ///
+    /// Nil when there is no token, rather than a request without an
+    /// Authorization header. The caller's job is then to not ask: a
+    /// members-only route answers a credential-less request with a 401
+    /// that reads exactly like a broken release, and we would be the
+    /// ones who broke it.
     func authorizedRequest(_ path: String) -> URLRequest? {
-        guard let url = URL(string: base + path) else { return nil }
+        guard let token, let url = URL(string: base + path) else { return nil }
         var req = URLRequest(url: url)
-        if let token { req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
+        req.cachePolicy = .reloadIgnoringLocalCacheData
+        req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         return req
     }
 
@@ -176,13 +212,21 @@ actor API {
         var req = URLRequest(url: url)
         req.httpMethod = method
         req.timeoutInterval = timeout
+        // Never from a cache, never into one. See `Net` above: a
+        // revalidated response is served to us as the original 200 with
+        // its original headers, and one of those headers rotates our
+        // credential.
+        req.cachePolicy = .reloadIgnoringLocalCacheData
         req.httpBody = body
         if body != nil { req.setValue(contentType, forHTTPHeaderField: "Content-Type") }
+        // Remembered, because a 401 means two entirely different things
+        // depending on whether we sent anything to be refused.
+        let sentCredential = token != nil
         if let token { req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
 
         let data: Data, response: URLResponse
         do {
-            (data, response) = try await URLSession.shared.data(for: req)
+            (data, response) = try await Net.session.data(for: req)
         } catch {
             throw Failure.transport(error.localizedDescription)
         }
@@ -191,9 +235,13 @@ actor API {
             throw Failure.transport("No HTTP response.")
         }
 
-        // Silent rotation. Without this an active session dies at 24h.
-        if let fresh = http.value(forHTTPHeaderField: "X-New-Token"), !fresh.isEmpty {
-            TokenStore.write("jwt", fresh)
+        // Silent rotation. Without this an active session dies at 24h —
+        // and with it done credulously, it dies at launch instead, which
+        // is why this goes through `adopt` rather than `write`. A
+        // rotation header is only ever worth having if it is NEWER than
+        // what we already hold.
+        if let fresh = http.value(forHTTPHeaderField: "X-New-Token") {
+            TokenStore.adopt(fresh)
         }
 
         // TWO DIFFERENT 401s, and treating them alike is what left the app
@@ -210,13 +258,26 @@ actor API {
         // session being refused ONE thing, and answering it by destroying
         // the login is the longest-running bug in this codebase, fixed on
         // the web side and never on this one.
+        //
+        // And there is a third case, which is the one that made the
+        // teardown dangerous: a 401 on a request that carried NO
+        // credential. verifyJwt answers that with "Missing token" and the
+        // same code AUTH, because from the server's side it cannot tell
+        // an unauthenticated caller from an expired one. We can. A
+        // request we sent without a credential is evidence about our own
+        // race — a poller that fired while the store was momentarily
+        // empty — and never evidence that the credential we hold is
+        // dead. Reading it the other way threw away good tokens.
         if http.statusCode == 401 {
             let body = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
-            if (body?["code"] as? String) == "AUTH" {
+            let reason = (body?["error"] as? String) ?? ""
+            let weSentNothing = !sentCredential
+                || reason.range(of: "missing token", options: .caseInsensitive) != nil
+            if !weSentNothing, (body?["code"] as? String) == "AUTH" {
                 TokenStore.delete("jwt")
                 throw Failure.unauthorized
             }
-            throw Failure.http(401, (body?["error"] as? String) ?? "Not permitted.")
+            throw Failure.http(401, reason.isEmpty ? "Not permitted." : reason)
         }
         guard (200..<300).contains(http.statusCode) else {
             // Surface the server's own sentence when it sent one. Our
@@ -371,6 +432,74 @@ enum TokenStore {
     static func delete(_ key: String = "jwt") {
         try? FileManager.default.removeItem(at: url)
     }
+
+    /// Take a rotated token only when it is genuinely newer than the one
+    /// we hold. Returns whether it was taken, which is mostly for the
+    /// benefit of anyone testing this.
+    ///
+    /// The rotation header cannot be trusted on its own, because a
+    /// response can be a REPLAY. An HTTP cache that revalidates our
+    /// request and receives a 304 hands the client the STORED 200 with
+    /// its original headers, so a token minted hours ago arrives looking
+    /// exactly like one minted a second ago. We have stopped caching
+    /// these responses (see `Net`), and this is the second lock on the
+    /// same door: even if a stale header reaches us by some route nobody
+    /// has thought of yet, it cannot overwrite a live credential.
+    ///
+    /// No signature check, deliberately. The question here is not
+    /// whether the token is authentic — the server settles that on every
+    /// call, and a forged one buys its bearer nothing. The question is
+    /// only whether it is NEWER, and `iat` answers that.
+    @discardableResult
+    static func adopt(_ fresh: String) -> Bool {
+        let candidate = fresh.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Empty or unparseable is not a rotation, it is noise on the
+        // wire, and writing it would sign the member out as surely as a
+        // stale one.
+        guard !candidate.isEmpty, let freshIat = issuedAt(candidate) else { return false }
+
+        // Rotation presumes a session. With nothing in the store there is
+        // nothing to rotate: either we never signed in, or we have just
+        // torn a dead session down on purpose. A response still in flight
+        // must not put the token back.
+        guard let current = read() else { return false }
+
+        // We hold something we cannot read — a truncated write, an older
+        // token format. A well-formed JWT is a strict improvement on
+        // that, so take it.
+        guard let currentIat = issuedAt(current) else { return true.then { write("jwt", candidate) } }
+
+        guard freshIat > currentIat else { return false }
+        write("jwt", candidate)
+        return true
+    }
+
+    /// The `iat` claim, read without verifying anything.
+    ///
+    /// base64url, and the padding is stripped on the wire — restoring it
+    /// is the detail that hand-rolled decoders get wrong, and the
+    /// symptom is a decode that silently fails on two tokens in three.
+    static func issuedAt(_ jwt: String) -> Int? {
+        let parts = jwt.split(separator: ".", omittingEmptySubsequences: false)
+        guard parts.count == 3 else { return nil }
+        var payload = String(parts[1])
+            .replacingOccurrences(of: "-", with: "+")
+            .replacingOccurrences(of: "_", with: "/")
+        payload += String(repeating: "=", count: (4 - payload.count % 4) % 4)
+        guard let raw = Data(base64Encoded: payload),
+              let obj = try? JSONSerialization.jsonObject(with: raw) as? [String: Any],
+              // Read as a Double so an issuer that writes a fractional
+              // second still parses; the comparison holds either way.
+              let iat = obj["iat"] as? Double else { return nil }
+        return Int(iat)
+    }
+}
+
+private extension Bool {
+    /// Sugar for the one place above that wants to do a thing and return
+    /// true in a single expression. Nothing clever, just keeps the guard
+    /// readable.
+    func then(_ body: () -> Void) -> Bool { body(); return self }
 }
 
 extension API {
@@ -406,9 +535,10 @@ extension API {
         req.httpBody = try JSONSerialization.data(withJSONObject: json)
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.setValue("text/event-stream", forHTTPHeaderField: "Accept")
+        req.cachePolicy = .reloadIgnoringLocalCacheData
         if let token { req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
 
-        let (bytes, response) = try await URLSession.shared.bytes(for: req)
+        let (bytes, response) = try await Net.session.bytes(for: req)
         guard let http = response as? HTTPURLResponse else {
             throw Failure.transport("No HTTP response.")
         }

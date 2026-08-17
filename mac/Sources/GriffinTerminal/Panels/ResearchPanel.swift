@@ -1904,10 +1904,11 @@ private struct OutreachTab: View {
             // than at the moment somebody presses send.
             GmailConnectionRow()
 
-            // The batch and what has come back, next to the queue counts
-            // they refer to rather than on a screen of their own.
+            // The outreach workbench. What has come BACK lives in INBX now:
+            // a reply is not about one project, it is about the person who
+            // wrote it, and burying it under whichever ticker they were
+            // first written about is why nobody found Kanter's.
             SendAllControl(projectID: p.id)
-            InboxSection()
 
             // Approval and compliance state on one line, because
             // "approved" and "screened" are different claims and a
