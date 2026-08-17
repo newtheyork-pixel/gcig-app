@@ -275,7 +275,7 @@ extension API {
 
         let data: Data, response: URLResponse
         do {
-            (data, response) = try await URLSession.shared.data(for: req)
+            (data, response) = try await Net.session.data(for: req)
         } catch {
             throw Failure.transport(error.localizedDescription)
         }
@@ -285,8 +285,11 @@ extension API {
 
         // Silent rotation. A panel that writes must honor it too, or
         // a long note-taking session dies at the 24h mark.
-        if let fresh = http.value(forHTTPHeaderField: "X-New-Token"), !fresh.isEmpty {
-            TokenStore.write("jwt", fresh)
+        // Through adopt, never a raw write. A panel that rotates on its
+        // own is a second door onto the token store, and the whole bug
+        // was a stale rotation getting through one.
+        if let fresh = http.value(forHTTPHeaderField: "X-New-Token") {
+            TokenStore.adopt(fresh)
         }
 
         if http.statusCode == 401 || http.statusCode == 403 {

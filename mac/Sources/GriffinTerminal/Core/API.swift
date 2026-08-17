@@ -221,8 +221,15 @@ actor API {
         if body != nil { req.setValue(contentType, forHTTPHeaderField: "Content-Type") }
         // Remembered, because a 401 means two entirely different things
         // depending on whether we sent anything to be refused.
-        let sentCredential = token != nil
-        if let token { req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
+        // Read the store ONCE. `token` is a computed property that hits the
+        // filesystem on every access, so a flag derived from a different
+        // read than the header it describes is a flag that can lie: nil on
+        // the first read and a dead token on the second means we send a
+        // credential while believing we sent none, and the teardown that
+        // should clear it never fires.
+        let credential = token
+        let sentCredential = credential != nil
+        if let credential { req.setValue("Bearer \(credential)", forHTTPHeaderField: "Authorization") }
 
         let data: Data, response: URLResponse
         do {

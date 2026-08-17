@@ -719,15 +719,18 @@ private enum ResearchHTTP {
 
         let data: Data, response: URLResponse
         do {
-            (data, response) = try await URLSession.shared.data(for: req)
+            (data, response) = try await Net.session.data(for: req)
         } catch {
             throw WriteError(message: "Could not reach the server. \(error.localizedDescription)")
         }
         guard let http = response as? HTTPURLResponse else {
             throw WriteError(message: "No HTTP response.")
         }
-        if let fresh = http.value(forHTTPHeaderField: "X-New-Token"), !fresh.isEmpty {
-            TokenStore.write("jwt", fresh)
+        // Through adopt, never a raw write. A panel that rotates on its
+        // own is a second door onto the token store, and the whole bug
+        // was a stale rotation getting through one.
+        if let fresh = http.value(forHTTPHeaderField: "X-New-Token") {
+            TokenStore.adopt(fresh)
         }
         if http.statusCode == 401 || http.statusCode == 403 {
             throw WriteError(message: "Session expired. Sign in again.")
