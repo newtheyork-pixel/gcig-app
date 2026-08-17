@@ -1892,7 +1892,11 @@ router.post('/projects/:id/schedule', canResearch, async (req, res) => {
     ...(ids ? { id: { in: ids } } : {}),
   };
   const drafts = await prisma.outreachDraft.findMany({
-    where, select: { id: true, target: { select: { name: true, email: true } } },
+    // targetId is selected, not just the nested target. Without it the
+    // status transition below silently matched nothing: every d.targetId
+    // was undefined, the id list came out empty, and forty-four people sat
+    // at Identified with mail going out at eight in the morning.
+    where, select: { id: true, targetId: true, target: { select: { name: true, email: true } } },
   });
   const sendable = drafts.filter((d) => /^[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}$/.test((d.target?.email || '').trim()));
 
