@@ -480,6 +480,26 @@ function runProvider(name, { messages, temperature, jsonMode, timeoutMs, localMo
 const DEFAULT_ORDER = ['local', 'anthropic', 'openai'];
 const QUALITY_ORDER = ['anthropic', 'openai', 'local'];
 
+// The jobs that must never quietly run on the small local model.
+//
+// Everything else can: ranking a headline, describing a company, writing
+// the daily brief. If the box is up they cost nothing, and a worse answer
+// costs a headline's position.
+//
+// Compliance cannot. The MNPI screen decides whether words reach a
+// stranger, and the claim gate decides whether an assertion enters a
+// ledger that a footnote will one day point at. The failure mode of a
+// model too small for those is not a wrong answer somebody catches in
+// review, it is NO answer, which is byte-for-byte what an honest clean
+// result looks like. That already happened once: every claim extracted
+// for the Lindt project came through a 7B that returned "nothing found"
+// on a transcript a person had read and knew contained an answer.
+//
+// So these jobs go to the cloud FIRST and fall back to local only if
+// there is no cloud provider at all, which is a degraded state the
+// screen already reports as modelAvailable:false rather than a pass.
+const COMPLIANCE_JOBS = new Set(['screen', 'claims']);
+
 // Whether llmChat has any provider to try at all. Callers that want to
 // skip a doomed round trip must ask THIS, not re-derive the env-var
 // list themselves: two services checked only LOCAL_LLM_URL/OPENAI and
@@ -527,7 +547,10 @@ export async function llmChat({
     Number(process.env.LOCAL_LLM_TIMEOUT_MS) ||
     DEFAULT_TIMEOUT_MS;
 
-  const order = preferQuality ? QUALITY_ORDER : DEFAULT_ORDER;
+  // Compliance overrides the caller's own preference. A service that
+  // forgot to ask for quality must not thereby get the cheap model on the
+  // one question where cheap is dangerous.
+  const order = (COMPLIANCE_JOBS.has(job) || preferQuality) ? QUALITY_ORDER : DEFAULT_ORDER;
   for (const name of order) {
     const result = await runProvider(name, {
       messages,
