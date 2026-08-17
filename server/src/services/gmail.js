@@ -258,7 +258,7 @@ function displayFrom(name, address) {
  * Sent, and a copy addressed to yourself is a second inbox entry for a
  * conversation you started.
  */
-function outreachCc(fromAddress) {
+export function outreachCc(fromAddress) {
   const from = String(fromAddress || '').toLowerCase();
   return (process.env.OUTREACH_CC || '')
     .split(',').map((x) => x.trim()).filter(Boolean)

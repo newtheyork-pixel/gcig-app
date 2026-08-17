@@ -9,7 +9,7 @@ import { scanForAnswer } from '../services/answerScan.js';
 import { assessTopics, formatCitation } from '../services/corroboration.js';
 import { assessCoverage, funnel } from '../services/questionCoverage.js';
 import { assessOutreach, assessTarget } from '../services/followUp.js';
-import { sendAs, gmailConfigured, maySendMail } from '../services/gmail.js';
+import { sendAs, gmailConfigured, maySendMail, outreachCc } from '../services/gmail.js';
 import { extractForArtifact } from '../services/artifactText.js';
 import { synthesize } from '../services/synthesis.js';
 import { screenTranscript, RISK } from '../services/mnpiScreen.js';
@@ -1469,6 +1469,10 @@ function decorate(d, user) {
     // deriving it separately becomes a fourth place for a contact's
     // progress to disagree with itself.
     queuedFor: d.scheduledFor || null,
+    // Who else will see it, resolved from the same function that writes
+    // the header. A card that showed a CC list derived separately would
+    // eventually promise a copy that never went.
+    cc: outreachCc(user?.email).join(', ') || null,
     queueError: d.scheduleError || null,
     iApproved: mine,
     canIApprove: canApproveOutreach(user) && !mine && !d.sentAt && !d.rejectedAt && !blocked,

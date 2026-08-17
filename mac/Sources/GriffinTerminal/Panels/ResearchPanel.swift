@@ -631,6 +631,9 @@ struct Draft: Decodable, Identifiable {
     let fullyApproved: Bool?
     /// When this draft goes out on its own, if it has been queued.
     let queuedFor: String?
+    /// Who gets copied when this sends, from the server, so the card
+    /// cannot promise a copy the header will not carry.
+    let cc: String?
     let queueError: String?
     let screenBlocked: Bool?
     let screenState: String?
@@ -2563,26 +2566,22 @@ private struct DraftCard: View {
                 }
                 .buttonStyle(.plain)
 
-                // Copy sits on the closed row as well. Collapsing the card
-                // must not cost the one action the screen exists for.
-                // Copy lives here, on every card, open or closed, sent or
-                // not: re-sending, forwarding and quoting a sent email are
-                // all real, and a button that moves is not a feature.
+                // WHO IT IS GOING TO, above the words themselves.
                 //
-                // It carries the SAME gate as the action row it replaced.
-                // For a while both rendered on an unsent card, one gated
-                // and one not, and the ungated one would happily put the
-                // body of a compliance-BLOCKED draft on the clipboard two
-                // lines above the disabled twin that existed to stop it. A
-                // veto you can copy past is worse than no veto, because it
-                // reads as oversight that is not happening.
-                Button(copied ? "Copied" : "Copy to send") { copyBlock(d) }
-                    .buttonStyle(TermButtonStyle())
-                    .disabled(d.fullyApproved != true)
-                    .help(d.fullyApproved == true
-                          ? "Copy, then send from your school address to \(target.email ?? "them")"
-                          : (d.stage == "rejected" ? "This draft was rejected, edit it to send"
-                             : "The compliance screen blocks this, edit it"))
+                // The card used to lead with a Copy button and never once
+                // said the address. Somebody about to send is checking two
+                // things, who receives it and who else sees it, and
+                // neither was on screen.
+                HStack(spacing: 6) {
+                    Text("to").font(Term.mono(9)).foregroundStyle(Term.fgMuted)
+                    Text(target.email ?? "no address")
+                        .font(Term.mono(10)).foregroundStyle(target.email == nil ? Term.negative : Term.fg)
+                    if let cc = d.cc, !cc.isEmpty {
+                        Text("cc").font(Term.mono(9)).foregroundStyle(Term.fgMuted)
+                        Text(cc).font(Term.mono(10)).foregroundStyle(Term.blue)
+                    }
+                    Spacer()
+                }
 
                 if isExpanded {
                     ScrollView {
@@ -2609,26 +2608,12 @@ private struct DraftCard: View {
                     }
                     .buttonStyle(TermButtonStyle()).disabled(busy)
 
-                    // Copy is the send button. It stays shut only when the
-                    // draft cannot go out at all — rejected, or blocked by
-                    // the compliance screen.
-                    Button(copied ? "Copied" : "Copy to send") { copyBlock(d) }
-                    .buttonStyle(TermButtonStyle())
-                    .disabled(d.fullyApproved != true)
-                    .help(d.fullyApproved == true
-                          ? "Copy, then send from your school address to \(target.email ?? "them")"
-                          : (d.stage == "rejected" ? "This draft was rejected — edit it to send"
-                             : "The compliance screen blocks this — edit it"))
-
                     if d.fullyApproved == true {
-                        // SEND, not "mark as sent". The app is the sender
-                        // now, so the record is a consequence of the act
-                        // rather than a claim somebody makes about it
-                        // afterwards. Marking, queueing and the whole
-                        // pasted-into-Gmail vocabulary described a world
-                        // where the sending happened somewhere else, and
-                        // every one of those steps was a chance for the
-                        // record and the truth to drift apart.
+                        // Send, or queue it. The pasted-into-Gmail
+                        // vocabulary is gone with the button that needed
+                        // it: the app is the sender, so the record is a
+                        // consequence of the act rather than a claim
+                        // somebody makes about it afterwards.
                         Button(sending ? "Sending" : "Send now") {
                             Task {
                                 sending = true
@@ -2640,19 +2625,6 @@ private struct DraftCard: View {
                         }
                         .buttonStyle(TermButtonStyle()).disabled(busy || sending)
                         .help("Sends it from your own mailbox, now. There is no undo.")
-
-                        // Kept for the case the button cannot cover: a
-                        // letter somebody sent by hand from their phone.
-                        // The record still has to be able to catch up
-                        // with reality, and refusing that would just move
-                        // the lie somewhere the app cannot see it.
-                        Button("Sent by hand") {
-                            Task { await run {
-                                _ = try await API.shared.post("/research/drafts/\(d.id)/sent", json: [:])
-                            } }
-                        }
-                        .buttonStyle(TermButtonStyle()).disabled(busy || sending)
-                        .help("Only if you already sent this yourself, outside the terminal.")
                     }
                     Spacer()
                 }
@@ -2927,7 +2899,7 @@ private struct DraftCard: View {
             // above an orange compliance flag.
             let names = d.approvedByNames ?? []
             Text(names.isEmpty
-                 ? "READY TO SEND, no approval required"
+                 ? ""
                  : "APPROVED by \(names.joined(separator: " and ")), ready to send")
                 .font(Term.mono(9, weight: .bold)).tracking(0.5).foregroundStyle(Term.positive)
         } else {
