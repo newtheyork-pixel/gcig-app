@@ -2445,6 +2445,7 @@ private struct DraftCard: View {
     @State private var bodyText = ""
     @State private var rejecting = false
     @State private var rejectNote = ""
+    @State private var sending = false
     @State private var copied = false
 
     var body: some View {
@@ -2595,27 +2596,38 @@ private struct DraftCard: View {
                              : "The compliance screen blocks this — edit it"))
 
                     if d.fullyApproved == true {
-                        // Sending is manual, so a letter can sit
-                        // written and scheduled for days. Without this
-                        // the list reads "ready" for something already
-                        // queued, and the cure for that ambiguity is
-                        // pasting it a second time.
-                        Button(d.queuedAt == nil ? "Mark in drafts" : "In drafts \u{2713}") {
-                            Task { await run {
-                                _ = try await API.shared.post("/research/drafts/\(d.id)/queued", json: [:])
-                            } }
+                        // SEND, not "mark as sent". The app is the sender
+                        // now, so the record is a consequence of the act
+                        // rather than a claim somebody makes about it
+                        // afterwards. Marking, queueing and the whole
+                        // pasted-into-Gmail vocabulary described a world
+                        // where the sending happened somewhere else, and
+                        // every one of those steps was a chance for the
+                        // record and the truth to drift apart.
+                        Button(sending ? "Sending" : "Send now") {
+                            Task {
+                                sending = true
+                                defer { sending = false }
+                                await run {
+                                    _ = try await API.shared.post("/research/drafts/\(d.id)/deliver", json: [:])
+                                }
+                            }
                         }
-                        .buttonStyle(TermButtonStyle()).disabled(busy)
-                        .help(d.queuedAt == nil
-                              ? "Pasted into your mail client and scheduled, but not gone yet"
-                              : "Queued. Press again if it is not actually sitting in your drafts.")
+                        .buttonStyle(TermButtonStyle()).disabled(busy || sending)
+                        .help("Sends it from your own mailbox, now. There is no undo.")
 
-                        Button("Mark as sent") {
+                        // Kept for the case the button cannot cover: a
+                        // letter somebody sent by hand from their phone.
+                        // The record still has to be able to catch up
+                        // with reality, and refusing that would just move
+                        // the lie somewhere the app cannot see it.
+                        Button("Sent by hand") {
                             Task { await run {
                                 _ = try await API.shared.post("/research/drafts/\(d.id)/sent", json: [:])
                             } }
                         }
-                        .buttonStyle(TermButtonStyle()).disabled(busy)
+                        .buttonStyle(TermButtonStyle()).disabled(busy || sending)
+                        .help("Only if you already sent this yourself, outside the terminal.")
                     }
                     Spacer()
                 }

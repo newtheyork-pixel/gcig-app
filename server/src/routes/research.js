@@ -2168,16 +2168,11 @@ router.post('/drafts/:id/sent', canResearch, async (req, res) => {
       });
     }
 
-    // Approvals are no longer required to send (REQUIRED_APPROVALS is 0).
-    // The prohibited-screen and rejection gates above still stand.
-    if (REQUIRED_APPROVALS > 0) {
-      const have = new Set(d.approvals.map((a) => a.userId)).size;
-      if (have < REQUIRED_APPROVALS) {
-        return res.status(409).json({
-          error: `This needs ${REQUIRED_APPROVALS} approvals and has ${have}. ${REQUIRED_APPROVALS} people have to sign off before it goes out.`,
-        });
-      }
-    }
+    // No approval gate. It was zero for months, no client ever built an
+    // Approve button, and the comment promising that raising the constant
+    // restored the old policy was false: at 2, fullyApproved could never
+    // become true and sending would 409 forever. The screen is the gate
+    // that matters and it is checked above.
 
     const updated = await prisma.$transaction(async (tx) => {
       const draft = await tx.outreachDraft.update({
