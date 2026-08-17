@@ -560,7 +560,10 @@ struct FollowUp: Decodable {
         case "overdue": return "CHASE — \(workingDaysWaited ?? 0)d"
         case "due": return "CHASE NOW"
         case "owed": return "REPLY OWED"
-        case "waiting": return dueAt.map { "chase \($0)" }
+        // Deliberately silent. The chase date on every waiting row was a
+        // date per row that nobody reads, and the FOLLOW UP line above
+        // already names who is actually due. Urgency belongs in one place.
+        case "waiting": return nil
         case "exhausted": return "GIVE UP"
         case "bounced": return "BAD ADDRESS"
         default: return nil
@@ -1973,7 +1976,7 @@ private struct OutreachTab: View {
                     Text("\(n) replied").foregroundStyle(Term.positive).bold()
                 }
                 if let n = q.readyToSend, n > 0 {
-                    Text("\(n) ready to send").foregroundStyle(Term.positive)
+                    Text("\(n) ready").foregroundStyle(Term.positive)
                 }
                 if let n = q.queued, n > 0 {
                     Text("\(n) queued").foregroundStyle(Term.cyan)
@@ -2026,9 +2029,6 @@ private struct OutreachTab: View {
                     Text(now.map { $0.0.name }.joined(separator: ", "))
                         .font(Term.mono(10)).foregroundStyle(Term.white)
                         .lineLimit(2)
-                    Text("· counted in working days, so weekends and public holidays do not age a thread")
-                        .font(Term.mono(9)).foregroundStyle(Term.fgMuted)
-                        .lineLimit(1)
                 }
                 Spacer()
             }

@@ -207,8 +207,12 @@ struct SendAllControl: View {
             if let q = queue, (q.queued ?? 0) > 0 || (q.failed ?? 0) > 0 {
                 HStack(spacing: 8) {
                     SectionLabel(text: "Queued")
-                    Text("\(q.queued ?? 0) scheduled")
-                        .font(Term.mono(10)).foregroundStyle(Term.positive)
+                    // QUEUED, never "scheduled". A target's Scheduled status
+                    // means somebody agreed to talk to us; a letter waiting
+                    // to leave is the opposite kind of fact and borrowing the
+                    // word would merge the two on every counter that reads it.
+                    Text("\(q.queued ?? 0) queued")
+                        .font(Term.mono(10)).foregroundStyle(Term.amber)
                     if (q.failed ?? 0) > 0 {
                         Text("\(q.failed ?? 0) gave up")
                             .font(Term.mono(10)).foregroundStyle(Term.negative)
