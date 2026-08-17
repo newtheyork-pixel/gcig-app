@@ -52,7 +52,7 @@ actor API {
 
         var errorDescription: String? {
             switch self {
-            case .unauthorized:        return "Session expired. Sign in again."
+            case .unauthorized:        return "Signed out. Reopen the terminal to sign in."
             case .http(let c, let m):  return m.isEmpty ? "Server returned \(c)." : m
             case .transport(let m):    return "Could not reach the server. \(m)"
             case .decoding(let m):     return "Server sent something unexpected. \(m)"
@@ -196,13 +196,27 @@ actor API {
             TokenStore.write("jwt", fresh)
         }
 
-        // 401 is a dead session; 403 is a live session being told no.
-        // Folding them together made every role refusal read "Session
-        // expired. Sign in again." to somebody visibly signed in, and it
-        // discarded the server's explanatory sentence — which the drive's
-        // trash logic needed to recognize a refusal and stop retrying.
+        // TWO DIFFERENT 401s, and treating them alike is what left the app
+        // telling somebody to sign in again while offering no way to do it.
+        //
+        // verifyJwt answers a DEAD TOKEN with 401 and code "AUTH". That is
+        // the only thing that means the session is over, and it is the one
+        // case where the stored token must be thrown away: keeping it means
+        // every later call re-sends a credential the server has already
+        // rejected, forever, and the app never returns to a sign-in screen.
+        // Clearing it here is what makes the next launch recover by itself.
+        //
+        // A data route's own 401 carries no such code. That is a live
+        // session being refused ONE thing, and answering it by destroying
+        // the login is the longest-running bug in this codebase, fixed on
+        // the web side and never on this one.
         if http.statusCode == 401 {
-            throw Failure.unauthorized
+            let body = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+            if (body?["code"] as? String) == "AUTH" {
+                TokenStore.delete("jwt")
+                throw Failure.unauthorized
+            }
+            throw Failure.http(401, (body?["error"] as? String) ?? "Not permitted.")
         }
         guard (200..<300).contains(http.statusCode) else {
             // Surface the server's own sentence when it sent one. Our
