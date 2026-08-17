@@ -245,11 +245,32 @@ function displayFrom(name, address) {
   return `"${n.replace(/["\\]/g, '')}" <${addr}>`;
 }
 
-function mime({ to, from, subject, body, inReplyTo, references }) {
+/**
+ * Who else sees it.
+ *
+ * Every outreach email copies the club's other officer, which is not a
+ * courtesy: two people run this, a reply can land while one of them is in
+ * class, and a thread only one person can see is a thread that stalls for
+ * a day nobody notices. It also means the record is not one member's word
+ * about what was said.
+ *
+ * The sender is never copied on their own mail. Gmail already files it in
+ * Sent, and a copy addressed to yourself is a second inbox entry for a
+ * conversation you started.
+ */
+function outreachCc(fromAddress) {
+  const from = String(fromAddress || '').toLowerCase();
+  return (process.env.OUTREACH_CC || '')
+    .split(',').map((x) => x.trim()).filter(Boolean)
+    .filter((a) => a.toLowerCase() !== from);
+}
+
+function mime({ to, cc, from, subject, body, inReplyTo, references }) {
   const esc = (v) => String(v).replace(/[\r\n]/g, ' ').trim();
   const headers = [
     `From: ${from}`,
     `To: ${esc(to)}`,
+    ...(cc && cc.length ? [`Cc: ${cc.map(esc).join(', ')}`] : []),
     `Subject: ${esc(subject)}`,
     'MIME-Version: 1.0',
     'Content-Type: text/plain; charset="UTF-8"',
@@ -279,7 +300,8 @@ export async function sendAs(userId, { to, subject, body, threadId, inReplyTo, e
   const sent = await call(c, '/messages/send', {
     method: 'POST',
     body: {
-      raw: mime({ to, from: displayFrom(fromName, acct.address), subject, body,
+      raw: mime({ to, cc: outreachCc(acct.address),
+                  from: displayFrom(fromName, acct.address), subject, body,
                   inReplyTo, references: inReplyTo }),
       ...(threadId ? { threadId } : {}),
     },
