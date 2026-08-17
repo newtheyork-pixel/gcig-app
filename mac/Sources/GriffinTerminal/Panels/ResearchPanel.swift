@@ -1908,11 +1908,20 @@ private struct OutreachTab: View {
         let targets = p.targets ?? []
         let fn = p.funnel
         let q = p.outreachQueue
+        let queuedCount = (p.targets ?? []).reduce(0) { n, t in
+            n + (t.drafts ?? []).filter { $0.queuedFor != nil && $0.sentAt == nil }.count
+        }
 
         VStack(alignment: .leading, spacing: 10) {
             // The funnel: "who haven't we tried yet" is the number that
             // actually paces a project.
-            Text("\(fn?.identified ?? 0) not yet tried · \(fn?.contacted ?? 0) contacted · \(fn?.scheduled ?? 0) scheduled · \(fn?.completed ?? 0) done · \((fn?.declined ?? 0) + (fn?.unreachable ?? 0)) dead\(fn?.conversionPct.map { " · \($0)% conversion" } ?? "")")
+            // "scheduled" here counts people who agreed to a CALL. Letters
+            // waiting to go out are a different fact entirely and used to
+            // be invisible on this line, which read as though fifty queued
+            // emails had not registered anywhere. Both are shown, named
+            // differently, because merging them would destroy the only
+            // number that says how many conversations we actually have.
+            Text("\(fn?.identified ?? 0) not yet written to · \(fn?.contacted ?? 0) written to · \(queuedCount) queued to send · \(fn?.scheduled ?? 0) calls booked · \(fn?.completed ?? 0) done · \((fn?.declined ?? 0) + (fn?.unreachable ?? 0)) dead")
                 .font(Term.mono(10)).foregroundStyle(Term.fgMuted)
 
             // Whether the terminal can actually put any of this in
