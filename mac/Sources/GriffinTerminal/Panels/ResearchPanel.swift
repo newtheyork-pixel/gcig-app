@@ -629,6 +629,9 @@ struct Draft: Decodable, Identifiable {
     let canIApprove: Bool?
     let iApproved: Bool?
     let fullyApproved: Bool?
+    /// When this draft goes out on its own, if it has been queued.
+    let queuedFor: String?
+    let queueError: String?
     let screenBlocked: Bool?
     let screenState: String?
     let screenReason: String?
@@ -840,6 +843,13 @@ private enum ScreenStyle {
 
 private enum StageStyle {
     static func label(_ d: Draft) -> String {
+        // A draft with a send time beats every other label. Somebody
+        // reading a row while a letter for that person sits waiting for
+        // Monday morning needs to see THAT, not the stage it was in before
+        // it was queued, and not the target's status, which still says
+        // Identified because nobody has actually written to them yet.
+        if let at = d.queuedFor { return "QUEUED \(Fmt.shortDateTime(at))" }
+        if d.queueError != nil { return "QUEUE FAILED" }
         switch d.stage {
         case "sent":         return "SENT"
         case "rejected":     return "REJECTED"
@@ -854,6 +864,8 @@ private enum StageStyle {
         }
     }
     static func tone(_ d: Draft) -> Color {
+        if d.queuedFor != nil { return Term.amber }
+        if d.queueError != nil { return Term.negative }
         switch d.stage {
         case "ready":               return Term.positive
         // Cyan, not green: it is sitting in a mailbox waiting on a clock,

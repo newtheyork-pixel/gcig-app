@@ -1456,6 +1456,12 @@ function decorate(d, user) {
     // risk and has never been a clearance, so it must not gate as one.
     fullyApproved:
       approvals.length >= REQUIRED_APPROVALS && !d.rejectedAt && !blocked && !!d.screenedAt,
+    // Surfaced on the draft rather than left for a client to work out.
+    // "Waiting to send" is a fact three surfaces need, and any one of them
+    // deriving it separately becomes a fourth place for a contact's
+    // progress to disagree with itself.
+    queuedFor: d.scheduledFor || null,
+    queueError: d.scheduleError || null,
     iApproved: mine,
     canIApprove: canApproveOutreach(user) && !mine && !d.sentAt && !d.rejectedAt && !blocked,
     screenBlocked: blocked,
