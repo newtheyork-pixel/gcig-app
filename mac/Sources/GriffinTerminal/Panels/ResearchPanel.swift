@@ -138,12 +138,32 @@ struct ResearchPanel: View {
                     // imports under a heading of their own.
                     let worked = shown.filter { $0.status != "Closed" }
                     let historic = shown.filter { $0.status == "Closed" }
+                    // Live work groups by campaign. Five separate rows
+                    // named ABB, Munters, Sika, Cognite and Vertiv are one
+                    // piece of work on data centres, and a flat list is
+                    // the only reason that is not obvious at a glance.
+                    //
+                    // Ungrouped rows come FIRST and keep no heading. The
+                    // active name usually stands alone and putting a
+                    // header above one row, or filing it under a folder of
+                    // one, would bury the thing most likely to be wanted.
+                    let loose = worked.filter { ($0.folder ?? "").isEmpty }
+                    let shelved = Dictionary(
+                        grouping: worked.filter { !($0.folder ?? "").isEmpty },
+                        by: { $0.folder ?? "" }
+                    )
+                    let shelfNames = shelved.keys.sorted()
                     ScrollView {
                         LazyVStack(spacing: 0) {
-                            if !worked.isEmpty && !historic.isEmpty {
-                                pileHeader("BEING RESEARCHED", worked.count)
+                            if !loose.isEmpty && (!shelved.isEmpty || !historic.isEmpty) {
+                                pileHeader("BEING RESEARCHED", loose.count)
                             }
-                            ForEach(worked) { p in projectRow(p) }
+                            ForEach(loose) { p in projectRow(p) }
+                            ForEach(shelfNames, id: \.self) { name in
+                                let rows = shelved[name] ?? []
+                                pileHeader(name.uppercased(), rows.count)
+                                ForEach(rows) { p in projectRow(p) }
+                            }
                             if !historic.isEmpty {
                                 if !worked.isEmpty {
                                     pileHeader("HISTORIC WORK · CLOSED", historic.count)
@@ -192,6 +212,10 @@ struct Project: Decodable, Identifiable {
     let name: String
     let ticker: String?
     let status: String
+    /// The campaign this belongs to, or nil. Optional in the decodable as
+    /// well as the column: a build talking to a server that predates the
+    /// field must render an ungrouped list, not fail to decode one.
+    let folder: String?
     let brief: String?
     let updatedAt: String?
     let createdAt: String?
@@ -245,8 +269,11 @@ struct Project: Decodable, Identifiable {
             && (counts?.interviews ?? 0) == 0
     }
 
+    // Explicit, because `counts` is `_count` on the wire. Which also
+    // means every new property has to be named here: leaving one out does
+    // not decode it as nil, it stops the type conforming at all.
     enum CodingKeys: String, CodingKey {
-        case id, name, ticker, status, brief, updatedAt, createdAt, createdBy
+        case id, name, ticker, status, folder, brief, updatedAt, createdAt, createdBy
         case counts = "_count"
     }
 }

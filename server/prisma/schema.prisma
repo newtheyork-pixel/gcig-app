@@ -1059,6 +1059,15 @@ model ResearchProject {
   // finding about the project. Capped at three in the UI on purpose.
   aims        String?
   // Open | Fieldwork | Synthesis | Closed
+  // The shelf this sits on. A theme, not a sector taxonomy: the club
+  // researches in campaigns ("the data-center names", "the aerospace
+  // aftermarket pair") and a flat list of fifty-three projects hides that
+  // five of them are one piece of work.
+  //
+  // Null is a real answer and the common one. The active name usually
+  // stands alone, and inventing a folder of one to avoid a null would be
+  // filing for its own sake.
+  folder   String?
   status      String   @default("Open")
   // Owner-only: the project is filtered out of every read path except the
   // super admin's, the same rule ResearchArtifact already follows. An

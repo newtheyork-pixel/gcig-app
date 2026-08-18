@@ -688,6 +688,13 @@ router.patch('/projects/:id', canResearch, async (req, res) => {
       .slice(0, 3);
     data.aims = lines.length ? lines.join('\n').slice(0, 900) : null;
   }
+  if (req.body?.folder !== undefined) {
+    // Trimmed and capped, and an empty string means "off the shelf"
+    // rather than a folder named "". Case is preserved because the
+    // heading is read by a person, not matched by a machine.
+    const f = String(req.body.folder || '').trim().slice(0, 60);
+    data.folder = f || null;
+  }
   if (req.body?.brief !== undefined) {
     data.brief = req.body.brief ? String(req.body.brief).slice(0, 5000) : null;
   }
