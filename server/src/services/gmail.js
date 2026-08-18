@@ -1,4 +1,5 @@
 import { OAuth2Client } from 'google-auth-library';
+import { randomUUID } from 'crypto';
 import { PrismaClient } from '@prisma/client';
 
 const prisma = new PrismaClient();
@@ -265,21 +266,98 @@ export function outreachCc(fromAddress) {
     .filter((a) => a.toLowerCase() !== from);
 }
 
+/**
+ * One letter, in both dialects a mail client might read.
+ *
+ * This used to send bare text/plain and let every client invent its own
+ * paragraph handling, which is not a formatting preference so much as a
+ * refusal to decide. Outlook strips what it calls extra line breaks from
+ * plain text BY DEFAULT, and a third of the addresses in the Signet
+ * campaign are on Microsoft, so a letter written in six paragraphs could
+ * arrive as one undifferentiated block with no way for us to know.
+ *
+ * So the paragraphs are now stated in a language that cannot be
+ * reinterpreted. text/plain stays first for anyone who prefers it, and
+ * an HTML alternative carries the same words with the breaks made
+ * structural. Blank line means new paragraph; a single newline inside a
+ * block (the four signature lines) stays a line break.
+ *
+ * Both parts are base64'd rather than sent raw, which sidesteps the 998
+ * octet line limit in RFC 5322 that our 260-character paragraphs sit
+ * uncomfortably close to, and headers carrying anything outside ASCII
+ * are RFC 2047 encoded rather than emitted as raw UTF-8 on a header line.
+ */
+function encodeHeader(v) {
+  const str = String(v).replace(/[\r\n]/g, ' ').trim();
+  // eslint-disable-next-line no-control-regex
+  if (!/[^\x00-\x7F]/.test(str)) return str;
+  return `=?UTF-8?B?${Buffer.from(str, 'utf8').toString('base64')}?=`;
+}
+
+/** An address header keeps its angle brackets out of the encoded word. */
+function encodeAddress(v) {
+  const str = String(v).replace(/[\r\n]/g, ' ').trim();
+  const m = str.match(/^(.*?)\s*(<[^>]+>)$/);
+  if (!m) return encodeHeader(str);
+  const name = m[1].replace(/^"|"$/g, '');
+  // eslint-disable-next-line no-control-regex
+  if (!/[^\x00-\x7F]/.test(name)) return str;
+  return `${encodeHeader(name)} ${m[2]}`;
+}
+
+function b64(text) {
+  return (Buffer.from(text, 'utf8').toString('base64').match(/.{1,76}/g) || []).join('\r\n');
+}
+
+const escapeHtml = (t) => String(t)
+  .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  .replace(/"/g, '&quot;');
+
+function asHtml(body) {
+  const blocks = String(body).replace(/\r\n/g, '\n').split(/\n{2,}/);
+  const paras = blocks
+    .map((b) => b.replace(/\n+$/, ''))
+    .filter((b) => b.trim().length)
+    .map((b) => `<p style="margin:0 0 1em 0">${escapeHtml(b).replace(/\n/g, '<br>')}</p>`)
+    .join('\n');
+  // An explicit family and size, because a client left to its own devices
+  // renders a plain body in whatever it uses for machine output, and a
+  // letter that looks machine generated is read as one.
+  return '<html><body style="font-family:Arial,Helvetica,sans-serif;'
+    + `font-size:14px;line-height:1.5;color:#000">\n${paras}\n</body></html>`;
+}
+
 function mime({ to, cc, from, subject, body, inReplyTo, references }) {
   const esc = (v) => String(v).replace(/[\r\n]/g, ' ').trim();
+  const boundary = `gf_${randomUUID().replace(/-/g, '')}`;
+  const text = String(body).replace(/\r?\n/g, '\r\n');
   const headers = [
-    `From: ${from}`,
-    `To: ${esc(to)}`,
-    ...(cc && cc.length ? [`Cc: ${cc.map(esc).join(', ')}`] : []),
-    `Subject: ${esc(subject)}`,
+    `From: ${encodeAddress(from)}`,
+    `To: ${encodeAddress(to)}`,
+    ...(cc && cc.length ? [`Cc: ${cc.map(encodeAddress).join(', ')}`] : []),
+    `Subject: ${encodeHeader(subject)}`,
     'MIME-Version: 1.0',
-    'Content-Type: text/plain; charset="UTF-8"',
-    'Content-Transfer-Encoding: 8bit',
+    `Content-Type: multipart/alternative; boundary="${boundary}"`,
   ];
   if (inReplyTo) {
     headers.push(`In-Reply-To: ${esc(inReplyTo)}`, `References: ${esc(references || inReplyTo)}`);
   }
-  const raw = `${headers.join('\r\n')}\r\n\r\n${String(body).replace(/\r?\n/g, '\r\n')}`;
+  const raw = [
+    headers.join('\r\n'),
+    '',
+    `--${boundary}`,
+    'Content-Type: text/plain; charset="UTF-8"',
+    'Content-Transfer-Encoding: base64',
+    '',
+    b64(text),
+    `--${boundary}`,
+    'Content-Type: text/html; charset="UTF-8"',
+    'Content-Transfer-Encoding: base64',
+    '',
+    b64(asHtml(body)),
+    `--${boundary}--`,
+    '',
+  ].join('\r\n');
   return Buffer.from(raw, 'utf8').toString('base64url');
 }
 
