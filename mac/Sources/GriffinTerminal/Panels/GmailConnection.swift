@@ -28,112 +28,6 @@ struct GmailStatus: Decodable {
     let revokedAt: String?
 }
 
-struct GmailConnectionRow: View {
-    @State private var status: Loadable<GmailStatus> = .loading
-    @State private var busy = false
-    @State private var note: String?
-
-    var body: some View {
-        // NOTHING when it is working.
-        //
-        // A connected mailbox with a recent sweep is not news, and a row
-        // announcing it every time somebody opens the panel is a line of
-        // chrome they learn to skip, which is exactly the line they will
-        // skip on the day it says the connection was refused. This appears
-        // only when there is something to do.
-        Group {
-            switch status {
-            case .loading, .loaded:
-                if case .loaded(let s) = status, s.configured == true, s.allowed == true,
-                   s.connected == true, s.revokedAt == nil {
-                    EmptyView()
-                } else if case .loaded(let s) = status {
-                    HStack(spacing: 8) {
-                        SectionLabel(text: "Gmail")
-                        if s.configured != true {
-                            Text("not configured on the server")
-                                .font(Term.mono(10)).foregroundStyle(Term.fgMuted)
-                        } else if s.allowed != true {
-                            Text("sending is limited to named senders")
-                                .font(Term.mono(10)).foregroundStyle(Term.fgMuted)
-                        } else {
-                            Text(s.revokedAt != nil
-                                 ? "Google refused the connection, reconnect"
-                                 : "no mailbox connected")
-                                .font(Term.mono(10))
-                                .foregroundStyle(s.revokedAt != nil ? Term.negative : Term.fgMuted)
-                            Button(busy ? "OPENING" : "CONNECT") { Task { await connect() } }
-                                .buttonStyle(TermButtonStyle()).disabled(busy)
-                            // The row cannot know consent finished. Google
-                            // redirects the BROWSER to the callback, and
-                            // nothing comes back to the app, so the state
-                            // that changed is invisible here until someone
-                            // asks again. Without this the row still reads
-                            // "no mailbox connected" after a connection
-                            // that worked perfectly, which reads as failure
-                            // at the one moment it should read as success.
-                            if note != nil {
-                                Button("RECHECK") { Task { await load() } }
-                                    .buttonStyle(TermButtonStyle()).disabled(busy)
-                            }
-                        }
-                        if let note {
-                            Text(note).font(Term.mono(10)).foregroundStyle(Term.negative).lineLimit(1)
-                        }
-                        Spacer()
-                    }
-                }
-            case .failed(let msg):
-                HStack(spacing: 8) {
-                    SectionLabel(text: "Gmail")
-                    Text(msg).font(Term.mono(10)).foregroundStyle(Term.negative).lineLimit(1)
-                    Button("RETRY") { Task { await load() } }.buttonStyle(TermButtonStyle())
-                    Spacer()
-                }
-            }
-        }
-        .task { await load() }
-    }
-
-    private func load() async {
-        do {
-            let d = try await API.shared.get("/gmail/status")
-            status = .loaded(try await API.shared.decode(GmailStatus.self, from: d))
-        } catch {
-            status = .failed(error.localizedDescription)
-        }
-    }
-
-    /// Opens the browser. The URL is the API's own /start, never Google's
-    /// directly: the cookie that binds this consent to this browser is set
-    /// on that hop, and a request made in process would strand it.
-    private func connect() async {
-        busy = true; note = nil
-        defer { busy = false }
-        do {
-            let d = try await API.shared.get("/gmail/connect")
-            struct Link: Decodable { let url: String }
-            let link = try await API.shared.decode(Link.self, from: d)
-            guard let u = URL(string: link.url) else { note = "bad link from the server"; return }
-            NSWorkspace.shared.open(u)
-            note = "approve it in the browser, then press RECHECK"
-        } catch {
-            note = error.localizedDescription
-        }
-    }
-
-    private func disconnect() async {
-        busy = true; note = nil
-        defer { busy = false }
-        do {
-            _ = try await API.shared.delete("/gmail/connection")
-            await load()
-        } catch {
-            note = error.localizedDescription
-        }
-    }
-}
-
 // MARK: Send
 
 // One door onto sending, with everything it can do behind it.
@@ -412,5 +306,109 @@ struct SendAllControl: View {
             preview = nil; open = false; scheduling = false
             await loadQueue()
         } catch { note = error.localizedDescription }
+    }
+}
+
+// MARK: The connect panel
+
+/// What INBX shows when there is no mailbox behind it.
+///
+/// This started as a one-line strip at the top of another function, which
+/// was wrong twice over. It sat in a panel a person had no reason to open
+/// to read their mail, and it was sized like a status note when it is the
+/// only thing standing between somebody and a working inbox. An empty
+/// inbox with a quiet grey row above it reads as "no mail yet", and the
+/// person waits for mail that can never arrive.
+///
+/// So it takes the whole panel and says the one thing to do.
+struct GmailConnectPanel: View {
+    let status: GmailStatus?
+    let busy: Bool
+    let note: String?
+    let onConnect: () -> Void
+    let onRecheck: () -> Void
+
+    var body: some View {
+        VStack(spacing: 14) {
+            Spacer(minLength: 0)
+
+            Text(headline)
+                .font(Term.mono(17, weight: .bold))
+                .foregroundStyle(Term.fg)
+
+            Text(explain)
+                .font(Term.mono(11))
+                .foregroundStyle(Term.fgMuted)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: 460)
+                .fixedSize(horizontal: false, vertical: true)
+
+            if canConnect {
+                Button(action: onConnect) {
+                    Text(busy ? "OPENING BROWSER" : "CONNECT MAILBOX")
+                        .font(Term.mono(14, weight: .bold))
+                        .tracking(1.2)
+                        .foregroundStyle(Term.bg)
+                        .padding(.horizontal, 30)
+                        .padding(.vertical, 12)
+                        .background(busy ? Term.fgMuted : Term.amber)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .disabled(busy)
+
+                // Only after the browser has been opened, because until
+                // then there is nothing to recheck and a second button
+                // just splits the one instruction in two.
+                if note != nil {
+                    Button("I APPROVED IT, RECHECK") { onRecheck() }
+                        .buttonStyle(TermButtonStyle())
+                }
+            }
+
+            if let note {
+                Text(note)
+                    .font(Term.mono(11))
+                    .foregroundStyle(noteIsError ? Term.negative : Term.orange)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: 460)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Spacer(minLength: 0)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(24)
+    }
+
+    private var canConnect: Bool {
+        status?.configured == true && status?.allowed == true
+    }
+
+    private var noteIsError: Bool {
+        guard let note else { return false }
+        return !note.lowercased().contains("approve it in the browser")
+    }
+
+    private var headline: String {
+        guard let s = status else { return "Checking your mailbox" }
+        if s.configured != true { return "Mail is not set up on the server" }
+        if s.allowed != true { return "You are not a named sender" }
+        if s.revokedAt != nil { return "Google refused the connection" }
+        return "Connect your mailbox"
+    }
+
+    private var explain: String {
+        guard let s = status else { return "One moment." }
+        if s.configured != true {
+            return "The server has no Google credentials, so no mailbox can be connected from here. An exec needs to configure it."
+        }
+        if s.allowed != true {
+            return "Sending and reading mail is limited to a named list, and your account is not on it. Ask an exec to add your address."
+        }
+        if s.revokedAt != nil {
+            return "The permission was withdrawn or expired, so replies have stopped arriving. Connecting again restores it."
+        }
+        return "Your replies live in your Griffin Fund mailbox. Connect it once and everything people send back shows up here, and you can answer from the terminal."
     }
 }

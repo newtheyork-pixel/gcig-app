@@ -1932,7 +1932,6 @@ private struct OutreachTab: View {
             // number is a promise, and a promise the app cannot keep
             // because no mailbox is connected should say so here rather
             // than at the moment somebody presses send.
-            GmailConnectionRow()
 
             // The outreach workbench. What has come BACK lives in INBX now:
             // a reply is not about one project, it is about the person who

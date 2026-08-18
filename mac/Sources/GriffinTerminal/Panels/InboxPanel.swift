@@ -39,8 +39,42 @@ struct InboxPanel: View {
     /// who is still waiting on us, not a chronology of everything ever said.
     @State private var owedOnly = false
     @State private var expanded: Set<Int> = []
+    /// The mailbox behind the inbox. Nil while we are still asking; a
+    /// failed status is deliberately NOT treated as disconnected, because
+    /// telling somebody to connect a mailbox they already connected is a
+    /// worse error than showing them a stale list.
+    @State private var gmail: GmailStatus?
+    @State private var gmailAsked = false
+    @State private var connecting = false
+    @State private var connectNote: String?
+
+    /// Connected AND healthy. Anything else means mail cannot arrive, and
+    /// the panel should say so instead of rendering an honest-looking
+    /// empty list that will never fill.
+    private var mailboxWorking: Bool {
+        guard let g = gmail else { return true }   // unknown: do not nag
+        return g.configured == true && g.allowed == true
+            && g.connected == true && g.revokedAt == nil
+    }
 
     var body: some View {
+        Group {
+            if gmailAsked && !mailboxWorking {
+                GmailConnectPanel(
+                    status: gmail,
+                    busy: connecting,
+                    note: connectNote,
+                    onConnect: { Task { await connect() } },
+                    onRecheck: { Task { await loadGmail(); await load() } }
+                )
+            } else {
+                inbox
+            }
+        }
+        .task { await loadGmail() }
+    }
+
+    private var inbox: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 8) {
                 if case .loaded(let p) = state {
@@ -70,6 +104,36 @@ struct InboxPanel: View {
             }
         }
         .task { await load() }
+    }
+
+    private func loadGmail() async {
+        defer { gmailAsked = true }
+        do {
+            let d = try await API.shared.get("/gmail/status")
+            gmail = try await API.shared.decode(GmailStatus.self, from: d)
+        } catch {
+            // Leave it nil. An unreachable status endpoint is our outage,
+            // not evidence that the member never connected anything.
+            gmail = nil
+        }
+    }
+
+    private func connect() async {
+        connecting = true; connectNote = nil
+        defer { connecting = false }
+        do {
+            let d = try await API.shared.get("/gmail/connect")
+            struct Link: Decodable { let url: String }
+            let link = try await API.shared.decode(Link.self, from: d)
+            guard let u = URL(string: link.url) else {
+                connectNote = "The server sent a link we could not open."
+                return
+            }
+            NSWorkspace.shared.open(u)
+            connectNote = "Approve it in the browser, then come back and press recheck. The link expires in ninety seconds."
+        } catch {
+            connectNote = error.localizedDescription
+        }
     }
 
     private func row(_ m: InboxPayload.Msg) -> some View {
