@@ -95,6 +95,12 @@ struct SendResult: Decodable {
 
 struct SendAllControl: View {
     let projectID: Int
+    /// Fired whenever this control changes something the REST of the tab
+    /// displays. The funnel line, the target rows and the tab badge are all
+    /// computed from a payload this view does not own, and nothing else
+    /// refreshed them: the line above the queue kept reading "5 queued to
+    /// send" while the block below it listed thirteen.
+    var onChanged: () -> Void = {}
 
     @State private var open = false
     @State private var preview: SendPreview?
@@ -204,6 +210,7 @@ struct SendAllControl: View {
             _ = try await API.shared.post("/research/projects/\(projectID)/unschedule",
                                           json: ids == nil ? [:] : ["draftIds": ids!])
             await loadQueue()
+            onChanged()
             // The send list changes the moment something leaves the queue,
             // so it is re-read rather than left showing a stale count.
             if open { await load() }
@@ -340,7 +347,9 @@ struct SendAllControl: View {
             let d = try await API.shared.post("/research/projects/\(projectID)/send-all",
                                               json: ["confirm": true, "draftIds": Array(chosen)])
             result = try await API.shared.decode(SendResult.self, from: d)
-            preview = nil; open = false
+            preview = nil
+            await loadQueue()
+            onChanged(); open = false
         } catch { note = error.localizedDescription }
     }
 

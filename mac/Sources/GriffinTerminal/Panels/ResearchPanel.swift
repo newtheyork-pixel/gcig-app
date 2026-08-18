@@ -537,6 +537,9 @@ struct ProjectFull: Decodable {
         // fifty-seven sends was findable only by memory or by opening a
         // hundred and ten contacts one at a time.
         let queued: Int?
+        /// Letters on the server's own clock. Distinct from `queued`,
+        /// which means parked in somebody's mail client by hand.
+        let scheduled: Int?
         let replied: Int?
         let autoRepliedOnly: Int?
         let bounced: Int?
@@ -1471,7 +1474,8 @@ private struct ProjectDetail: View {
         case .questions:
             CoverageTab(p: p, busy: $busy, run: run)
         case .outreach:
-            OutreachTab(p: p, busy: $busy, run: run, onOpenTarget: { openTargetID = $0 })
+            OutreachTab(p: p, busy: $busy, run: run, onOpenTarget: { openTargetID = $0 },
+                        reload: { Task { await load(initial: false) } })
         case .interviews:
             InterviewsTab(p: p, busy: $busy, run: run, onOpenTranscript: { readerInterviewID = $0 })
         case .visits:
@@ -1951,6 +1955,11 @@ private struct OutreachTab: View {
     @Binding var busy: Bool
     let run: RunAction
     let onOpenTarget: (Int) -> Void
+    /// Re-read the whole project. The send control changes counts that
+    /// live in THIS payload rather than in its own, so without a way to
+    /// ask for a reload the funnel line goes stale the moment anything
+    /// is scheduled.
+    let reload: () -> Void
 
     private enum TFilter: Equatable { case all, status(String), dead }
     @State private var only: TFilter = .all
@@ -2006,7 +2015,12 @@ private struct OutreachTab: View {
             // a reply is not about one project, it is about the person who
             // wrote it, and burying it under whichever ticker they were
             // first written about is why nobody found Kanter's.
-            SendAllControl(projectID: p.id)
+            // Scheduling changes the funnel line, the rows and the
+            // badge, none of which live in this control. Without the
+            // callback the line above kept saying "5 queued to send"
+            // while the block below it listed thirteen, because the two
+            // are different payloads and nothing refreshed them together.
+            SendAllControl(projectID: p.id, onChanged: reload)
 
             // Approval and compliance state on one line, because
             // "approved" and "screened" are different claims and a
@@ -2059,7 +2073,7 @@ private struct OutreachTab: View {
         let notScreened = (q?.unscreened ?? 0) + (q?.keywordOnly ?? 0)
         if let q, (q.awaitingReview ?? 0) + (q.readyToSend ?? 0) + (q.rejected ?? 0)
             + (q.screenBlocked ?? 0) + (q.screenElevated ?? 0) + notScreened
-            + (q.replied ?? 0) + (q.queued ?? 0) + (q.bounced ?? 0)
+            + (q.replied ?? 0) + (q.queued ?? 0) + (q.scheduled ?? 0) + (q.bounced ?? 0)
             + (q.autoRepliedOnly ?? 0) > 0 {
             HStack(spacing: 12) {
                 // Answers first. A strip that only ever reports problems
@@ -2070,8 +2084,13 @@ private struct OutreachTab: View {
                 if let n = q.readyToSend, n > 0 {
                     Text("\(n) ready").foregroundStyle(Term.positive)
                 }
+                if let n = q.scheduled, n > 0 {
+                    Text("\(n) queued to send").foregroundStyle(Term.cyan)
+                }
+                // Named differently on purpose. This one is not on our
+                // clock at all: somebody has it open in a mail client.
                 if let n = q.queued, n > 0 {
-                    Text("\(n) queued").foregroundStyle(Term.cyan)
+                    Text("\(n) in a mailbox").foregroundStyle(Term.cyan)
                 }
                 if let n = q.bounced, n > 0 {
                     Text("\(n) bounced").foregroundStyle(Term.negative)
@@ -2080,7 +2099,8 @@ private struct OutreachTab: View {
                     Text("\(n) out of office").foregroundStyle(Term.amber)
                 }
                 if let n = q.rejected, n > 0 {
-                    Text("\(n) rejected").foregroundStyle(Term.negative)
+                    Text("\(n) pulled").foregroundStyle(Term.negative)
+                        .help("Letters a president stopped before they went out. Not people who turned us down.")
                 }
                 if let n = q.screenBlocked, n > 0 {
                     Text("\(n) blocked by the screen").foregroundStyle(Term.negative)

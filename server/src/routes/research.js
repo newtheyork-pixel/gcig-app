@@ -592,8 +592,20 @@ router.get('/projects/:id', async (req, res) => {
           // written into a mailbox waiting on a clock. Counting the two
           // together would tell whoever opens this that there is more
           // left to do than there is.
-          readyToSend: all.filter((d) => d.fullyApproved && !d.sentAt && !d.queuedAt).length,
+          // Ready means nothing has been done with it yet. A letter with
+          // a send time on it is NOT ready, and leaving scheduledFor out
+          // of this filter meant thirteen scheduled letters were counted
+          // as thirteen still to do AND listed as thirteen queued, one
+          // line apart, so the screen argued with itself.
+          readyToSend: all.filter((d) => d.fullyApproved && !d.sentAt
+                                      && !d.queuedAt && !d.scheduledFor).length,
+          // Two different facts that were both called "queued". This one
+          // is a letter somebody parked in a mail client by hand, usually
+          // at an address the terminal cannot reach.
           queued: all.filter((d) => d.queuedAt && !d.sentAt).length,
+          // And this one is the server's own clock. Separate name, because
+          // the reader has to be able to tell which is which.
+          scheduled: all.filter((d) => d.scheduledFor && !d.sentAt).length,
           rejected: all.filter((d) => d.rejectedAt && !d.sentAt).length,
           sent: all.filter((d) => d.sentAt).length,
           // Compliance state has to be countable at the top level too,
