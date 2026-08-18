@@ -2609,11 +2609,25 @@ private struct DraftCard: View {
                     .buttonStyle(TermButtonStyle()).disabled(busy)
 
                     if d.fullyApproved == true {
-                        // Send, or queue it. The pasted-into-Gmail
-                        // vocabulary is gone with the button that needed
-                        // it: the app is the sender, so the record is a
-                        // consequence of the act rather than a claim
-                        // somebody makes about it afterwards.
+                        // Copy is back, and it earned its way back.
+                        //
+                        // It was removed when the app became the sender,
+                        // on the reasoning that pasting into Gmail
+                        // described a world that had ended. That was half
+                        // right. Threads that BEGAN somewhere else still
+                        // have to be answered from there: a reply to a
+                        // source first written to from the school address
+                        // must go out from that address, or it reaches
+                        // them as a stranger breaking into a conversation.
+                        // Two of the three real correspondences on Signet
+                        // are in exactly that position.
+                        //
+                        // Same gate as Send. A veto you can copy past
+                        // reads as oversight that is not happening.
+                        Button(copied ? "Copied" : "Copy") { copyBlock(d) }
+                            .buttonStyle(TermButtonStyle()).disabled(busy)
+                            .help("To send by hand, from a mailbox the terminal is not connected to.")
+
                         Button(sending ? "Sending" : "Send now") {
                             Task {
                                 sending = true
