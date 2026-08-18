@@ -462,6 +462,142 @@ router.post('/messages/:id/reply', canResearch, async (req, res) => {
   }
 });
 
+/**
+ * Every contact, thin, for a compose box to search.
+ *
+ * Deliberately not the project payload: that one carries drafts,
+ * messages and every transcript hanging off them, and a typeahead that
+ * pulls megabytes per keystroke is a typeahead nobody leaves switched on.
+ */
+router.get('/contacts', canResearch, async (req, res) => {
+  try {
+    const q = String(req.query.q || '').trim();
+    const visibility = isSuperAdminEmail(req.user?.email) ? {} : { ownerOnly: false };
+    const rows = await prisma.researchTarget.findMany({
+      where: {
+        project: req.user?.isGuest
+          ? { ownerOnly: false, ticker: { in: GUEST_RESEARCH_TICKERS } }
+          : visibility,
+        email: { not: null },
+        ...(q ? {
+          OR: [
+            { name: { contains: q, mode: 'insensitive' } },
+            { email: { contains: q, mode: 'insensitive' } },
+            { employer: { contains: q, mode: 'insensitive' } },
+          ],
+        } : {}),
+      },
+      select: {
+        id: true, name: true, email: true, employer: true, role: true, status: true,
+        lastContactAt: true,
+        project: { select: { id: true, ticker: true } },
+      },
+      orderBy: { name: 'asc' },
+      take: 40,
+    });
+    res.json({ contacts: rows });
+  } catch (err) {
+    console.error('research/contacts failed:', err.message);
+    res.status(500).json({ error: 'Could not load contacts' });
+  }
+});
+
+/**
+ * Write a new letter to somebody already in the book.
+ *
+ * The reply route answers a message that exists. This one starts a
+ * conversation, which is the other half of what an inbox is for, and it
+ * had no path at all: every new letter went through the outreach draft
+ * pipeline, which is built for a batch of cold contacts written in
+ * advance and reviewed later, not for one email somebody needs to send now.
+ *
+ * The gates are the same ones. It is a real draft, screened before it
+ * goes, refused and KEPT if the screen prohibits it, and written into
+ * the ledger in the transaction that marks it sent. What is deliberately
+ * absent is any way to type a fresh address here: the recipient must be
+ * a contact that already exists, because an address typed into a compose
+ * box is exactly the guessed address the whole desk is built to prevent.
+ */
+router.post('/compose', canResearch, async (req, res) => {
+  const targetId = Number(req.body?.targetId);
+  const subject = String(req.body?.subject || '').trim();
+  const text = String(req.body?.body || '').trim();
+  if (!Number.isInteger(targetId)) return res.status(400).json({ error: 'Pick somebody to write to.' });
+  if (!subject) return res.status(400).json({ error: 'Give it a subject.' });
+  if (!text) return res.status(400).json({ error: 'Write something first.' });
+  if (!gmailConfigured()) return res.status(503).json({ error: 'Gmail is not configured on this server' });
+  if (!maySendMail(req.user)) {
+    return res.status(403).json({ error: 'Sending mail from the terminal is limited to named senders.' });
+  }
+  try {
+    const target = await prisma.researchTarget.findUnique({ where: { id: targetId } });
+    if (!target) return res.status(404).json({ error: 'No such contact' });
+    const to = (target.email || '').trim();
+    if (!to || !/^[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}$/.test(to)) {
+      return res.status(409).json({ error: `No usable address on this contact (${to || 'blank'}).` });
+    }
+
+    const draft = await prisma.outreachDraft.create({
+      data: {
+        targetId,
+        subject: subject.slice(0, 300),
+        body: tokeniseSignature(text.slice(0, 20_000), req.user),
+        authorId: req.user?.id ?? null,
+      },
+    });
+    await screenAndStore(draft.id);
+    const screened = await prisma.outreachDraft.findUnique({ where: { id: draft.id } });
+    if (screened.screenRisk === 'prohibited') {
+      return res.status(409).json({
+        draftId: draft.id,
+        error: `The compliance screen will not pass this: ${screened.screenReason || 'no reason recorded'}. `
+          + 'It is saved as a draft, so edit it rather than starting again.',
+      });
+    }
+
+    const body = renderSignature(screened.body, req.user);
+    let sent;
+    try {
+      sent = await sendAs(req.user.id, { to, subject, body, fromName: req.user?.name });
+    } catch (err) {
+      return res.status(502).json({ draftId: draft.id, error: `Gmail refused it: ${err.message}` });
+    }
+
+    await prisma.$transaction(async (tx) => {
+      await tx.outreachDraft.update({
+        where: { id: draft.id },
+        data: {
+          sentAt: new Date(), sentById: req.user?.id ?? null, sentBody: body,
+          gmailThreadId: sent.threadId, gmailMessageId: sent.messageId, sentVia: 'gmail',
+        },
+      });
+      await tx.outreachMessage.create({
+        data: {
+          targetId, draftId: draft.id, direction: 'out', kind: 'Other',
+          occurredAt: new Date(), subject: subject.slice(0, 300),
+          body: body.slice(0, 20_000), gmailMessageId: sent.messageId,
+          recordedById: req.user?.id ?? null,
+        },
+      });
+      // Same floor as everywhere else: the timestamp always advances, the
+      // status only advances. Writing to somebody who already agreed to
+      // talk must not drag them back to Contacted.
+      const AHEAD = new Set(['Scheduled', 'Completed', 'Declined']);
+      await tx.researchTarget.update({
+        where: { id: targetId },
+        data: {
+          ...(AHEAD.has(target.status) ? {} : { status: 'Contacted' }),
+          lastContactAt: new Date(),
+        },
+      });
+    });
+    res.json({ ok: true, draftId: draft.id, to, from: sent.from, subject });
+  } catch (err) {
+    console.error('research/compose failed:', err.message);
+    res.status(500).json({ error: 'Could not send it' });
+  }
+});
+
 router.get('/projects/manifest', async (req, res) => {
   try {
     // The same visibility rules the real payload uses. A fingerprint

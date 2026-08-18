@@ -56,6 +56,22 @@ struct InboxPanel: View {
     @State private var sending = false
     @State private var rowNote: [Int: String] = [:]
     @State private var sentJustNow: Set<Int> = []
+    // Compose. A new letter, to somebody already in the book.
+    @State private var composing = false
+    @State private var pick = ""
+    @State private var contacts: [Contact] = []
+    @State private var toTarget: Contact?
+    @State private var newSubject = ""
+    @State private var newBody = ""
+    @State private var composeNote: String?
+
+    struct Contact: Decodable, Identifiable, Equatable {
+        let id: Int
+        let name: String?
+        let email: String?
+        let employer: String?
+        let status: String?
+    }
 
     enum Filter: String, CaseIterable {
         case all = "ALL", owed = "OWED", bounced = "BOUNCED", replies = "REPLIES"
@@ -149,6 +165,12 @@ struct InboxPanel: View {
                     Text(ago(d)).font(Term.mono(9)).foregroundStyle(Term.fgMuted)
                         .help("The list re-reads itself every minute. REFRESH also pulls from Gmail.")
                 }
+                Button(composing ? "CLOSE" : "NEW") {
+                    composing.toggle()
+                    if composing { Task { await findContacts() } }
+                }
+                .buttonStyle(TermButtonStyle())
+                .help("Write a new letter to somebody in the book")
                 Button(syncing ? "PULLING" : "REFRESH") { Task { await syncThenLoad() } }
                     .buttonStyle(TermButtonStyle()).disabled(syncing)
                 if let n = syncNote {
@@ -156,6 +178,8 @@ struct InboxPanel: View {
                 }
             }
             .padding(.horizontal, 10).padding(.vertical, 6)
+
+            if composing { composer }
 
             PanelState(state: state,
                        emptyWhen: { ($0.messages ?? []).isEmpty },
@@ -170,6 +194,107 @@ struct InboxPanel: View {
             }
         }
         .task { await load() }
+    }
+
+    /// The compose box.
+    ///
+    /// The recipient is CHOSEN, never typed. An address typed into a
+    /// compose box is exactly the guessed address the whole desk exists to
+    /// prevent, and a wrong one sends our research to a stranger. Somebody
+    /// not in the book has to be added as a contact first, with a
+    /// verification recorded against them, which is the step that matters.
+    @ViewBuilder private var composer: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack(spacing: 6) {
+                Text("TO").font(Term.mono(9, weight: .bold)).foregroundStyle(Term.fgMuted)
+                    .frame(width: 40, alignment: .leading)
+                if let t = toTarget {
+                    Text(t.name ?? "?").font(Term.mono(11, weight: .bold)).foregroundStyle(Term.fg)
+                    Text(t.email ?? "").font(Term.mono(10)).foregroundStyle(Term.fgMuted)
+                    Button("CHANGE") { toTarget = nil; pick = "" }.buttonStyle(TermButtonStyle())
+                } else {
+                    TextField("search a contact by name, employer or address", text: $pick)
+                        .textFieldStyle(.plain).font(Term.mono(11)).foregroundStyle(Term.white)
+                        .onChange(of: pick) { _, _ in Task { await findContacts() } }
+                }
+                Spacer()
+            }
+            if toTarget == nil && !contacts.isEmpty {
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 0) {
+                        ForEach(contacts) { c in
+                            HStack(spacing: 6) {
+                                Text(c.name ?? "?").font(Term.mono(10)).foregroundStyle(Term.fg)
+                                Text(c.employer ?? "").font(Term.mono(9)).foregroundStyle(Term.fgDim).lineLimit(1)
+                                Spacer()
+                                Text(c.email ?? "").font(Term.mono(9)).foregroundStyle(Term.fgMuted)
+                                if let st = c.status {
+                                    Text(st.uppercased()).font(Term.mono(8)).foregroundStyle(Term.fgMuted)
+                                }
+                            }
+                            .padding(.vertical, 2)
+                            .contentShape(Rectangle())
+                            .onTapGesture { toTarget = c; contacts = [] }
+                        }
+                    }
+                }
+                .frame(maxHeight: 120)
+            }
+            if toTarget != nil {
+                HStack(spacing: 6) {
+                    Text("SUBJ").font(Term.mono(9, weight: .bold)).foregroundStyle(Term.fgMuted)
+                        .frame(width: 40, alignment: .leading)
+                    TextField("subject", text: $newSubject)
+                        .textFieldStyle(.plain).font(Term.mono(11)).foregroundStyle(Term.white)
+                }
+                TextEditor(text: $newBody)
+                    .font(Term.mono(11)).foregroundStyle(Term.fg)
+                    .scrollContentBackground(.hidden).background(Term.bg)
+                    .frame(minHeight: 110)
+                    .overlay(Rectangle().strokeBorder(Term.border, lineWidth: 1))
+                HStack(spacing: 8) {
+                    Button(sending ? "SENDING" : "SEND") { Task { await sendNew() } }
+                        .buttonStyle(TermButtonStyle())
+                        .disabled(sending || newSubject.trimmingCharacters(in: .whitespaces).isEmpty
+                                  || newBody.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    Text("Screened before it goes. From your mailbox, and there is no undo.")
+                        .font(Term.mono(9)).foregroundStyle(Term.fgMuted)
+                    Spacer()
+                }
+            }
+            if let n = composeNote {
+                Text(n).font(Term.mono(10)).foregroundStyle(Term.negative)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(.horizontal, 10).padding(.vertical, 8)
+        .background(Term.bgPanel)
+        .overlay(alignment: .bottom) { Rectangle().fill(Term.border).frame(height: 1) }
+    }
+
+    private func findContacts() async {
+        let q = pick.trimmingCharacters(in: .whitespaces)
+        do {
+            let d = try await API.shared.get("/research/contacts?q=\(q.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? "")")
+            struct Wrap: Decodable { let contacts: [Contact] }
+            contacts = try await API.shared.decode(Wrap.self, from: d).contacts
+        } catch { contacts = [] }
+    }
+
+    private func sendNew() async {
+        guard let t = toTarget else { return }
+        sending = true; composeNote = nil
+        defer { sending = false }
+        do {
+            _ = try await API.shared.post("/research/compose", json: [
+                "targetId": t.id, "subject": newSubject, "body": newBody,
+            ])
+            composing = false; toTarget = nil; pick = ""
+            newSubject = ""; newBody = ""
+            await load()
+        } catch {
+            composeNote = error.localizedDescription
+        }
     }
 
     private func matches(_ f: Filter, _ m: InboxPayload.Msg) -> Bool {
