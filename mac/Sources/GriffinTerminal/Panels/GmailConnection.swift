@@ -50,7 +50,13 @@ struct SendPreview: Decodable {
     struct Row: Decodable, Identifiable {
         let draftId: Int?; let name: String?; let email: String?
         let subject: String?; let screenRisk: String?
+        /// When this person was last written to, or nil for a first
+        /// contact. A chase is a legitimate second letter; twelve
+        /// duplicates were not, and nothing in this list could tell them
+        /// apart until the server started saying.
+        let priorContactAt: String?
         var id: Int { draftId ?? 0 }
+        var isSecondLetter: Bool { (priorContactAt ?? "").isEmpty == false }
     }
     struct Skip: Decodable, Identifiable {
         let draftId: Int?; let name: String?; let why: String?
@@ -127,6 +133,10 @@ struct SendAllControl: View {
                         .buttonStyle(TermButtonStyle()).disabled(busy)
                     Spacer()
                 }
+                if (q.rows ?? []).count > 10 {
+                    Text("showing 10 of \((q.rows ?? []).count)")
+                        .font(Term.mono(9)).foregroundStyle(Term.fgMuted)
+                }
                 ForEach((q.rows ?? []).prefix(10)) { r in
                     HStack(spacing: 6) {
                         Text(r.target?.name ?? "?").font(Term.mono(10)).foregroundStyle(Term.fg)
@@ -201,8 +211,27 @@ struct SendAllControl: View {
     }
 
     @ViewBuilder private var panel: some View {
-        if busy && preview == nil {
+        if busy {
             Text("reading the queue").font(Term.mono(10)).foregroundStyle(Term.fgMuted)
+        } else if let p = preview, (p.recipients ?? []).isEmpty {
+            // Nothing to send is a RESULT, and a good one. The panel used
+            // to open on blank space here, which reads as a failure of the
+            // app rather than an empty queue, and sent somebody looking for
+            // a bug that was not there.
+            VStack(alignment: .leading, spacing: 3) {
+                Text("Nothing is waiting to send.")
+                    .font(Term.mono(11)).foregroundStyle(Term.fg)
+                Text("Letters already sent, pulled, scheduled, or parked in a mailbox do not appear here.")
+                    .font(Term.mono(9)).foregroundStyle(Term.fgMuted)
+                ForEach((p.skipped ?? []).prefix(6)) { sk in
+                    Text("held back \(sk.name ?? "?"): \(sk.why ?? "")")
+                        .font(Term.mono(9)).foregroundStyle(Term.fgMuted)
+                }
+                if (p.skipped ?? []).count > 6 {
+                    Text("and \((p.skipped ?? []).count - 6) more held back")
+                        .font(Term.mono(9)).foregroundStyle(Term.fgMuted)
+                }
+            }
         } else if let p = preview {
             VStack(alignment: .leading, spacing: 5) {
                 HStack(spacing: 8) {
@@ -228,6 +257,10 @@ struct SendAllControl: View {
                                     .foregroundStyle(chosen.contains(r.id) ? Term.amber : Term.fgMuted)
                                 Text(r.name ?? "?").font(Term.mono(10)).foregroundStyle(Term.fg)
                                 Text(r.email ?? "").font(Term.mono(10)).foregroundStyle(Term.fgMuted)
+                                if r.isSecondLetter {
+                                    Text("2ND LETTER").font(Term.mono(9)).foregroundStyle(Term.orange)
+                                        .help("Already written to on \(Fmt.date(r.priorContactAt)). Tick it only if this is a deliberate follow-up.")
+                                }
                                 if r.screenRisk == "elevated" {
                                     Text("ELEVATED").font(Term.mono(9)).foregroundStyle(Term.orange)
                                 }
@@ -247,7 +280,11 @@ struct SendAllControl: View {
                 // from a batch is how somebody concludes a contact was
                 // written to when they were not.
                 ForEach((p.skipped ?? []).prefix(5)) { sk in
-                    Text("skipped \(sk.name ?? "?"): \(sk.why ?? "")")
+                    Text("held back \(sk.name ?? "?"): \(sk.why ?? "")")
+                        .font(Term.mono(10)).foregroundStyle(Term.fgMuted)
+                }
+                if (p.skipped ?? []).count > 5 {
+                    Text("and \((p.skipped ?? []).count - 5) more held back")
                         .font(Term.mono(10)).foregroundStyle(Term.fgMuted)
                 }
 
@@ -290,7 +327,9 @@ struct SendAllControl: View {
             let d = try await API.shared.post("/research/projects/\(projectID)/send-all", json: [:])
             let p = try await API.shared.decode(SendPreview.self, from: d)
             preview = p
-            chosen = Set((p.recipients ?? []).map(\.id))
+            // First contacts start ticked. A second letter to somebody
+            // already written to has to be chosen on purpose.
+            chosen = Set((p.recipients ?? []).filter { !$0.isSecondLetter }.map(\.id))
         } catch { note = error.localizedDescription }
     }
 

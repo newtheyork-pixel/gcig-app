@@ -559,6 +559,34 @@ struct Target: Decodable, Identifiable {
     let drafts: [Draft]?
     let messages: [Message]?
     let followUp: FollowUp?
+    /// The draft this row should speak for.
+    ///
+    /// The server hands drafts back newest first, and the row used to
+    /// take `.first`, which is only the right answer when a contact has
+    /// exactly one. On 14 August a rewrite left a duplicate first contact
+    /// on twelve people whose letters had already gone out that morning,
+    /// and every one of those rows then read READY while the letter that
+    /// actually went was invisible underneath it. The row was telling the
+    /// truth about a draft and lying about the contact.
+    ///
+    /// Order of interest, which is not order of creation: something with
+    /// a send time on it, then something still to act on, then the record
+    /// of what went, and only then whatever is left.
+    var primaryDraft: Draft? {
+        let ds = drafts ?? []
+        if let scheduled = ds.first(where: { $0.queuedFor != nil || $0.queueError != nil }) { return scheduled }
+        if let live = ds.first(where: { $0.sentAt == nil && $0.rejectedAt == nil }) { return live }
+        if let sent = ds.first(where: { $0.sentAt != nil }) { return sent }
+        return ds.first
+    }
+
+    /// Unsent, unpulled drafts this row is NOT showing.
+    var otherLiveDrafts: Int {
+        let live = (drafts ?? []).filter { $0.sentAt == nil && $0.rejectedAt == nil }
+        guard let shown = primaryDraft else { return max(0, live.count) }
+        return max(0, live.filter { $0.id != shown.id }.count)
+    }
+
 }
 
 /// Whether this person is owed a chase, and when.
@@ -985,11 +1013,21 @@ private struct ScreenChip: View {
 /// clean screen explained on the row rather than behind a hover.
 private struct StageChip: View {
     let draft: Draft?
+    /// How many OTHER unsent, unpulled drafts this row is not showing.
+    /// A row that silently speaks for one of three is how twelve
+    /// duplicate letters hid behind twelve rows that all read SENT.
+    var alsoHolding: Int = 0
 
     var body: some View {
         if let d = draft {
             VStack(alignment: .trailing, spacing: 1) {
                 HStack(spacing: 6) {
+                    if alsoHolding > 0 {
+                        Text("+\(alsoHolding)")
+                            .font(Term.mono(9, weight: .bold))
+                            .foregroundStyle(Term.orange)
+                            .help("\(alsoHolding) more unsent draft\(alsoHolding == 1 ? "" : "s") on this contact")
+                    }
                     Text(StageStyle.label(d))
                         .font(Term.mono(9, weight: .bold))
                         .foregroundStyle(StageStyle.tone(d))
@@ -2117,7 +2155,7 @@ private struct OutreachTab: View {
                     .textSelection(.enabled)
             }
             Spacer(minLength: 6)
-            StageChip(draft: t.drafts?.first)
+            StageChip(draft: t.primaryDraft, alsoHolding: t.otherLiveDrafts)
                 .frame(width: 160, alignment: .trailing)
             // The status writes straight through — moving a name off
             // "Identified" also stamps lastContactAt on the server.
