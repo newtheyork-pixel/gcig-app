@@ -2024,6 +2024,12 @@ router.post('/projects/:id/send-all', canResearch, async (req, res) => {
         // scheduled twenty for Monday opens this list, sees them still
         // ticked, presses send, and the schedule silently meant nothing.
         scheduledFor: null,
+        // The SAME reasoning for a letter parked in a mail client by
+        // hand. queuedAt means somebody has already put this in a
+        // mailbox to go out, usually from an address the terminal
+        // cannot reach, and offering it here is how one contact gets
+        // written to twice by two different routes on the same morning.
+        queuedAt: null,
         ...(picked ? { id: { in: picked } } : {}),
       },
       orderBy: { id: 'asc' },
@@ -2049,6 +2055,16 @@ router.post('/projects/:id/send-all', canResearch, async (req, res) => {
         seen.add(to.toLowerCase());
         ready.push({ draft: d, to });
       }
+      // Marked, not blocked. A chase IS a second letter and must stay
+      // sendable, but twelve duplicate first contacts once sat in this
+      // list looking exactly like fresh outreach because nothing here
+      // knew the difference. The client ticks first contacts and leaves
+      // second letters to be chosen deliberately.
+      const last = ready[ready.length - 1];
+      if (last && last.draft.id === d.id) {
+        const prior = (d.target?.lastContactAt) || null;
+        last.priorContactAt = prior;
+      }
     }
 
     if (!confirm) {
@@ -2058,7 +2074,10 @@ router.post('/projects/:id/send-all', canResearch, async (req, res) => {
         from: req.user?.name,
         recipients: ready.map((r) => ({ draftId: r.draft.id, name: r.draft.target?.name,
                                         email: r.to, subject: r.draft.subject,
-                                        screenRisk: r.draft.screenRisk })),
+                                        screenRisk: r.draft.screenRisk,
+                                        // When this person was last written to, or null if
+                                        // never. Null means a first contact.
+                                        priorContactAt: r.priorContactAt || null })),
         skipped,
         note: 'Nothing was sent. Repeat with {"confirm": true} to send this exact list.',
       });

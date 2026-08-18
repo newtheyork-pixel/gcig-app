@@ -882,7 +882,11 @@ private enum StageStyle {
         if d.queueError != nil { return "QUEUE FAILED" }
         switch d.stage {
         case "sent":         return "SENT"
-        case "rejected":     return "REJECTED"
+        // Not "REJECTED": that reads as though the CONTACT turned us
+        // down, which is the one thing it never means. It means a
+        // president pulled our own letter before it went, and the row
+        // has to say which of those happened without being opened.
+        case "rejected":     return "PULLED"
         case "blocked":      return "BLOCKED"
         case "ready":        return "READY"
         // Queued is further along than ready and short of sent. Without
@@ -2926,7 +2930,7 @@ private struct DraftCard: View {
             Text("SENT \(Fmt.date(sent))\(d.sentBy?.name.map { " by \($0)" } ?? "")")
                 .font(Term.mono(9, weight: .bold)).tracking(0.5).foregroundStyle(Term.fgMuted)
         } else if d.rejectedAt != nil {
-            Text("REJECTED by \(d.rejectedBy?.name ?? "someone") — \(d.reviewNote ?? "no reason given")")
+            Text("PULLED by \(d.rejectedBy?.name ?? "someone"), will not be sent: \(d.reviewNote ?? "no reason given")")
                 .font(Term.mono(9, weight: .bold)).tracking(0.5).foregroundStyle(Term.negative)
         } else if d.screenBlocked == true {
             Text("BLOCKED by the compliance screen — cannot be approved or sent as written")

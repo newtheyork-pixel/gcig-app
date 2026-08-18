@@ -147,7 +147,14 @@ struct SendAllControl: View {
                 SectionLabel(text: "Outreach")
                 Button(open ? "CLOSE" : "SEND") {
                     open.toggle()
-                    if open && preview == nil { Task { await load() } }
+                    // EVERY open re-reads. The old guard only loaded when
+                    // preview was nil, so a list read once survived every
+                    // send, schedule, rejection and refresh for as long as
+                    // the tab stayed on screen, and the number beside the
+                    // button was whatever had been true when it was first
+                    // opened. Everything else on this tab reloads; this was
+                    // the one stale thing, and it looked live.
+                    if open { Task { await load() } }
                 }
                 .buttonStyle(TermButtonStyle())
                 if let r = result {
@@ -173,10 +180,15 @@ struct SendAllControl: View {
         queue = try? await API.shared.decode(
             ScheduledQueue.self,
             from: try await API.shared.get("/research/projects/\(projectID)/scheduled"))
+        // "13 scheduled for Mon 08:00" outlived the queue it described:
+        // unscheduling emptied the list and left the sentence standing,
+        // and nothing on screen retracted it. An outcome is only true
+        // while the server still agrees.
+        if let n = result?.scheduled, n > 0, (queue?.queued ?? 0) == 0 { result = nil }
     }
 
     private func unschedule(_ ids: [Int]?) async {
-        busy = true; note = nil
+        busy = true; note = nil; result = nil
         defer { busy = false }
         do {
             _ = try await API.shared.post("/research/projects/\(projectID)/unschedule",
