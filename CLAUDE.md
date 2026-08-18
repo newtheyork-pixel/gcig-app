@@ -868,6 +868,35 @@ proposed shape is one human-owned disposition including `Agreed`, with
 contact DERIVED from the message ledger, and `/sent` writing its ledger
 row in the same transaction.
 
+- **A second sender is what proves an outreach system (Aug '26)**: the day
+  Sander connected `sjo@thegriffinfund.org` and pressed Send once, four
+  latent defects became live at the same moment, all of them variations on
+  one assumption — that the person who WROTE a draft is the person who
+  SENT it. That held for a hundred sends and was never true by design.
+    - Both reply sweeps selected drafts by `authorId` and then asked that
+      member's mailbox for the thread. **A Gmail thread belongs to the
+      sender's mailbox**, so the sweep asked the wrong account, got a 404,
+      and `inboundOnThread` returned `[]`. A reply that never arrives is
+      indistinguishable from a quiet week; the target stays at Contacted
+      and the chase panel recommends writing again to somebody who already
+      answered. Both now key on `sentById`, and a 404 on a thread *we*
+      recorded is counted and reported rather than swallowed.
+    - `outreachScheduler` built its own signature block inline and left out
+      the title line, so a SCHEDULED letter was signed "The Griffin Fund"
+      while the terminal previewed "President, The Griffin Fund". Most of a
+      campaign goes out scheduled, so most of it was signed without an
+      office. One definition now lives in `services/outreachSignature.js`
+      and both send paths import it. **Two copies of a signature is the
+      bug, not the risk of one.**
+    - `decorate()` re-rendered `{{SIGNATURE}}` for the READER on sent
+      drafts too, so one member's letter was served back to another over
+      the reader's own name, title and address, under a header naming the
+      real sender. `sentBody` now stores what actually left; pre-column
+      rows resolve for the sender, never the reader. **A sent letter is a
+      record, not a template.**
+  The general rule: any system where one person does every step hides every
+  bug that distinguishes the steps. Adding the second person is the test.
+
 ## Known issues (open)
 
 - **GSAM Daily Rates PDF returns HTTP 403 from Render (May '26)**: the
