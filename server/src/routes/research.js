@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { SIGNATURE_TOKEN, signatureFor, renderSignature } from '../services/outreachSignature.js';
 import multer from 'multer';
 import rateLimit from 'express-rate-limit';
 import prisma from '../db.js';
@@ -1392,7 +1393,10 @@ const DRAFT_VIEW = {
   },
   author: { select: { id: true, name: true } },
   rejectedBy: { select: { id: true, name: true } },
-  sentBy: { select: { id: true, name: true } },
+  // role and email as well, because decorate resolves a pre-column send's
+  // signature FOR the sender, and signatureFor needs all three. Selecting
+  // only the name would sign it "Analyst" with no address.
+  sentBy: { select: { id: true, name: true, role: true, email: true } },
   queuedBy: { select: { id: true, name: true } },
 };
 
@@ -1405,40 +1409,9 @@ const DRAFT_VIEW = {
 // carry this at the moment and there will be more, so the body stores
 // the token below and the name is resolved per reader instead of
 // being baked in at write time.
-const SIGNATURE_TOKEN = '{{SIGNATURE}}';
-
-// Titles as a recipient should read them. Role names are internal
-// vocabulary and JuniorAnalyst under a school crest reads like a
-// hierarchy nobody outside the club needs explained.
-const OUTREACH_TITLE = {
-  President: 'President',
-  CIO: 'Chief Investment Officer',
-  SeniorPortfolioManager: 'Portfolio Manager',
-  PortfolioManager: 'Portfolio Manager',
-  SeniorAnalyst: 'Analyst',
-  Analyst: 'Analyst',
-  JuniorAnalyst: 'Analyst',
-  FacultyAdvisor: 'Faculty Advisor',
-  AdvisoryBoardMember: 'Advisory Board',
-  ChiefOfCommunication: 'Communications',
-};
-
-function signatureFor(user) {
-  if (!user) return SIGNATURE_TOKEN;
-  const title = OUTREACH_TITLE[user.role] || 'Analyst';
-  return [user.name, `${title}, The Griffin Fund`, 'Grace Church School', user.email]
-    .filter(Boolean)
-    .join('\n');
-}
-
 // Swap the token for the reader's own block. Every read path already
 // runs through decorate(), including the copy-to-clipboard the client
 // builds from d.body, so doing it here means no caller has to remember.
-function renderSignature(body, user) {
-  if (typeof body !== 'string' || !body.includes(SIGNATURE_TOKEN)) return body;
-  return body.split(SIGNATURE_TOKEN).join(signatureFor(user));
-}
-
 // The other half, and the one that is easy to forget: an edit round
 // trips through a textarea showing the RENDERED body, so saving it
 // back would write one person's name into storage permanently and
@@ -1461,7 +1434,17 @@ function decorate(d, user) {
   const blocked = d.screenRisk === 'prohibited';
   return {
     ...d,
-    body: renderSignature(d.body, user),
+    // A SENT letter is a record, not a template. Re-resolving its
+    // signature for whoever happens to be reading produced an archive in
+    // which Sander's email to JVC was served to Thomas over Thomas's name
+    // and address, three lines under a header saying Sander sent it.
+    //
+    // Prefer the stored copy. Failing that (every send before this
+    // column existed) resolve for the SENDER, who is at least the right
+    // person, and never for the reader.
+    body: d.sentAt
+      ? (d.sentBody || renderSignature(d.body, d.sentBy || user))
+      : renderSignature(d.body, user),
     // Named so a client can show "signing as ..." without re-deriving
     // the rule and getting a different answer.
     signature: signatureFor(user),
@@ -2104,7 +2087,7 @@ router.post('/projects/:id/send-all', canResearch, async (req, res) => {
         await prisma.$transaction(async (tx) => {
           await tx.outreachDraft.update({
             where: { id: draft.id },
-            data: { sentAt: new Date(), sentById: req.user?.id ?? null,
+            data: { sentAt: new Date(), sentById: req.user?.id ?? null, sentBody: body,
                     gmailThreadId: out.threadId, gmailMessageId: out.messageId, sentVia: 'gmail' },
           });
           await tx.outreachMessage.create({
@@ -2203,6 +2186,9 @@ router.post('/drafts/:id/deliver', canResearch, async (req, res) => {
           data: {
             sentAt: new Date(),
             sentById: req.user?.id ?? null,
+            // What actually left, not a token to be re-resolved against
+            // whoever opens this row next month.
+            sentBody: body,
             gmailThreadId: sent.threadId,
             gmailMessageId: sent.messageId,
             sentVia: 'gmail',

@@ -345,8 +345,15 @@ export async function inboundOnThread(userId, threadId) {
     thread = await call(c, `/threads/${encodeURIComponent(threadId)}?format=full`);
   } catch (err) {
     // A thread the member deleted is not an error worth stopping a sweep
-    // over a hundred other threads for.
-    if (err?.response?.status === 404) return [];
+    // over a hundred other threads for. But it is also exactly what a
+    // WRONG CREDENTIAL looks like, and that ambiguity hid a bug that
+    // silently discarded replies, so the caller is told rather than left
+    // to read an empty array as a quiet week.
+    if (err?.response?.status === 404) {
+      const e = new Error('thread not in this mailbox');
+      e.threadMissing = true;
+      throw e;
+    }
     throw err;
   }
   const mine = acct.address.toLowerCase();

@@ -1,4 +1,5 @@
 import { PrismaClient } from '@prisma/client';
+import { renderSignature } from './outreachSignature.js';
 import { sendAs, gmailConfigured, maySendMail } from './gmail.js';
 
 const prisma = new PrismaClient();
@@ -64,10 +65,14 @@ export async function runDueSends(now = new Date()) {
 
     // The signature resolves for the SENDER, which here is the person who
     // scheduled it rather than whoever happens to read the draft later.
-    const body = String(d.body || '').replace(
-      /\{\{SIGNATURE\}\}/g,
-      [user.name, 'The Griffin Fund', 'Grace Church School', user.email].filter(Boolean).join('\n')
-    );
+    //
+    // Through the shared helper, because this used to build its own block
+    // and dropped the title line while doing it. The preview in the
+    // terminal said "President, The Griffin Fund" and the letter that left
+    // said "The Griffin Fund", and since almost the whole Signet campaign
+    // was scheduled rather than sent by hand, almost the whole campaign
+    // went out unsigned by office.
+    const body = renderSignature(String(d.body || ''), user);
 
     let out;
     try {
@@ -85,7 +90,8 @@ export async function runDueSends(now = new Date()) {
         await tx.outreachDraft.update({
           where: { id: d.id },
           data: {
-            sentAt: new Date(), sentById: user.id, scheduledFor: null, scheduleError: null,
+            sentAt: new Date(), sentById: user.id, sentBody: body,
+            scheduledFor: null, scheduleError: null,
             gmailThreadId: out.threadId, gmailMessageId: out.messageId, sentVia: 'gmail',
           },
         });

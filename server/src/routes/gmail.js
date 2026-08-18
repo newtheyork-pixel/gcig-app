@@ -187,23 +187,31 @@ router.delete('/connection', senderOnly, async (req, res) => {
  */
 router.post('/sync', senderOnly, async (req, res) => {
   try {
+    // The mailbox that SENT it owns the thread, which is not always the
+    // member who wrote it. See the note in replySweep: keying this on the
+    // author asks the wrong Gmail account and gets a 404 that reads as
+    // "no new replies".
     const drafts = await prisma.outreachDraft.findMany({
       where: {
         gmailThreadId: { not: null },
-        authorId: req.user.id,
+        OR: [
+          { sentById: req.user.id },
+          { AND: [{ sentById: null }, { authorId: req.user.id }] },
+        ],
       },
       select: { id: true, targetId: true, gmailThreadId: true },
       orderBy: { id: 'desc' },
       take: 300,
     });
 
-    let found = 0, added = 0;
+    let found = 0, added = 0, gone = 0;
     const errors = [];
     for (const d of drafts) {
       let msgs;
       try {
         msgs = await inboundOnThread(req.user.id, d.gmailThreadId);
       } catch (err) {
+        if (err?.threadMissing) { gone += 1; continue; }
         errors.push(`${d.gmailThreadId}: ${err.message}`);
         continue;
       }
@@ -242,7 +250,7 @@ router.post('/sync', senderOnly, async (req, res) => {
     // half the threads and said "0 new" is indistinguishable from a quiet
     // week, and the quiet week is the one that ends a contact.
     res.json({ threads: drafts.length, seen: found, added, errors: errors.slice(0, 10),
-               errorCount: errors.length });
+               errorCount: errors.length, missing: gone });
   } catch (err) {
     console.error('gmail sync failed:', err.message);
     res.status(500).json({ error: 'Could not read replies' });

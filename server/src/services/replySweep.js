@@ -23,14 +23,33 @@ export async function sweepAll() {
   });
   if (!accounts.length) return { accounts: 0 };
 
-  let added = 0, threads = 0;
+  let added = 0, threads = 0, missing = 0;
   const errors = [];
   for (const acct of accounts) {
-    // Only threads this member's own drafts started. The same fence the
+    // Only threads this member's own mailbox started. The same fence the
     // manual sweep keeps, and the reason gmail.readonly is defensible: a
     // timer that widened the read would be worse than a button that did.
+    //
+    // Keyed on who SENT it, not who wrote it. Those were the same person
+    // for the first hundred sends and the distinction cost nothing, until
+    // the day a second member connected a mailbox and sent a draft someone
+    // else had drafted. Then the sweep asked the author's mailbox for a
+    // thread that lives in the sender's, Gmail answered 404, and
+    // inboundOnThread turned that into an empty list. The reply was not
+    // lost loudly. It simply never arrived, the target stayed at Contacted,
+    // and the chase panel went on recommending we write again to somebody
+    // who had already answered.
+    //
+    // sentById is null only for drafts nobody has sent, which carry no
+    // thread id either; the fallback covers any that predate the column.
     const drafts = await prisma.outreachDraft.findMany({
-      where: { gmailThreadId: { not: null }, authorId: acct.userId },
+      where: {
+        gmailThreadId: { not: null },
+        OR: [
+          { sentById: acct.userId },
+          { AND: [{ sentById: null }, { authorId: acct.userId }] },
+        ],
+      },
       select: { id: true, targetId: true, gmailThreadId: true },
       orderBy: { id: 'desc' },
       take: 300,
@@ -41,6 +60,10 @@ export async function sweepAll() {
       try {
         msgs = await inboundOnThread(acct.userId, d.gmailThreadId);
       } catch (err) {
+        // A thread that is not in this mailbox is now reported rather than
+        // read as silence, but it must not stop the sweep: one deleted
+        // conversation is not a reason to skip ninety-nine live ones.
+        if (err?.threadMissing) { missing += 1; continue; }
         errors.push(`${acct.address} ${d.gmailThreadId}: ${err.message}`);
         // A refused credential refuses every remaining thread for this
         // member, so stop rather than generating three hundred identical
@@ -68,5 +91,5 @@ export async function sweepAll() {
       where: { userId: acct.userId }, data: { lastSyncAt: new Date() },
     });
   }
-  return { accounts: accounts.length, threads, added, errors: errors.slice(0, 5) };
+  return { accounts: accounts.length, threads, added, errors: errors.slice(0, 5) , missing };
 }

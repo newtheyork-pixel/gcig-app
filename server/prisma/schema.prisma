@@ -1387,6 +1387,14 @@ model OutreachDraft {
   queuedBy   User?     @relation("OutreachDraftQueuer", fields: [queuedById], references: [id], onDelete: SetNull)
 
   sentAt   DateTime?
+  // The letter as it actually left, resolved signature and all.
+  //
+  // Without this the app reconstructs a sent email at read time by
+  // substituting the READER's signature into the stored token, so the same
+  // sent draft renders as a different person's letter depending on who
+  // opens it. That is not a display quirk on a record of what a club said
+  // to an outside professional in writing.
+  sentBody String?
   sentById Int?
   sentBy   User?     @relation("OutreachDraftSender", fields: [sentById], references: [id], onDelete: SetNull)
 
