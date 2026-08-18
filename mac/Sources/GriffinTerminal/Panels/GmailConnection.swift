@@ -64,6 +64,18 @@ struct GmailConnectionRow: View {
                                 .foregroundStyle(s.revokedAt != nil ? Term.negative : Term.fgMuted)
                             Button(busy ? "OPENING" : "CONNECT") { Task { await connect() } }
                                 .buttonStyle(TermButtonStyle()).disabled(busy)
+                            // The row cannot know consent finished. Google
+                            // redirects the BROWSER to the callback, and
+                            // nothing comes back to the app, so the state
+                            // that changed is invisible here until someone
+                            // asks again. Without this the row still reads
+                            // "no mailbox connected" after a connection
+                            // that worked perfectly, which reads as failure
+                            // at the one moment it should read as success.
+                            if note != nil {
+                                Button("RECHECK") { Task { await load() } }
+                                    .buttonStyle(TermButtonStyle()).disabled(busy)
+                            }
                         }
                         if let note {
                             Text(note).font(Term.mono(10)).foregroundStyle(Term.negative).lineLimit(1)
@@ -104,7 +116,7 @@ struct GmailConnectionRow: View {
             let link = try await API.shared.decode(Link.self, from: d)
             guard let u = URL(string: link.url) else { note = "bad link from the server"; return }
             NSWorkspace.shared.open(u)
-            note = "finish in the browser, then RETRY here"
+            note = "approve it in the browser, then press RECHECK"
         } catch {
             note = error.localizedDescription
         }
