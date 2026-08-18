@@ -2269,10 +2269,39 @@ router.post('/drafts/:id/sent', canResearch, async (req, res) => {
     // that matters and it is checked above.
 
     const updated = await prisma.$transaction(async (tx) => {
+      const sentAt = new Date();
       const draft = await tx.outreachDraft.update({
         where: { id },
-        data: { sentAt: new Date(), sentById: req.user?.id ?? null },
+        data: {
+          sentAt,
+          sentById: req.user?.id ?? null,
+          // Marked by hand, so this is the copy we believe went out. It is
+          // a claim rather than a receipt, unlike the Gmail path, but it is
+          // the only copy there will ever be and reconstructing it later
+          // from the reader's signature is how the archive started lying.
+          sentBody: renderSignature(d.body, req.user),
+        },
         include: DRAFT_VIEW,
+      });
+      // The ledger row, in the same transaction, exactly as /deliver does.
+      //
+      // Without it "marked sent" moved the draft and the target and left
+      // the ledger untouched, and the follow-up clock reads the LEDGER. So
+      // answering somebody by hand cleared nothing: they stayed "owed a
+      // reply" forever, and the chase panel went on telling us to write to
+      // people we had already written to. Fifty-seven letters were in that
+      // state, including every reply to a source who had actually engaged,
+      // which is the worst possible set to lose track of.
+      await tx.outreachMessage.create({
+        data: {
+          targetId: draft.targetId,
+          draftId: draft.id,
+          direction: 'out',
+          kind: 'Reply',
+          occurredAt: sentAt,
+          body: (draft.sentBody || '').slice(0, 20_000),
+          recordedById: req.user?.id ?? null,
+        },
       });
       // The whole point of marking it sent is that the funnel moves.
       // Leaving the target on "Identified" after an email went out is
