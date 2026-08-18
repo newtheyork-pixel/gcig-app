@@ -360,6 +360,108 @@ router.get('/inbox', async (req, res) => {
   }
 });
 
+/**
+ * Answer a message from the inbox, in its own thread.
+ *
+ * The panel was read-only on the theory that a reply typed from a list is
+ * a reply written without the correspondence in front of it. That was
+ * wrong in one specific way: it left the inbox unable to do the one thing
+ * an inbox is for, and pushed every answer through a five-step draft
+ * pipeline built for cold outreach that nobody has read yet.
+ *
+ * This is still not a shortcut past the screen. The reply is written as a
+ * real OutreachDraft, screened like anything else, refused if the screen
+ * prohibits it, and logged in the same transaction that marks it sent. The
+ * difference is that it THREADS: it carries the Gmail thread id and the
+ * In-Reply-To of the message it answers, so it lands inside the
+ * conversation instead of arriving as a fresh cold email with "Re:" on it.
+ */
+router.post('/messages/:id/reply', canResearch, async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) return res.status(400).json({ error: 'Bad id' });
+  const text = String(req.body?.body || '').trim();
+  if (!text) return res.status(400).json({ error: 'Write something first.' });
+  if (!gmailConfigured()) return res.status(503).json({ error: 'Gmail is not configured on this server' });
+  if (!maySendMail(req.user)) {
+    return res.status(403).json({ error: 'Sending mail from the terminal is limited to named senders.' });
+  }
+  try {
+    const msg = await prisma.outreachMessage.findUnique({
+      where: { id },
+      include: { target: true, draft: { select: { id: true, subject: true, gmailThreadId: true } } },
+    });
+    if (!msg) return res.status(404).json({ error: 'No such message' });
+    const to = (msg.target?.email || '').trim();
+    if (!to || !/^[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}$/.test(to)) {
+      return res.status(409).json({ error: `No usable address on this contact (${to || 'blank'}).` });
+    }
+    // Bounces are the one kind that must not be answered. The address is
+    // dead; a reply to it is another bounce, and the row said so.
+    if (msg.kind === 'Bounce') {
+      return res.status(409).json({ error: 'That address bounced. Find another route before writing again.' });
+    }
+
+    const base = (msg.subject || msg.draft?.subject || 'our note').replace(/^re:\s*/i, '');
+    const subject = `Re: ${base}`.slice(0, 300);
+
+    const draft = await prisma.outreachDraft.create({
+      data: {
+        targetId: msg.targetId,
+        subject,
+        body: tokeniseSignature(text.slice(0, 20_000), req.user),
+        authorId: req.user?.id ?? null,
+      },
+    });
+    await screenAndStore(draft.id);
+    const screened = await prisma.outreachDraft.findUnique({ where: { id: draft.id } });
+    if (screened.screenRisk === 'prohibited') {
+      return res.status(409).json({
+        draftId: draft.id,
+        error: `The compliance screen will not pass this: ${screened.screenReason || 'no reason recorded'}. `
+          + 'It has been saved as a draft so you can edit it.',
+      });
+    }
+
+    const body = renderSignature(screened.body, req.user);
+    let sent;
+    try {
+      sent = await sendAs(req.user.id, {
+        to, subject, body,
+        threadId: msg.draft?.gmailThreadId || undefined,
+        inReplyTo: msg.rfcMessageId || undefined,
+        fromName: req.user?.name,
+      });
+    } catch (err) {
+      return res.status(502).json({ draftId: draft.id, error: `Gmail refused it: ${err.message}` });
+    }
+
+    await prisma.$transaction(async (tx) => {
+      await tx.outreachDraft.update({
+        where: { id: draft.id },
+        data: {
+          sentAt: new Date(), sentById: req.user?.id ?? null, sentBody: body,
+          gmailThreadId: sent.threadId, gmailMessageId: sent.messageId, sentVia: 'gmail',
+        },
+      });
+      await tx.outreachMessage.create({
+        data: {
+          targetId: msg.targetId, draftId: draft.id, direction: 'out', kind: 'Reply',
+          occurredAt: new Date(), subject, body: body.slice(0, 20_000),
+          gmailMessageId: sent.messageId, recordedById: req.user?.id ?? null,
+        },
+      });
+      await tx.researchTarget.update({
+        where: { id: msg.targetId },
+        data: { lastContactAt: new Date() },
+      });
+    });
+    res.json({ ok: true, draftId: draft.id, from: sent.from, subject });
+  } catch (err) {
+    console.error('research/reply failed:', err.message);
+    res.status(500).json({ error: 'Could not send the reply' });
+  }
+});
+
 router.get('/projects/manifest', async (req, res) => {
   try {
     // The same visibility rules the real payload uses. A fingerprint

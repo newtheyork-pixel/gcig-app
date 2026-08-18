@@ -48,6 +48,14 @@ struct InboxPanel: View {
     @State private var lastLoad: Date?
     @State private var syncing = false
     @State private var syncNote: String?
+    /// Which message has a reply box open, and what is in it. One at a
+    /// time on purpose: two half-written answers in a list is how the
+    /// wrong one gets sent.
+    @State private var replyingTo: Int?
+    @State private var replyText = ""
+    @State private var sending = false
+    @State private var rowNote: [Int: String] = [:]
+    @State private var sentJustNow: Set<Int> = []
 
     enum Filter: String, CaseIterable {
         case all = "ALL", owed = "OWED", bounced = "BOUNCED", replies = "REPLIES"
@@ -321,6 +329,45 @@ struct InboxPanel: View {
                 Text(addr).font(Term.mono(9)).foregroundStyle(Term.fgMuted)
                     .textSelection(.enabled).padding(.leading, 14)
             }
+
+            // Answer it here. A bounce is the one thing that cannot be
+            // answered: the address is dead and a reply is another bounce.
+            if open && !bounced && (m.direction ?? "in") == "in" {
+                if replyingTo == m.id {
+                    VStack(alignment: .leading, spacing: 4) {
+                        TextEditor(text: $replyText)
+                            .font(Term.mono(11))
+                            .foregroundStyle(Term.fg)
+                            .scrollContentBackground(.hidden)
+                            .background(Term.bg)
+                            .frame(minHeight: 90)
+                            .overlay(Rectangle().strokeBorder(Term.border, lineWidth: 1))
+                        HStack(spacing: 8) {
+                            Button(sending ? "SENDING" : "SEND REPLY") { Task { await sendReply(m) } }
+                                .buttonStyle(TermButtonStyle())
+                                .disabled(sending || replyText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                            Button("CANCEL") { replyingTo = nil; replyText = "" }
+                                .buttonStyle(TermButtonStyle()).disabled(sending)
+                            Text("Goes from your mailbox, inside this thread. It is screened first, and there is no undo.")
+                                .font(Term.mono(9)).foregroundStyle(Term.fgMuted)
+                            Spacer()
+                        }
+                    }
+                    .padding(.leading, 14).padding(.top, 4)
+                } else if sentJustNow.contains(m.id) {
+                    Text("Replied.").font(Term.mono(10)).foregroundStyle(Term.positive)
+                        .padding(.leading, 14)
+                } else {
+                    Button("REPLY") { replyingTo = m.id; replyText = "" }
+                        .buttonStyle(TermButtonStyle())
+                        .padding(.leading, 14).padding(.top, 2)
+                }
+                if let n = rowNote[m.id] {
+                    Text(n).font(Term.mono(10)).foregroundStyle(Term.negative)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .padding(.leading, 14)
+                }
+            }
         }
         .padding(.horizontal, 10).padding(.vertical, 5)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -334,6 +381,27 @@ struct InboxPanel: View {
         }
         .background(Term.bgPanel)
         .overlay(alignment: .bottom) { Rectangle().fill(Term.border).frame(height: 1) }
+    }
+
+    private func sendReply(_ m: InboxPayload.Msg) async {
+        sending = true; rowNote[m.id] = nil
+        defer { sending = false }
+        do {
+            _ = try await API.shared.post("/research/messages/\(m.id)/reply",
+                                          json: ["body": replyText])
+            replyingTo = nil; replyText = ""
+            sentJustNow.insert(m.id)
+            // Re-read rather than patch the row by hand: the answer
+            // changes who is owed a reply, and that is the server's
+            // arithmetic, not ours.
+            await load()
+        } catch {
+            // The screen refusing it, or Gmail refusing it, are both
+            // things the writer has to see in full. This is the one
+            // place in the panel where a truncated error would cost
+            // somebody a rewrite they did not need.
+            rowNote[m.id] = error.localizedDescription
+        }
     }
 
     private func load() async {

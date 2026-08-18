@@ -442,6 +442,11 @@ export async function inboundOnThread(userId, threadId) {
         gmailMessageId: msg.id,
         threadId: msg.threadId,
         from,
+        // The RFC header, not Gmail's internal id. Gmail will thread on
+        // threadId alone, but every other mail client in the world
+        // threads on In-Reply-To, and a source reading us in Outlook
+        // should see a conversation rather than a pile.
+        rfcMessageId: header(msg.payload, 'Message-ID'),
         subject: header(msg.payload, 'Subject'),
         occurredAt: msg.internalDate ? new Date(Number(msg.internalDate)) : new Date(),
         body: withoutQuotedTail(plainText(msg.payload)),
