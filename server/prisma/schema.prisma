@@ -1499,6 +1499,11 @@ model OutreachMessage {
   // out: FollowUp | Reply | Scheduling | Other
   kind           String
   occurredAt     DateTime       @map("receivedAt")
+  // What the message was actually called. An inbox without subject
+  // lines is a list of people, not a list of messages: two replies from
+  // the same person on the same thread are indistinguishable, and the
+  // only way to tell what one is about is to open it.
+  subject  String?
   body           String?
   // What we decided to do about it, which is the part a reader needs
   // three weeks later when the reply itself is no longer surprising.

@@ -76,7 +76,9 @@ export async function sweepAll() {
           await prisma.outreachMessage.create({
             data: {
               targetId: d.targetId, draftId: d.id, direction: 'in',
-              kind: classify(m), occurredAt: m.occurredAt,
+                            kind: classify(m),
+              subject: m.subject ? String(m.subject).slice(0, 300) : null,
+              subject: m.subject ? String(m.subject).slice(0, 300) : null, occurredAt: m.occurredAt,
               body: m.body?.slice(0, 20_000) || null,
               gmailMessageId: m.gmailMessageId, recordedById: null,
             },

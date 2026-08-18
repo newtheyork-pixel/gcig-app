@@ -21,11 +21,15 @@ struct InboxPayload: Decodable {
         let direction: String?
         let kind: String?
         let occurredAt: String?
+        let subject: String?
         let body: String?
         let target: T?
         let followUp: F?
         struct T: Decodable {
             let id: Int?; let name: String?; let employer: String?; let role: String?
+            /// Where the bounce came from, so a dead address is nameable
+            /// on the row rather than one more click away.
+            let email: String?
             let project: P?
             struct P: Decodable { let id: Int?; let ticker: String?; let name: String? }
         }
@@ -37,8 +41,30 @@ struct InboxPanel: View {
     @State private var state: Loadable<InboxPayload> = .loading
     /// Owed-only is the working view: the whole point of an inbox here is
     /// who is still waiting on us, not a chronology of everything ever said.
-    @State private var owedOnly = false
+    @State private var filter: Filter = .all
     @State private var expanded: Set<Int> = []
+    /// Last successful read, so the header can say how fresh this is
+    /// rather than leaving a reader to guess whether it is live.
+    @State private var lastLoad: Date?
+    @State private var syncing = false
+    @State private var syncNote: String?
+
+    enum Filter: String, CaseIterable {
+        case all = "ALL", owed = "OWED", bounced = "BOUNCED", replies = "REPLIES"
+        var label: String { rawValue }
+    }
+
+    /// Sixty seconds.
+    ///
+    /// This endpoint is a database read, not a Gmail call, and the
+    /// terminal's data routes share 900 requests per ten minutes per
+    /// caller, so one a minute spends 6.7% of the allowance and leaves
+    /// the rest for every other panel. Pulling from GMAIL is a different
+    /// matter and deliberately NOT on this timer: the server sweeps every
+    /// ten minutes on its own, which is the cadence Google's quota is
+    /// sized for, and REFRESH forces one by hand when somebody is waiting
+    /// on a specific reply.
+    private static let pollSeconds: UInt64 = 60
     /// The mailbox behind the inbox. Nil while we are still asking; a
     /// failed status is deliberately NOT treated as disconnected, because
     /// telling somebody to connect a mailbox they already connected is a
@@ -72,22 +98,54 @@ struct InboxPanel: View {
             }
         }
         .task { await loadGmail() }
+        .task {
+            // Re-read on a clock. A desk where somebody is waiting on an
+            // answer should not need to be told to press anything, and a
+            // stale inbox is worse than a slow one: it reports silence
+            // that is not there.
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: Self.pollSeconds * 1_000_000_000)
+                if Task.isCancelled { break }
+                await load()
+            }
+        }
     }
 
     private var inbox: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 8) {
                 if case .loaded(let p) = state {
-                    Text("\(p.counts?.total ?? 0) in")
-                        .font(Term.mono(11)).foregroundStyle(Term.fgMuted)
-                    Text("\(p.counts?.owed ?? 0) owed a reply")
-                        .font(Term.mono(11))
-                        .foregroundStyle((p.counts?.owed ?? 0) > 0 ? Term.orange : Term.fgMuted)
+                    let msgs = p.messages ?? []
+                    let owed = msgs.filter { $0.followUp?.state == "owed" }.count
+                    let bounced = msgs.filter { ($0.kind ?? "") == "Bounce" }.count
+                    Text("\(msgs.count)").font(Term.mono(11)).foregroundStyle(Term.fg)
+                    ForEach(Filter.allCases, id: \.self) { f in
+                        let n = count(for: f, in: msgs)
+                        Button(action: { filter = f }) {
+                            HStack(spacing: 3) {
+                                Text(f.label).font(Term.mono(9, weight: filter == f ? .bold : .regular))
+                                Text("\(n)").font(Term.mono(9))
+                            }
+                            .foregroundStyle(filter == f ? Term.amber
+                                : (f == .owed && owed > 0) ? Term.orange
+                                : (f == .bounced && bounced > 0) ? Term.negative : Term.fgMuted)
+                            .padding(.horizontal, 6).padding(.vertical, 2)
+                            .background(filter == f ? Term.bgPanelHover : Color.clear)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                    }
                 }
-                Button(owedOnly ? "SHOWING OWED" : "SHOW ALL") { owedOnly.toggle() }
-                    .buttonStyle(TermButtonStyle())
-                Button("REFRESH") { Task { await load() } }.buttonStyle(TermButtonStyle())
                 Spacer()
+                if let d = lastLoad {
+                    Text(ago(d)).font(Term.mono(9)).foregroundStyle(Term.fgMuted)
+                        .help("The list re-reads itself every minute. REFRESH also pulls from Gmail.")
+                }
+                Button(syncing ? "PULLING" : "REFRESH") { Task { await syncThenLoad() } }
+                    .buttonStyle(TermButtonStyle()).disabled(syncing)
+                if let n = syncNote {
+                    Text(n).font(Term.mono(9)).foregroundStyle(Term.negative).lineLimit(1)
+                }
             }
             .padding(.horizontal, 10).padding(.vertical, 6)
 
@@ -95,7 +153,7 @@ struct InboxPanel: View {
                        emptyWhen: { ($0.messages ?? []).isEmpty },
                        emptyText: "Nothing has come in yet.",
                        retry: { Task { await load() } }) { p in
-                let rows = (p.messages ?? []).filter { !owedOnly || $0.followUp?.state == "owed" }
+                let rows = (p.messages ?? []).filter { matches(filter, $0) }
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 0) {
                         ForEach(rows) { m in row(m) }
@@ -104,6 +162,53 @@ struct InboxPanel: View {
             }
         }
         .task { await load() }
+    }
+
+    private func matches(_ f: Filter, _ m: InboxPayload.Msg) -> Bool {
+        switch f {
+        case .all:     return true
+        case .owed:    return m.followUp?.state == "owed"
+        case .bounced: return (m.kind ?? "") == "Bounce"
+        // A human answer. An out of office is NOT being heard from, which
+        // is the whole reason kind exists, so it does not belong here.
+        case .replies: return (m.direction ?? "in") == "in"
+            && !["Bounce", "AutoReply"].contains(m.kind ?? "")
+        }
+    }
+
+    private func count(for f: Filter, in msgs: [InboxPayload.Msg]) -> Int {
+        msgs.filter { matches(f, $0) }.count
+    }
+
+    /// How long ago, in the shortest form that is still true.
+    private func ago(_ d: Date) -> String {
+        let s = Int(Date().timeIntervalSince(d))
+        if s < 90 { return "just now" }
+        if s < 3600 { return "\(s / 60)m ago" }
+        return "\(s / 3600)h ago"
+    }
+
+    /// REFRESH means two different things and does both, in order.
+    ///
+    /// The cheap one is re-reading our own database, which is what the
+    /// minute timer does. The expensive one is asking GMAIL for new mail
+    /// on every thread we started, which is what somebody actually wants
+    /// when they press a button because they are waiting on a reply. The
+    /// server already sweeps every ten minutes; this is the impatient path.
+    private func syncThenLoad() async {
+        syncing = true; syncNote = nil
+        defer { syncing = false }
+        do {
+            let d = try await API.shared.post("/gmail/sync", json: [:])
+            struct Sync: Decodable { let added: Int?; let errorCount: Int?; let errors: [String]? }
+            let r = try await API.shared.decode(Sync.self, from: d)
+            if (r.errorCount ?? 0) > 0 { syncNote = r.errors?.first ?? "\(r.errorCount ?? 0) threads failed" }
+        } catch {
+            // A failed pull must not look like an empty mailbox. The list
+            // below is still whatever we last read, and it is still true.
+            syncNote = error.localizedDescription
+        }
+        await load()
     }
 
     private func loadGmail() async {
@@ -138,10 +243,15 @@ struct InboxPanel: View {
 
     private func row(_ m: InboxPayload.Msg) -> some View {
         let owed = m.followUp?.state == "owed"
-        return VStack(alignment: .leading, spacing: 3) {
+        let bounced = (m.kind ?? "") == "Bounce"
+        let open = expanded.contains(m.id)
+        return VStack(alignment: .leading, spacing: 2) {
             HStack(spacing: 6) {
+                Text(open ? "v" : ">")
+                    .font(Term.mono(9)).foregroundStyle(Term.fgMuted).frame(width: 8)
                 Text(m.target?.name ?? "Unknown")
-                    .font(Term.mono(12, weight: .bold)).foregroundStyle(Term.fg)
+                    .font(Term.mono(12, weight: .bold))
+                    .foregroundStyle(bounced ? Term.negative : Term.fg)
                 if let e = m.target?.employer {
                     Text(e).font(Term.mono(10)).foregroundStyle(Term.fgDim).lineLimit(1)
                 }
@@ -153,7 +263,7 @@ struct InboxPanel: View {
                 // needs a new address rather than another send.
                 if let k = m.kind, k != "Reply" {
                     Text(k.uppercased()).font(Term.mono(9))
-                        .foregroundStyle(k == "Bounce" ? Term.negative : Term.orange)
+                        .foregroundStyle(bounced ? Term.negative : Term.orange)
                 }
                 if owed {
                     Text("OWED").font(Term.mono(9, weight: .bold)).foregroundStyle(Term.negative)
@@ -162,23 +272,65 @@ struct InboxPanel: View {
                 Text(Fmt.shortDateTime(m.occurredAt))
                     .font(Term.mono(10)).foregroundStyle(Term.fgMuted)
             }
+
+            // The subject, which an inbox without one is not. Two replies
+            // from the same person on the same day were previously
+            // distinguishable only by opening them.
+            if let sub = m.subject, !sub.isEmpty {
+                Text(sub)
+                    .font(Term.mono(11, weight: .bold))
+                    .foregroundStyle(Term.fgDim)
+                    .lineLimit(1)
+                    .padding(.leading, 14)
+            }
+
             if let b = m.body, !b.isEmpty {
                 Text(b)
-                    .font(Term.mono(11)).foregroundStyle(Term.fgDim)
-                    .lineLimit(expanded.contains(m.id) ? nil : 2)
+                    .font(Term.mono(11)).foregroundStyle(Term.fgMuted)
+                    .lineLimit(open ? nil : 2)
                     .textSelection(.enabled)
-                    .onTapGesture {
-                        if expanded.contains(m.id) { expanded.remove(m.id) } else { expanded.insert(m.id) }
-                    }
+                    .padding(.leading, 14)
             }
-            if owed, let r = m.followUp?.recommendation {
-                Text(r).font(Term.mono(10)).foregroundStyle(Term.orange)
+
+            // Everything below this point is OURS, not theirs.
+            //
+            // The recommendation used to render as plain text directly
+            // under the body in a similar colour, so "They wrote back and
+            // we have not answered" read as a sentence the source had
+            // written. A line about what WE owe cannot look like a line
+            // they sent.
+            if owed || bounced {
+                HStack(spacing: 6) {
+                    Text(bounced ? "FIX" : "TODO")
+                        .font(Term.mono(8, weight: .bold)).tracking(0.5)
+                        .foregroundStyle(Term.bg)
+                        .padding(.horizontal, 4).padding(.vertical, 1)
+                        .background(bounced ? Term.negative : Term.orange)
+                    Text(bounced
+                         ? "\(m.target?.email ?? "that address") does not exist. Find another route before sending again."
+                         : (m.followUp?.recommendation ?? "They wrote back and we have not answered."))
+                        .font(Term.mono(10))
+                        .foregroundStyle(bounced ? Term.negative : Term.orange)
+                        .lineLimit(open ? nil : 1)
+                    Spacer()
+                }
+                .padding(.leading, 14).padding(.top, 2)
+            }
+
+            if open, let addr = m.target?.email {
+                Text(addr).font(Term.mono(9)).foregroundStyle(Term.fgMuted)
+                    .textSelection(.enabled).padding(.leading, 14)
             }
         }
         .padding(.horizontal, 10).padding(.vertical, 5)
         .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            if open { expanded.remove(m.id) } else { expanded.insert(m.id) }
+        }
         .overlay(alignment: .leading) {
-            if owed { Rectangle().fill(Term.negative).frame(width: 2) }
+            if bounced { Rectangle().fill(Term.negative).frame(width: 2) }
+            else if owed { Rectangle().fill(Term.orange).frame(width: 2) }
         }
         .background(Term.bgPanel)
         .overlay(alignment: .bottom) { Rectangle().fill(Term.border).frame(height: 1) }
@@ -188,6 +340,14 @@ struct InboxPanel: View {
         do {
             let d = try await API.shared.get("/research/inbox")
             state = .loaded(try await API.shared.decode(InboxPayload.self, from: d))
-        } catch { state = .failed(error.localizedDescription) }
+            lastLoad = Date()
+        } catch {
+            // A poll that fails must not wipe a list we already have.
+            // The timer runs every minute; one refused request, or a
+            // dyno waking up, is not news and is certainly not an empty
+            // mailbox. Only the first load can fail into an error state.
+            if case .loaded = state { return }
+            state = .failed(error.localizedDescription)
+        }
     }
 }

@@ -309,7 +309,12 @@ router.get('/inbox', async (req, res) => {
       take,
       select: {
         id: true, direction: true, kind: true, occurredAt: true, body: true,
-        action: true, draftId: true,
+        subject: true, action: true, draftId: true,
+        // The draft's subject stands in for messages swept before the
+        // column existed, which is most of them. A reply carries the
+        // subject of the letter it answers, so this is the right answer
+        // rather than a placeholder.
+        draft: { select: { subject: true } },
         target: {
           select: {
             id: true, name: true, employer: true, role: true, email: true, status: true,
@@ -341,6 +346,7 @@ router.get('/inbox', async (req, res) => {
     res.json({
       messages: rows.map((m) => ({
         ...m,
+        subject: m.subject || m.draft?.subject || null,
         followUp: state.get(m.target?.id) || null,
       })),
       counts: {
