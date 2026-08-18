@@ -453,6 +453,15 @@ router.get('/projects/:id', async (req, res) => {
           },
         },
         interviews: {
+          // A quarantined interview leaves the panel as well as the
+          // citations. The comment at the top of this file says they
+          // "leave every read path" and this list was the exception: a
+          // superseded row sat in the workspace announcing NO CONSENT
+          // next to the real one, which reads as a compliance problem
+          // rather than as bookkeeping. It is still in the database and
+          // still reachable by id; it is simply not part of the project
+          // anybody opens.
+          where: { quarantined: false },
           orderBy: { conductedAt: 'desc' },
           // Explicit columns, because `include` returns every scalar and
           // one of them is transcriptWords — the per-word timing array
