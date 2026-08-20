@@ -33,7 +33,11 @@ struct InboxPayload: Decodable {
             let project: P?
             struct P: Decodable { let id: Int?; let ticker: String?; let name: String? }
         }
-        struct F: Decodable { let state: String?; let recommendation: String? }
+        struct F: Decodable {
+            let state: String?
+            let recommendation: String?
+            let resumeAfter: String?
+        }
     }
 }
 
@@ -432,6 +436,18 @@ struct InboxPanel: View {
             // we have not answered" read as a sentence the source had
             // written. A line about what WE owe cannot look like a line
             // they sent.
+            // A closed loop is worth saying once, quietly. It is the
+            // difference between "we have dropped this" and "they told us
+            // when to come back", and only one of those needs anybody.
+            if !owed && !bounced, let st = m.followUp?.state,
+               st == "closed-loop" || st == "drafted" {
+                Text(m.followUp?.recommendation ?? "")
+                    .font(Term.mono(9))
+                    .foregroundStyle(st == "drafted" ? Term.cyan : Term.fgMuted)
+                    .lineLimit(1)
+                    .padding(.leading, 14)
+            }
+
             if owed || bounced {
                 HStack(spacing: 6) {
                     Text(bounced ? "FIX" : "TODO")

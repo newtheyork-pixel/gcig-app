@@ -610,6 +610,9 @@ struct FollowUp: Decodable {
     let waitTarget: Int?
     let attempts: Int?
     let autoReplyReset: Bool?
+    /// When they told us to come back. Set by the model that reads the
+    /// reply, and only ever from a date the person actually named.
+    let resumeAfter: String?
 
     var isActionable: Bool { state == "due" || state == "overdue" || state == "owed" }
 
@@ -618,6 +621,15 @@ struct FollowUp: Decodable {
         case "overdue": return "CHASE — \(workingDaysWaited ?? 0)d"
         case "due": return "CHASE NOW"
         case "owed": return "REPLY OWED"
+        // An answer that is written but has not left is not silence, and
+        // must not wear the same red as a conversation we have dropped.
+        case "drafted": return "REPLY QUEUED"
+        // They wrote, and the message asked nothing of us. Andrew Hayashi
+        // said "email in October", which is an instruction rather than an
+        // unanswered question, and the desk called that REPLY OWED for two
+        // days. If they named a date, that date is the useful thing here.
+        case "closed-loop":
+            return resumeAfter.map { "BACK \(Fmt.date($0))" } ?? "NOTHING OWED"
         // Deliberately silent. The chase date on every waiting row was a
         // date per row that nobody reads, and the FOLLOW UP line above
         // already names who is actually due. Urgency belongs in one place.
@@ -632,6 +644,8 @@ struct FollowUp: Decodable {
         switch state {
         case "overdue", "owed": return Term.negative
         case "due": return Term.amber
+        case "drafted": return Term.cyan
+        case "closed-loop": return Term.positive
         case "exhausted", "bounced": return Term.fgMuted
         default: return Term.fgDim
         }
