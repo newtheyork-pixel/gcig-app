@@ -425,24 +425,34 @@ router.post('/messages/:id/reply', canResearch, async (req, res) => {
     const body = renderSignature(screened.body, req.user);
     let sent;
     try {
-      // Reply-ALL. Whoever was on the message we are answering stays on the
-      // answer. Read live from Gmail rather than from our own columns,
-      // because the recipient list is the sender's, not ours, and it can
-      // change between messages on the same thread.
-      let extraCc = [];
+      // Reply-ALL, and REPLY TO WHOEVER ACTUALLY WROTE.
+      //
+      // The address on our contact record is where we first wrote TO. It is
+      // not necessarily where the person writes FROM, and when those differ
+      // the record is the wrong one. Galena Rhoades wrote from a personal
+      // gmail and copied her university address; we answered the university
+      // address and dropped the one she was reading. An answer delivered to
+      // an inbox somebody does not watch is not an answer.
+      //
+      // So: To is the From of the message being answered. Everyone else who
+      // was on it moves to Cc. Both read live from Gmail, because the
+      // recipient list belongs to whoever wrote last.
+      let replyTo = to; let extraCc = [];
       if (msg.draft?.gmailThreadId) {
         try {
           const msgs = await inboundOnThread(req.user.id, msg.draft.gmailThreadId);
           const last = msgs[msgs.length - 1];
           if (last) {
-            extraCc = [last.toHeader, last.ccHeader]
+            const bare = (v) => { const m = String(v || '').match(/<([^>]+)>/); return (m ? m[1] : String(v || '')).trim(); };
+            if (last.from && bare(last.from).includes('@')) replyTo = bare(last.from);
+            extraCc = [last.toHeader, last.ccHeader, to]
               .filter(Boolean).join(',').split(',')
               .map((x) => x.trim()).filter(Boolean);
           }
         } catch { /* a thread we cannot read still gets the standing CC */ }
       }
       sent = await sendAs(req.user.id, {
-        to, subject, body,
+        to: replyTo, subject, body,
         threadId: msg.draft?.gmailThreadId || undefined,
         inReplyTo: msg.rfcMessageId || undefined,
         fromName: req.user?.name,
