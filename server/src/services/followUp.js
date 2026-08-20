@@ -125,6 +125,7 @@ const NEVER_CHASE = new Set(['Declined', 'Completed', 'Unreachable']);
  *   bounced   — bad address; needs a new one, not another send
  *   closed    — declined, completed or already given up on
  *   owed      — they wrote, we have not written back
+ *   drafted   — they wrote, an answer exists but has not left yet
  *   waiting   — sent, too early to chase, `dueAt` says when
  *   due       — chase now
  *   overdue   — should have been chased already
@@ -153,6 +154,24 @@ export function assessTarget(target, now = new Date()) {
   const last = msgs[msgs.length - 1];
   if (answered.length) {
     if (last && last.direction === 'in' && last.kind !== 'AutoReply') {
+      // An answer that is WRITTEN but not yet gone is not silence. This
+      // state is computed from the message ledger, which only learns about
+      // a letter once it leaves, so a reply scheduled for a civil hour or
+      // parked in somebody's mail client read exactly like ignoring the
+      // person. Two of the four live conversations were in that state at
+      // once, which is how a real "owed" stops being believed.
+      const pending = (target?.drafts || []).find(
+        (d) => !d.sentAt && !d.rejectedAt
+          && new Date(d.createdAt || 0) >= new Date(last.occurredAt));
+      if (pending) {
+        return { ...base, state: 'drafted',
+          lastInboundAt: last.occurredAt,
+          recommendation: pending.scheduledFor
+            ? 'An answer is written and queued to send.'
+            : pending.queuedAt
+            ? 'An answer is written and sitting in a mailbox, waiting to go.'
+            : 'An answer is written and waiting to be sent.' };
+      }
       return { ...base, state: 'owed',
         lastInboundAt: last.occurredAt,
         waitingDays: workingDaysBetween(last.occurredAt, now),

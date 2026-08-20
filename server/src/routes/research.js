@@ -232,7 +232,7 @@ router.get('/follow-ups', async (req, res) => {
             name: true,
             status: true,
             followUpAfter: true,
-            drafts: { select: { sentAt: true } },
+            drafts: { select: { sentAt: true, rejectedAt: true, createdAt: true, scheduledFor: true, queuedAt: true } },
             messages: {
               orderBy: { occurredAt: 'asc' },
               select: { direction: true, kind: true, occurredAt: true },
@@ -333,7 +333,7 @@ router.get('/inbox', async (req, res) => {
           where: { id: { in: targetIds } },
           select: {
             id: true, status: true, followUpAfter: true,
-            drafts: { select: { sentAt: true } },
+            drafts: { select: { sentAt: true, rejectedAt: true, createdAt: true, scheduledFor: true, queuedAt: true } },
             messages: {
               orderBy: { occurredAt: 'asc' },
               select: { direction: true, kind: true, occurredAt: true },
