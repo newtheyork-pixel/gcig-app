@@ -267,6 +267,36 @@ export function outreachCc(fromAddress) {
 }
 
 /**
+ * Everyone who should still be on the conversation.
+ *
+ * Reply-all, done carefully. The standing club CC, plus whoever was already
+ * addressed on the message being answered, minus ourselves and minus the
+ * person already in the To line. Answering only the sender silently evicts
+ * anybody they had brought in, which reads to them as being cut out.
+ *
+ * Deduplicated case-insensitively on the bare address, because the same
+ * person appears as `Jane Doe <j@x.com>` in one header and `j@x.com` in the
+ * next, and sending to both is its own kind of rude.
+ */
+export function mergeCc(standing, extra, selfAddress, toAddress) {
+  const bare = (v) => {
+    const m = String(v).match(/<([^>]+)>/);
+    return (m ? m[1] : String(v)).trim().toLowerCase();
+  };
+  const drop = new Set([
+    String(selfAddress || '').toLowerCase(),
+    bare(toAddress || ''),
+  ].filter(Boolean));
+  const out = []; const seen = new Set();
+  for (const v of [...(standing || []), ...(extra || [])]) {
+    const addr = bare(v);
+    if (!addr || !addr.includes('@') || drop.has(addr) || seen.has(addr)) continue;
+    seen.add(addr); out.push(String(v).trim());
+  }
+  return out;
+}
+
+/**
  * One letter, in both dialects a mail client might read.
  *
  * This used to send bare text/plain and let every client invent its own
@@ -370,7 +400,7 @@ function mime({ to, cc, from, subject, body, inReplyTo, references }) {
  * consent screen is a mistake nobody would notice until a reply arrived
  * somewhere unexpected.
  */
-export async function sendAs(userId, { to, subject, body, threadId, inReplyTo, expectAddress, fromName }) {
+export async function sendAs(userId, { to, subject, body, threadId, inReplyTo, expectAddress, fromName, extraCc }) {
   const { c, acct } = await clientFor(userId);
   if (expectAddress && acct.address.toLowerCase() !== String(expectAddress).toLowerCase()) {
     throw new Error(`Connected mailbox is ${acct.address}, not ${expectAddress}. Reconnect Gmail.`);
@@ -378,7 +408,7 @@ export async function sendAs(userId, { to, subject, body, threadId, inReplyTo, e
   const sent = await call(c, '/messages/send', {
     method: 'POST',
     body: {
-      raw: mime({ to, cc: outreachCc(acct.address),
+      raw: mime({ to, cc: mergeCc(outreachCc(acct.address), extraCc, acct.address, to),
                   from: displayFrom(fromName, acct.address), subject, body,
                   inReplyTo, references: inReplyTo }),
       ...(threadId ? { threadId } : {}),
@@ -440,6 +470,12 @@ export async function inboundOnThread(userId, threadId) {
       const from = header(msg.payload, 'From') || '';
       return {
         gmailMessageId: msg.id,
+        // Everyone the message was addressed to. A reply that answers only
+        // the sender quietly removes anybody they had brought into the
+        // conversation, and a source who loops in a colleague is a source
+        // taking us seriously, so that is the worst moment to drop them.
+        toHeader: header(msg.payload, 'To') || '',
+        ccHeader: header(msg.payload, 'Cc') || '',
         threadId: msg.threadId,
         from,
         // The RFC header, not Gmail's internal id. Gmail will thread on

@@ -425,11 +425,28 @@ router.post('/messages/:id/reply', canResearch, async (req, res) => {
     const body = renderSignature(screened.body, req.user);
     let sent;
     try {
+      // Reply-ALL. Whoever was on the message we are answering stays on the
+      // answer. Read live from Gmail rather than from our own columns,
+      // because the recipient list is the sender's, not ours, and it can
+      // change between messages on the same thread.
+      let extraCc = [];
+      if (msg.draft?.gmailThreadId) {
+        try {
+          const msgs = await inboundOnThread(req.user.id, msg.draft.gmailThreadId);
+          const last = msgs[msgs.length - 1];
+          if (last) {
+            extraCc = [last.toHeader, last.ccHeader]
+              .filter(Boolean).join(',').split(',')
+              .map((x) => x.trim()).filter(Boolean);
+          }
+        } catch { /* a thread we cannot read still gets the standing CC */ }
+      }
       sent = await sendAs(req.user.id, {
         to, subject, body,
         threadId: msg.draft?.gmailThreadId || undefined,
         inReplyTo: msg.rfcMessageId || undefined,
         fromName: req.user?.name,
+        extraCc,
       });
     } catch (err) {
       return res.status(502).json({ draftId: draft.id, error: `Gmail refused it: ${err.message}` });
@@ -2429,12 +2446,21 @@ async function threadContextFor(draft, userId) {
       select: { gmailThreadId: true },
     });
     if (!prior?.gmailThreadId) return {};
-    let inReplyTo;
+    let inReplyTo; let extraCc = [];
     try {
       const msgs = await inboundOnThread(userId, prior.gmailThreadId);
-      inReplyTo = msgs.length ? msgs[msgs.length - 1].rfcMessageId : undefined;
+      const last = msgs[msgs.length - 1];
+      inReplyTo = last?.rfcMessageId;
+      // Anyone already on the conversation stays on it, for the same reason
+      // the reply route does it: dropping them is invisible to us and very
+      // visible to them.
+      if (last) {
+        extraCc = [last.toHeader, last.ccHeader]
+          .filter(Boolean).join(',').split(',')
+          .map((x) => x.trim()).filter(Boolean);
+      }
     } catch { /* a thread we cannot read still threads on threadId alone */ }
-    return { threadId: prior.gmailThreadId, inReplyTo: inReplyTo || undefined };
+    return { threadId: prior.gmailThreadId, inReplyTo: inReplyTo || undefined, extraCc };
   } catch {
     return {};
   }
