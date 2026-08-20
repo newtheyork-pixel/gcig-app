@@ -1,2 +1,4 @@
 -- An inbox without subject lines is a list of people, not messages.
-ALTER TABLE "OutreachMessage" ADD COLUMN "subject" TEXT;
+-- NOTE: the Prisma model is OutreachMessage, but the physical table kept its
+-- original name via @@map("OutreachReply"). Always ALTER the table, not the model.
+ALTER TABLE "OutreachReply" ADD COLUMN "subject" TEXT;

@@ -2404,6 +2404,42 @@ router.post('/projects/:id/send-all', canResearch, async (req, res) => {
   }
 });
 
+
+/**
+ * Where does this letter belong, if anywhere.
+ *
+ * A draft written to somebody we have already corresponded with should land
+ * INSIDE that conversation, not beside it. Nothing passed a thread id before,
+ * so every follow-up we have ever sent arrived as a fresh cold email with
+ * "Re:" in front of it, which is worse than no Re: at all.
+ *
+ * The Message-ID is read live from Gmail rather than from our own column,
+ * deliberately: it works on the schema as it stands, and it is the recipient's
+ * header that matters, not ours. Gmail threads on threadId for us; every other
+ * client in the world threads on In-Reply-To for them.
+ *
+ * Best effort throughout. A letter that fails to thread must still be sent.
+ */
+async function threadContextFor(draft, userId) {
+  if (!draft?.targetId) return {};
+  try {
+    const prior = await prisma.outreachDraft.findFirst({
+      where: { targetId: draft.targetId, gmailThreadId: { not: null }, id: { not: draft.id } },
+      orderBy: { sentAt: 'desc' },
+      select: { gmailThreadId: true },
+    });
+    if (!prior?.gmailThreadId) return {};
+    let inReplyTo;
+    try {
+      const msgs = await inboundOnThread(userId, prior.gmailThreadId);
+      inReplyTo = msgs.length ? msgs[msgs.length - 1].rfcMessageId : undefined;
+    } catch { /* a thread we cannot read still threads on threadId alone */ }
+    return { threadId: prior.gmailThreadId, inReplyTo: inReplyTo || undefined };
+  } catch {
+    return {};
+  }
+}
+
 router.post('/drafts/:id/deliver', canResearch, async (req, res) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id)) return res.status(400).json({ error: 'Bad id' });
@@ -2450,12 +2486,14 @@ router.post('/drafts/:id/deliver', canResearch, async (req, res) => {
       // The client echoes the address /gmail/status last showed it, so a
       // member whose binding changed under them gets a refusal instead of a
       // delivered email from a mailbox they did not mean to use.
+      const thread = await threadContextFor(d, req.user.id);
       sent = await sendAs(req.user.id, {
         to, subject: d.subject, body,
         expectAddress: req.body?.expectAddress,
         // Without this the recipient sees the local part of the address,
         // so outreach signed "Thomas Seirer" arrives from "tcs".
         fromName: req.user?.name,
+        ...thread,
       });
     } catch (err) {
       return res.status(502).json({ error: `Gmail refused it: ${err.message}` });
