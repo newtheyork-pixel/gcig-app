@@ -23,7 +23,7 @@ export async function sweepAll() {
   });
   if (!accounts.length) return { accounts: 0 };
 
-  let added = 0, threads = 0, missing = 0;
+  let added = 0, addedOut = 0, claimed = 0, threads = 0, missing = 0;
   const errors = [];
   for (const acct of accounts) {
     // Only threads this member's own mailbox started. The same fence the
@@ -58,7 +58,7 @@ export async function sweepAll() {
       threads += 1;
       let msgs;
       try {
-        msgs = await inboundOnThread(acct.userId, d.gmailThreadId);
+        msgs = await inboundOnThread(acct.userId, d.gmailThreadId, { keepOurs: true });
       } catch (err) {
         // A thread that is not in this mailbox is now reported rather than
         // read as silence, but it must not stop the sweep: one deleted
@@ -72,6 +72,51 @@ export async function sweepAll() {
         continue;
       }
       for (const m of msgs) {
+        // A letter sent straight from Gmail rather than from the terminal.
+        //
+        // The sweep only ever read INBOUND mail, so answering somebody in
+        // their own thread from the Gmail web client left no trace here at
+        // all: the draft stayed unsent, the ledger stayed empty, and the
+        // panel went on saying we owed them a reply. Shane McMurray was
+        // answered at 8am and the desk still had him flagged ten hours
+        // later. Recording our own side closes that.
+        if (m.isFromUs) {
+          try {
+            await prisma.outreachMessage.create({
+              data: {
+                targetId: d.targetId, draftId: d.id, direction: 'out',
+                kind: 'Reply', occurredAt: m.occurredAt,
+                subject: m.subject ? String(m.subject).slice(0, 300) : null,
+                rfcMessageId: m.rfcMessageId || null,
+                body: m.body?.slice(0, 20_000) || null,
+                gmailMessageId: m.gmailMessageId,
+                recordedById: null,
+              },
+            });
+            addedOut += 1;
+          } catch (err) {
+            if (err?.code !== 'P2002') errors.push(`out ${m.gmailMessageId}: ${err.message}`);
+          }
+          // And if a draft for this person was still sitting unsent with
+          // the same subject, it is the letter that just went. Marking it
+          // stops the terminal offering to send it a second time.
+          try {
+            const norm = (v) => String(v || '').replace(/^\s*re:\s*/i, '').trim().toLowerCase();
+            const twin = await prisma.outreachDraft.findFirst({
+              where: { targetId: d.targetId, sentAt: null, rejectedAt: null },
+              orderBy: { createdAt: 'desc' },
+            });
+            if (twin && norm(twin.subject) === norm(m.subject)) {
+              await prisma.outreachDraft.update({
+                where: { id: twin.id },
+                data: { sentAt: m.occurredAt, sentVia: 'gmail-direct',
+                        gmailMessageId: m.gmailMessageId, gmailThreadId: d.gmailThreadId },
+              });
+              claimed += 1;
+            }
+          } catch { /* matching is a convenience; the ledger row is the record */ }
+          continue;
+        }
         try {
           await prisma.outreachMessage.create({
             data: {
@@ -94,5 +139,5 @@ export async function sweepAll() {
       where: { userId: acct.userId }, data: { lastSyncAt: new Date() },
     });
   }
-  return { accounts: accounts.length, threads, added, errors: errors.slice(0, 5) , missing };
+  return { accounts: accounts.length, threads, added, addedOut, claimed, errors: errors.slice(0, 5), missing };
 }

@@ -204,12 +204,12 @@ router.post('/sync', senderOnly, async (req, res) => {
       take: 300,
     });
 
-    let found = 0, added = 0, gone = 0;
+    let found = 0, added = 0, addedOut = 0, claimed = 0, gone = 0;
     const errors = [];
     for (const d of drafts) {
       let msgs;
       try {
-        msgs = await inboundOnThread(req.user.id, d.gmailThreadId);
+        msgs = await inboundOnThread(req.user.id, d.gmailThreadId, { keepOurs: true });
       } catch (err) {
         if (err?.threadMissing) { gone += 1; continue; }
         errors.push(`${d.gmailThreadId}: ${err.message}`);
@@ -217,6 +217,41 @@ router.post('/sync', senderOnly, async (req, res) => {
       }
       found += msgs.length;
       for (const m of msgs) {
+        // Same as the cron: a letter sent from Gmail rather than the
+        // terminal is still a letter we sent, and the record has to say so.
+        if (m.isFromUs) {
+          try {
+            await prisma.outreachMessage.create({
+              data: {
+                targetId: d.targetId, draftId: d.id, direction: 'out',
+                kind: 'Reply', occurredAt: m.occurredAt,
+                subject: m.subject ? String(m.subject).slice(0, 300) : null,
+                rfcMessageId: m.rfcMessageId || null,
+                body: m.body?.slice(0, 20_000) || null,
+                gmailMessageId: m.gmailMessageId, recordedById: null,
+              },
+            });
+            addedOut += 1;
+          } catch (err) {
+            if (err?.code !== 'P2002') errors.push(`out ${m.gmailMessageId}: ${err.message}`);
+          }
+          try {
+            const norm = (v) => String(v || '').replace(/^\s*re:\s*/i, '').trim().toLowerCase();
+            const twin = await prisma.outreachDraft.findFirst({
+              where: { targetId: d.targetId, sentAt: null, rejectedAt: null },
+              orderBy: { createdAt: 'desc' },
+            });
+            if (twin && norm(twin.subject) === norm(m.subject)) {
+              await prisma.outreachDraft.update({
+                where: { id: twin.id },
+                data: { sentAt: m.occurredAt, sentVia: 'gmail-direct',
+                        gmailMessageId: m.gmailMessageId, gmailThreadId: d.gmailThreadId },
+              });
+              claimed += 1;
+            }
+          } catch { /* the ledger row is the record */ }
+          continue;
+        }
         try {
           await prisma.outreachMessage.create({
             data: {
@@ -253,7 +288,7 @@ router.post('/sync', senderOnly, async (req, res) => {
     // half the threads and said "0 new" is indistinguishable from a quiet
     // week, and the quiet week is the one that ends a contact.
     res.json({ threads: drafts.length, seen: found, added, errors: errors.slice(0, 10),
-               errorCount: errors.length, missing: gone });
+               errorCount: errors.length, missing: gone, addedOut, claimed });
   } catch (err) {
     console.error('gmail sync failed:', err.message);
     res.status(500).json({ error: 'Could not read replies' });

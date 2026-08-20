@@ -446,7 +446,7 @@ function plainText(payload) {
  * search, no list, and no query by address, so a member's ordinary mail is
  * never requested in the first place.
  */
-export async function inboundOnThread(userId, threadId) {
+export async function inboundOnThread(userId, threadId, { keepOurs = false } = {}) {
   const { c, acct } = await clientFor(userId);
   let thread;
   try {
@@ -489,7 +489,7 @@ export async function inboundOnThread(userId, threadId) {
         isFromUs: from.toLowerCase().includes(mine),
       };
     })
-    .filter((m) => !m.isFromUs);
+    .filter((m) => keepOurs || !m.isFromUs);
 }
 
 /**
