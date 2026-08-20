@@ -10,6 +10,7 @@ import { scanForAnswer } from '../services/answerScan.js';
 import { assessTopics, formatCitation } from '../services/corroboration.js';
 import { assessCoverage, funnel } from '../services/questionCoverage.js';
 import { assessOutreach, assessTarget } from '../services/followUp.js';
+import { triageReply } from '../services/replyTriage.js';
 import { sendAs, gmailConfigured, maySendMail, outreachCc } from '../services/gmail.js';
 import { extractForArtifact } from '../services/artifactText.js';
 import { synthesize } from '../services/synthesis.js';
@@ -622,6 +623,55 @@ router.post('/compose', canResearch, async (req, res) => {
   } catch (err) {
     console.error('research/compose failed:', err.message);
     res.status(500).json({ error: 'Could not send it' });
+  }
+});
+
+/**
+ * Read the replies that landed before the model was asked to.
+ *
+ * Triage runs when a message arrives, so everything logged before it
+ * existed has null columns and falls back to the old rule. This walks the
+ * backlog. Bounded and idempotent: only untriaged inbound, only a page at a
+ * time, and re-running it is safe because a row with a verdict is skipped.
+ *
+ * Super-admin only. It spends model calls and rewrites how the desk reads
+ * its own inbox, which is not something any Analyst should be able to fire.
+ */
+router.post('/messages/triage-backfill', canResearch, async (req, res) => {
+  if (!isSuperAdminEmail(req.user?.email)) {
+    return res.status(403).json({ error: 'Super admin only.' });
+  }
+  const limit = Math.min(Number(req.body?.limit) || 25, 100);
+  try {
+    const rows = await prisma.outreachMessage.findMany({
+      where: {
+        direction: 'in',
+        replyNeeded: null,
+        NOT: { kind: { in: ['Bounce', 'AutoReply'] } },
+      },
+      orderBy: { occurredAt: 'desc' },
+      take: limit,
+      include: { target: { select: { name: true } } },
+    });
+
+    const done = [];
+    for (const m of rows) {
+      const v = await triageReply(m);
+      if (!v) { done.push({ id: m.id, name: m.target?.name, verdict: 'model unavailable' }); continue; }
+      await prisma.outreachMessage.update({
+        where: { id: m.id },
+        data: { replyNeeded: v.replyNeeded, replyNote: v.why, resumeAfter: v.resumeAfter },
+      });
+      done.push({
+        id: m.id, name: m.target?.name,
+        replyNeeded: v.replyNeeded, why: v.why,
+        resumeAfter: v.resumeAfter ? v.resumeAfter.toISOString().slice(0, 10) : null,
+      });
+    }
+    res.json({ considered: rows.length, results: done });
+  } catch (err) {
+    console.error('triage backfill failed:', err.message);
+    res.status(500).json({ error: 'Backfill failed' });
   }
 });
 
