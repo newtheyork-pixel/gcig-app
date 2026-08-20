@@ -113,7 +113,7 @@ const REQUIRED = [
  *
  * Exported for tests.
  */
-export function keywordScreen(text) {
+export function keywordScreen(text, opts = {}) {
   const body = String(text || '');
   const hits = [];
   for (const p of PATTERNS) {
@@ -126,8 +126,16 @@ export function keywordScreen(text) {
       excerpt: body.slice(at, Math.min(body.length, m.index + m[0].length + 60)).trim(),
     });
   }
-  for (const r of REQUIRED) {
-    if (!r.test(body)) hits.push({ kind: 'missing', key: r.key, why: r.why, excerpt: null });
+  // The REQUIRED three are INTRODUCTIONS: say who we are, say we cannot
+  // pay, say what we are asking about. They belong in a first letter and
+  // are noise in a reply, because all three were established in the letter
+  // the person is answering. Demanding them again produces a flag on every
+  // "thank you, can we talk", and a compliance flag that fires on courtesy
+  // is one people learn to click past. That is the real cost.
+  if (!opts.isReply) {
+    for (const r of REQUIRED) {
+      if (!r.test(body)) hits.push({ kind: 'missing', key: r.key, why: r.why, excerpt: null });
+    }
   }
   return hits;
 }
@@ -181,7 +189,8 @@ const ORDER = { low: 0, elevated: 1, prohibited: 2 };
  */
 export async function screenOutreach(draft, target = {}, deps = {}) {
   const text = `Subject: ${draft?.subject || ''}\n\n${draft?.body || ''}`;
-  const hits = keywordScreen(text);
+  // A reply inherits its introductions from the letter it answers.
+  const hits = keywordScreen(text, { isReply: /^\s*re:/i.test(draft?.subject || '') });
 
   let risk = RISK.LOW;
   // Writing to somebody still inside the company we are researching is
