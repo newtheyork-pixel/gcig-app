@@ -55,6 +55,10 @@ const JOB_MODELS = {
   chat:       () => process.env.OPENAI_MODEL_CHAT,
   // Bulk sorting. Cheap on purpose, and wrong answers here cost a
   // headline's position rather than anything that matters.
+  // Reading a reply and deciding whether it actually asks anything of us.
+  // Cheap on purpose: the worst case is one unnecessary chase or one
+  // missed one, both of which a person catches by looking at the row.
+  triage:     () => process.env.OPENAI_MODEL_TRIAGE,
   rank:       () => process.env.OPENAI_MODEL_RANK,
   describe:   () => process.env.OPENAI_MODEL_DESCRIBE,
 };

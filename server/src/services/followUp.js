@@ -126,6 +126,7 @@ const NEVER_CHASE = new Set(['Declined', 'Completed', 'Unreachable']);
  *   closed    — declined, completed or already given up on
  *   owed      — they wrote, we have not written back
  *   drafted   — they wrote, an answer exists but has not left yet
+ *   closed-loop — they wrote, and the message asks nothing of us
  *   waiting   — sent, too early to chase, `dueAt` says when
  *   due       — chase now
  *   overdue   — should have been chased already
@@ -160,6 +161,19 @@ export function assessTarget(target, now = new Date()) {
       // parked in somebody's mail client read exactly like ignoring the
       // person. Two of the four live conversations were in that state at
       // once, which is how a real "owed" stops being believed.
+      // The model read this message when it landed and said whether it
+      // actually asks anything of us. "Email me in October" closes a loop;
+      // the old rule treated it as an open one and nagged for two days.
+      // Only trusted when it says NO. A true verdict adds nothing the
+      // default did not already assume, and a false one is the whole point.
+      if (last.replyNeeded === false) {
+        return { ...base, state: 'closed-loop',
+          lastInboundAt: last.occurredAt,
+          resumeAfter: last.resumeAfter || null,
+          recommendation: last.resumeAfter
+            ? `Nothing owed. They asked us to come back after ${String(last.resumeAfter).slice(0, 10)}.`
+            : `Nothing owed. ${last.replyNote || 'They did not ask anything of us.'}` };
+      }
       const pending = (target?.drafts || []).find(
         (d) => !d.sentAt && !d.rejectedAt
           && new Date(d.createdAt || 0) >= new Date(last.occurredAt));

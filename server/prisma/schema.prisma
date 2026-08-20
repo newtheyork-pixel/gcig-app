@@ -1506,6 +1506,18 @@ model OutreachMessage {
   // is a list of people, not a list of messages: two replies from the
   // same person on the same thread are otherwise indistinguishable.
   subject        String?
+  // Does this message actually ask anything of us.
+  //
+  // "Last message was inbound" is a bad proxy for "we owe a reply". Andrew
+  // Hayashi wrote "email in October would be just fine, I can get back to
+  // you then", which closes the loop rather than opening one, and the desk
+  // flagged him as unanswered for two days. Read once by a cheap model when
+  // the message arrives, then stored, so nothing re-reads the mail on every
+  // page load.
+  replyNeeded    Boolean?
+  replyNote      String?
+  // When they told us to come back. A stated date beats a computed one.
+  resumeAfter    DateTime?
   body           String?
   // What we decided to do about it, which is the part a reader needs
   // three weeks later when the reply itself is no longer surprising.

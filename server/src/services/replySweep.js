@@ -1,3 +1,4 @@
+import { triageReply } from './replyTriage.js';
 import { PrismaClient } from '@prisma/client';
 import { gmailConfigured, inboundOnThread, classify } from './gmail.js';
 
@@ -118,14 +119,22 @@ export async function sweepAll() {
           continue;
         }
         try {
+          const kind = classify(m);
+          // Read it once, as it lands, rather than on every page load.
+          // Fails open: no verdict leaves the columns null and the caller
+          // keeps the old last-message-inbound rule.
+          const verdict = ['Bounce', 'AutoReply'].includes(kind) ? null : await triageReply(m);
           await prisma.outreachMessage.create({
             data: {
               targetId: d.targetId, draftId: d.id, direction: 'in',
-                            kind: classify(m),
+              kind,
               subject: m.subject ? String(m.subject).slice(0, 300) : null,
               rfcMessageId: m.rfcMessageId || null,
-              subject: m.subject ? String(m.subject).slice(0, 300) : null, occurredAt: m.occurredAt,
+              occurredAt: m.occurredAt,
               body: m.body?.slice(0, 20_000) || null,
+              replyNeeded: verdict ? verdict.replyNeeded : null,
+              replyNote: verdict ? verdict.why : null,
+              resumeAfter: verdict ? verdict.resumeAfter : null,
               gmailMessageId: m.gmailMessageId, recordedById: null,
             },
           });
