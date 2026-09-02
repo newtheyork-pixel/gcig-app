@@ -111,7 +111,16 @@ struct SendAllControl: View {
     /// the preview already refused anything unsendable, and a member who
     /// opened this meant to send.
     @State private var chosen: Set<Int> = []
-    @State private var when = Date().addingTimeInterval(12 * 3600)
+    /// Default to the next 8am rather than "twelve hours from now", which
+    /// lands at whatever o'clock you happened to open the panel.
+    @State private var when = Self.nextMorning()
+
+    static func nextMorning(_ now: Date = Date(), hour: Int = 8) -> Date {
+        let cal = Calendar.current
+        let today = cal.date(bySettingHour: hour, minute: 0, second: 0, of: now)!
+        return today > now.addingTimeInterval(600) ? today
+                                                   : cal.date(byAdding: .day, value: 1, to: today)!
+    }
     @State private var scheduling = false
     @State private var queue: ScheduledQueue?
     @State private var picked: Set<Int> = []
@@ -305,15 +314,28 @@ struct SendAllControl: View {
 
                 if scheduling {
                     HStack(spacing: 8) {
-                        DatePicker("", selection: $when, in: Date()...,
+                        // No `in:` bound. A lower bound of "now" makes the
+                        // AM/PM field unswitchable for the whole afternoon:
+                        // flipping PM to AM moves the value into the past,
+                        // the picker refuses the keystroke, and it reads as a
+                        // broken control rather than a rule. The date has to
+                        // be advanced first, which is not discoverable and is
+                        // exactly backwards from how anyone types a time. The
+                        // rule is still enforced, below and on the server.
+                        DatePicker("", selection: $when,
                                    displayedComponents: [.date, .hourAndMinute])
                             .labelsHidden().font(Term.mono(10))
                         Button(busy ? "QUEUEING" : "QUEUE \(chosen.count)") { Task { await schedule() } }
-                            .buttonStyle(TermButtonStyle()).disabled(busy || chosen.isEmpty)
+                            .buttonStyle(TermButtonStyle())
+                            .disabled(busy || chosen.isEmpty || !Self.isSendable(when))
                         Spacer()
                     }
                     // Said out loud, because the obvious assumption is wrong
                     // and would be discovered at 8am on a Monday.
+                    if !Self.isSendable(when) {
+                        Text("That time has passed. Pick a later one.")
+                            .font(Term.mono(9)).foregroundStyle(Term.negative)
+                    }
                     Text("Queued on the server, not in Gmail and not on this Mac. It sends whether or not this computer is awake.")
                         .font(Term.mono(9)).foregroundStyle(Term.fgMuted)
                         .fixedSize(horizontal: false, vertical: true)
@@ -352,6 +374,10 @@ struct SendAllControl: View {
             onChanged(); open = false
         } catch { note = error.localizedDescription }
     }
+
+    /// The server refuses anything inside sixty seconds; ask for two, so a
+    /// slow round trip cannot turn an accepted time into a rejected one.
+    static func isSendable(_ d: Date) -> Bool { d.timeIntervalSinceNow > 120 }
 
     private func schedule() async {
         busy = true; note = nil
