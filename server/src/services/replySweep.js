@@ -1,6 +1,7 @@
 import { triageReply } from './replyTriage.js';
 import { PrismaClient } from '@prisma/client';
 import { gmailConfigured, inboundOnThread, classify } from './gmail.js';
+import { shouldClaimTwin } from './outreachTwin.js';
 
 const prisma = new PrismaClient();
 
@@ -51,9 +52,14 @@ export async function sweepAll() {
           { AND: [{ sentById: null }, { authorId: acct.userId }] },
         ],
       },
-      select: { id: true, targetId: true, gmailThreadId: true },
+      select: { id: true, targetId: true, gmailThreadId: true, gmailMessageId: true },
       orderBy: { id: 'desc' },
-      take: 300,
+      // No cap. There was one, at three hundred newest, and the campaign
+      // outgrew it: once a chase is written for every quiet thread the
+      // rows past three hundred are exactly the ones nobody is writing to
+      // again, which are the people whose late reply would otherwise be
+      // the only thing we ever learn from them. A thread read is one
+      // Gmail call; four hundred of them is under a minute.
     });
     for (const d of drafts) {
       threads += 1;
@@ -82,6 +88,7 @@ export async function sweepAll() {
         // answered at 8am and the desk still had him flagged ten hours
         // later. Recording our own side closes that.
         if (m.isFromUs) {
+          let freshlyRecorded = false;
           try {
             await prisma.outreachMessage.create({
               data: {
@@ -95,19 +102,28 @@ export async function sweepAll() {
               },
             });
             addedOut += 1;
+            freshlyRecorded = true;
           } catch (err) {
             if (err?.code !== 'P2002') errors.push(`out ${m.gmailMessageId}: ${err.message}`);
           }
           // And if a draft for this person was still sitting unsent with
           // the same subject, it is the letter that just went. Marking it
           // stops the terminal offering to send it a second time.
+          //
+          // Only for a letter the ledger has never seen. This block used to
+          // run on every pass, and the letter it re-reads most is our own
+          // first one, whose subject is exactly what every chase staged
+          // under it carries after the Re:. Left as it was, the tick after
+          // a hundred and sixty-five follow-ups were written would have
+          // marked all of them sent, dated to the letter they were chasing,
+          // and the scheduler would have skipped every one. outreachTwin.js
+          // holds the rule and its tests.
           try {
-            const norm = (v) => String(v || '').replace(/^\s*re:\s*/i, '').trim().toLowerCase();
             const twin = await prisma.outreachDraft.findFirst({
               where: { targetId: d.targetId, sentAt: null, rejectedAt: null },
               orderBy: { createdAt: 'desc' },
             });
-            if (twin && norm(twin.subject) === norm(m.subject)) {
+            if (shouldClaimTwin({ freshlyRecorded, message: m, readingDraft: d, twin })) {
               await prisma.outreachDraft.update({
                 where: { id: twin.id },
                 data: { sentAt: m.occurredAt, sentVia: 'gmail-direct',

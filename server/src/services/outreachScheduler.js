@@ -1,6 +1,7 @@
 import { PrismaClient } from '@prisma/client';
 import { renderSignature } from './outreachSignature.js';
 import { sendAs, gmailConfigured, maySendMail } from './gmail.js';
+import { threadContextFor } from './outreachThread.js';
 
 const prisma = new PrismaClient();
 
@@ -76,7 +77,11 @@ export async function runDueSends(now = new Date()) {
 
     let out;
     try {
-      out = await sendAs(user.id, { to, subject: d.subject, body, fromName: user.name });
+      // A queued chase belongs on the conversation it chases. This path sent
+      // without a thread id or In-Reply-To until September 2026, so every
+      // scheduled follow-up arrived as a new cold email wearing "Re:".
+      const thread = await threadContextFor(d, user.id);
+      out = await sendAs(user.id, { to, subject: d.subject, body, fromName: user.name, ...thread });
     } catch (err) {
       await fail(`Gmail refused it: ${err.message}`);
       // A refused credential will refuse every remaining send by this

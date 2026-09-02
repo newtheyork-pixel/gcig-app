@@ -50,6 +50,34 @@ test('five working days on, it is due', () => {
   assert.match(r.recommendation, /Send the follow-up/);
 });
 
+test('the ledger row a send writes is the same letter, not a chase', () => {
+  // Send-all marks the draft and logs the outbound row in one transaction,
+  // milliseconds apart; the sweep logs our own letter again off Gmail's
+  // clock, seconds apart. Both are one letter. Troy Searles, 26 Aug 2026:
+  // one email, shown as waiting for his second follow-up.
+  const r = assessTarget(
+    { id: 7, name: 'Searles', status: 'Contacted',
+      drafts: [sent('2026-08-26T12:55:12.825Z')],
+      messages: [msg('out', 'Other', '2026-08-26T12:55:12.834Z'),
+                 msg('out', 'Reply', '2026-08-26T12:55:19.000Z')] },
+    new Date('2026-09-02T12:00:00Z'));
+  assert.equal(r.attempts, 1);
+  assert.equal(r.waitTarget, 5);
+  assert.equal(r.state, 'due');
+  assert.match(r.recommendation, /Send the follow-up/);
+});
+
+test('a chase logged from Gmail days later still counts as one', () => {
+  const r = assessTarget(
+    { id: 8, name: 'Chased', status: 'Contacted',
+      drafts: [sent('2026-08-17T12:05:00Z')],
+      messages: [msg('out', 'Other', '2026-08-17T12:05:00.400Z'),
+                 msg('out', 'Reply', '2026-08-25T13:00:00Z')] },
+    new Date('2026-09-02T12:00:00Z'));
+  assert.equal(r.attempts, 2);
+  assert.equal(r.waitTarget, 8);
+});
+
 test('a human reply ends the chase; an auto-reply does not', () => {
   const base = { id: 2, name: 'Oran', drafts: [sent('2026-07-20T09:00:00Z')] };
   const auto = assessTarget(

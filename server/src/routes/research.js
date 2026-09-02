@@ -12,6 +12,7 @@ import { assessCoverage, funnel } from '../services/questionCoverage.js';
 import { assessOutreach, assessTarget } from '../services/followUp.js';
 import { triageReply } from '../services/replyTriage.js';
 import { sendAs, gmailConfigured, maySendMail, outreachCc } from '../services/gmail.js';
+import { threadContextFor } from '../services/outreachThread.js';
 import { extractForArtifact } from '../services/artifactText.js';
 import { synthesize } from '../services/synthesis.js';
 import { screenTranscript, RISK } from '../services/mnpiScreen.js';
@@ -2433,7 +2434,10 @@ router.post('/projects/:id/send-all', canResearch, async (req, res) => {
       const body = renderSignature(fresh.body, req.user);
       let out;
       try {
-        out = await sendAs(req.user.id, { to, subject: fresh.subject, body, fromName: req.user?.name });
+        // Same threading as the single deliver route. A chase in a batch is
+        // still a chase, and this path used to send it as a fresh letter.
+        const thread = await threadContextFor(draft, req.user.id);
+        out = await sendAs(req.user.id, { to, subject: fresh.subject, body, fromName: req.user?.name, ...thread });
       } catch (err) {
         failed.push({ draftId: draft.id, name: draft.target?.name, error: err.message });
         // A refused credential will refuse every remaining send, so stop
@@ -2481,50 +2485,6 @@ router.post('/projects/:id/send-all', canResearch, async (req, res) => {
   }
 });
 
-
-/**
- * Where does this letter belong, if anywhere.
- *
- * A draft written to somebody we have already corresponded with should land
- * INSIDE that conversation, not beside it. Nothing passed a thread id before,
- * so every follow-up we have ever sent arrived as a fresh cold email with
- * "Re:" in front of it, which is worse than no Re: at all.
- *
- * The Message-ID is read live from Gmail rather than from our own column,
- * deliberately: it works on the schema as it stands, and it is the recipient's
- * header that matters, not ours. Gmail threads on threadId for us; every other
- * client in the world threads on In-Reply-To for them.
- *
- * Best effort throughout. A letter that fails to thread must still be sent.
- */
-async function threadContextFor(draft, userId) {
-  if (!draft?.targetId) return {};
-  try {
-    const prior = await prisma.outreachDraft.findFirst({
-      where: { targetId: draft.targetId, gmailThreadId: { not: null }, id: { not: draft.id } },
-      orderBy: { sentAt: 'desc' },
-      select: { gmailThreadId: true },
-    });
-    if (!prior?.gmailThreadId) return {};
-    let inReplyTo; let extraCc = [];
-    try {
-      const msgs = await inboundOnThread(userId, prior.gmailThreadId);
-      const last = msgs[msgs.length - 1];
-      inReplyTo = last?.rfcMessageId;
-      // Anyone already on the conversation stays on it, for the same reason
-      // the reply route does it: dropping them is invisible to us and very
-      // visible to them.
-      if (last) {
-        extraCc = [last.toHeader, last.ccHeader]
-          .filter(Boolean).join(',').split(',')
-          .map((x) => x.trim()).filter(Boolean);
-      }
-    } catch { /* a thread we cannot read still threads on threadId alone */ }
-    return { threadId: prior.gmailThreadId, inReplyTo: inReplyTo || undefined, extraCc };
-  } catch {
-    return {};
-  }
-}
 
 router.post('/drafts/:id/deliver', canResearch, async (req, res) => {
   const id = Number(req.params.id);

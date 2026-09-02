@@ -196,9 +196,28 @@ export function assessTarget(target, now = new Date()) {
 
   // The clock runs from the last thing WE sent, whether that was the
   // original draft or a chase already logged.
+  //
+  // One letter, one stamp. Every send path now writes the ledger row in
+  // the same transaction that marks the draft sent, and the sweep records
+  // our own side of a thread it reads, so a single letter appears here
+  // twice: once as the draft's sentAt, once as an outbound message a few
+  // milliseconds (or, from Gmail's clock, a few seconds) later. Counting
+  // both made every first letter look like a letter and a chase, which
+  // pushed the whole campaign a wait ahead of where it stood: eighty-eight
+  // people written to once were shown waiting for their SECOND follow-up,
+  // and the fourteen who really had been chased once read as exhausted.
+  // A ledger row within a quarter of an hour of a draft's send is that
+  // draft leaving, not another letter; no chase has ever followed its
+  // original that fast, and a reply logged days later still counts.
+  const ECHO_MS = 15 * 60_000;
+  const sentAts = sentDrafts.map((d) => new Date(d.sentAt).getTime()).filter(Number.isFinite);
+  const echoOfADraft = (m) => {
+    const t = new Date(m.occurredAt).getTime();
+    return sentAts.some((s) => Math.abs(t - s) <= ECHO_MS);
+  };
   const stamps = [
     ...sentDrafts.map((d) => d.sentAt),
-    ...outbound.map((m) => m.occurredAt),
+    ...outbound.filter((m) => !echoOfADraft(m)).map((m) => m.occurredAt),
   ].filter(Boolean).sort((a, b) => new Date(b) - new Date(a));
   if (!stamps.length) return { ...base, state: 'none', recommendation: null };
 

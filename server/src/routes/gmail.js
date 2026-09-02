@@ -6,6 +6,7 @@ import {
   gmailConfigured, consentUrl, exchangeCode, connectionFor, disconnect,
   inboundOnThread, classify, maySendMail, gmailSenders,
 } from '../services/gmail.js';
+import { shouldClaimTwin } from '../services/outreachTwin.js';
 
 const prisma = new PrismaClient();
 const router = express.Router();
@@ -199,9 +200,14 @@ router.post('/sync', senderOnly, async (req, res) => {
           { AND: [{ sentById: null }, { authorId: req.user.id }] },
         ],
       },
-      select: { id: true, targetId: true, gmailThreadId: true },
+      select: { id: true, targetId: true, gmailThreadId: true, gmailMessageId: true },
       orderBy: { id: 'desc' },
-      take: 300,
+      // No cap. There was one, at three hundred newest, and the campaign
+      // outgrew it: once a chase is written for every quiet thread the
+      // rows past three hundred are exactly the ones nobody is writing to
+      // again, which are the people whose late reply would otherwise be
+      // the only thing we ever learn from them. A thread read is one
+      // Gmail call; four hundred of them is under a minute.
     });
 
     let found = 0, added = 0, addedOut = 0, claimed = 0, gone = 0;
@@ -220,6 +226,7 @@ router.post('/sync', senderOnly, async (req, res) => {
         // Same as the cron: a letter sent from Gmail rather than the
         // terminal is still a letter we sent, and the record has to say so.
         if (m.isFromUs) {
+          let freshlyRecorded = false;
           try {
             await prisma.outreachMessage.create({
               data: {
@@ -232,16 +239,19 @@ router.post('/sync', senderOnly, async (req, res) => {
               },
             });
             addedOut += 1;
+            freshlyRecorded = true;
           } catch (err) {
             if (err?.code !== 'P2002') errors.push(`out ${m.gmailMessageId}: ${err.message}`);
           }
+          // Claiming is for a letter the ledger has never seen; see
+          // outreachTwin.js for why re-reading our own first letter must
+          // never mark the chase staged under it as sent.
           try {
-            const norm = (v) => String(v || '').replace(/^\s*re:\s*/i, '').trim().toLowerCase();
             const twin = await prisma.outreachDraft.findFirst({
               where: { targetId: d.targetId, sentAt: null, rejectedAt: null },
               orderBy: { createdAt: 'desc' },
             });
-            if (twin && norm(twin.subject) === norm(m.subject)) {
+            if (shouldClaimTwin({ freshlyRecorded, message: m, readingDraft: d, twin })) {
               await prisma.outreachDraft.update({
                 where: { id: twin.id },
                 data: { sentAt: m.occurredAt, sentVia: 'gmail-direct',
