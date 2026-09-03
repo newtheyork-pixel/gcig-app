@@ -132,10 +132,20 @@ struct TickerScreen: View, Hashable {
                 chartSection
                 positionSection
                 marketSection
+                // Why it moved, before what it is. A member opening a name
+                // that gapped down wants the reason above the fundamentals.
+                TickerNewsSection(ticker: ticker)
                 earningsSection
                 consensusSection
+                // Fundamentals, statements, insiders, peers, dividends and
+                // short interest. Each loads and fails on its own; none of
+                // them is allowed to be why the quote above is missing.
+                NameDetailSections(ticker: ticker)
                 filingsSection
                 clubSection
+                // Last, because it is the one thing here you write rather
+                // than read, and it should sit under everything it is about.
+                TickerNotesSection(ticker: ticker)
                 aboutSection
             }
         }
