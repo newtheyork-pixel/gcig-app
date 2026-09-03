@@ -174,12 +174,18 @@ actor API {
     /// for a server that is fine.
     ///
     /// Only cold-start shapes are retried. A 403 is an answer, not a hiccup.
-    func get<R: Decodable>(_ path: String, as type: R.Type) async throws -> R {
+    ///
+    /// `cache: true` writes the response body to disk on success so the next
+    /// cold launch can paint this screen before the network is even asked.
+    /// Opt-in per call rather than automatic: it is right for the book and the
+    /// watchlist, which are worth showing a minute old, and wrong for a live
+    /// quote on a name the member just opened.
+    func get<R: Decodable>(_ path: String, as type: R.Type, cache: Bool = false) async throws -> R {
         let backoff: [Double] = [3, 6, 12]
         var lastError: Error = APIError.noResponse
         for attemptIndex in 0...backoff.count {
             do {
-                return try await attempt(path, as: type)
+                return try await attempt(path, as: type, cache: cache)
             } catch let e as APIError {
                 guard e.isTransient, attemptIndex < backoff.count else { throw e }
                 lastError = e
@@ -209,13 +215,18 @@ actor API {
         try await attempt(path, as: type, method: "POST", body: body)
     }
 
+    func put<R: Decodable>(_ path: String, body: [String: Any], as type: R.Type) async throws -> R {
+        try await attempt(path, as: type, method: "PUT", body: body)
+    }
+
     func delete<R: Decodable>(_ path: String, as type: R.Type) async throws -> R {
         try await attempt(path, as: type, method: "DELETE")
     }
 
     private func attempt<R: Decodable>(_ path: String, as: R.Type,
                                        method: String = "GET",
-                                       body: [String: Any]? = nil) async throws -> R {
+                                       body: [String: Any]? = nil,
+                                       cache: Bool = false) async throws -> R {
         guard let token else { throw APIError.sessionOver }
         guard let url = URL(string: API.base + path) else { throw APIError.noResponse }
         let gen = generation
@@ -282,7 +293,12 @@ actor API {
             throw APIError.server(http.statusCode,
                                   (body?["error"] as? String) ?? "Request failed")
         }
-        return try JSONDecoder().decode(R.self, from: d)
+        let decoded = try JSONDecoder().decode(R.self, from: d)
+        // Only after a successful DECODE, never merely a 200. A body that
+        // cannot be read is not worth replaying to the member next launch,
+        // and caching it would make one bad deploy stick to the phone.
+        if cache { Cache.write(d, for: path) }
+        return decoded
     }
 }
 
@@ -484,6 +500,10 @@ final class Session: ObservableObject {
 
     func signOut() {
         Self.keychainDelete()
+        // The book leaves with the token. Otherwise sign-out is cosmetic:
+        // the credential is gone and the positions are still sitting in
+        // Application Support.
+        Cache.clear()
         token = nil; name = nil; role = nil; terminalAccess = nil; keychainWarning = nil
         UserDefaults.standard.removeObject(forKey: Self.nameKey)
         UserDefaults.standard.removeObject(forKey: Self.roleKey)

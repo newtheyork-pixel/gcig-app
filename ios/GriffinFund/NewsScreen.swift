@@ -18,6 +18,11 @@ final class NewsStore: ObservableObject {
     @Published private(set) var state: Loadable<Wire> = .loading
 
     func load() async {
+        if let (w, at) = Cache.read("/terminal/top-news", as: Wire.self) {
+            state = .loaded(w, at: at)
+            await fetch(keepOld: true)
+            return
+        }
         state = .loading
         await fetch(keepOld: false)
     }
@@ -27,7 +32,8 @@ final class NewsStore: ObservableObject {
     private func fetch(keepOld: Bool) async {
         let previous = state.value
         do {
-            state = .loaded(try await API.shared.get("/terminal/top-news", as: Wire.self), at: Date())
+            state = .loaded(try await API.shared.get("/terminal/top-news", as: Wire.self, cache: true),
+                            at: Date())
         } catch APIError.cancelled {
             return
         } catch {

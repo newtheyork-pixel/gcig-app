@@ -121,6 +121,28 @@ struct LoginView: View {
     }
 }
 
+/// Where the phone can go that is not a tab.
+///
+/// Five surfaces is the tab bar's honest limit — iOS folds a sixth into a
+/// "More" list, which is where features go to be forgotten. So the screens
+/// that are answered rather than browsed reach the member through Today,
+/// which is the screen they open first and the only one that knows what is
+/// owed.
+enum Route: Hashable {
+    case ballots, alerts, club, performance, search
+}
+
+@MainActor
+@ViewBuilder func routeView(_ r: Route) -> some View {
+    switch r {
+    case .ballots:     VoteScreen()
+    case .alerts:      AlertsScreen()
+    case .club:        ClubScreen()
+    case .performance: PerformanceScreen()
+    case .search:      SearchScreen()
+    }
+}
+
 struct MainTabs: View {
     @EnvironmentObject var s: Session
 
@@ -173,6 +195,16 @@ final class TodayStore: ObservableObject {
     @Published private(set) var movers: Movers?
 
     func load() async {
+        if let (f, at) = Cache.read("/research/follow-ups", as: FollowUps.self) {
+            // Same reasoning as the Book: what you owe today is the thing
+            // worth showing in the first quarter-second, and it is rarely
+            // wrong by much. See Cache.swift.
+            state = .loaded(f, at: at)
+            async let a: Void = fetch(keepOld: true)
+            async let b: Void = loadExtras()
+            _ = await (a, b)
+            return
+        }
         state = .loading
         async let a: Void = fetch(keepOld: false)
         async let b: Void = loadExtras()
@@ -193,7 +225,7 @@ final class TodayStore: ObservableObject {
     private func fetch(keepOld: Bool) async {
         let previous = state.value
         do {
-            let f = try await API.shared.get("/research/follow-ups", as: FollowUps.self)
+            let f = try await API.shared.get("/research/follow-ups", as: FollowUps.self, cache: true)
             state = .loaded(f, at: Date())
         } catch APIError.cancelled {
             // Leaving the tab mid-load is not a failure. The old build used
@@ -221,10 +253,12 @@ final class TodayStore: ObservableObject {
 /// row invites sending it today.
 struct TodayScreen: View {
     @StateObject private var store = TodayStore()
+    @EnvironmentObject var s: Session
 
     var body: some View {
         VStack(spacing: 0) {
             FunctionBar(code: "TODAY", title: "What needs you")
+            accessStrip
             // The three blocks are siblings, and that is the fix.
             //
             // They used to live inside one ScreenState keyed on the chase
@@ -245,8 +279,44 @@ struct TodayScreen: View {
         .toolbar(.hidden, for: .navigationBar)
         .navigationDestination(for: PersonScreen.self) { $0 }
         .navigationDestination(for: TickerScreen.self) { $0 }
+        .navigationDestination(for: Route.self) { routeView($0) }
+        .navigationDestination(for: VoteDetailScreen.self) { $0 }
         .task { if store.state.value == nil { await store.load() } }
         .refreshOnForeground { await store.refresh() }
+    }
+
+    /// The way to everything that is not a tab.
+    ///
+    /// Ballots first and always: it is the only obligation here with a
+    /// deadline the server enforces, and closeExpiredSessions() gives no
+    /// grace. Alerts and Search are Analyst-gated, so they are absent rather
+    /// than present-and-refusing for the members who cannot open them —
+    /// the same rule the Wire and Watch tabs follow.
+    @ViewBuilder private var accessStrip: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: Space.s) {
+                NavigationLink(value: Route.ballots) {
+                    Chip(text: "BALLOTS", tone: T.amber, style: .solid)
+                }
+                NavigationLink(value: Route.club) {
+                    Chip(text: "CLUB", tone: T.blue)
+                }
+                NavigationLink(value: Route.performance) {
+                    Chip(text: "PERFORMANCE", tone: T.blue)
+                }
+                if s.terminalAccess != false {
+                    NavigationLink(value: Route.alerts) {
+                        Chip(text: "ALERTS", tone: T.orange)
+                    }
+                    NavigationLink(value: Route.search) {
+                        Chip(text: "SEARCH", tone: T.blue)
+                    }
+                }
+            }
+            .padding(.horizontal, Space.l)
+            .padding(.vertical, Space.s)
+        }
+        .background(T.bg)
     }
 
     @ViewBuilder private var outreachSection: some View {

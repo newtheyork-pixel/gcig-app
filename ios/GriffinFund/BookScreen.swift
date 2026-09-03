@@ -10,7 +10,20 @@ final class BookStore: ObservableObject {
 
     private var lastLoad: Date?
 
+    /// Paints from the last visit before the network is asked.
+    ///
+    /// A cold launch used to be a spinner over an empty screen for as long as
+    /// Render took to wake a sleeping dyno, which is often thirty seconds. A
+    /// phone is opened for four. The cached book renders instantly with its
+    /// real age attached, `aged(after:)` puts the stale strip up if it is old
+    /// enough to matter, and the refresh corrects it underneath.
     func load() async {
+        if let (book, at) = Cache.read("/holdings/quotes", as: Book.self) {
+            state = .loaded(book, at: at)
+            lastLoad = at
+            await fetch(keepingOldOnFailure: true)
+            return
+        }
         state = .loading
         await fetch(keepingOldOnFailure: false)
     }
@@ -33,7 +46,7 @@ final class BookStore: ObservableObject {
     private func fetch(keepingOldOnFailure keepOld: Bool) async {
         let previous = state.value
         do {
-            let book = try await API.shared.get("/holdings/quotes", as: Book.self)
+            let book = try await API.shared.get("/holdings/quotes", as: Book.self, cache: true)
             lastLoad = Date()
             state = .loaded(book, at: Date())
         } catch APIError.cancelled {

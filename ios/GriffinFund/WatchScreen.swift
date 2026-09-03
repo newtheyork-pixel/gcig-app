@@ -16,7 +16,13 @@ import SwiftUI
 final class WatchStore: ObservableObject {
     @Published private(set) var state: Loadable<Watchlist> = .loading
 
+    /// See BookStore.load: the last list paints before the network is asked.
     func load() async {
+        if let (list, at) = Cache.read("/watchlist", as: Watchlist.self) {
+            state = .loaded(list, at: at)
+            await fetch(keepOld: true)
+            return
+        }
         state = .loading
         await fetch(keepOld: false)
     }
@@ -87,7 +93,8 @@ final class WatchStore: ObservableObject {
     private func fetch(keepOld: Bool) async {
         let previous = state.value
         do {
-            state = .loaded(try await API.shared.get("/watchlist", as: Watchlist.self), at: Date())
+            state = .loaded(try await API.shared.get("/watchlist", as: Watchlist.self, cache: true),
+                            at: Date())
         } catch APIError.cancelled {
             return
         } catch {
