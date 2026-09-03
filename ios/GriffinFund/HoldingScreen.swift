@@ -18,7 +18,10 @@ final class HoldingStore: ObservableObject {
     /// The chart is a second request and must never gate the screen: a
     /// missing line is a missing line, not a failed name.
     @Published private(set) var chart: [ChartPoint] = []
-    @Published private(set) var chartFailed = false
+    /// Nil when the chart is fine. A sentence rather than a bool, because
+    /// the three ways this fails are three different facts and only one of
+    /// them is about the company.
+    @Published private(set) var chartError: String?
     /// Three more best-effort reads, each silent on failure for the same
     /// reason the coverage query is: they are context around the name, and
     /// a missing analyst count must never be why the company does not
@@ -51,14 +54,19 @@ final class HoldingStore: ObservableObject {
         consensus = (try? await API.shared.get("/terminal/consensus/\(ticker)", as: Consensus.self))?.latest
     }
 
+    /// Same keep-the-numbers rule as every other store: this screen now has
+    /// a pull-to-refresh, and a refresh that fails must not replace a quote
+    /// the member is reading with "Quote unavailable".
     private func loadInfo(_ ticker: String) async {
+        let previous = info.value
         do {
             info = .loaded(try await API.shared.get("/holdings/info/\(ticker)", as: TickerInfo.self),
                            at: Date())
         } catch APIError.cancelled {
             return
         } catch {
-            info = .failed(error.localizedDescription)
+            let msg = error.localizedDescription
+            info = previous != nil ? .stale(previous!, msg) : .failed(msg)
         }
     }
 
@@ -66,15 +74,37 @@ final class HoldingStore: ObservableObject {
         coverage = try? await API.shared.get("/holdings/coverage/\(ticker)", as: Coverage.self)
     }
 
+    /// The range picker is the whole interaction on this screen, so tapping
+    /// 1M then 3M before the first finishes is ordinary use, not a contrived
+    /// race. `.task(id: range)` cancels the superseded request; a bare `try?`
+    /// then flattened that cancellation into the same nil as a real failure
+    /// and the cancelled task went on to write `chartFailed = true` over a
+    /// perfectly good chart. Every other loader in this file already catches
+    /// `.cancelled` explicitly; this one now does too.
+    ///
+    /// The 403 case matters just as much. `/terminal/*` requires Analyst,
+    /// and the default role for a new member is below it — so for them this
+    /// swallowed a permission denial and printed "No price history available
+    /// for this name", which is our own gate reported as a fact about the
+    /// company. The repo's own rule forbids exactly that.
     func loadChart(_ ticker: String, range: ChartRange) async {
-        let payload = try? await API.shared.get("/terminal/chart/\(ticker)?range=\(range.rawValue)",
-                                                as: ChartPayload.self)
-        let pts = (payload?.points ?? []).compactMap { p -> ChartPoint? in
-            guard let t = p.t, let c = p.close else { return nil }
-            return ChartPoint(t: t, close: c)
+        do {
+            let payload = try await API.shared.get("/terminal/chart/\(ticker)?range=\(range.rawValue)",
+                                                   as: ChartPayload.self)
+            chart = (payload.points ?? []).compactMap { p -> ChartPoint? in
+                guard let t = p.t, let c = p.close else { return nil }
+                return ChartPoint(t: t, close: c)
+            }
+            chartError = chart.isEmpty ? "No price history available for this name." : nil
+        } catch APIError.cancelled {
+            return
+        } catch APIError.forbidden {
+            chart = []
+            chartError = "Price history needs Analyst access."
+        } catch {
+            chart = []
+            chartError = "The price history did not load. \(error.localizedDescription)"
         }
-        chart = pts
-        chartFailed = payload == nil
     }
 }
 
@@ -122,6 +152,15 @@ struct TickerScreen: View, Hashable {
         .toolbarBackground(T.redBar, for: .navigationBar)
         .toolbarBackground(.visible, for: .navigationBar)
         .toolbarColorScheme(.dark, for: .navigationBar)
+        // The quote block calls itself "Live". It was not: there was no
+        // refresh path of any kind after the first load, so a member could
+        // sit on a twenty-minute-old number that the screen labelled live.
+        // Pull to refresh, and the as-of stamp in the quote block says when
+        // the number is actually from.
+        .refreshable {
+            await store.load(ticker)
+            await store.loadChart(ticker, range: range)
+        }
         .task { await store.load(ticker) }
         .task(id: range) { await store.loadChart(ticker, range: range) }
     }
@@ -131,14 +170,14 @@ struct TickerScreen: View, Hashable {
     /// we doing", which is the question somebody opening our app has.
     @ViewBuilder private var chartSection: some View {
         VStack(spacing: Space.s) {
-            if store.chartFailed && store.chart.isEmpty {
-                Text("No price history available for this name.")
+            if let msg = store.chartError, store.chart.isEmpty {
+                Text(msg)
                     .font(Type.meta).foregroundStyle(T.muted)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.vertical, Space.l)
             } else {
-                PriceChart(points: store.chart, averageCost: holding?.costBasis)
-                if holding?.costBasis != nil && !store.chart.isEmpty {
+                PriceChart(points: store.chart, averageCost: position?.costBasis)
+                if position?.costBasis != nil && !store.chart.isEmpty {
                     HStack(spacing: Space.xs) {
                         Rectangle().fill(T.amber.opacity(0.7)).frame(width: 10, height: 1)
                         Text("Our average cost").font(Type.meta).foregroundStyle(T.muted)
@@ -228,8 +267,31 @@ struct TickerScreen: View, Hashable {
 
     // MARK: sections
 
+    /// The position the coverage payload reports, used when this screen was
+    /// not opened from the Book.
+    ///
+    /// `holding` arrives only through the navigation link off BookScreen, so
+    /// the SAME held name opened from the wire, the watchlist or Today's
+    /// movers claimed we owned nothing — no position block, and no cost rule
+    /// on the chart. The server has been sending `coverage.holding` all
+    /// along. Market value is derived from the live quote rather than read,
+    /// because the coverage row carries shares and cost and no mark.
+    private var position: Holding? {
+        if let h = holding { return h }
+        guard let c = store.coverage?.holding, let shares = c.shares else { return nil }
+        let price = store.info.value?.price
+        return Holding(ticker: ticker,
+                       name: c.name,
+                       shares: shares,
+                       price: price,
+                       marketValue: price.map { $0 * shares },
+                       costBasis: c.costBasis,
+                       dayChange: store.info.value?.dayChange,
+                       isCash: false)
+    }
+
     @ViewBuilder private var positionSection: some View {
-        if let h = holding {
+        if let h = position {
         Section {
             VStack(spacing: 0) {
                 StatLine(label: "SHARES", value: Fmt.shares(h.shares))
@@ -268,10 +330,24 @@ struct TickerScreen: View, Hashable {
                 case .failed(let msg):
                     // Named, and scoped to this section. The position above
                     // is ours and stays on screen regardless.
-                    Text("Quote unavailable. \(msg)")
-                        .font(Type.meta)
-                        .foregroundStyle(T.muted)
-                        .padding(Space.l)
+                    //
+                    // With a retry, because the screen had none: a quote
+                    // that failed once could only be reloaded by leaving
+                    // the screen and coming back, which is not a thing
+                    // anybody works out on their own.
+                    HStack(alignment: .firstTextBaseline, spacing: Space.s) {
+                        Text("Quote unavailable. \(msg)")
+                            .font(Type.meta)
+                            .foregroundStyle(T.muted)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Spacer(minLength: Space.s)
+                        Button("RETRY") { Task { await store.load(ticker) } }
+                            .font(Type.chip)
+                            .foregroundStyle(T.cyan)
+                            .buttonStyle(.plain)
+                            .frame(minWidth: 44, minHeight: 44)
+                    }
+                        .padding(.horizontal, Space.l)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 case .loaded(let i, _), .stale(let i, _):
                     VStack(spacing: 0) {
@@ -280,7 +356,7 @@ struct TickerScreen: View, Hashable {
                         StatLine(label: "P/E TRAILING", value: Fmt.multiple(i.trailingPE))
                         StatLine(label: "P/E FORWARD", value: Fmt.multiple(i.forwardPE))
                         StatLine(label: "BETA", value: i.beta == nil ? "—" : String(format: "%.2f", i.beta!))
-                        StatLine(label: "DIV YIELD", value: Fmt.pct(i.dividendYield, signed: false))
+                        StatLine(label: "DIV YIELD", value: Fmt.pct(i.dividendYieldPct, signed: false))
                         StatLine(label: "INDUSTRY", value: i.industry ?? "—")
                     }
                     .padding(.horizontal, Space.l)
@@ -391,9 +467,23 @@ struct TickerScreen: View, Hashable {
         if let c = store.coverage, !c.isEmpty {
             Section {
                 VStack(spacing: 0) {
-                    ForEach(Array((c.pitches ?? []).prefix(4).enumerated()), id: \.offset) { _, p in
-                        Row(title: p.title ?? "Pitch",
-                            subtitle: p.recommendation,
+                    // What the club DECIDED, which is the whole point of the
+                    // section and was the one part never drawn. The rows
+                    // were decoded into a shape the server does not send and
+                    // then dropped on the floor.
+                    ForEach((c.decisions ?? []).prefix(4), id: \.stableId) { d in
+                        Row(title: decisionTitle(d),
+                            subtitle: d.synthesis,
+                            meta: Fmt.day(d.closedAt),
+                            strip: decisionTone(d)) {
+                            if let n = d.ballots, n > 0 {
+                                Chip(text: "\(n) ballot\(n == 1 ? "" : "s")", tone: T.muted)
+                            }
+                        }
+                    }
+                    ForEach((c.pitches ?? []).prefix(4), id: \.stableId) { p in
+                        Row(title: p.who.map { "Pitched by \($0)" } ?? "Pitch",
+                            subtitle: p.where_,
                             meta: Fmt.day(p.date))
                     }
                     ForEach(Array((c.reports ?? []).prefix(4).enumerated()), id: \.offset) { _, r in
@@ -410,6 +500,27 @@ struct TickerScreen: View, Hashable {
             } header: {
                 SectionHeader(text: "Club record")
             }
+        }
+    }
+
+    /// "Voted Buy · $4,200 average" reads as a decision. "Buy" alone reads
+    /// as a recommendation somebody is making now, which is a different
+    /// claim about a closed vote.
+    private func decisionTitle(_ d: Coverage.Decision) -> String {
+        let verdict = d.decision ?? "Closed"
+        guard let p = d.proposed, let avg = p.avg else {
+            return "\(d.question): \(verdict)"
+        }
+        let sized = p.fixed == true ? "\(Fmt.money(avg)) fixed"
+                                    : "\(Fmt.money(avg)) average"
+        return "\(d.question): \(verdict) · \(sized)"
+    }
+
+    private func decisionTone(_ d: Coverage.Decision) -> Color? {
+        switch d.decision {
+        case "Buy":  return T.positive
+        case "Sell": return T.negative
+        default:     return nil
         }
     }
 

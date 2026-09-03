@@ -95,6 +95,77 @@ Rules that keep it sane:
   ends translocation; the download page says so, and so should any
   release notes while 0.2.0/0.2.1 updaters are still in the field.
 
+## iPhone app (`/ios`)
+
+SwiftUI, iPhone-first, `~/repos/gcig-app/ios`. Companion to the Mac
+terminal, not a port of it: the README's rule is that the phone holds a
+reader, an alerter and a messenger, and anything with columns stays on
+the desk. Render ignores `/ios` entirely; pushing it redeploys nothing.
+
+Rules, each one paid for:
+
+- **The transport contract is the Mac's, copied.** `Core.swift` uses its
+  own ephemeral, cache-disabled `URLSession` (`Net.session`) — never
+  `URLSession.shared`. The shared session caches to disk, Express stamps
+  an ETag on responses with no Cache-Control, and a replayed 200 then
+  re-serves a stale `X-New-Token`; adopting it 401s the next request with
+  code AUTH and tears down a live session. That is written down in
+  `mac/Core/API.swift` as how that client "came to delete its own valid
+  session at launch", and iOS shipped the identical shape for months.
+  Rotation is now guarded by the token's own `iat` and by a generation
+  counter that orphans every in-flight request the moment somebody signs
+  out. **If you touch this file, port from the Mac; do not re-derive.**
+- **Only a 401 carrying `code: "AUTH"` ends a session**, and only if the
+  session generation still matches. A 429 or a 502 from a waking dyno
+  keeps the login. Reads retry on 3/6/12s, sized to outlast a cold start;
+  writes never retry.
+- **A 403 is `APIError.forbidden` and renders as a sentence, not as
+  COULD NOT LOAD over a RETRY that cannot succeed.** `/terminal/*` and
+  `/watchlist` are Analyst-and-above and `JuniorAnalyst` is the default
+  role, so this is the ordinary case for a new member, not an edge one.
+  `MainTabs` hides Wire and Watch on `terminalAccess:false` from
+  `/auth/me` — which the SERVER computes with `hasTerminalAccess`, so the
+  app never reimplements the rank ladder. **Client and server gates move
+  together.**
+- **Never report our own gate or outage as a fact about the company.** A
+  403 on `/terminal/chart` used to print "No price history available for
+  this name", which is a claim about the filer.
+- **Decodables come from the server handler, every field optional** — and
+  now with a real cost recorded: three of them asked for keys the routes
+  have never sent, and one passed a fractional `dividendYield` to a
+  percent formatter and printed a 2.34% yield as 0.02%. All-optional
+  decoding means a wrong key is silent. `Fmt.day` returns its input
+  unchanged when it cannot parse it, never a dash: the earnings history
+  labels are `"Q2 2026"`, and a length guard turned every row into an em
+  dash for as long as the section existed.
+- **The phone never sends.** No compose, no drafting, no approve, and no
+  `mailto:` — a contact's address is selectable text. An email from a
+  member's personal account bypasses the MNPI screen, the
+  `OutreachMessage` ledger and the reply sweep (which keys on
+  `sentById`), and the chase clock then recommends writing again to
+  somebody who was just written to.
+- **Staleness is a state, reachable by the clock.** `Loadable.aged(after:)`
+  turns a `.loaded` older than ten minutes into `.stale`, and
+  `.refreshOnForeground` refetches when the app returns after a real
+  absence. There was no scene-phase handling at all, which is how the
+  book stayed on morning prices all afternoon under a chip saying "Live".
+- **The token is keychain-only, `WhenUnlockedThisDeviceOnly`.** Nothing
+  reads it while locked. Raise that to `AfterFirstUnlock` only when
+  something genuinely runs in the background, and say why in the diff.
+- **`project.pbxproj` is generated** by `ios/generate_project.py`, which
+  discovers sources recursively and derives every object id from a hash
+  of the path. Regenerating with no source change must produce a
+  byte-identical file; `.github/workflows/ios.yml` enforces that. Version
+  and build number live in `ios/VERSION` and `ios/BUILD_NUMBER`, written
+  by `ios/release.sh` from `git rev-list --count HEAD`.
+- **`SWIFT_VERSION` is 5.0**, so the actor and `@Sendable` annotations in
+  `Core.swift` are NOT compiler-checked. The Mac is on tools 6.0. Moving
+  iOS to Swift 6 is the precondition for a shared GriffinKit package and
+  is deliberately not bundled with feature work.
+- **TestFlight builds expire 90 days after upload** and every member's
+  app stops launching on the same day. There is no warning; check the
+  upload date before assuming a report of "it won't open" is a bug.
+
 ## Quant research (`/quant`)
 
 A **research** repository for a long-only, cash-account, daily-rebalance

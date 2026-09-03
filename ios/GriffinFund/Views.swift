@@ -28,6 +28,12 @@ struct RootView: View {
             else { return }
             Task { await s.exchange(code: code) }
         }
+        // Who is holding the phone, asked at launch and again whenever the
+        // app comes back. A role can change between sessions, and a stale
+        // answer is how somebody keeps looking at a surface that was taken
+        // away from them.
+        .task { await s.refreshIdentity() }
+        .refreshOnForeground(after: 300) { await s.refreshIdentity() }
     }
 }
 
@@ -116,6 +122,20 @@ struct LoginView: View {
 }
 
 struct MainTabs: View {
+    @EnvironmentObject var s: Session
+
+    /// Wire and Watch both sit behind `requireTerminalAccess`, which is
+    /// Analyst and above. JuniorAnalyst is one rank below it and is the
+    /// DEFAULT role for every self-signup, so the newest members of the club
+    /// installed this app and found two of five tabs were full-screen red
+    /// errors with a RETRY that could never succeed. The server gate is
+    /// right and deliberate; what was missing was the client half of it —
+    /// CLAUDE.md says in as many words that the two must move together.
+    ///
+    /// Nil means "we have not asked yet", and the tabs stay up through it:
+    /// a slow identity call must not read as a demotion.
+    private var showsTerminal: Bool { s.terminalAccess != false }
+
     var body: some View {
         // Today first because the phone is the interrupt device and this
         // is the only screen that knows who you are. Club last: lowest
@@ -124,10 +144,12 @@ struct MainTabs: View {
         TabView {
             NavigationStack { TodayScreen() }
                 .tabItem { Label("Today", systemImage: "checklist") }
-            NavigationStack { NewsScreen() }
-                .tabItem { Label("Wire", systemImage: "newspaper") }
-            NavigationStack { WatchScreen() }
-                .tabItem { Label("Watch", systemImage: "eye") }
+            if showsTerminal {
+                NavigationStack { NewsScreen() }
+                    .tabItem { Label("Wire", systemImage: "newspaper") }
+                NavigationStack { WatchScreen() }
+                    .tabItem { Label("Watch", systemImage: "eye") }
+            }
             NavigationStack { BookScreen() }
                 .tabItem { Label("Book", systemImage: "chart.pie") }
             NavigationStack { AccountScreen() }
@@ -203,16 +225,70 @@ struct TodayScreen: View {
     var body: some View {
         VStack(spacing: 0) {
             FunctionBar(code: "TODAY", title: "What needs you")
-            ScreenState(state: store.state,
-                        retry: { Task { await store.load() } }) { f in
-                list(f)
+            // The three blocks are siblings, and that is the fix.
+            //
+            // They used to live inside one ScreenState keyed on the chase
+            // list, so a 500 on /research/follow-ups blanked the movers and
+            // the day-in-review as well — two sections that had loaded
+            // perfectly. One failed request must cost exactly one section.
+            ScrollView {
+                LazyVStack(spacing: 0, pinnedViews: [.sectionHeaders]) {
+                    outreachSection
+                    moversSection
+                    reviewSection
+                    Spacer().frame(height: Space.xl)
+                }
             }
+            .refreshable { await store.refresh() }
         }
         .background(T.bg)
         .toolbar(.hidden, for: .navigationBar)
         .navigationDestination(for: PersonScreen.self) { $0 }
         .navigationDestination(for: TickerScreen.self) { $0 }
         .task { if store.state.value == nil { await store.load() } }
+        .refreshOnForeground { await store.refresh() }
+    }
+
+    @ViewBuilder private var outreachSection: some View {
+        let rows = store.state.value?.rows ?? []
+        Section {
+            switch store.state.aged(after: 600) {
+            case .loading:
+                LoadingState().frame(height: 120)
+            case .failed(let msg):
+                ErrorState(message: msg, retry: { Task { await store.load() } })
+                    .frame(height: 180)
+            case .stale(let f, let msg):
+                VStack(spacing: 0) {
+                    StaleStrip(message: msg, retry: { Task { await store.refresh() } })
+                    chaseList(f.rows ?? [])
+                }
+            case .loaded(let f, _):
+                chaseList(f.rows ?? [])
+            }
+        } header: {
+            SectionHeader(text: "Outreach", trailing: rows.isEmpty ? nil : "\(rows.count)")
+        }
+    }
+
+    @ViewBuilder private func chaseList(_ rows: [ChaseRow]) -> some View {
+        if rows.isEmpty {
+            EmptyState(text: emptyText, good: true).frame(height: 90)
+        } else {
+            // The rows arrive ranked by the server and are rendered in that
+            // order. The client used to sort them itself and disagreed with
+            // the desk about which chase mattered most.
+            ForEach(rows) { row in
+                NavigationLink(value: PersonScreen(targetId: row.targetId ?? -1,
+                                                   knownName: row.name)) {
+                    chaseRow(row)
+                }
+                .buttonStyle(.plain)
+                // A row with no target id has nothing to open, and a link
+                // that goes nowhere is worse than no link.
+                .disabled(row.targetId == nil)
+            }
+        }
     }
 
     /// The server ships nextDueAt precisely so a screen with nothing to do
@@ -225,41 +301,6 @@ struct TodayScreen: View {
             return "Nothing owed today."
         }
         return "Nothing owed today.\nNext chase comes due \(Fmt.day(ISO8601DateFormatter().string(from: d)))."
-    }
-
-    private func list(_ f: FollowUps) -> some View {
-        ScrollView {
-            LazyVStack(spacing: 0, pinnedViews: [.sectionHeaders]) {
-                // The rows arrive ranked by the server and are rendered in
-                // that order. The client used to sort them itself and
-                // disagreed with the desk about which chase mattered most.
-                let rows = f.rows ?? []
-                Section {
-                    if rows.isEmpty {
-                        EmptyState(text: emptyText, good: true).frame(height: 90)
-                    } else {
-                        ForEach(rows) { row in
-                            NavigationLink(value: PersonScreen(targetId: row.targetId ?? -1,
-                                                               knownName: row.name)) {
-                                chaseRow(row)
-                            }
-                            .buttonStyle(.plain)
-                            // A row with no target id has nothing to open,
-                            // and a link that goes nowhere is worse than
-                            // no link.
-                            .disabled(row.targetId == nil)
-                        }
-                    }
-                } header: {
-                    SectionHeader(text: "Outreach", trailing: rows.isEmpty ? nil : "\(rows.count)")
-                }
-
-                moversSection
-                reviewSection
-                Spacer().frame(height: Space.xl)
-            }
-        }
-        .refreshable { await store.refresh() }
     }
 
     /// What moved in our own book today. Not a market screen: these are
@@ -328,7 +369,6 @@ struct TodayScreen: View {
             strip: strip(r)) {
             Chip(text: label(r), tone: strip(r) ?? T.muted, style: .solid)
         }
-        .accessibilityElement(children: .combine)
     }
 
     /// `owed` carries no dueAt at all, so a due-date line is not merely
@@ -371,14 +411,36 @@ struct AccountScreen: View {
     @EnvironmentObject var s: Session
     @State private var confirmingSignOut = false
 
+    /// The wire carries CamelCase role names. "SeniorPortfolioManager" is a
+    /// database value, not a sentence to show somebody about themselves.
+    static func readable(_ role: String) -> String {
+        role.replacingOccurrences(of: "([a-z])([A-Z])", with: "$1 $2",
+                                  options: .regularExpression)
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             FunctionBar(code: "ACCT", title: "Signed in")
             ScrollView {
                 LazyVStack(spacing: 0, pinnedViews: [.sectionHeaders]) {
                     Section {
+                        // The name is remembered across launches now. It
+                        // was only ever set by the sign-in call, so every
+                        // cold launch showed the placeholder to a member
+                        // whose name we had known since the day they
+                        // installed the app.
                         Row(title: s.name ?? "Signed in",
-                            subtitle: "The Griffin Fund")
+                            subtitle: s.role.map { Self.readable($0) } ?? "The Griffin Fund")
+                        if s.terminalAccess == false {
+                            Row(title: "Wire and Watch are not on this account",
+                                subtitle: "Market data needs the Analyst role. The book and your obligations do not.",
+                                strip: T.muted)
+                        }
+                        if let w = s.keychainWarning {
+                            Row(title: "This phone could not save your sign-in",
+                                subtitle: w,
+                                strip: T.negative)
+                        }
                     } header: {
                         SectionHeader(text: "You")
                     }

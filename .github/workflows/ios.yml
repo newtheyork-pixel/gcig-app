@@ -1,0 +1,49 @@
+name: iOS
+
+# Path-filtered because macOS runners bill at ten times the Linux rate, and
+# nothing under ios/ can break the server or the web client.
+on:
+  push:
+    paths: ['ios/**', '.github/workflows/ios.yml']
+  pull_request:
+    paths: ['ios/**', '.github/workflows/ios.yml']
+
+jobs:
+  build:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      # The generator's whole promise is that regenerating with no source
+      # change produces a byte-identical file, so the diff on a real change
+      # shows only the real change. Nothing verified that, which meant a
+      # hand-edit to project.pbxproj could sit in the repo until the next
+      # person ran the script and got an unexplainable diff.
+      #
+      # This stays honest across a release because the generator reads the
+      # build number from ios/BUILD_NUMBER rather than shelling out to git:
+      # release.sh writes that file and commits it alongside the pbxproj it
+      # produced, so regenerating at any commit reproduces that commit's
+      # file exactly. A generator that called `git rev-list` itself would
+      # fail this check on every push after a release.
+      - name: project.pbxproj is what the generator produces
+        run: |
+          python3 ios/generate_project.py
+          git diff --exit-code -- ios/GriffinFund.xcodeproj/project.pbxproj
+
+      - name: Build for the simulator
+        run: |
+          xcodebuild -project ios/GriffinFund.xcodeproj -target GriffinFund \
+            -sdk iphonesimulator -configuration Debug \
+            CODE_SIGNING_ALLOWED=NO SYMROOT="$RUNNER_TEMP/build" build \
+            | tail -60
+
+      # A warning is a finding nobody reads unless something counts them.
+      - name: Report warnings
+        if: always()
+        run: |
+          xcodebuild -project ios/GriffinFund.xcodeproj -target GriffinFund \
+            -sdk iphonesimulator -configuration Debug \
+            CODE_SIGNING_ALLOWED=NO SYMROOT="$RUNNER_TEMP/build2" build 2>&1 \
+            | grep -E 'warning:' | sort -u | tee "$RUNNER_TEMP/warnings.txt" || true
+          echo "warnings: $(wc -l < "$RUNNER_TEMP/warnings.txt" | tr -d ' ')"

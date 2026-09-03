@@ -49,6 +49,9 @@ struct Holding: Decodable, Identifiable {
     /// identities, so the index is folded in by the caller via `keyed`.
     var id: String { ticker ?? name ?? "unidentified" }
 
+    /// The ticker, uppercased, for the one comparison that matters.
+    var symbol: String? { ticker?.uppercased() }
+
     /// Position-level day move in dollars: per-share change times shares.
     var dayChangeValue: Double? {
         guard let dayChange, let shares else { return nil }
@@ -90,6 +93,32 @@ struct Book: Decodable {
     var cash: [Holding] { (holdings ?? []).filter { $0.isCash == true } }
 }
 
+extension Array where Element == Holding {
+    /// The stable, unique identity `Holding.id`'s own comment promises and
+    /// nothing ever provided — there was no `keyed` anywhere in the app.
+    ///
+    /// Rendering by array offset instead, which is what the Book did, means
+    /// identity is POSITION: when the sheet reorders, row 3 keeps its
+    /// identity while its contents change from one company to another, so
+    /// the price-flash animation compares the old holding's price to the new
+    /// holding's and flashes green on a name that did not move. Keyed on the
+    /// ticker, a reordered row travels with its own identity.
+    ///
+    /// Two malformed sheet rows carrying neither ticker nor name collapse to
+    /// the same literal, so first-seen ordinal disambiguates them. That is
+    /// the only case where position enters, and it is the case where there
+    /// is nothing else to go on.
+    var keyed: [(key: String, holding: Holding)] {
+        var seen: [String: Int] = [:]
+        return map { h in
+            let base = h.id
+            let n = (seen[base] ?? 0) + 1
+            seen[base] = n
+            return (key: n == 1 ? base : "\(base)#\(n)", holding: h)
+        }
+    }
+}
+
 // MARK: One name
 
 /// /holdings/info/:ticker. Finnhub first, Yahoo as fallback, so any field
@@ -103,6 +132,12 @@ struct TickerInfo: Decodable {
     let marketCap: Double?
     let trailingPE: Double?
     let forwardPE: Double?
+    /// A FRACTION on the wire. Both server branches agree: the Finnhub path
+    /// divides `currentDividendYieldTTM` by 100 and Yahoo's own field is
+    /// already fractional. Read it through `dividendYieldPct` and never
+    /// directly — passing the raw value to `Fmt.pct` printed a 2.34% yield
+    /// as "0.02%", which is the Mac's DescriptionPanel bug in reverse: that
+    /// client multiplies by 100 and this one had simply never been told to.
     let dividendYield: Double?
     let fiftyTwoWeekLow: Double?
     let fiftyTwoWeekHigh: Double?
@@ -119,6 +154,9 @@ struct TickerInfo: Decodable {
         let s = summary?.trimmingCharacters(in: .whitespacesAndNewlines)
         return (s?.isEmpty == false) ? s : nil
     }
+
+    /// The wire fraction, as a whole percent, ready for `Fmt.pct`.
+    var dividendYieldPct: Double? { dividendYield.map { $0 * 100 } }
 
     var dayChange: Double? {
         guard let price, let previousClose, previousClose != 0 else { return nil }
@@ -148,28 +186,93 @@ struct Coverage: Decodable {
     let research: [Research]?
     let decisions: [Decision]?
 
+    /// Do we own it, and what did we pay. The screen only knew about a
+    /// position when a `Holding` had been handed to it by the Book, so the
+    /// same ticker opened from the wire or the watchlist claimed we held
+    /// nothing. The coverage payload has carried this all along.
+    let holding: Position?
+
+    /// Rewritten from the handler in routes/holdings.js. The previous shape
+    /// asked for `title` and `recommendation`, which that route has never
+    /// sent — so every pitch rendered as the literal word "Pitch" over a
+    /// blank subtitle. The house rule says decodables come from the server
+    /// handler and not from the JSX; this is what happens when the rule is
+    /// followed once and never checked again.
     struct Pitch: Decodable, Identifiable {
         let id: Int?
         let date: String?
-        let recommendation: String?
-        let title: String?
+        let location: String?
+        let industry: Industry?
+        let presenters: [String]?
+
+        struct Industry: Decodable { let id: Int?; let name: String? }
+
         var stableId: String { id.map(String.init) ?? (date ?? "pitch") }
+        var who: String? {
+            let names = (presenters ?? []).compactMap { $0.isEmpty ? nil : $0 }
+            return names.isEmpty ? nil : names.joined(separator: ", ")
+        }
+        var where_: String? {
+            [industry?.name, location].compactMap { $0 }
+                .filter { !$0.isEmpty }
+                .joined(separator: " · ")
+                .nilIfEmpty
+        }
     }
     struct Report: Decodable {
+        let id: Int?
         let title: String?
         let author: String?
         let date: String?
+        let description: String?
     }
     struct Research: Decodable {
+        let id: Int?
         let name: String?
         let status: String?
+        /// When the work was STARTED. The server picks createdAt over
+        /// updatedAt on purpose: relabelling a row moved updatedAt, which
+        /// is how thirty-nine projects all came to read "August 6".
+        let initiatedAt: String?
         let analyst: String?
         let buyBelow: Double?
+        let currency: String?
     }
-    struct Decision: Decodable {
-        let date: String?
-        let action: String?
-        let outcome: String?
+
+    /// What the club decided, recomputed server-side from the same tally
+    /// function the votes page uses. Fetched since this screen was written
+    /// and never once rendered.
+    struct Decision: Decodable, Identifiable {
+        let id: Int?
+        let ticker: String?
+        let kind: String?
+        let closedAt: String?
+        let decision: String?
+        let ballots: Int?
+        let proposed: Proposed?
+        let synthesis: String?
+        let pitchId: Int?
+
+        struct Proposed: Decodable {
+            let count: Int?
+            let avg: Double?
+            let min: Double?
+            let max: Double?
+            let fixed: Bool?
+        }
+
+        var stableId: String { id.map(String.init) ?? (closedAt ?? "decision") }
+        /// A sell vote offers Sell or Hold; a buy vote offers Buy, Hold or
+        /// Sell. The word alone does not say which question was asked.
+        var question: String { kind == "sell" ? "Exit vote" : "Pitch vote" }
+    }
+
+    struct Position: Decodable {
+        let shares: Double?
+        let costBasis: Double?
+        let name: String?
+        let sector: String?
+        let addedAt: String?
     }
 
     var isEmpty: Bool {
@@ -425,7 +528,12 @@ struct Mover: Decodable, Identifiable {
     /// endpoint, and passing this straight to Fmt.pct renders a 2.34% move
     /// as "+0.02%".
     let changePct: Double?
-    let dayChange: Double?
+    /// The wire name is `dayUsd`. This decoded as `dayChange` and therefore
+    /// as nil on every row since it was written — silently, because the
+    /// field is not rendered anywhere yet. Named correctly now so that the
+    /// first screen to show a dollar move gets a number instead of a dash.
+    let dayUsd: Double?
+    let last: Double?
     let source: String?
 
     var id: String { ticker ?? name ?? "?" }

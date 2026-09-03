@@ -38,9 +38,20 @@ enum T {
     /// amber reads as secondary. Here body ink is white, and 0.130 beside
     /// white reads as highlighted text rather than quieter text. Re-authored
     /// at low chroma: still warm, still OKLCH, no eyeballed grey.
-    static let dim   = oklch(0.64, 0.020, 75)
+    static let dim   = oklch(0.72, 0.020, 75)
     /// Tertiary and meta text, and the colour of a FLAT delta.
-    static let muted = oklch(0.50, 0.075, 66)
+    ///
+    /// Raised from 0.50, which failed WCAG AA on every surface it appears
+    /// on — 3.00:1 over the page, 3.18:1 over a card and 2.62:1 over a
+    /// section header, against the 4.5:1 small text is held to. This is the
+    /// colour of as-of stamps, provenance chips, source labels and counts:
+    /// the layer that says where a number came from. Making the caveat
+    /// harder to read than the figure it qualifies is the wrong way round.
+    ///
+    /// At 0.64 it clears 4.5:1 on all three grounds. It stays separable
+    /// from `dim` by lightness AND by chroma — muted is the warm one, dim
+    /// is nearly neutral — rather than by being too faint to read.
+    static let muted = oklch(0.64, 0.075, 66)
 
     // MARK: Voice
 
