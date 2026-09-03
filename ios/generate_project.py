@@ -28,8 +28,18 @@ PBXPROJ = ROOT / "GriffinFund.xcodeproj" / "project.pbxproj"
 # version in Info.plist with GENERATE_INFOPLIST_FILE = NO, which meant the
 # commit titled "0.1.1" shipped an app still identifying itself as 0.1.0 (1)
 # and App Store Connect would have rejected the next upload as a duplicate.
-MARKETING_VERSION = "0.4.0"
-BUILD_NUMBER = "6"
+MARKETING_VERSION = (ROOT / "VERSION").read_text().strip() if (ROOT / "VERSION").exists() else "0.4.0"
+
+# The build number is READ, never typed. It sat here as a string literal that
+# a person had to remember to raise before every upload, against 1,041 commits
+# of history — and App Store Connect rejects a duplicate outright, so the
+# forgetting is discovered at the end of a release rather than the start.
+# `release.sh` writes `git rev-list --count HEAD` into ios/BUILD_NUMBER, which
+# is monotonic, unforgeable, and needs nobody's memory. Reading it from a file
+# rather than shelling out to git keeps regeneration deterministic: the same
+# inputs on disk always produce a byte-identical pbxproj, which is the whole
+# promise of this script and what CI now checks.
+BUILD_NUMBER = (ROOT / "BUILD_NUMBER").read_text().strip() if (ROOT / "BUILD_NUMBER").exists() else "6"
 
 BUNDLE_ID = "org.thegriffinfund.ios"
 DISPLAY_NAME = "Griffin Fund"
@@ -47,16 +57,33 @@ def oid(key: str) -> str:
 
 
 def main() -> None:
-    sources = sorted(p.name for p in APP.glob("*.swift"))
+    # Recursive. The glob was flat, so the day anybody grouped sources into
+    # a folder — Core/, Panels/, the shape the Mac client already uses — the
+    # files inside it would vanish from the target silently and the app would
+    # fail to build on a missing symbol rather than on a missing file.
+    sources = sorted(
+        p.relative_to(APP).as_posix() for p in APP.rglob("*.swift")
+    )
     if not sources:
         raise SystemExit(f"No Swift sources found in {APP}")
+
+    # Object ids are derived from a hash of the path, and two files can only
+    # collide if their paths do. Checked rather than assumed: a silent
+    # collision would drop one of the two from the build.
+    seen = {}
+    for name in sources:
+        for kind in ("fileref", "buildfile"):
+            key = oid(f"{kind}:{name}")
+            if key in seen:
+                raise SystemExit(f"id collision: {name} and {seen[key]}")
+            seen[key] = name
 
     file_refs, build_files, group_children, source_files = [], [], [], []
     for name in sources:
         fref, bfile = oid(f"fileref:{name}"), oid(f"buildfile:{name}")
         file_refs.append(
             f"\t\t{fref} /* {name} */ = {{isa = PBXFileReference; "
-            f"lastKnownFileType = sourcecode.swift; path = {name}; sourceTree = \"<group>\"; }};"
+            f"lastKnownFileType = sourcecode.swift; path = \"{name}\"; sourceTree = \"<group>\"; }};"
         )
         build_files.append(
             f"\t\t{bfile} /* {name} in Sources */ = {{isa = PBXBuildFile; "

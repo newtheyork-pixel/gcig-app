@@ -4,7 +4,9 @@ import crypto from 'node:crypto';
 import jwt from 'jsonwebtoken';
 import { OAuth2Client } from 'google-auth-library';
 import prisma from '../db.js';
-import { verifyJwt, issueJwt, serializeUser } from '../middleware/auth.js';
+import {
+  verifyJwt, issueJwt, serializeUser, passesTerminalGate,
+} from '../middleware/auth.js';
 import { authLimiter, codeLimiter } from '../middleware/rateLimit.js';
 import {
   sendVerificationCode,
@@ -749,6 +751,15 @@ router.get('/me', verifyJwt, async (req, res) => {
   res.json({
     ...safe,
     ...serializeUser(user),
+    // Answered here rather than re-derived by each client. The native
+    // apps need to know whether to show the terminal surfaces at all,
+    // and a client that reimplements the rank ladder is a second rule
+    // that can disagree with the gate — which is how a member ends up
+    // looking at a tab that 403s on every request inside it.
+    //
+    // `passesTerminalGate` is literally the body of requireTerminalAccess,
+    // so this answer and the route's answer cannot diverge.
+    terminalAccess: passesTerminalGate(user),
     googleLinked: !!googleId,
     hasPassword: !!passwordHash,
   });

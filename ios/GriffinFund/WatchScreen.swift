@@ -28,7 +28,11 @@ final class WatchStore: ObservableObject {
     /// with one name is how a disabled button ends up wired to the wrong
     /// one.
     @Published private(set) var submitting = false
-    @Published var addError: String?
+    /// Any failed write on this screen, add or remove. One field rather
+    /// than two because there is one place to show it, and a remove
+    /// failure written into a variable only the add sheet renders is a
+    /// message nobody ever sees.
+    @Published var actionError: String?
 
     /// Adding is the watchlist's real value on a phone: somebody names a
     /// company at dinner and it takes four seconds. Reading the list is
@@ -41,7 +45,7 @@ final class WatchStore: ObservableObject {
     /// everybody, so the screen asks.
     func add(_ ticker: String, shared: Bool) async -> Bool {
         submitting = true
-        addError = nil
+        actionError = nil
         defer { submitting = false }
         do {
             _ = try await API.shared.post("/watchlist",
@@ -51,8 +55,32 @@ final class WatchStore: ObservableObject {
             await refresh()
             return true
         } catch {
-            addError = error.localizedDescription
+            actionError = error.localizedDescription
             return false
+        }
+    }
+
+    /// The list could be added to and never removed from, which turns a
+    /// watchlist into a ratchet: the only way to take a name off was to open
+    /// the website.
+    ///
+    /// Only rows with a numeric id can go. That is not a client rule invented
+    /// here — the server refuses a non-numeric id because holdings are
+    /// derived from the sheet, and "removing" one would be pretending we can
+    /// sell from a watchlist. The row hides its own remove action when the
+    /// id says it is not ours to delete, so nobody is offered a button that
+    /// answers 400.
+    func remove(_ item: WatchItem) async {
+        guard let id = item.id, Int(id) != nil else { return }
+        do {
+            _ = try await API.shared.delete("/watchlist/\(id)", as: AddReceipt.self)
+            await refresh()
+        } catch {
+            // Surfaced in the same place an add failure is. A permission
+            // refusal here is a real sentence from the server about whose
+            // row this is ("Only an executive can remove a name from the
+            // club list"), and it is worth reading.
+            actionError = error.localizedDescription
         }
     }
 
@@ -71,18 +99,21 @@ final class WatchStore: ObservableObject {
 
 struct WatchScreen: View {
     @StateObject private var store = WatchStore()
+    @ObservedObject private var clock = StaleClock.shared
     @State private var adding = false
     @State private var newTicker = ""
     @State private var shared = true
+    @State private var removing: WatchItem?
     @FocusState private var tickerFocused: Bool
 
     var body: some View {
         VStack(spacing: 0) {
             FunctionBar(code: "WATCH", title: "Names we follow")
-            ScreenState(state: store.state,
+            ScreenState(state: store.state.aged(after: 600, now: clock.tick),
                         emptyWhen: { ($0.items ?? []).isEmpty },
                         emptyText: "Nothing on the watchlist yet.",
-                        retry: { Task { await store.load() } }) { list in
+                        retry: { Task { await store.load() } },
+                        staleRetry: { Task { await store.refresh() } }) { list in
                 content(list)
             }
         }
@@ -90,12 +121,40 @@ struct WatchScreen: View {
         .toolbar(.hidden, for: .navigationBar)
         .navigationDestination(for: TickerScreen.self) { $0 }
         .task { if store.state.value == nil { await store.load() } }
+        .refreshOnForeground { await store.refresh() }
         .overlay(alignment: .bottomTrailing) { addButton }
-        .sheet(isPresented: $adding) { addSheet }
+        // Reset on dismiss, not only on a successful add. Cancelling used to
+        // leave the typed ticker and any error behind, so reopening the
+        // sheet showed a stranger's half-finished attempt.
+        .sheet(isPresented: $adding, onDismiss: resetAddSheet) { addSheet }
+        .confirmationDialog("Remove \(removing?.ticker ?? "this name")?",
+                            isPresented: Binding(get: { removing != nil },
+                                                 set: { if !$0 { removing = nil } }),
+                            titleVisibility: .visible) {
+            Button("Remove", role: .destructive) {
+                if let item = removing { Task { await store.remove(item) } }
+                removing = nil
+            }
+            Button("Cancel", role: .cancel) { removing = nil }
+        } message: {
+            Text(removing?.source == "manual"
+                 ? "Takes it off the list for everyone who can see it."
+                 : "Takes it off the watchlist. The filing it came from is unaffected.")
+        }
+    }
+
+    private func resetAddSheet() {
+        newTicker = ""
+        store.actionError = nil
     }
 
     private var addButton: some View {
-        Button { adding = true } label: {
+        Button {
+            // Cleared on the way IN as well as out: an error left from a
+            // failed remove has nothing to do with the sheet about to open.
+            store.actionError = nil
+            adding = true
+        } label: {
             Text("+ ADD")
                 .font(Type.chip).tracking(0.8)
                 .padding(.horizontal, Space.m).padding(.vertical, Space.m)
@@ -130,7 +189,7 @@ struct WatchScreen: View {
                 }
                 .tint(T.amber)
 
-                if let e = store.addError {
+                if let e = store.actionError {
                     Text(e).font(Type.footnote).foregroundStyle(T.negative)
                         .fixedSize(horizontal: false, vertical: true)
                 }
@@ -183,6 +242,24 @@ struct WatchScreen: View {
 
         return ScrollView {
             LazyVStack(spacing: 0, pinnedViews: [.sectionHeaders]) {
+                // A remove is attempted from the list, not from the sheet,
+                // so its failure has to be legible from the list.
+                if let e = store.actionError, !adding {
+                    HStack(spacing: Space.s) {
+                        Chip(text: "Not done", tone: T.negative, style: .solid)
+                        Text(e).font(Type.meta).foregroundStyle(T.dim)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Spacer(minLength: 0)
+                        Button("DISMISS") { store.actionError = nil }
+                            .font(Type.chip).foregroundStyle(T.cyan)
+                            .buttonStyle(.plain)
+                            .frame(minWidth: 44, minHeight: 44)
+                    }
+                    .padding(.horizontal, Space.l).padding(.vertical, Space.s)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(T.negative.opacity(0.12))
+                }
+
                 // Said once, at the top, rather than as a dash on every
                 // row: if quotes are down, that is one fact about the
                 // screen, not forty facts about forty companies.
@@ -207,15 +284,32 @@ struct WatchScreen: View {
                                     row(item)
                                 }
                                 .buttonStyle(.plain)
+                                .contextMenu {
+                                    if removable(item) {
+                                        Button("Remove from watchlist",
+                                               systemImage: "minus.circle",
+                                               role: .destructive) { removing = item }
+                                    }
+                                }
                             }
                         } header: {
                             SectionHeader(text: title, trailing: "\(rows.count)")
                         }
                     }
                 }
+                // The + ADD button floats over the bottom-trailing corner,
+                // so without this the last row's price sits underneath it.
+                Spacer().frame(height: 72)
             }
         }
         .refreshable { await store.refresh() }
+    }
+
+    /// Derived rows carry non-numeric ids and the server refuses to delete
+    /// them. Asking first means nobody is offered an action that 400s.
+    private func removable(_ i: WatchItem) -> Bool {
+        guard let id = i.id else { return false }
+        return Int(id) != nil
     }
 
     private func row(_ i: WatchItem) -> some View {

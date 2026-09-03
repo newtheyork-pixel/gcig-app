@@ -326,11 +326,27 @@ export function requireExecutiveOrAdvisory(req, res, next) {
 //
 // Advisory members remain read-only everywhere else in the app; the
 // terminal is a research surface that grants no operational power.
-export function requireTerminalAccess(req, res, next) {
-  const role = req.user?.role;
+// The predicate and the middleware are the SAME function, so a caller that
+// needs to know the answer without being an Express route cannot drift from
+// the gate that actually decides. `/auth/me` reports this to the native apps
+// as `terminalAccess`, and they hide the terminal tabs on false; if the two
+// were computed separately, a member would be shown a tab that 403s on every
+// request inside it — which is precisely the state the phone was in before.
+//
+// NOTE: this is deliberately NOT `hasTerminalAccess` below, which also folds
+// in `extraRoles` and `isSuperAdmin`. The two have disagreed since
+// hasTerminalAccess was written for the hoot WebSocket, and reconciling them
+// changes who can open the terminal — a policy call, not a refactor. Until
+// somebody makes it, the client is told exactly what the route gate does.
+export function passesTerminalGate(user) {
+  if (!user) return false;
+  const role = user.role;
   const advisory = role === 'AdvisoryBoardMember' || role === 'FacultyAdvisory';
-  const rank = ROLE_RANK[role] || 0;
-  if (!req.user || (!advisory && rank < ROLE_RANK.Analyst)) {
+  return advisory || (ROLE_RANK[role] || 0) >= ROLE_RANK.Analyst;
+}
+
+export function requireTerminalAccess(req, res, next) {
+  if (!passesTerminalGate(req.user)) {
     return res
       .status(403)
       .json({ error: 'Analyst role or higher (or Advisory Board) required' });

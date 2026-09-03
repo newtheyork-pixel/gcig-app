@@ -35,17 +35,26 @@ enum Fmt {
 
     /// A signed money delta: +$1,204 / -$318. The sign is explicit on the
     /// positive side because a gain with no sign reads as a level.
+    /// The sign is decided by what the string SAYS, not by what the double
+    /// is. A move of -$0.004 formats to "$0" at zero decimals, and signing
+    /// that produced "-$0" — a figure that reads as a loss too small to name
+    /// and is really a rounding artefact. Same reasoning as a dash for nil:
+    /// the screen must not assert more precision than it is printing.
     static func moneyDelta(_ v: Double?, decimals: Int = 0) -> String {
         guard let v else { return "—" }
         let body = money(abs(v), decimals: decimals)
         if body == "—" { return "—" }
-        return (v > 0 ? "+" : v < 0 ? "-" : "") + body
+        let zero = money(0, decimals: decimals)
+        let sign = body == zero ? "" : (v > 0 ? "+" : v < 0 ? "-" : "")
+        return sign + body
     }
 
     static func pct(_ v: Double?, decimals: Int = 2, signed: Bool = true) -> String {
         guard let v else { return "—" }
         let s = String(format: "%.\(decimals)f", abs(v))
-        let sign = !signed ? "" : (v > 0 ? "+" : (v < 0 ? "-" : ""))
+        // As above: "-0.00%" is a sign on a magnitude that rounded away.
+        let roundedToZero = Double(s) == 0
+        let sign = (!signed || roundedToZero) ? "" : (v > 0 ? "+" : (v < 0 ? "-" : ""))
         return "\(sign)\(s)%"
     }
 
@@ -87,8 +96,16 @@ enum Fmt {
     /// correct: a fixed format string is parsed against the reader's own
     /// calendar unless told otherwise, so a Thai Buddhist or Japanese
     /// Imperial phone reads yyyy in that era and lands centuries off.
+    /// Anything this cannot parse is returned UNCHANGED, never dashed.
+    ///
+    /// The length guard here used to be `count >= 10`, which is right for an
+    /// ISO date and wrong for everything else the server labels a period
+    /// with. `earningsPeriod()` returns "Q2 2026" — seven characters — so
+    /// every row of every earnings history on every name rendered as an em
+    /// dash, permanently, from the day the section shipped. A label we do
+    /// not recognise is still a label; only a genuinely absent one is a dash.
     static func day(_ iso: String?) -> String {
-        guard let iso, iso.count >= 10 else { return "—" }
+        guard let iso, !iso.trimmingCharacters(in: .whitespaces).isEmpty else { return "—" }
         let inF = DateFormatter()
         inF.dateFormat = "yyyy-MM-dd"
         inF.locale = Locale(identifier: "en_US_POSIX")
@@ -114,6 +131,18 @@ enum Fmt {
     static func clock(_ d: Date?) -> String {
         guard let d else { return "—" }
         return d.formatted(date: .omitted, time: .shortened)
+    }
+
+    /// "just now" / "6 minutes ago" / "at 09:31", for saying how old a
+    /// number is. A price screen that cannot say when it last spoke to the
+    /// server is asking to be believed on nothing.
+    static func since(_ d: Date?, now: Date = Date()) -> String {
+        guard let d else { return "at an unknown time" }
+        let secs = Int(now.timeIntervalSince(d))
+        if secs < 45 { return "just now" }
+        let mins = (secs + 30) / 60
+        if mins < 60 { return "\(mins) minute\(mins == 1 ? "" : "s") ago" }
+        return "at \(clock(d))"
     }
 
     /// The server sends fractional seconds on some rows and not others, and

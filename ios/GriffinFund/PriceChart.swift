@@ -30,8 +30,22 @@ struct PriceChart: View {
     /// close enough to be worth seeing: a cost far outside the window
     /// would flatten the price line into a straight edge to make room for
     /// a rule, which loses the thing the chart is for.
+    /// A perfectly flat series is real data, not missing data.
+    ///
+    /// The guard here was `hi > lo`, so a name that closed at the same price
+    /// every day in the window — a halted stock, a cash-like holding, a
+    /// short window on a quiet name — returned nil and the screen said "Not
+    /// enough history", which is a claim about our records rather than about
+    /// the price. When every close is equal the band is invented around the
+    /// level and the line is drawn flat, which is the truth.
     private var bounds: (lo: Double, hi: Double)? {
-        guard let lo = closes.min(), let hi = closes.max(), hi > lo else { return nil }
+        guard let lo = closes.min(), let hi = closes.max() else { return nil }
+        guard hi > lo else {
+            let pad = max(abs(hi) * 0.01, 0.01)
+            var low = lo - pad, high = hi + pad
+            if let c = averageCost { low = min(low, c); high = max(high, c) }
+            return (low, high)
+        }
         let pad = (hi - lo) * 0.08
         var low = lo - pad, high = hi + pad
         if let c = averageCost, c > lo - (hi - lo), c < hi + (hi - lo) {

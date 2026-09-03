@@ -39,14 +39,16 @@ final class NewsStore: ObservableObject {
 
 struct NewsScreen: View {
     @StateObject private var store = NewsStore()
+    @ObservedObject private var clock = StaleClock.shared
 
     var body: some View {
         VStack(spacing: 0) {
             FunctionBar(code: "WIRE", title: "Top news")
-            ScreenState(state: store.state,
+            ScreenState(state: store.state.aged(after: 900, now: clock.tick),
                         emptyWhen: { ($0.articles ?? []).isEmpty },
                         emptyText: "The wire is quiet. Nothing published recently.",
-                        retry: { Task { await store.load() } }) { wire in
+                        retry: { Task { await store.load() } },
+                        staleRetry: { Task { await store.refresh() } }) { wire in
                 list(wire)
             }
         }
@@ -54,6 +56,7 @@ struct NewsScreen: View {
         .toolbar(.hidden, for: .navigationBar)
         .navigationDestination(for: TickerScreen.self) { $0 }
         .task { if store.state.value == nil { await store.load() } }
+        .refreshOnForeground { await store.refresh() }
     }
 
     private func list(_ wire: Wire) -> some View {

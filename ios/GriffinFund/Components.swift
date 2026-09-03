@@ -89,6 +89,12 @@ struct Row<Trailing: View>: View {
         .background(T.card)
         .edgeStrip(strip)
         .hairline()
+        // Grouped here rather than at each call site. Exactly one screen
+        // remembered to do this, so everywhere else VoiceOver announced a
+        // row's title, subtitle, meta line and trailing figure as four
+        // separate stops — which on a list of chases means four swipes per
+        // contact to hear one obligation.
+        .accessibilityElement(children: .combine)
     }
 }
 
@@ -133,6 +139,8 @@ struct TickerRow<Trailing: View>: View {
         .background(T.card)
         .edgeStrip(strip)
         .hairline()
+        // As with Row: one stop per row, not one per fragment.
+        .accessibilityElement(children: .combine)
     }
 }
 
@@ -343,6 +351,7 @@ struct StaleStrip: View {
                     .font(Type.chip)
                     .foregroundStyle(T.cyan)
                     .buttonStyle(.plain)
+                    .frame(minWidth: 44, minHeight: 44)
             }
         }
         .padding(.horizontal, Space.l)
@@ -375,6 +384,12 @@ struct GriffinButtonStyle: ButtonStyle {
             .padding(.vertical, Space.s)
             .background(configuration.isPressed ? T.cardPress : T.card)
             .overlay(Rectangle().strokeBorder(T.border, lineWidth: 1))
+            // 44pt is Apple's floor and this style backs the app's only
+            // Retry affordance — the control somebody reaches for when
+            // something has already gone wrong, and the worst one to make
+            // them stab at twice. The frame is outside the background so
+            // the button keeps its drawn size and grows only its target.
             .contentShape(Rectangle())
+            .frame(minWidth: 44, minHeight: 44)
     }
 }

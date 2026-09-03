@@ -20,13 +20,27 @@ final class PersonStore: ObservableObject {
 
     func load(_ id: Int) async {
         state = .loading
+        await fetch(id, keepOld: false)
+    }
+
+    /// Pull-to-refresh and the stale strip's retry, and the reason it is a
+    /// separate method: `load` blanks the screen to a spinner on the way in
+    /// and to a bare error on the way out. Wiring pull-to-refresh to it
+    /// meant one flaky request — the Render cold start this whole client is
+    /// built around — replaced a member's visible correspondence thread with
+    /// a RETRY button. Every other store here already had this split.
+    func refresh(_ id: Int) async { await fetch(id, keepOld: true) }
+
+    private func fetch(_ id: Int, keepOld: Bool) async {
+        let previous = state.value
         do {
             state = .loaded(try await API.shared.get("/research/targets/\(id)", as: Target.self),
                             at: Date())
         } catch APIError.cancelled {
             return
         } catch {
-            state = .failed(error.localizedDescription)
+            let msg = error.localizedDescription
+            state = keepOld && previous != nil ? .stale(previous!, msg) : .failed(msg)
         }
     }
 }
@@ -38,13 +52,15 @@ struct PersonScreen: View, Hashable {
     var knownName: String? = nil
 
     @StateObject private var store = PersonStore()
+    @ObservedObject private var clock = StaleClock.shared
 
     static func == (a: PersonScreen, b: PersonScreen) -> Bool { a.targetId == b.targetId }
     func hash(into h: inout Hasher) { h.combine(targetId) }
 
     var body: some View {
-        ScreenState(state: store.state,
-                    retry: { Task { await store.load(targetId) } }) { t in
+        ScreenState(state: store.state.aged(after: 600, now: clock.tick),
+                    retry: { Task { await store.load(targetId) } },
+                    staleRetry: { Task { await store.refresh(targetId) } }) { t in
             ScrollView {
                 LazyVStack(spacing: 0, pinnedViews: [.sectionHeaders]) {
                     header(t)
@@ -53,6 +69,10 @@ struct PersonScreen: View, Hashable {
                     draftsSection(t)
                 }
             }
+            // A reply can land at any moment and this screen is where you
+            // find out. It had no refresh of any kind short of navigating
+            // away and back.
+            .refreshable { await store.refresh(targetId) }
         }
         .background(T.bg)
         .navigationTitle("")
@@ -97,13 +117,29 @@ struct PersonScreen: View, Hashable {
                 }
             }
 
-            // The address is a link, because the one thing worth doing
-            // from a phone is opening the thread in a mail client that
-            // already has the history.
+            // The address is TEXT, not a link, and that is deliberate.
+            //
+            // It used to be a mailto:, on the theory that the phone should
+            // open "the thread in a mail client that already has the
+            // history". That theory is wrong twice. The thread lives in the
+            // club Gmail account the letter was sent from — the reply sweep
+            // keys on `sentById` for exactly this reason — so a member's
+            // personal Mail app has no history of it and starts a new one.
+            // And a message sent that way is a real approach to a management
+            // contact that never passes the MNPI screen, never lands in the
+            // OutreachMessage ledger, and is invisible to the follow-up
+            // clock, which will then recommend chasing somebody who was
+            // written to yesterday.
+            //
+            // This screen already refuses a Copy button on drafts on those
+            // grounds. Offering tap-to-send two sections above it was the
+            // larger version of the same door. The README's rule stands:
+            // the phone tells you Kanter replied; answering him happens
+            // where there is a keyboard.
             if let e = t.email, !e.isEmpty {
-                Link(destination: URL(string: "mailto:\(e)") ?? URL(string: "https://thegriffinfund.org")!) {
-                    Text(e).font(Type.meta).foregroundStyle(T.cyan)
-                }
+                Text(e)
+                    .font(Type.meta).foregroundStyle(T.dim)
+                    .textSelection(.enabled)
             } else if let c = t.channel {
                 Text(c).font(Type.meta).foregroundStyle(T.muted)
             }

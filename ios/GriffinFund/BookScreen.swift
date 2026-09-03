@@ -52,14 +52,21 @@ final class BookStore: ObservableObject {
 
 struct BookScreen: View {
     @StateObject private var store = BookStore()
+    /// Drives the clock-based stale strip; see StaleClock.
+    @ObservedObject private var clock = StaleClock.shared
 
     var body: some View {
         VStack(spacing: 0) {
             FunctionBar(code: "BOOK", title: "Positions")
-            ScreenState(state: store.state,
+            // aged(): staleness by the CLOCK, not only by a failed
+            // refresh. A book nobody refetched looked exactly like one
+            // fetched a second ago, which on a money screen is the one
+            // lie this app must not tell.
+            ScreenState(state: store.state.aged(after: 600, now: clock.tick),
                         emptyWhen: { ($0.holdings ?? []).isEmpty },
                         emptyText: "The positions sheet came back empty.",
-                        retry: { Task { await store.load() } }) { book in
+                        retry: { Task { await store.load() } },
+                        staleRetry: { Task { await store.refresh() } }) { book in
                 content(book)
             }
         }
@@ -68,6 +75,11 @@ struct BookScreen: View {
         .navigationDestination(for: TickerScreen.self) { $0 }
         .task { if store.state.value == nil { await store.load() } }
         .task { await store.refreshIfStale() }
+        // refreshIfStale on .task fires on view construction, which is tab
+        // re-entry and nothing else. It does not fire on lock/unlock or on
+        // an app switch, which is how the book stays on morning prices all
+        // afternoon. The Mac syncs on didBecomeActive for the same reason.
+        .refreshOnForeground(after: 60) { await store.refreshIfStale(after: 60) }
     }
 
     private func content(_ book: Book) -> some View {
@@ -83,10 +95,10 @@ struct BookScreen: View {
                 }
 
                 Section {
-                    ForEach(Array(book.equities.enumerated()), id: \.offset) { _, h in
-                        NavigationLink(value: TickerScreen(symbol: h.ticker ?? "",
-                                                          holding: h)) {
-                            holdingRow(h)
+                    ForEach(book.equities.keyed, id: \.key) { entry in
+                        NavigationLink(value: TickerScreen(symbol: entry.holding.ticker ?? "",
+                                                          holding: entry.holding)) {
+                            holdingRow(entry.holding)
                         }
                             .buttonStyle(.plain)
                     }
@@ -96,8 +108,8 @@ struct BookScreen: View {
 
                 if !book.cash.isEmpty {
                     Section {
-                        ForEach(Array(book.cash.enumerated()), id: \.offset) { _, h in
-                            cashRow(h)
+                        ForEach(book.cash.keyed, id: \.key) { entry in
+                            cashRow(entry.holding)
                         }
                     } header: {
                         SectionHeader(text: "Cash")

@@ -11,22 +11,46 @@ and a messenger, and anything with columns belongs on the Mac.
 
 ## What is here
 
-Two tabs, chosen because they are the two that work on a phone.
+Five tabs, and two of them only for members who may open them.
 
 **Today** is the one Bloomberg does not have and the club needs most.
 Their mobile alerts are market events; ours are obligations. It walks the
 open research projects and collects everything the chase clock says is
 actionable, rendering the server's own recommendation sentence rather
-than inventing a second rule that could disagree with the Mac.
+than inventing a second rule that could disagree with the Mac. The three
+blocks on it — chases, our movers, the day in review — are siblings, so
+one failed request costs exactly one block.
 
 **Book** is the portfolio: the marked total and the holdings with the
 day's move.
+
+**Wire** and **Watch** are the market surfaces, and they sit behind
+`requireTerminalAccess` on the server: Analyst and above. `JuniorAnalyst`
+ranks below it and is the default role for every self-signup, so those
+two tabs are HIDDEN rather than shipped as errors when `/auth/me` says
+this member cannot open them. Client and server gates move together or a
+member gets a tab that 403s on every request inside it.
+
+**Account** is who you are, what you may open, and how to stop being
+signed in.
 
 ## What is deliberately absent
 
 The outreach table, drafting, compliance screening and copy-to-send.
 Those are desk work. The phone tells you Kanter replied; answering him
 happens where there is a keyboard.
+
+**And tap-to-send, which is the same rule and was violated for months.**
+A contact's email address renders as selectable text, never a `mailto:`
+link. The thread lives in the club Gmail account the letter was sent
+from — the reply sweep keys on `sentById` for exactly that reason — so a
+member's personal Mail app has no history of it and would start a new
+one: an approach to a management contact that never passes the MNPI
+screen, never enters the `OutreachMessage` ledger, and is invisible to
+the follow-up clock, which then recommends chasing somebody who was
+written to yesterday. This screen already refuses a Copy button on
+drafts on those grounds; a live mailto: two sections above it was the
+larger version of the same door.
 
 ## Building
 
@@ -44,11 +68,19 @@ An earlier version of this paragraph claimed the script already existed
 repo, and adding a file meant hand-writing 24-hex-digit ids into five
 places in the pbxproj. It exists now.
 
-Version and build number live in `generate_project.py`, not in
-`Info.plist`. The plist reads them back through `$(MARKETING_VERSION)`
-and `$(CURRENT_PROJECT_VERSION)`; hardcoding them there alongside
+Version and build number are READ FROM FILES — `ios/VERSION` and
+`ios/BUILD_NUMBER` — by `generate_project.py`, which writes them into the
+project. `Info.plist` reads them back through `$(MARKETING_VERSION)` and
+`$(CURRENT_PROJECT_VERSION)`; hardcoding them there alongside
 `GENERATE_INFOPLIST_FILE = NO` is why the commit titled 0.1.1 shipped an
 app that still called itself 0.1.0 build 1.
+
+The build number was a string literal somebody had to remember to raise,
+and it read `6` against a thousand commits. `ios/release.sh` now writes
+`git rev-list --count HEAD` into `ios/BUILD_NUMBER` before every upload:
+monotonic, unforgeable, and needing nobody's memory. Reading it from a
+file rather than shelling out to git inside the generator is what keeps
+regeneration byte-identical, which CI checks on every push.
 
     xcodebuild -project ios/GriffinFund.xcodeproj -target GriffinFund \
       -sdk iphonesimulator -configuration Debug \
@@ -59,6 +91,17 @@ or a signed device build. TestFlight needs the paid membership on team
 PW2VT56789, not just the Developer ID used for Mac notarization.
 
 ## Publishing to TestFlight
+
+    ios/release.sh          bump, build, archive, upload
+    ios/release.sh --check  everything up to the archive, then stop
+
+That script is this section, executable, and it is the thing to run.
+What follows is why it does what it does, because prose is not something
+you can run at eleven at night but it is what you read when the script
+breaks.
+
+**TestFlight builds expire 90 days after upload.** Nothing warns you;
+the app simply stops launching for every member on the same day.
 
 Two commands, and the second one is the whole trick.
 
