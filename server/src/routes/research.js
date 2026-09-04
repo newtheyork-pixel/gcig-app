@@ -1739,6 +1739,10 @@ const DRAFT_VIEW = {
   // signature FOR the sender, and signatureFor needs all three. Selecting
   // only the name would sign it "Analyst" with no address.
   sentBy: { select: { id: true, name: true, role: true, email: true } },
+  // Same three fields, same reason: once a draft carries a time it also
+  // carries a sender, and the preview has to sign it as that person
+  // rather than as whoever opened it.
+  scheduledBy: { select: { id: true, name: true, role: true, email: true } },
   queuedBy: { select: { id: true, name: true } },
 };
 
@@ -1770,6 +1774,15 @@ function tokeniseSignature(body, user) {
 // server-side. A client that works out for itself whether it may send
 // is a client that can be talked into being wrong about it; the server
 // re-checks every gate anyway, and this just keeps the two agreeing.
+// Whoever will actually put this in somebody's inbox: the person who sent
+// it, else the person who scheduled it, else whoever is looking at it and
+// might press Send. Never simply the reader.
+function signer(d, user) {
+  if (d.sentAt) return d.sentBy || user;
+  if (d.scheduledFor) return d.scheduledBy || user;
+  return user;
+}
+
 function decorate(d, user) {
   const approvals = d.approvals || [];
   const mine = approvals.some((a) => a.userId === user?.id);
@@ -1784,12 +1797,25 @@ function decorate(d, user) {
     // Prefer the stored copy. Failing that (every send before this
     // column existed) resolve for the SENDER, who is at least the right
     // person, and never for the reader.
+    // A SCHEDULED draft has a sender too. The scheduler sends as the
+    // person who scheduled it, so a queued letter previewed by anyone
+    // else was showing the reader's name and office over words another
+    // member's mailbox was going to send. Ten letters sat overnight
+    // reading "Thomas Seirer, President" while queued to leave from
+    // Carter's address as Director of Research.
     body: d.sentAt
       ? (d.sentBody || renderSignature(d.body, d.sentBy || user))
-      : renderSignature(d.body, user),
+      : renderSignature(d.body, signer(d, user)),
     // Named so a client can show "signing as ..." without re-deriving
     // the rule and getting a different answer.
-    signature: signatureFor(user),
+    signature: signatureFor(signer(d, user)),
+    // Who this will actually go out as, and whether the reader is that
+    // person. A client should not have to work that out from three
+    // nullable columns.
+    sendingAs: signer(d, user)
+      ? { id: signer(d, user).id, name: signer(d, user).name }
+      : null,
+    sendingAsMe: (signer(d, user)?.id ?? null) === (user?.id ?? null),
     approvalCount: approvals.length,
     approvalsNeeded: REQUIRED_APPROVALS,
     // An unscreened draft is NOT ready. The card used to print a green

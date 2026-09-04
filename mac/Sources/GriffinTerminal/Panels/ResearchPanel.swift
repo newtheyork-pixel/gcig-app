@@ -690,6 +690,19 @@ struct Message: Decodable, Identifiable {
     }
 }
 
+/// A queue time a person can read, in the club's own timezone rather than
+/// the reader's, because the schedule was set in New York and a member
+/// abroad reading "08:00" should see the same 08:00 everyone else works to.
+func whenET(_ iso: String) -> String {
+    let withFrac = ISO8601DateFormatter()
+    withFrac.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    guard let d = withFrac.date(from: iso) ?? ISO8601DateFormatter().date(from: iso) else { return iso }
+    let out = DateFormatter()
+    out.timeZone = TimeZone(identifier: "America/New_York")
+    out.dateFormat = "EEE d MMM, HH:mm"
+    return out.string(from: d) + " ET"
+}
+
 struct Draft: Decodable, Identifiable {
     let id: Int
     let subject: String
@@ -718,6 +731,14 @@ struct Draft: Decodable, Identifiable {
     let reviewNote: String?
     let sentBy: ProjectFull.Person?
     let rejectedBy: ProjectFull.Person?
+    /// Set once somebody queues it. Its presence is what makes this letter
+    /// somebody else's to send.
+    let scheduledFor: String?
+    /// Who it will actually go out as: the sender if sent, the person who
+    /// scheduled it if queued, otherwise you. The server works this out so
+    /// two clients cannot disagree about it.
+    let sendingAs: ProjectFull.Person?
+    let sendingAsMe: Bool?
 
     struct Findings: Decodable {
         let hits: [Hit]?
@@ -2697,6 +2718,14 @@ private struct DraftCard: View {
                 }
             }
 
+            // Says out loud what the card used to leave the reader to
+            // infer from a silent Send button: this is going, at this
+            // time, from this person's mailbox.
+            if !editing, d.sentAt == nil, let when = d.scheduledFor {
+                Text("QUEUED  \(whenET(when))\(d.sendingAs.map { " · sends as \($0.name)" } ?? "")")
+                    .font(Term.mono(10)).foregroundStyle(Term.cyan)
+            }
+
             if !editing && d.sentAt == nil {
                 HStack(spacing: 6) {
                     // An exec can still veto a draft outright; it just is
@@ -2730,17 +2759,26 @@ private struct DraftCard: View {
                             .buttonStyle(TermButtonStyle()).disabled(busy)
                             .help("To send by hand, from a mailbox the terminal is not connected to.")
 
-                        Button(sending ? "Sending" : "Send now") {
-                            Task {
-                                sending = true
-                                defer { sending = false }
-                                await run {
-                                    _ = try await API.shared.post("/research/drafts/\(d.id)/deliver", json: [:])
+                        // Not offered on a draft that already has a time.
+                        // The server refuses it, because a hand-send
+                        // inside the scheduler's own batch window delivers
+                        // the same letter twice and mail cannot be
+                        // recalled. A button that exists only to return a
+                        // 409 teaches people to click through errors, so
+                        // the row says what is happening instead.
+                        if d.scheduledFor == nil {
+                            Button(sending ? "Sending" : "Send now") {
+                                Task {
+                                    sending = true
+                                    defer { sending = false }
+                                    await run {
+                                        _ = try await API.shared.post("/research/drafts/\(d.id)/deliver", json: [:])
+                                    }
                                 }
                             }
+                            .buttonStyle(TermButtonStyle()).disabled(busy || sending)
+                            .help("Sends it from your own mailbox, now. There is no undo.")
                         }
-                        .buttonStyle(TermButtonStyle()).disabled(busy || sending)
-                        .help("Sends it from your own mailbox, now. There is no undo.")
                     }
                     Spacer()
                 }
