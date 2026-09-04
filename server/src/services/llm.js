@@ -680,7 +680,7 @@ export async function probeProviders({ timeoutMs = 6000, localTimeoutMs = LOCAL_
     const r = await callEndpoint({
       endpoint: 'https://api.openai.com/v1/chat/completions',
       apiKey: process.env.OPENAI_API_KEY,
-      model: modelForJob(job),
+      model: process.env.OPENAI_MODEL || DEFAULT_OPENAI_MODEL,
       messages: ping,
       temperature: 0,
       timeoutMs,
