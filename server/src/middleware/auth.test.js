@@ -138,3 +138,23 @@ test('requirePresidentOrSuperAdmin denies when unauthenticated', () => {
   assert.equal(nextCalled, false);
   assert.equal(res.statusCode, 403);
 });
+
+// A role that outranks another but cannot do what that other one does is an
+// org chart the gates disagree with. Director of Research sits above CIO, so
+// both halves have to be true at once, and the second is the one a future
+// edit would quietly drop.
+test('DirectorOfResearch outranks CIO and sits below President', () => {
+  assert.ok(ROLE_RANK.DirectorOfResearch > ROLE_RANK.CIO);
+  assert.ok(ROLE_RANK.DirectorOfResearch < ROLE_RANK.President);
+  assert.ok(ROLE_RANK.DirectorOfResearch > ROLE_RANK.SeniorPortfolioManager);
+});
+
+test('requireExecutive admits a DirectorOfResearch', () => {
+  let passed = false;
+  requireExecutive(
+    { user: { role: 'DirectorOfResearch' } },
+    { status: () => ({ json: () => {} }) },
+    () => { passed = true; },
+  );
+  assert.equal(passed, true);
+});

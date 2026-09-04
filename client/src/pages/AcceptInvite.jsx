@@ -6,6 +6,7 @@ import Button from '../components/Button.jsx';
 
 const ROLE_LABELS = {
   President: 'President',
+  DirectorOfResearch: 'Director of Research',
   CIO: 'CIO',
   ChiefOfCommunication: 'Chief of Communication',
   SeniorPortfolioManager: 'Senior Portfolio Manager',

@@ -24,9 +24,9 @@ import RequestPitchModal from '../components/RequestPitchModal.jsx';
 import { formatStartTime, ROOM_LABELS } from '../lib/lunchSlots.js';
 import { isManagedFile, openOrPreview } from '../api/fileHelpers.js';
 
-const PITCH_ROLES = ['President', 'CIO', 'SeniorPortfolioManager', 'PortfolioManager'];
-const CROSS_POD_ROLES = new Set(['President', 'CIO', 'SeniorPortfolioManager']);
-const EXECUTIVE_ROLES = new Set(['President', 'CIO']);
+const PITCH_ROLES = ['President', 'DirectorOfResearch', 'CIO', 'SeniorPortfolioManager', 'PortfolioManager'];
+const CROSS_POD_ROLES = new Set(['President', 'DirectorOfResearch', 'CIO', 'SeniorPortfolioManager']);
+const EXECUTIVE_ROLES = new Set(['President', 'DirectorOfResearch', 'CIO']);
 
 const locales = { 'en-US': enUS };
 const localizer = dateFnsLocalizer({ format, parse, startOfWeek, getDay, locales });

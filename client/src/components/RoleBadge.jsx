@@ -1,5 +1,6 @@
 const ROLE_LABELS = {
   President: 'President',
+  DirectorOfResearch: 'Director of Research',
   CIO: 'CIO',
   ChiefOfCommunication: 'Chief of Communication',
   SeniorPortfolioManager: 'Sr. Portfolio Manager',
@@ -14,6 +15,7 @@ const ROLE_LABELS = {
 
 const VARIANTS = {
   President: 'bg-navy text-gold border-navy',
+  DirectorOfResearch: 'bg-gold text-navy border-gold',
   CIO: 'bg-gold text-navy border-gold',
   ChiefOfCommunication: 'bg-sky-50 text-sky-800 border-sky-200',
   SeniorPortfolioManager: 'bg-gold-300 text-navy border-gold-300',

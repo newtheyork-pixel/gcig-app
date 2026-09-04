@@ -33,7 +33,8 @@ import { ChevronDown, ChevronRight } from 'lucide-react';
 // Operational ranks for the client-side PM+ gate. Mirrors server ROLE_RANK;
 // the server is still the source of truth (betas endpoint requires the role).
 const CLIENT_ROLE_RANK = {
-  President: 10,
+  President: 11,
+  DirectorOfResearch: 10,
   CIO: 9,
   SeniorPortfolioManager: 8,
   PortfolioManager: 7,

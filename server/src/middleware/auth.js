@@ -286,10 +286,10 @@ export function requireSuperAdmin(req, res, next) {
 // Executive tier: President + CIO. Has admin powers for most features but
 // cannot perform destructive user-account operations (delete member, reset
 // password). Those remain President-only via requireAdmin.
-const EXECUTIVE_ROLES = new Set(['President', 'CIO']);
+const EXECUTIVE_ROLES = new Set(['President', 'DirectorOfResearch', 'CIO']);
 export function requireExecutive(req, res, next) {
   if (!req.user || !EXECUTIVE_ROLES.has(req.user.role)) {
-    return res.status(403).json({ error: 'Executive role (President or CIO) required' });
+    return res.status(403).json({ error: 'Executive role (President, Director of Research or CIO) required' });
   }
   next();
 }
@@ -361,7 +361,8 @@ export function requireTerminalAccess(req, res, next) {
 // chain. All three get low ranks so permission gates treat them as view-only
 // for investment-tier actions.
 export const ROLE_RANK = {
-  President: 10,
+  President: 11,
+  DirectorOfResearch: 10,
   CIO: 9,
   SeniorPortfolioManager: 8,
   PortfolioManager: 7,

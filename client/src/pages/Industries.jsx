@@ -10,13 +10,14 @@ import Modal from '../components/Modal.jsx';
 import RoleBadge, { ROLE_LABELS } from '../components/RoleBadge.jsx';
 import EditorialMasthead from '../components/EditorialMasthead.jsx';
 
-const LEADER_ROLES = new Set(['President', 'CIO', 'SeniorPortfolioManager', 'PortfolioManager']);
+const LEADER_ROLES = new Set(['President', 'DirectorOfResearch', 'CIO', 'SeniorPortfolioManager', 'PortfolioManager']);
 
 // Must match the server's ROLE_RANK — used to decide which roles a leader
 // can assign to members in their industry. Advisory Board and Faculty are
 // observer roles that sit outside the operational hierarchy.
 const ROLE_RANK = {
-  President: 10,
+  President: 11,
+  DirectorOfResearch: 10,
   CIO: 9,
   SeniorPortfolioManager: 8,
   PortfolioManager: 7,
@@ -30,6 +31,7 @@ const ROLE_RANK = {
 
 const ALL_ROLES = [
   'President',
+  'DirectorOfResearch',
   'CIO',
   'ChiefOfCommunication',
   'SeniorPortfolioManager',

@@ -20,6 +20,7 @@ const router = Router();
 
 const ROLES = [
   'President',
+  'DirectorOfResearch',
   'CIO',
   'ChiefOfCommunication',
   'SeniorPortfolioManager',

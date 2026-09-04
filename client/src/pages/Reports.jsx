@@ -13,7 +13,7 @@ import FileSummary from '../components/FileSummary.jsx';
 import FilePreviewModal from '../components/FilePreviewModal.jsx';
 import { isManagedFile, openOrPreview } from '../api/fileHelpers.js';
 
-const REPORT_ROLES = ['President', 'CIO', 'SeniorPortfolioManager', 'PortfolioManager'];
+const REPORT_ROLES = ['President', 'DirectorOfResearch', 'CIO', 'SeniorPortfolioManager', 'PortfolioManager'];
 
 function emptyForm() {
   return { title: '', author: '', ticker: '', date: '', description: '', fileUrl: '' };

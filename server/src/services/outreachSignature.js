@@ -22,6 +22,7 @@ export const SIGNATURE_TOKEN = '{{SIGNATURE}}';
 // supervising adult as a student "Analyst" on a cold email.
 export const OUTREACH_TITLE = {
   President: 'President',
+  DirectorOfResearch: 'Director of Research',
   CIO: 'Chief Investment Officer',
   SeniorPortfolioManager: 'Portfolio Manager',
   PortfolioManager: 'Portfolio Manager',

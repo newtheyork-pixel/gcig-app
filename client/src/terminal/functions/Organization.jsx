@@ -17,6 +17,7 @@ import { useAuth } from '../../context/AuthContext.jsx';
 
 const TIERS = [
   { key: 'President', label: 'Presidents', roles: ['President'] },
+  { key: 'DirectorOfResearch', label: 'Director of Research', roles: ['DirectorOfResearch'] },
   { key: 'CIO', label: 'Chief Investment Officers', roles: ['CIO'] },
   { key: 'Comms', label: 'Chief of Communication', roles: ['ChiefOfCommunication'] },
   { key: 'SPM', label: 'Senior Portfolio Managers', roles: ['SeniorPortfolioManager'] },
@@ -29,6 +30,7 @@ const ADVISORY_ROLES = ['AdvisoryBoardMember', 'FacultyAdvisory', 'FacultyAdviso
 
 const ROLE_SHORT = {
   President: 'President',
+  DirectorOfResearch: 'Director of Research',
   CIO: 'CIO',
   ChiefOfCommunication: 'Comms',
   SeniorPortfolioManager: 'Senior PM',

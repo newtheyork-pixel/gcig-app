@@ -13,6 +13,7 @@ import { formatStartTime, ROOM_LABELS } from '../lib/lunchSlots.js';
 const PM_RANKED = [
   'PortfolioManager',
   'SeniorPortfolioManager',
+  'DirectorOfResearch',
   'CIO',
   'President',
 ];

@@ -18,8 +18,8 @@ import MemberPicker from '../components/MemberPicker.jsx';
 import FilePreviewModal from '../components/FilePreviewModal.jsx';
 import { openOrPreview } from '../api/fileHelpers.js';
 
-const PITCH_ROLES = ['President', 'CIO', 'SeniorPortfolioManager', 'PortfolioManager'];
-const CROSS_POD_ROLES = new Set(['President', 'CIO', 'SeniorPortfolioManager']);
+const PITCH_ROLES = ['President', 'DirectorOfResearch', 'CIO', 'SeniorPortfolioManager', 'PortfolioManager'];
+const CROSS_POD_ROLES = new Set(['President', 'DirectorOfResearch', 'CIO', 'SeniorPortfolioManager']);
 
 const locales = { 'en-US': enUS };
 const localizer = dateFnsLocalizer({ format, parse, startOfWeek, getDay, locales });

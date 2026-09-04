@@ -13,6 +13,7 @@ import EditorialMasthead from '../components/EditorialMasthead.jsx';
 
 const ROLES = [
   'President',
+  'DirectorOfResearch',
   'CIO',
   'ChiefOfCommunication',
   'SeniorPortfolioManager',
@@ -132,7 +133,7 @@ export default function Members({ embedded = false } = {}) {
           <EditorialMasthead
             stats={(() => {
               const executives = users.filter((u) =>
-                ['President', 'CIO'].includes(u.role)
+                ['President', 'DirectorOfResearch', 'CIO'].includes(u.role)
               ).length;
               const managers = users.filter((u) =>
                 ['SeniorPortfolioManager', 'PortfolioManager'].includes(u.role)

@@ -563,7 +563,7 @@ async function notifyUsers(pitch, userIds, clientOrigin) {
 
 // Cross-pod scheduling privileges. Presidents, CIOs, and SPMs can schedule
 // for any industry; Portfolio Managers can only schedule for their own pod.
-const CROSS_POD_ROLES = new Set(['President', 'CIO', 'SeniorPortfolioManager']);
+const CROSS_POD_ROLES = new Set(['President', 'DirectorOfResearch', 'CIO', 'SeniorPortfolioManager']);
 
 async function assertCanUseIndustry(req, industryId) {
   if (!industryId) return; // individual pitch — always OK

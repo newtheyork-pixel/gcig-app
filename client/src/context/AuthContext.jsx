@@ -178,13 +178,16 @@ export function AuthProvider({ children }) {
   }
 
   const isAdmin = user?.role === 'President';
-  const isExecutive = user?.role === 'President' || user?.role === 'CIO';
+  const isExecutive =
+    user?.role === 'President' || user?.role === 'DirectorOfResearch' || user?.role === 'CIO';
   // Portfolio Manager and above: PMs, Senior PMs, CIO, President. Mirrors
   // requireRole('PortfolioManager') on the server. Used to gate management
   // tools (e.g. the Participation ranking) that PMs need for planning but
   // junior analysts don't.
   const isPmOrAbove =
     user?.role === 'President' ||
+    user?.role === 'DirectorOfResearch' ||
+    user?.role === 'DirectorOfResearch' ||
     user?.role === 'CIO' ||
     user?.role === 'SeniorPortfolioManager' ||
     user?.role === 'PortfolioManager';

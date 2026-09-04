@@ -829,6 +829,7 @@ async function buildLiveContext() {
   if (membersRes.status === 'fulfilled' && membersRes.value.length > 0) {
     const ROLE_LABELS = {
       President: 'President',
+      DirectorOfResearch: 'Director of Research',
       CIO: 'CIO',
       ChiefOfCommunication: 'Chief of Communication',
       SeniorPortfolioManager: 'Senior Portfolio Manager',
@@ -842,7 +843,7 @@ async function buildLiveContext() {
     const TIERS = [
       {
         heading: 'Executive',
-        roles: new Set(['President', 'CIO']),
+        roles: new Set(['President', 'DirectorOfResearch', 'CIO']),
       },
       {
         heading: 'Chief of Communication',

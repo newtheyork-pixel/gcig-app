@@ -60,6 +60,7 @@ struct OrganizationPanel: View {
 
     private static let tiers: [Tier] = [
         Tier(label: "Presidents", roles: ["President"]),
+        Tier(label: "Director of Research", roles: ["DirectorOfResearch"]),
         Tier(label: "Chief Investment Officers", roles: ["CIO"]),
         Tier(label: "Chief of Communication", roles: ["ChiefOfCommunication"]),
         Tier(label: "Senior Portfolio Managers", roles: ["SeniorPortfolioManager"]),
@@ -73,6 +74,7 @@ struct OrganizationPanel: View {
 
     private static let roleShort: [String: String] = [
         "President": "President",
+        "DirectorOfResearch": "Director of Research",
         "CIO": "CIO",
         "ChiefOfCommunication": "Comms",
         "SeniorPortfolioManager": "Senior PM",
@@ -100,7 +102,7 @@ struct OrganizationPanel: View {
     // gate is about what the panel shows, not what it could fetch.
     private var pmOrAbove: Bool {
         guard let role = session.user?.role else { return false }
-        return ["President", "CIO", "SeniorPortfolioManager", "PortfolioManager"]
+        return ["President", "DirectorOfResearch", "CIO", "SeniorPortfolioManager", "PortfolioManager"]
             .contains(role)
     }
 
