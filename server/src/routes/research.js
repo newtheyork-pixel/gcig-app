@@ -13,6 +13,7 @@ import { assessOutreach, assessTarget } from '../services/followUp.js';
 import { triageReply } from '../services/replyTriage.js';
 import { sendAs, gmailConfigured, maySendMail, outreachCc } from '../services/gmail.js';
 import { threadContextFor } from '../services/outreachThread.js';
+import { sendBlockReason } from '../services/outreachSendGuard.js';
 import { extractForArtifact } from '../services/artifactText.js';
 import { synthesize } from '../services/synthesis.js';
 import { screenTranscript, RISK } from '../services/mnpiScreen.js';
@@ -2515,6 +2516,10 @@ router.post('/drafts/:id/deliver', canResearch, async (req, res) => {
     if (!d.screenedAt) {
       return res.status(409).json({ error: 'Nothing has screened this draft yet. Edit it to trigger a screen.' });
     }
+    // Already queued: refuse rather than race the scheduler. The rule and
+    // its reasoning live in outreachSendGuard.js, with tests.
+    const queuedWhy = sendBlockReason(d);
+    if (queuedWhy) return res.status(409).json({ error: queuedWhy });
     const to = (d.target?.email || '').trim();
     if (!to || !/^[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}$/.test(to)) {
       return res.status(409).json({ error: `No usable address on this target (${to || 'blank'}).` });
