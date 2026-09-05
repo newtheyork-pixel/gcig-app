@@ -1033,6 +1033,18 @@ router.patch('/projects/:id', canResearch, async (req, res) => {
   if (req.body?.brief !== undefined) {
     data.brief = req.body.brief ? String(req.body.brief).slice(0, 5000) : null;
   }
+  // Hiding a project was accepted and silently dropped: the field was
+  // never read, the route answered 200 with the whole project, and the
+  // caller had no way to tell "hidden" from "ignored". Forty-three
+  // confidential documents sat readable in a guest-visible project on the
+  // strength of a flag somebody believed they had set. Same gate as the
+  // artifact-level flag, because it protects the same material.
+  if (req.body?.ownerOnly !== undefined) {
+    if (!isSuperAdminEmail(req.user?.email)) {
+      return res.status(403).json({ error: 'Only the owner can hide or unhide a project.' });
+    }
+    data.ownerOnly = !!req.body.ownerOnly;
+  }
   if (req.body?.status) {
     if (!PROJECT_STATUSES.has(req.body.status)) {
       return res.status(400).json({ error: `status must be one of: ${[...PROJECT_STATUSES].join(', ')}` });

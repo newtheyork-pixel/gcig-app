@@ -134,16 +134,51 @@ async function projects(guestOnly = false) {
   });
 }
 
-async function artifactsFor(ticker) {
-  const p = await prisma.researchProject.findFirst({
-    where: { ticker: { equals: ticker, mode: 'insensitive' } },
-    select: { id: true },
+/**
+ * The artifacts behind one ticker folder, for this caller.
+ *
+ * Two things went wrong here and they compounded.
+ *
+ * It resolved with findFirst on the ticker alone, so when two projects
+ * shared one a write landed in whichever the database happened to return
+ * and answered 201. That produced two false "the artifacts disappeared"
+ * reports, and a silent 201 into the wrong project is the worst available
+ * behaviour: nothing is lost, nothing is reported, and the file is
+ * somewhere nobody will look. An ambiguous ticker is now refused.
+ *
+ * And it never consulted ownerOnly, on the project or on the artifact.
+ * The folder LISTING filtered correctly, which is what made this hard to
+ * see, but a guest does not need a folder listed to ask for the path
+ * inside it. The ticker whitelist was the only thing standing between a
+ * guest and a hidden project that happened to share a whitelisted ticker.
+ * Forty-three confidential documents were readable that way.
+ */
+async function artifactsFor(ticker, { guest = false } = {}) {
+  const matches = await prisma.researchProject.findMany({
+    where: {
+      ticker: { equals: ticker, mode: 'insensitive' },
+      ...(guest ? { ownerOnly: false } : {}),
+    },
+    select: { id: true, ownerOnly: true },
   });
-  if (!p) return null;
+  if (matches.length === 0) return null;
+  // Refused rather than guessed. Two projects on one ticker is a data
+  // problem someone has to resolve; picking one is how the wrong project
+  // got written to twice.
+  if (matches.length > 1) return { ambiguous: matches.map((m) => m.id) };
+  const p = matches[0];
   const rows = await prisma.researchArtifact.findMany({
     // Trashed files leave the volume too, or the next pull downloads
     // straight back the thing somebody just dragged to the Trash.
-    where: { projectId: p.id, fileRef: { not: null }, trashedAt: null },
+    where: {
+      projectId: p.id,
+      fileRef: { not: null },
+      trashedAt: null,
+      // Belt and braces. A hidden artifact stays hidden even if it is
+      // sitting in a project somebody forgot to hide, which is exactly
+      // the arrangement that failed.
+      ...(guest ? { ownerOnly: false } : {}),
+    },
     select: { id: true, title: true, filename: true, fileRef: true, updatedAt: true },
   });
   return { projectId: p.id, rows };
@@ -188,7 +223,8 @@ router.propfind('*', async (req, res) => {
     // as good as not there.
     if (guestBlockedTicker(req, ticker)) return res.status(404).end();
 
-    const data = await artifactsFor(ticker);
+    const data = await artifactsFor(ticker, { guest: !!req.user?.isGuest });
+  if (data?.ambiguous) return res.status(409).end();
     if (!data) return res.status(404).end();
     const prefix = rest.join('/');
     const here = `${base}/${encodeURIComponent(ticker)}${prefix ? '/' + rest.map(encodeURIComponent).join('/') : ''}`;
@@ -232,7 +268,8 @@ router.get('*', async (req, res) => {
   const { ticker, rest } = parse(req.path);
   if (!ticker || !rest.length) return res.status(404).end();
   if (guestBlockedTicker(req, ticker)) return res.status(404).end();
-  const data = await artifactsFor(ticker);
+  const data = await artifactsFor(ticker, { guest: !!req.user?.isGuest });
+  if (data?.ambiguous) return res.status(409).end();
   const row = data?.rows.find((r) => r.title === rest.join('/'));
   if (!row) return res.status(404).end();
   const itemId = String(row.fileRef).replace('onedrive:', '');
@@ -254,7 +291,8 @@ router.put('*', async (req, res) => {
   // Finder writes its own bookkeeping files into any volume it opens.
   // Storing them would put .DS_Store in the project's file list.
   if (name.startsWith('.') || name.startsWith('~$')) return res.status(201).end();
-  const data = await artifactsFor(ticker);
+  const data = await artifactsFor(ticker, { guest: !!req.user?.isGuest });
+  if (data?.ambiguous) return res.status(409).end();
   if (!data) return res.status(404).end();
   try {
     const stored = await uploadFile({
