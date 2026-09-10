@@ -193,6 +193,17 @@ final class TodayStore: ObservableObject {
     /// reason the chase list does not appear.
     @Published private(set) var review: DayInReview?
     @Published private(set) var movers: Movers?
+    /// The market half of this screen. Each is context rather than the
+    /// subject, so each fails silently and independently: a FRED outage
+    /// must never be why the book's own number is missing.
+    ///
+    /// `book` is read from the same cache BookStore writes, so opening the
+    /// app puts a real number on screen before a request is made. Indices
+    /// sit behind requireTerminalAccess, so for a JuniorAnalyst that block
+    /// is simply absent rather than an error.
+    @Published private(set) var book: Book?
+    @Published private(set) var indices: PerfIndices?
+    @Published private(set) var macro: PerfMacro?
 
     func load() async {
         if let (f, at) = Cache.read("/research/follow-ups", as: FollowUps.self) {
@@ -218,8 +229,22 @@ final class TodayStore: ObservableObject {
     }
 
     private func loadExtras() async {
-        review = try? await API.shared.get("/dashboard/day-in-review", as: DayInReview.self)
-        movers = try? await API.shared.get("/terminal/movers", as: Movers.self)
+        // Concurrent, because these are five independent reads and the wait
+        // should be the slowest of them rather than the sum. The book is
+        // painted from cache first so the headline number is on screen in
+        // the time it takes to read a file.
+        if let (b, _) = Cache.read("/holdings/quotes", as: Book.self) { book = b }
+        async let bk: Book?          = try? API.shared.get("/holdings/quotes", as: Book.self, cache: true)
+        async let mv: Movers?        = try? API.shared.get("/terminal/movers", as: Movers.self)
+        async let ix: PerfIndices?   = try? API.shared.get("/terminal/indices", as: PerfIndices.self)
+        async let mc: PerfMacro?     = try? API.shared.get("/dashboard/macro", as: PerfMacro.self)
+        async let dr: DayInReview?   = try? API.shared.get("/dashboard/day-in-review", as: DayInReview.self)
+        let (b, m, i, ma, r) = await (bk, mv, ix, mc, dr)
+        if let b { book = b }
+        if let m { movers = m }
+        if let i { indices = i }
+        if let ma { macro = ma }
+        if let r { review = r }
     }
 
     private func fetch(keepOld: Bool) async {
@@ -254,6 +279,7 @@ final class TodayStore: ObservableObject {
 struct TodayScreen: View {
     @StateObject private var store = TodayStore()
     @EnvironmentObject var s: Session
+    @State private var showAllOutreach = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -267,8 +293,17 @@ struct TodayScreen: View {
             // perfectly. One failed request must cost exactly one section.
             ScrollView {
                 LazyVStack(spacing: 0, pinnedViews: [.sectionHeaders]) {
-                    outreachSection
+                    // The market first, and the book's own number above all
+                    // of it. This screen opened on a list of overdue emails,
+                    // which is one member's job rather than the fund's
+                    // position, and it read as a chore rather than a
+                    // terminal. Outreach is still here and still ranked by
+                    // the server; it is just no longer the headline.
+                    bookHeadline
                     moversSection
+                    indicesSection
+                    macroSection
+                    outreachSection
                     reviewSection
                     Spacer().frame(height: Space.xl)
                 }
@@ -319,6 +354,100 @@ struct TodayScreen: View {
         .background(T.bg)
     }
 
+    /// The fund's own number, at the top, because this is a terminal and
+    /// that is what a terminal opens with.
+    ///
+    /// Painted from the cache BookStore already writes, so it is on screen
+    /// before a request is made rather than after a dyno wakes up. The day
+    /// move is summed from the positions: `totals` carries value, cost and
+    /// lifetime gain but no day figure, and inventing one server-side would
+    /// be a second rule that could disagree with the Book tab.
+    @ViewBuilder private var bookHeadline: some View {
+        if let t = store.book?.totals, let value = t.totalValue {
+            let day = store.book?.equities.compactMap(\.dayChangeValue).reduce(0, +)
+            Section {
+                VStack(alignment: .leading, spacing: Space.xs) {
+                    Text(Fmt.money(value))
+                        .font(Type.valueBig)
+                        .foregroundStyle(T.white)
+                    HStack(spacing: Space.m) {
+                        if let day, day != 0 {
+                            Text("\(Fmt.moneyDelta(day)) today")
+                                .font(Type.delta)
+                                .foregroundStyle(T.delta(day))
+                        }
+                        if let gl = t.totalGainLoss {
+                            Text("\(Fmt.moneyDelta(gl)) \(Fmt.pct(t.totalGainLossPct))")
+                                .font(Type.delta)
+                                .foregroundStyle(T.delta(gl))
+                        }
+                        Spacer(minLength: 0)
+                    }
+                    // The same warning the Book carries. A total that is
+                    // silently missing positions is a wrong number, and it
+                    // is more wrong here, where it is the headline.
+                    if let n = t.unpricedCount, n > 0 {
+                        Text("\(n) position\(n == 1 ? "" : "s") unpriced, so this total is short.")
+                            .font(Type.meta).foregroundStyle(T.orange)
+                    }
+                }
+                .padding(Space.l)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(T.card)
+                .hairline()
+            } header: {
+                SectionHeader(text: "The book")
+            }
+        }
+    }
+
+    /// Where the market went, as context for where we went. Only the move
+    /// is shown: worldIndices falls back to a tracking ETF when its sources
+    /// miss and flags `approx`, which makes the LEVEL wrong under the
+    /// index's own name while the percentage stays faithful.
+    @ViewBuilder private var indicesSection: some View {
+        let rows = store.indices?.rows ?? []
+        if !rows.isEmpty {
+            Section {
+                VStack(spacing: 0) {
+                    ForEach(rows.prefix(6)) { r in
+                        StatLine(label: (r.name ?? r.symbol ?? "—").uppercased(),
+                                 value: Fmt.pct(r.changePercent),
+                                 tone: T.delta(r.changePercent))
+                    }
+                }
+                .padding(.horizontal, Space.l).padding(.vertical, Space.s)
+                .background(T.card)
+                .hairline()
+            } header: {
+                SectionHeader(text: "Markets")
+            }
+        }
+    }
+
+    /// The five FRED series. `value` arrives already formatted by the
+    /// service, so it is printed as sent rather than parsed and reformatted
+    /// here, which is the one way this could disagree with the dashboard
+    /// about a number they both read from FRED.
+    @ViewBuilder private var macroSection: some View {
+        let rows = store.macro?.indicators ?? []
+        if !rows.isEmpty {
+            Section {
+                VStack(spacing: 0) {
+                    ForEach(rows) { r in
+                        StatLine(label: (r.label ?? r.id ?? "—").uppercased(),
+                                 value: [r.value, r.unit].compactMap { $0 }.joined())
+                    }
+                }
+                .padding(.horizontal, Space.l).padding(.vertical, Space.s)
+                .background(T.card)
+                .hairline()
+            } header: {
+                SectionHeader(text: "Macro")
+            }
+        }
+    }
+
     @ViewBuilder private var outreachSection: some View {
         let rows = store.state.value?.rows ?? []
         Section {
@@ -331,24 +460,42 @@ struct TodayScreen: View {
             case .stale(let f, let msg):
                 VStack(spacing: 0) {
                     StaleStrip(message: msg, retry: { Task { await store.refresh() } })
-                    chaseList(f.rows ?? [])
+                    chaseList(f)
                 }
             case .loaded(let f, _):
-                chaseList(f.rows ?? [])
+                chaseList(f)
             }
         } header: {
-            SectionHeader(text: "Outreach", trailing: rows.isEmpty ? nil : "\(rows.count)")
+            SectionHeader(text: "Outreach",
+                          trailing: store.state.value?.summary
+                              ?? (rows.isEmpty ? nil : "\(rows.count)"))
         }
     }
 
-    @ViewBuilder private func chaseList(_ rows: [ChaseRow]) -> some View {
+    /// Three rows, then a count.
+    ///
+    /// This list used to be the whole screen, and with a hundred and ten
+    /// contacts on a chase clock it ran for pages — so Today read as one
+    /// member's inbox rather than as the fund's position, and the market
+    /// blocks below were never scrolled to. The work has not gone anywhere:
+    /// the server still ranks it, the three most urgent still show, and the
+    /// summary line says exactly how much is behind them.
+    ///
+    /// The cap is on what is DRAWN, never on what is counted. A screen that
+    /// quietly shows the first three of forty is worse than the long list
+    /// it replaced.
+    private static let outreachPreview = 3
+
+    @ViewBuilder private func chaseList(_ f: FollowUps) -> some View {
+        let rows = f.rows ?? []
         if rows.isEmpty {
             EmptyState(text: emptyText, good: true).frame(height: 90)
         } else {
             // The rows arrive ranked by the server and are rendered in that
             // order. The client used to sort them itself and disagreed with
             // the desk about which chase mattered most.
-            ForEach(rows) { row in
+            let shown = showAllOutreach ? rows : Array(rows.prefix(Self.outreachPreview))
+            ForEach(shown) { row in
                 NavigationLink(value: PersonScreen(targetId: row.targetId ?? -1,
                                                    knownName: row.name)) {
                     chaseRow(row)
@@ -357,6 +504,27 @@ struct TodayScreen: View {
                 // A row with no target id has nothing to open, and a link
                 // that goes nowhere is worse than no link.
                 .disabled(row.targetId == nil)
+            }
+            if rows.count > Self.outreachPreview {
+                Button {
+                    withAnimation(.easeInOut(duration: 0.18)) { showAllOutreach.toggle() }
+                } label: {
+                    HStack(spacing: Space.s) {
+                        Text(showAllOutreach
+                             ? "SHOW LESS"
+                             : "SHOW ALL \(rows.count)")
+                            .font(Type.chip).tracking(0.8).foregroundStyle(T.cyan)
+                        if let sum = f.summary, !showAllOutreach {
+                            Text(sum).font(Type.meta).foregroundStyle(T.muted)
+                        }
+                        Spacer(minLength: 0)
+                    }
+                    .padding(.horizontal, Space.l)
+                    .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                    .background(T.card)
+                    .hairline()
+                }
+                .buttonStyle(.plain)
             }
         }
     }
