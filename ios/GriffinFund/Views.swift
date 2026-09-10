@@ -208,6 +208,14 @@ final class TodayStore: ObservableObject {
     /// calendar barely moves between opens and a member should see the
     /// next print before the network answers.
     @Published private(set) var earnings: BookEarnings?
+    /// When the book and the calendar were actually true. The headline is
+    /// printed in 28pt and had no as-of stamp at all, while `Cache.read`
+    /// was already handing back the timestamp and it was being discarded.
+    @Published private(set) var bookAt: Date?
+    @Published private(set) var earningsAt: Date?
+    /// Set by the screen from Session so the two Analyst-gated reads can be
+    /// skipped rather than fired to be refused.
+    var terminalAccess: Bool?
 
     func load() async {
         if let (f, at) = Cache.read("/research/follow-ups", as: FollowUps.self) {
@@ -233,25 +241,64 @@ final class TodayStore: ObservableObject {
     }
 
     private func loadExtras() async {
-        // Concurrent, because these are five independent reads and the wait
-        // should be the slowest of them rather than the sum. The book is
-        // painted from cache first so the headline number is on screen in
-        // the time it takes to read a file.
-        if let (b, _) = Cache.read("/holdings/quotes", as: Book.self) { book = b }
-        if let (e, _) = Cache.read("/holdings/earnings", as: BookEarnings.self) { earnings = e }
-        async let bk: Book?          = try? API.shared.get("/holdings/quotes", as: Book.self, cache: true)
-        async let mv: Movers?        = try? API.shared.get("/terminal/movers", as: Movers.self)
-        async let ix: PerfIndices?   = try? API.shared.get("/terminal/indices", as: PerfIndices.self)
-        async let mc: PerfMacro?     = try? API.shared.get("/dashboard/macro", as: PerfMacro.self)
-        async let dr: DayInReview?   = try? API.shared.get("/dashboard/day-in-review", as: DayInReview.self)
-        async let ea: BookEarnings?  = try? API.shared.get("/holdings/earnings", as: BookEarnings.self, cache: true)
-        let (b, m, i, ma, r, e) = await (bk, mv, ix, mc, dr, ea)
-        if let b { book = b }
-        if let m { movers = m }
-        if let i { indices = i }
-        if let ma { macro = ma }
-        if let r { review = r }
-        if let e { earnings = e }
+        // Each read lands on its OWN published property the moment it
+        // arrives, and this is the difference between a screen that paints
+        // in a second and one that sits empty for half a minute.
+        //
+        // These six were fired concurrently with `async let` and then
+        // collected into one tuple, and a tuple await is a BARRIER: nothing
+        // was assigned until the slowest finished. The slowest is
+        // /dashboard/day-in-review, which is a lazy LLM generation that
+        // takes ten to thirty seconds on a cache miss. So the book, the
+        // movers, the indices, the macro and the earnings — five reads that
+        // answer in well under a second — all waited behind an essay, and
+        // pull-to-refresh spun for the whole of it.
+        //
+        // A task group with per-child assignment has no barrier: the market
+        // is on screen immediately and the summary arrives whenever it is
+        // written.
+        if let (b, at) = Cache.read("/holdings/quotes", as: Book.self) {
+            book = b; bookAt = at
+        }
+        if let (e, at) = Cache.read("/holdings/earnings", as: BookEarnings.self) {
+            earnings = e; earningsAt = at
+        }
+
+        // Two of these are Analyst-gated, and JuniorAnalyst is the default
+        // role, so for half the club they are a guaranteed 403 — two of six
+        // launch requests spent to be refused. Nil means we have not asked
+        // /auth/me yet and we still try, which is the same rule MainTabs
+        // uses for the tabs themselves.
+        let mayTerminal = terminalAccess != false
+
+        await withTaskGroup(of: Void.self) { group in
+            group.addTask { [weak self] in
+                let v = try? await API.shared.get("/holdings/quotes", as: Book.self, cache: true)
+                await MainActor.run { if let v { self?.book = v; self?.bookAt = Date() } }
+            }
+            group.addTask { [weak self] in
+                let v = try? await API.shared.get("/holdings/earnings", as: BookEarnings.self, cache: true)
+                await MainActor.run { if let v { self?.earnings = v; self?.earningsAt = Date() } }
+            }
+            group.addTask { [weak self] in
+                let v = try? await API.shared.get("/dashboard/macro", as: PerfMacro.self)
+                await MainActor.run { if let v { self?.macro = v } }
+            }
+            group.addTask { [weak self] in
+                let v = try? await API.shared.get("/dashboard/day-in-review", as: DayInReview.self)
+                await MainActor.run { if let v { self?.review = v } }
+            }
+            if mayTerminal {
+                group.addTask { [weak self] in
+                    let v = try? await API.shared.get("/terminal/movers", as: Movers.self)
+                    await MainActor.run { if let v { self?.movers = v } }
+                }
+                group.addTask { [weak self] in
+                    let v = try? await API.shared.get("/terminal/indices", as: PerfIndices.self)
+                    await MainActor.run { if let v { self?.indices = v } }
+                }
+            }
+        }
     }
 
     private func fetch(keepOld: Bool) async {
@@ -291,6 +338,11 @@ final class TodayStore: ObservableObject {
 struct TodayScreen: View {
     @StateObject private var store = TodayStore()
     @EnvironmentObject var s: Session
+    /// Every other screen using aged() observes this; Today did not, so its
+    /// stale strip was unreachable by the clock no matter how old the chase
+    /// list got. aged() is a pure function of now, and nothing was making
+    /// the body re-run.
+    @ObservedObject private var clock = StaleClock.shared
     @State private var showAllOutreach = false
 
     var body: some View {
@@ -329,7 +381,11 @@ struct TodayScreen: View {
         .navigationDestination(for: TickerScreen.self) { $0 }
         .navigationDestination(for: Route.self) { routeView($0) }
         .navigationDestination(for: VoteDetailScreen.self) { $0 }
-        .task { if store.state.value == nil { await store.load() } }
+        .task {
+            store.terminalAccess = s.terminalAccess
+            if store.state.value == nil { await store.load() }
+        }
+        .onChange(of: s.terminalAccess) { _, new in store.terminalAccess = new }
         .refreshOnForeground { await store.refresh() }
     }
 
@@ -403,6 +459,12 @@ struct TodayScreen: View {
                         Text("\(n) position\(n == 1 ? "" : "s") unpriced, so this total is short.")
                             .font(Type.meta).foregroundStyle(T.orange)
                     }
+                    // The biggest number in the app had nothing saying when
+                    // it was true, and the loader was already holding the
+                    // answer. A 28pt figure with no stamp is the exact lie
+                    // the "Live" chip on the ticker screen used to tell.
+                    Text("AS OF \(Fmt.since(store.bookAt))")
+                        .font(Type.meta).foregroundStyle(T.muted)
                 }
                 .padding(Space.l)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -428,7 +490,10 @@ struct TodayScreen: View {
     /// `/holdings/earnings` is verifyJwt only, so this is one of the few
     /// genuinely useful blocks a JuniorAnalyst can see.
     @ViewBuilder private var earningsSection: some View {
-        let rows = store.earnings?.upcoming ?? []
+        // Filtered, not trusted. See EarningsDate.whenLine: the server only
+        // ever sends future dates, but this list can come off disk and a
+        // cached calendar ages into the past.
+        let rows = (store.earnings?.upcoming ?? []).filter(\.isUpcoming)
         if !rows.isEmpty {
             Section {
                 VStack(spacing: 0) {
@@ -512,7 +577,7 @@ struct TodayScreen: View {
     @ViewBuilder private var outreachSection: some View {
         let rows = store.state.value?.rows ?? []
         Section {
-            switch store.state.aged(after: 600) {
+            switch store.state.aged(after: 600, now: clock.tick) {
             case .loading:
                 LoadingState().frame(height: 120)
             case .failed(let msg):

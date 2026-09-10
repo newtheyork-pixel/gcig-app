@@ -10,6 +10,30 @@ import Foundation
 // non-optional Double, which forced callers to invent a zero to call it.
 enum Fmt {
 
+    // Formatters are built ONCE.
+    //
+    // Every entry point below allocated a fresh NumberFormatter or
+    // DateFormatter per call, and these are not cheap objects: a book row
+    // costs five and a news row three, all on the main thread, all while a
+    // list is being flung. Hoisting them changes no output — same locale,
+    // same format string, same timezone — and takes the allocation out of
+    // the scroll.
+    //
+    // `money` does set the fraction digits on this instance per call, so
+    // this is a shared mutable object and worth being explicit about: every
+    // caller in this app formats from a SwiftUI body on the main actor, so
+    // there is never a second writer. If anything ever formats money off
+    // the main actor, give it its own formatter rather than reaching for a
+    // lock — and do not let this comment quietly become untrue, which is
+    // the failure this codebase keeps paying for.
+    private static let usd: NumberFormatter = {
+        let f = NumberFormatter()
+        f.numberStyle = .currency
+        f.locale = Locale(identifier: "en_US")
+        f.currencyCode = "USD"
+        return f
+    }()
+
     /// Money, always in US dollars with US grouping.
     ///
     /// The locale is pinned to en_US, and the distinction matters: this was
@@ -24,10 +48,7 @@ enum Fmt {
     /// phone set to French would otherwise print 137 070,00 $.
     static func money(_ v: Double?, decimals: Int = 0) -> String {
         guard let v else { return "—" }
-        let f = NumberFormatter()
-        f.numberStyle = .currency
-        f.locale = Locale(identifier: "en_US")
-        f.currencyCode = "USD"
+        let f = usd
         f.minimumFractionDigits = decimals
         f.maximumFractionDigits = decimals
         return f.string(from: NSNumber(value: v)) ?? "—"

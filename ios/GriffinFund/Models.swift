@@ -349,9 +349,20 @@ struct EarningsDate: Decodable, Identifiable {
         case .some(1):  return "Tomorrow\(part)"
         case .some(let n) where n > 1 && n <= 14:
             return "\(day) · in \(n) days\(part)"
+        // A negative day is a print that has already happened, and it can
+        // reach here from a cached calendar: the server asks Finnhub for
+        // from=today, so a fresh payload never contains one, but a payload
+        // read off disk three days later does. Falling through to the bare
+        // date printed last week's result under a header saying "Reporting
+        // next", which is the screen asserting something false rather than
+        // merely being out of date.
+        case .some(let n) where n < 0: return "\(day) · reported"
         default:        return "\(day)\(part)"
         }
     }
+
+    /// Still ahead of us. The filter for anything claiming to be upcoming.
+    var isUpcoming: Bool { (daysAway ?? 0) >= 0 }
 
     /// Inside a week is worth colouring. Beyond that it is a diary entry.
     var isImminent: Bool {

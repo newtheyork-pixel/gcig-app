@@ -384,8 +384,15 @@ final class NameDetailStore: ObservableObject {
             // "No XBRL financial data on file — this is a fund or trust,
             // not an operating company" beats an absent section.
             fundamentals = Read(value: nil, note: msg)
+        } catch APIError.server(_, let msg) {
+            // A section that fails must say so in one line rather
+            // than drawing nothing. The dividends block 404'd on a
+            // wrong path for the whole life of this file and nobody
+            // could tell, because an empty Read renders no header,
+            // no sentence and no footnote.
+            fundamentals = Read(value: nil, note: msg)
         } catch {
-            fundamentals = Read()
+            fundamentals = Read(value: nil, note: "Could not load.")
         }
     }
 
@@ -413,8 +420,15 @@ final class NameDetailStore: ObservableObject {
             return
         } catch APIError.forbidden {
             gate = Self.gateSentence
+        } catch APIError.server(_, let msg) {
+            // A section that fails must say so in one line rather
+            // than drawing nothing. The dividends block 404'd on a
+            // wrong path for the whole life of this file and nobody
+            // could tell, because an empty Read renders no header,
+            // no sentence and no footnote.
+            insiders = Read(value: nil, note: msg)
         } catch {
-            insiders = Read()
+            insiders = Read(value: nil, note: "Could not load.")
         }
     }
 
@@ -437,7 +451,7 @@ final class NameDetailStore: ObservableObject {
 
     private func loadDividends(_ t: String) async {
         do {
-            let p = try await API.shared.get("/dividends/\(t)", as: NDDividends.self)
+            let p = try await API.shared.get("/terminal/dividends/\(t)", as: NDDividends.self)
             // The note only earns the screen when there is nothing else
             // to show. A payer whose header also carries the upstream's
             // boilerplate should show the payments, not the boilerplate.
@@ -447,8 +461,15 @@ final class NameDetailStore: ObservableObject {
             return
         } catch APIError.forbidden {
             gate = Self.gateSentence
+        } catch APIError.server(_, let msg) {
+            // A section that fails must say so in one line rather
+            // than drawing nothing. The dividends block 404'd on a
+            // wrong path for the whole life of this file and nobody
+            // could tell, because an empty Read renders no header,
+            // no sentence and no footnote.
+            dividends = Read(value: nil, note: msg)
         } catch {
-            dividends = Read()
+            dividends = Read(value: nil, note: "Could not load.")
         }
     }
 
@@ -460,8 +481,15 @@ final class NameDetailStore: ObservableObject {
             return
         } catch APIError.forbidden {
             gate = Self.gateSentence
+        } catch APIError.server(_, let msg) {
+            // A section that fails must say so in one line rather
+            // than drawing nothing. The dividends block 404'd on a
+            // wrong path for the whole life of this file and nobody
+            // could tell, because an empty Read renders no header,
+            // no sentence and no footnote.
+            shorts = Read(value: nil, note: msg)
         } catch {
-            shorts = Read()
+            shorts = Read(value: nil, note: "Could not load.")
         }
     }
 }
@@ -595,7 +623,9 @@ struct NameDetailSections: View {
     /// single heading, which is the sort of quiet composition error that
     /// survives review.
     @ViewBuilder private var statementsSection: some View {
-        if let s = store.statements.value,
+        if let note = store.statements.note {
+            Section { quiet(note) } header: { SectionHeader(text: "Statements") }
+        } else if let s = store.statements.value,
            let periods = s.periods,
            let idx = latestStatementIndex,
            idx < periods.count {
@@ -685,7 +715,9 @@ struct NameDetailSections: View {
     /// screen, and a row that navigates to where you are is a dead end.
     @ViewBuilder private var peersSection: some View {
         let rows = (store.peers.value?.rows ?? []).filter { $0.isFocus != true }
-        if !rows.isEmpty {
+        if let note = store.peers.note {
+            Section { quiet(note) } header: { SectionHeader(text: "Peers") }
+        } else if !rows.isEmpty {
             Section {
                 ForEach(Array(rows.prefix(6).enumerated()), id: \.offset) { _, p in
                     NavigationLink(value: TickerScreen(symbol: p.ticker ?? "")) {
@@ -743,7 +775,9 @@ struct NameDetailSections: View {
     // MARK: insiders
 
     @ViewBuilder private var insidersSection: some View {
-        if let i = store.insiders.value {
+        if let note = store.insiders.note {
+            Section { quiet(note) } header: { SectionHeader(text: "Insiders") }
+        } else if let i = store.insiders.value {
             let txs = i.transactions ?? []
             Section {
                 if txs.isEmpty {
@@ -835,7 +869,9 @@ struct NameDetailSections: View {
     // MARK: short interest
 
     @ViewBuilder private var shortSection: some View {
-        if let s = store.shorts.value, shortHasSomethingToSay(s) {
+        if let note = store.shorts.note {
+            Section { quiet(note) } header: { SectionHeader(text: "Short interest") }
+        } else if let s = store.shorts.value, shortHasSomethingToSay(s) {
             Section {
                 if s.consolidatedAvailable == false {
                     // Our outage, or FINRA refusing this deployment's IP
