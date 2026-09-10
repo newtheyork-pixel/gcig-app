@@ -70,19 +70,39 @@ function fmtDate(d) {
 //   epsActual, hour: 'bmo'|'amc'|'dmh', quarter, year, symbol,
 //   revenueEstimate, revenueActual }, ...] }. `hour` is 'bmo' = before
 // market open, 'amc' = after market close, 'dmh' = during market hours.
+// The cache is keyed by TICKER and the window is NOT part of the key, which
+// used to make whichever caller warmed the dyno decide what everyone else
+// could see for the next twelve hours. alerts.js:48 asks for 14 days,
+// clubBrief.js:305 for 45 and holdings.js:1598 for 60; let the alerts sweep
+// run first and the phone's sixty-day calendar came back holding only the
+// prints inside a fortnight, with nothing anywhere saying it had been
+// truncated. So: always FETCH the widest window any caller wants, cache
+// that, and narrow on the way out. One upstream call serves every caller
+// and each gets exactly the window it asked for.
+const EARNINGS_FETCH_DAYS = 90;
+
 export async function getUpcomingEarnings(ticker, { daysAhead = 60 } = {}) {
   const key = process.env.FINNHUB_API_KEY;
   if (!key || !ticker) return null;
   const upper = String(ticker).toUpperCase();
 
+  const withinWindow = (row) => {
+    if (!row?.date) return null;
+    const days = Math.round(
+      (new Date(`${row.date}T00:00:00Z`) - new Date(`${fmtDate(new Date())}T00:00:00Z`))
+        / 86400000
+    );
+    return days >= 0 && days <= daysAhead ? row : null;
+  };
+
   const cached = earningsCache.get(upper);
   if (cached && Date.now() - cached.at < EARNINGS_TTL_MS) {
-    return cached.data;
+    return withinWindow(cached.data);
   }
 
   const now = new Date();
   const from = fmtDate(now);
-  const to = fmtDate(new Date(now.getTime() + daysAhead * 24 * 60 * 60 * 1000));
+  const to = fmtDate(new Date(now.getTime() + EARNINGS_FETCH_DAYS * 24 * 60 * 60 * 1000));
   const url =
     `${FINNHUB_BASE}/calendar/earnings?from=${from}&to=${to}` +
     `&symbol=${encodeURIComponent(upper)}&token=${encodeURIComponent(key)}`;
@@ -105,7 +125,8 @@ export async function getUpcomingEarnings(ticker, { daysAhead = 60 } = {}) {
     failed = true;
   }
   earningsCache.set(upper, { at: failed ? failureAt(EARNINGS_TTL_MS) : Date.now(), data });
-  return data;
+  // Cache the widest row, hand back only what this caller asked for.
+  return withinWindow(data);
 }
 
 // Batch helper for dashboards / AI briefs. Runs per-ticker in parallel

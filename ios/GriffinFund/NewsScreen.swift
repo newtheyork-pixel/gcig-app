@@ -36,6 +36,14 @@ final class NewsStore: ObservableObject {
                             at: Date())
         } catch APIError.cancelled {
             return
+        } catch APIError.forbidden(let msg) {
+            // A gate is an answer, not an outage. This rendered as COULD
+            // NOT LOAD over a RETRY that could never succeed, which is the
+            // ordinary first launch for a JuniorAnalyst — the default role,
+            // and half the club. MainTabs hides this tab once /auth/me has
+            // answered; this is what the member sees in the seconds before
+            // it does, or if the identity call itself fails.
+            state = .failed("The wire needs Analyst access. \(msg)")
         } catch {
             let msg = error.localizedDescription
             state = keepOld && previous != nil ? .stale(previous!, msg) : .failed(msg)

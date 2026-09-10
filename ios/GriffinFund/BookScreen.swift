@@ -48,7 +48,12 @@ final class BookStore: ObservableObject {
         do {
             let book = try await API.shared.get("/holdings/quotes", as: Book.self, cache: true)
             lastLoad = Date()
-            state = .loaded(book, at: Date())
+            // Dated from when the SHEET was read, not from when we asked.
+            // The server caches the portfolio, so a fresh request can hand
+            // back a twenty-minute-old mark; stamping it Date() made the
+            // book permanently look a second old and put `aged(after:)`
+            // out of reach. `fetchedAt` is on the payload for this.
+            state = .loaded(book, at: Fmt.parseISO(book.fetchedAt) ?? Date())
         } catch APIError.cancelled {
             // Leaving the tab is not a failure. Say nothing, change nothing.
             return
