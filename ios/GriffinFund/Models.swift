@@ -324,6 +324,25 @@ struct FollowUps: Decodable {
     /// When the next chase comes due. The server ships this precisely so an
     /// empty panel can say when that changes instead of being a dead end.
     let nextDueAt: String?
+    /// Keyed by state: overdue / due / owed. research.js:249 sums these
+    /// across every project and has sent them since the route was written;
+    /// the client decoded neither, which is why the only way to know how
+    /// much outreach was waiting was to scroll the whole list.
+    let counts: [String: Int]?
+    let dueNow: Int?
+
+    var overdue: Int { counts?["overdue"] ?? 0 }
+    var due: Int     { counts?["due"] ?? 0 }
+    var owed: Int    { counts?["owed"] ?? 0 }
+
+    /// The one line that replaces the list: "3 overdue · 11 due · 2 owed".
+    /// Only the states that are non-zero, because a zero here is not news.
+    var summary: String? {
+        let parts = [(overdue, "overdue"), (due, "due"), (owed, "owed")]
+            .filter { $0.0 > 0 }
+            .map { "\($0.0) \($0.1)" }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    }
 }
 
 struct ProjectStub: Decodable, Identifiable {
