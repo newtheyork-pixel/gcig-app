@@ -16,18 +16,57 @@ import SwiftUI
 final class WatchStore: ObservableObject {
     @Published private(set) var state: Loadable<Watchlist> = .loading
 
-    /// See BookStore.load: the last list paints before the network is asked.
+    /// True while the names are up and the prices are still coming.
+    @Published private(set) var pricing = false
+
+    /// Names first, prices second — and the order is the whole point.
+    ///
+    /// One `/watchlist` request prices every name on the list: a live batch
+    /// of up to forty symbols plus a bar history over all hundred and sixty,
+    /// none of which can begin until the rows themselves are assembled. The
+    /// names are ready in the first fifty milliseconds and the phone was
+    /// waiting on the rest of it before drawing anything, which on a cold
+    /// dyno is most of a minute of blank screen.
+    ///
+    /// So: paint the cached list if there is one, otherwise ask for the
+    /// names alone and paint those, and either way fetch the priced version
+    /// behind it. A member sees the list immediately and the numbers fill
+    /// in, rather than seeing nothing and then everything.
+    ///
+    /// The cache branch does NOT take the names-only path, and that matters:
+    /// a cached list already HAS prices, and replacing it with an unpriced
+    /// one would blank numbers that were on screen a moment ago. Prices that
+    /// arrive are an improvement; prices that vanish and return are a bug.
     func load() async {
         if let (list, at) = Cache.read("/watchlist", as: Watchlist.self) {
             state = .loaded(list, at: at)
+            pricing = true
             await fetch(keepOld: true)
+            pricing = false
             return
         }
+
         state = .loading
-        await fetch(keepOld: false)
+        do {
+            let names = try await API.shared.get("/watchlist?quotes=0", as: Watchlist.self)
+            state = .loaded(names, at: Date())
+            pricing = true
+        } catch APIError.cancelled {
+            return
+        } catch {
+            // The fast path failing is not worth reporting on its own; the
+            // priced fetch below is about to try the same thing and its
+            // error is the one worth showing.
+        }
+        await fetch(keepOld: state.value != nil)
+        pricing = false
     }
 
-    func refresh() async { await fetch(keepOld: true) }
+    func refresh() async {
+        pricing = true
+        await fetch(keepOld: true)
+        pricing = false
+    }
 
     /// Named for what it is, not for the sheet: the screen has its own
     /// `adding` meaning "the sheet is open", and two different booleans
@@ -278,6 +317,17 @@ struct WatchScreen: View {
                 // Said once, at the top, rather than as a dash on every
                 // row: if quotes are down, that is one fact about the
                 // screen, not forty facts about forty companies.
+                if store.pricing {
+                    HStack(spacing: Space.s) {
+                        ProgressView().tint(T.amber).scaleEffect(0.7)
+                        Text("Names are up. Prices are still coming in.")
+                            .font(Type.meta).foregroundStyle(T.muted)
+                        Spacer(minLength: 0)
+                    }
+                    .padding(.horizontal, Space.l).padding(.vertical, Space.s)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+
                 if list.quotesAvailable == false {
                     HStack(spacing: Space.s) {
                         Chip(text: "No quotes", tone: T.orange, style: .solid)
@@ -331,12 +381,20 @@ struct WatchScreen: View {
         TickerRow(ticker: i.ticker ?? "—",
                   name: i.name,
                   meta: metaLine(i)) {
-            ValueStack(
-                value: Fmt.money(i.quote?.last, decimals: 2),
-                delta: i.quote?.changePct,
-                deltaText: i.quote?.changePct == nil ? "—" : Fmt.pct(i.quote?.changePct),
-                flash: i.quote?.last
-            )
+            // A dash means "we asked and there is no price". While the
+            // second request is still in flight we have not asked yet, and
+            // the two must not look the same — otherwise the list appears
+            // to have failed for a second and then repaired itself.
+            if store.pricing && i.quote == nil {
+                Text("··").font(Type.value).foregroundStyle(T.muted)
+            } else {
+                ValueStack(
+                    value: Fmt.money(i.quote?.last, decimals: 2),
+                    delta: i.quote?.changePct,
+                    deltaText: i.quote?.changePct == nil ? "—" : Fmt.pct(i.quote?.changePct),
+                    flash: i.quote?.last
+                )
+            }
         }
         .contentShape(Rectangle())
     }

@@ -348,7 +348,6 @@ struct TodayScreen: View {
     var body: some View {
         VStack(spacing: 0) {
             FunctionBar(code: "TODAY", title: "What needs you")
-            accessStrip
             // The three blocks are siblings, and that is the fix.
             //
             // They used to live inside one ScreenState keyed on the chase
@@ -375,6 +374,16 @@ struct TodayScreen: View {
             }
             .refreshable { await store.refresh() }
         }
+        // Bottom, not top, and big enough to hit.
+        //
+        // These five were a row of 16-point chips under the function bar:
+        // at the far end of a six-inch screen from where a thumb rests, and
+        // below Apple's 44-point floor in both directions. They are half
+        // this app's navigation and they were the least usable thing on it.
+        //
+        // safeAreaInset rather than an overlay so the scroll view knows the
+        // bar is there and the last row of content can still be reached.
+        .safeAreaInset(edge: .bottom, spacing: 0) { accessBar }
         .background(T.bg)
         .toolbar(.hidden, for: .navigationBar)
         .navigationDestination(for: PersonScreen.self) { $0 }
@@ -396,31 +405,51 @@ struct TodayScreen: View {
     /// grace. Alerts and Search are Analyst-gated, so they are absent rather
     /// than present-and-refusing for the members who cannot open them —
     /// the same rule the Wire and Watch tabs follow.
-    @ViewBuilder private var accessStrip: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: Space.s) {
-                NavigationLink(value: Route.ballots) {
-                    Chip(text: "BALLOTS", tone: T.amber, style: .solid)
-                }
-                NavigationLink(value: Route.club) {
-                    Chip(text: "CLUB", tone: T.blue)
-                }
-                NavigationLink(value: Route.performance) {
-                    Chip(text: "PERFORMANCE", tone: T.blue)
-                }
-                if s.terminalAccess != false {
-                    NavigationLink(value: Route.alerts) {
-                        Chip(text: "ALERTS", tone: T.orange)
+    @ViewBuilder private var accessBar: some View {
+        // Icons as well as words. At this size a label alone is a wall of
+        // small caps, and the glyph is what the eye actually lands on.
+        let items: [(Route, String, String, Color)] = {
+            var v: [(Route, String, String, Color)] = [
+                (.ballots, "BALLOTS", "checkmark.square", T.amber),
+                (.club, "CLUB", "person.2", T.blue),
+                (.performance, "PERF", "chart.line.uptrend.xyaxis", T.blue),
+            ]
+            if s.terminalAccess != false {
+                v.append((.alerts, "ALERTS", "bell", T.orange))
+                v.append((.search, "SEARCH", "magnifyingglass", T.blue))
+            }
+            return v
+        }()
+
+        VStack(spacing: 0) {
+            Rectangle().fill(T.border).frame(height: 1)
+            HStack(spacing: 0) {
+                ForEach(items, id: \.0) { route, label, icon, tone in
+                    NavigationLink(value: route) {
+                        VStack(spacing: Space.xs) {
+                            Image(systemName: icon)
+                                .font(.system(size: 17, weight: .semibold))
+                            Text(label)
+                                .font(Type.chip)
+                                .tracking(0.6)
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.8)
+                        }
+                        .foregroundStyle(tone)
+                        // 52pt tall and an equal share of the width, so
+                        // every one of these clears the 44-point floor in
+                        // both directions with room to spare. contentShape
+                        // makes the whole cell tappable rather than just
+                        // the glyph and the glyph's baseline.
+                        .frame(maxWidth: .infinity, minHeight: 52)
+                        .contentShape(Rectangle())
                     }
-                    NavigationLink(value: Route.search) {
-                        Chip(text: "SEARCH", tone: T.blue)
-                    }
+                    .buttonStyle(.plain)
                 }
             }
-            .padding(.horizontal, Space.l)
-            .padding(.vertical, Space.s)
+            .padding(.vertical, Space.xs)
         }
-        .background(T.bg)
+        .background(T.header)
     }
 
     /// The fund's own number, at the top, because this is a terminal and

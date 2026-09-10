@@ -84,6 +84,39 @@ router.get('/', async (req, res) => {
     // a cold boot cannot recreate the burst that rate-limited the whole
     // panel into dashes.
     const tickers = [...new Set(items.map((i) => i.ticker))];
+
+    // `?quotes=0` answers with the NAMES ALONE, and exists because pricing
+    // this list is most of what it costs.
+    //
+    // Everything above here is one Prisma query and a sheet read. What
+    // follows is a live upstream batch of up to forty symbols plus a bar
+    // history over every name on the list — a hundred and sixty of them —
+    // and none of it can start until the rest finishes. So the phone waited
+    // on the whole lot before it could draw a single row, which on a cold
+    // dyno is most of a minute of blank screen for a list whose names were
+    // ready in the first fifty milliseconds.
+    //
+    // The client asks for this first, paints, then asks again for the
+    // priced version and merges. Same handler, same shape, `quote` and
+    // `stats` simply null — never a second endpoint that could disagree
+    // with this one about what is on the list.
+    if (String(req.query.quotes || '') === '0') {
+      return res.json({
+        items: items.map((i) => ({ ...i, quote: null, stats: null })),
+        counts: {
+          holdings: items.filter((i) => i.source === 'holding').length,
+          seg13f: items.filter((i) => i.source === 'seg13f').length,
+          manual: items.filter((i) => i.source === 'manual').length,
+        },
+        // Not "no quotes available" — quotes were not ASKED for. The
+        // client knows it made this request and does not render the
+        // no-quotes warning for it, but saying so keeps the payload
+        // honest for anything else that reads it.
+        quotesAvailable: null,
+        pricing: true,
+      });
+    }
+
     const quotes = {};
     const needLive = [];
     for (const row of quoteScheduler.read(tickers)) {
