@@ -204,6 +204,10 @@ final class TodayStore: ObservableObject {
     @Published private(set) var book: Book?
     @Published private(set) var indices: PerfIndices?
     @Published private(set) var macro: PerfMacro?
+    /// The book's own earnings calendar. Cached, because a sixty-day
+    /// calendar barely moves between opens and a member should see the
+    /// next print before the network answers.
+    @Published private(set) var earnings: BookEarnings?
 
     func load() async {
         if let (f, at) = Cache.read("/research/follow-ups", as: FollowUps.self) {
@@ -234,17 +238,20 @@ final class TodayStore: ObservableObject {
         // painted from cache first so the headline number is on screen in
         // the time it takes to read a file.
         if let (b, _) = Cache.read("/holdings/quotes", as: Book.self) { book = b }
+        if let (e, _) = Cache.read("/holdings/earnings", as: BookEarnings.self) { earnings = e }
         async let bk: Book?          = try? API.shared.get("/holdings/quotes", as: Book.self, cache: true)
         async let mv: Movers?        = try? API.shared.get("/terminal/movers", as: Movers.self)
         async let ix: PerfIndices?   = try? API.shared.get("/terminal/indices", as: PerfIndices.self)
         async let mc: PerfMacro?     = try? API.shared.get("/dashboard/macro", as: PerfMacro.self)
         async let dr: DayInReview?   = try? API.shared.get("/dashboard/day-in-review", as: DayInReview.self)
-        let (b, m, i, ma, r) = await (bk, mv, ix, mc, dr)
+        async let ea: BookEarnings?  = try? API.shared.get("/holdings/earnings", as: BookEarnings.self, cache: true)
+        let (b, m, i, ma, r, e) = await (bk, mv, ix, mc, dr, ea)
         if let b { book = b }
         if let m { movers = m }
         if let i { indices = i }
         if let ma { macro = ma }
         if let r { review = r }
+        if let e { earnings = e }
     }
 
     private func fetch(keepOld: Bool) async {
@@ -270,9 +277,14 @@ final class TodayStore: ObservableObject {
 /// is the more phone-shaped thing and the one nobody can hold in their head
 /// across a hundred and ten contacts.
 ///
-/// Two things are deliberately absent. Earnings dates, because they are a
-/// market event with no action attached, which is exactly the category this
-/// screen exists not to be. And chases that are merely coming up: the five
+/// Earnings dates USED to be excluded here on the grounds that they are a
+/// market event with no action attached. That held while this was an
+/// obligations list and stopped holding when it became a terminal: for a
+/// club deciding whether to hold a name through its print, the date IS the
+/// action. They now sit under the movers.
+///
+/// One thing is still deliberately absent: chases that are merely coming
+/// up. The five
 /// working-day rule exists so nobody is the person who emailed twice in
 /// three days, and putting tomorrow's chase on today's screen as a tappable
 /// row invites sending it today.
@@ -301,6 +313,7 @@ struct TodayScreen: View {
                     // the server; it is just no longer the headline.
                     bookHeadline
                     moversSection
+                    earningsSection
                     indicesSection
                     macroSection
                     outreachSection
@@ -397,6 +410,54 @@ struct TodayScreen: View {
                 .hairline()
             } header: {
                 SectionHeader(text: "The book")
+            }
+        }
+    }
+
+    /// What reports next, out of our own book.
+    ///
+    /// This screen's own comment used to say earnings dates were
+    /// DELIBERATELY absent, "because they are a market event with no action
+    /// attached, which is exactly the category this screen exists not to
+    /// be". That was a fair rule when Today was an obligations list. It
+    /// stopped being true the moment Today led with the book, and the
+    /// owner's judgement is that the print date is the most useful thing on
+    /// here: an earnings date IS the action for a club that has to decide
+    /// whether to hold something through it.
+    ///
+    /// `/holdings/earnings` is verifyJwt only, so this is one of the few
+    /// genuinely useful blocks a JuniorAnalyst can see.
+    @ViewBuilder private var earningsSection: some View {
+        let rows = store.earnings?.upcoming ?? []
+        if !rows.isEmpty {
+            Section {
+                VStack(spacing: 0) {
+                    ForEach(rows.prefix(5)) { e in
+                        NavigationLink(value: TickerScreen(symbol: e.ticker ?? "")) {
+                            TickerRow(ticker: e.ticker ?? "—",
+                                      name: e.name,
+                                      meta: e.whenLine,
+                                      strip: e.isImminent ? T.amber : nil) {
+                                // The estimate is the only number worth the
+                                // width here. A revenue estimate beside it
+                                // would need a second column, and columns
+                                // are the Mac's.
+                                if let eps = e.epsEstimate {
+                                    VStack(alignment: .trailing, spacing: Space.xs) {
+                                        Text(String(format: "%.2f", eps))
+                                            .font(Type.value).foregroundStyle(T.white)
+                                        Text("EST EPS")
+                                            .font(Type.meta).foregroundStyle(T.muted)
+                                    }
+                                }
+                            }
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            } header: {
+                SectionHeader(text: "Reporting next",
+                              trailing: rows.count > 5 ? "5 of \(rows.count)" : "\(rows.count)")
             }
         }
     }

@@ -281,6 +281,85 @@ struct Coverage: Decodable {
     }
 }
 
+/// GET /api/holdings/earnings — holdings.js:1590. The whole book's calendar,
+/// sixty days out, already sorted soonest-first by the handler.
+///
+/// verifyJwt only, so unlike everything under /terminal this reaches every
+/// member including a JuniorAnalyst. That is most of why it is worth the
+/// screen space: it is one of the few genuinely useful things the newest
+/// half of the club can see.
+struct BookEarnings: Decodable {
+    let upcoming: [EarningsDate]?
+}
+
+struct EarningsDate: Decodable, Identifiable {
+    let ticker: String?
+    let name: String?
+    let sector: String?
+    /// "YYYY-MM-DD".
+    let date: String?
+    /// bmo (before market open) | amc (after the close) | dmh (during
+    /// hours) | null. Finnhub is inconsistent about supplying it, and a
+    /// missing one is not a reason to withhold the date.
+    let hour: String?
+    let epsEstimate: Double?
+    let revenueEstimate: Double?
+    let quarter: Int?
+    let year: Int?
+
+    var id: String { "\(ticker ?? "?")-\(date ?? "?")" }
+
+    /// "before open" / "after close" / "during hours". Spelled out rather
+    /// than left as the vendor's three-letter code: bmo and amc mean
+    /// nothing to a member who has not worked a desk, and this app is for
+    /// students.
+    var whenInDay: String? {
+        switch hour?.lowercased() {
+        case "bmo": return "before open"
+        case "amc": return "after close"
+        case "dmh": return "during hours"
+        default:    return nil
+        }
+    }
+
+    /// Days from today, in the reader's own calendar. Nil when the date
+    /// cannot be parsed, which reads as "we have a row but not a day" and
+    /// is different from having no row at all.
+    var daysAway: Int? {
+        guard let date, date.count >= 10 else { return nil }
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd"
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.timeZone = TimeZone.current
+        guard let d = f.date(from: String(date.prefix(10))) else { return nil }
+        let cal = Calendar.current
+        return cal.dateComponents([.day],
+                                  from: cal.startOfDay(for: Date()),
+                                  to: cal.startOfDay(for: d)).day
+    }
+
+    /// The line under the ticker. "Today, before open" earns its place;
+    /// "in 34 days" does not, so anything beyond a fortnight just gives
+    /// the date.
+    var whenLine: String {
+        let day = Fmt.day(date)
+        let part = whenInDay.map { ", \($0)" } ?? ""
+        switch daysAway {
+        case .some(0):  return "Today\(part)"
+        case .some(1):  return "Tomorrow\(part)"
+        case .some(let n) where n > 1 && n <= 14:
+            return "\(day) · in \(n) days\(part)"
+        default:        return "\(day)\(part)"
+        }
+    }
+
+    /// Inside a week is worth colouring. Beyond that it is a diary entry.
+    var isImminent: Bool {
+        guard let n = daysAway else { return false }
+        return n >= 0 && n <= 7
+    }
+}
+
 // MARK: Outreach
 
 struct ChaseRow: Decodable, Identifiable {
