@@ -243,6 +243,17 @@ final class CallRecorder: ObservableObject {
         }
     }
 
+    /// Hands the finished recording's directory to the caller and forgets
+    /// it, so the next call can start while the last one is still
+    /// uploading. Without this the recorder either blocks the queue or
+    /// deletes a file that is still being sent.
+    func detachWorkingDirectory() -> URL? {
+        let dir = workingDir
+        workingDir = nil
+        state = .idle
+        return dir
+    }
+
     /// Removes the working directory. Called once the transcript is home,
     /// so a machine that records forty calls in an afternoon is not
     /// quietly filling up with other people's voices.
@@ -255,7 +266,48 @@ final class CallRecorder: ObservableObject {
 
     // MARK: Sources
 
+    /// Where macOS stands on letting us hear the microphone.
+    ///
+    /// Asked explicitly, because starting an AVAudioEngine does not
+    /// reliably raise the prompt: the engine runs, the tap fires, and the
+    /// buffers are silence. That failure is indistinguishable from a
+    /// working recorder in a quiet room, and it is how a store call
+    /// reached the ledger with only the shop assistant on it while nobody
+    /// had ever been asked for permission.
+    static var microphoneAuthorization: AVAuthorizationStatus {
+        AVCaptureDevice.authorizationStatus(for: .audio)
+    }
+
+    /// Raises the system prompt if it has never been shown. Returns what
+    /// the answer was.
+    @discardableResult
+    static func requestMicrophone() async -> AVAuthorizationStatus {
+        if AVCaptureDevice.authorizationStatus(for: .audio) == .notDetermined {
+            _ = await AVCaptureDevice.requestAccess(for: .audio)
+        }
+        return AVCaptureDevice.authorizationStatus(for: .audio)
+    }
+
     private func startMicrophone() throws {
+        // Refuse loudly rather than record silence. A denied microphone
+        // produces buffers of zeroes, not an error, so without this check
+        // the only symptom is a transcript with one voice in it.
+        switch Self.microphoneAuthorization {
+        case .denied, .restricted:
+            throw NSError(domain: "CallRecorder", code: 2, userInfo: [
+                NSLocalizedDescriptionKey:
+                    "Microphone access is turned off for Griffin Terminal, so only the other side of the "
+                    + "call would be recorded. Turn it on in System Settings, Privacy & Security, Microphone.",
+            ])
+        case .notDetermined:
+            throw NSError(domain: "CallRecorder", code: 3, userInfo: [
+                NSLocalizedDescriptionKey:
+                    "Microphone access has not been granted yet. Allow it when macOS asks.",
+            ])
+        default:
+            break
+        }
+
         let input = engine.inputNode
 
         // Echo cancellation, and it is load-bearing rather than polish.
