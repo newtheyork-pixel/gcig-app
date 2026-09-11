@@ -198,3 +198,63 @@ final class CallRecorderTests: XCTestCase {
     }
 }
 
+
+/// The crash this file did not catch, and now does.
+///
+/// `CallRecorder` is @MainActor, so a plain closure written inside it
+/// INHERITS that isolation. AVAudioEngine calls the tap block from a
+/// real-time audio thread, Swift 6 checks whether it is on the main actor
+/// and traps — taking the whole app down on the first buffer of the first
+/// call, with the dial already placed. Every unit test here passed
+/// throughout, because none of them ever started the engine.
+@MainActor
+final class CallRecorderLiveTests: XCTestCase {
+
+    func testStartingAndStoppingDoesNotTrap() async throws {
+        let recorder = CallRecorder()
+        do {
+            try recorder.start()
+        } catch {
+            // No microphone, or no permission for a bare test binary.
+            // Nothing to exercise, and a skip is honest where a pass
+            // would be the same lie the old suite told.
+            throw XCTSkip("No capturable microphone here: \(error.localizedDescription)")
+        }
+        XCTAssertEqual(recorder.state, .recording)
+
+        // Play something audible so the SYSTEM AUDIO TAP has a far end to
+        // capture. This is the half of the recorder that could otherwise
+        // only be tested by ringing a real store, and the half that
+        // decides whether a channel check holds one voice or two.
+        let sound = "/System/Library/Sounds/Submarine.aiff"
+        let player = Process()
+        player.executableURL = URL(fileURLWithPath: "/usr/bin/afplay")
+        player.arguments = [sound, "-t", "2"]
+        try? player.run()
+
+        // Long enough for the tap to deliver buffers on its own thread,
+        // which is the moment the isolation check fires.
+        try await Task.sleep(nanoseconds: 2_500_000_000)
+        player.terminate()
+
+        if recorder.farEndCaptured {
+            print("FAR-END: captured, echoCancelled=\(recorder.echoCancelled)")
+            XCTAssertNotNil(recorder.farEndSilentFor, "captured audio must stamp a time")
+        } else {
+            // Not a failure: a bare test binary has no bundle identity and
+            // may be refused the audio-capture permission the tap needs.
+            // Recorded as a skip-shaped note rather than a silent pass.
+            print("NOTE: far end was not captured — \(recorder.farEndNote ?? "no reason given")")
+        }
+
+        let url = recorder.stop()
+        XCTAssertNotNil(url, "a started recorder must produce a file")
+        if let url {
+            let bytes = (try? Data(contentsOf: url).count) ?? 0
+            // A WAV header alone is 44 bytes; anything past that means
+            // real buffers crossed the thread boundary and were written.
+            XCTAssertGreaterThan(bytes, 44, "no audio reached the file")
+        }
+        recorder.discard()
+    }
+}
