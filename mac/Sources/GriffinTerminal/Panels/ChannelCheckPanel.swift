@@ -252,12 +252,17 @@ struct ChannelCheckPanel: View {
         // WORKED, and a row that looks untried is a row somebody redials
         // instead of moving on. So it fades and says what happened, and
         // the queue still keeps it for a second pass at a different time.
+        // Everything else that has been rung reads as TRIED, with the
+        // count, because the question the list has to answer at a glance
+        // is "have I already had a go at this one" — and the specific
+        // flavour of not-getting-through is on the row underneath.
         switch door.lastAttempt?.outcome {
-        case "NoAnswer":  return (door.attemptCount >= 3 ? "TRY ANOTHER HOUR" : "NO ANSWER", Term.fgMuted)
-        case "Busy":      return ("BUSY", Term.fgMuted)
-        case "Voicemail": return ("VOICEMAIL", Term.fgMuted)
-        case "Failed":    return ("DIDN'T CONNECT", Term.fgMuted)
-        default:          return nil
+        case "NoAnswer", "Busy", "Voicemail", "Failed", "CallBackLater":
+            return (door.attemptCount >= 3 ? "TRIED ×\(door.attemptCount) — ANOTHER HOUR"
+                                           : "TRIED ×\(door.attemptCount)", Term.fgMuted)
+        default:
+            // Rung, but the row was never closed. Still tried.
+            return door.attemptCount > 0 ? ("TRIED ×\(door.attemptCount)", Term.fgMuted) : nil
         }
     }
 
@@ -395,8 +400,15 @@ struct ChannelCheckPanel: View {
                         Text(tier).font(Term.mono(9)).foregroundStyle(Term.cyan)
                     }
                 }
-                if let last = door.lastAttempt, let outcome = last.outcome {
-                    Text("last: \(outcome) · \(Fmt.date(last.startedAt))")
+                if let last = door.lastAttempt, last.outcome == nil {
+                    Text("tried · \(Fmt.shortDateTime(last.startedAt)) · still open")
+                        .font(Term.mono(8))
+                        .foregroundStyle(Term.fgMuted)
+                } else if let last = door.lastAttempt, let outcome = last.outcome {
+                    // The clock time, because "11 Sep" is useless for
+                    // deciding whether to ring again this afternoon and
+                    // the whole point of a ring-out is which hour it was.
+                    Text("last: \(outcome) · \(Fmt.shortDateTime(last.startedAt))")
                         .font(Term.mono(8))
                         .foregroundStyle(Term.fgMuted)
                 }
