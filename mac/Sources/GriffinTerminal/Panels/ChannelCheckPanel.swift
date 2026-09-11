@@ -773,14 +773,27 @@ struct ChannelCheckPanel: View {
                 Circle().fill(Term.negative).frame(width: 7, height: 7)
                 Text(recorder.bothSidesLive ? "Recording both sides"
                      : recorder.farEndCaptured ? "Recording them, NOT you"
-                     : "Recording you only")
+                     : "Recording the microphone")
                     .font(Term.mono(10))
-                    .foregroundStyle(recorder.bothSidesLive ? Term.fg : Term.orange)
+                    .foregroundStyle(recorder.bothSidesLive ? Term.fg
+                                     : recorder.micHasAudio ? Term.fg : Term.orange)
                 if regime == "one-party" {
                     Text("· tape kept").font(Term.mono(9)).foregroundStyle(Term.fgMuted)
                 } else {
                     Text("· tape deleted after transcribing").font(Term.mono(9)).foregroundStyle(Term.fgMuted)
                 }
+            }
+            if recorder.micHasAudio && !recorder.farEndCaptured {
+                // Not a fault. It means the call is not running through
+                // this Mac, which is the normal case when somebody dials
+                // on their own handset. On speaker the microphone carries
+                // both voices and the transcript separates them, which is
+                // how the first two-speaker transcript we got was made.
+                Text("The call is not routed through this Mac, so only the microphone is capturing. "
+                     + "Put the handset on SPEAKER and both voices land on it.")
+                    .font(Term.mono(9))
+                    .foregroundStyle(Term.fgMuted)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             if recorder.farEndCaptured && !recorder.echoCancelled {
                 // Worth saying only in this combination. On speakers
