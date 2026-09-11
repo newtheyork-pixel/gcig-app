@@ -436,7 +436,32 @@ struct ChannelCheckPanel: View {
             .buttonStyle(.plain)
             .disabled(!door.dialable || working != nil)
 
-            Text("Opens the call on your phone. The row is written before it rings, so a call that fails is still logged.")
+            Text("Opens the call on your phone and records both sides here. The row is written before it rings, so a call that fails is still logged.")
+                .font(Term.mono(9))
+                .foregroundStyle(Term.fgMuted)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Divider().overlay(Term.border).padding(.vertical, 2)
+
+            // The other way of working, and the ordinary one for anybody
+            // not sitting at this Mac. The desk records both sides because
+            // both sides are on the desk; a call made on a handset in a
+            // car is recorded by the handset, and all this end has to do
+            // is hold the row and take the file afterwards.
+            Button {
+                Task { await openCall(door, dial: false) }
+            } label: {
+                Text("RECORD")
+                    .font(Term.mono(10, weight: .bold))
+                    .foregroundStyle(Term.bg)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 6)
+                    .background(Term.cyan)
+            }
+            .buttonStyle(.plain)
+            .disabled(working != nil)
+
+            Text("Starts recording without dialling, for a call you placed on your own handset. Put it on speaker next to the Mac and this captures it the same way.")
                 .font(Term.mono(9))
                 .foregroundStyle(Term.fgMuted)
                 .fixedSize(horizontal: false, vertical: true)
@@ -734,7 +759,15 @@ struct ChannelCheckPanel: View {
         }
     }
 
-    private func openCall(_ door: Door) async {
+    /// Open a call row, and optionally place the call.
+    ///
+    /// `dial: false` is the handset path: somebody rang the store from
+    /// their own phone and has it on speaker next to the Mac. The row,
+    /// the disclosure, the regime, the recording and the transcript are
+    /// all identical; the only difference is that nothing is handed to
+    /// FaceTime. Recording starts either way, because it starting is the
+    /// entire point of the button.
+    private func openCall(_ door: Door, dial: Bool = true) async {
         guard let project else { return }
         problem = nil
         working = "Opening the call…"
@@ -749,7 +782,7 @@ struct ChannelCheckPanel: View {
             objected = false
             autoClosing = false
             notes = ""
-            if let url = opened.telUrl { open(url) }
+            if dial, let url = opened.telUrl { open(url) }
             // Always. The disclosure is the first thing said on the
             // call, so there is nothing to wait for, and a recorder
             // that starts late loses the opening of every call.
