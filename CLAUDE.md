@@ -956,6 +956,13 @@ Hit-rate stats count `Approved` toward Voted Yes too.
 
 ## Things NOT to do
 
+- Don't serve images through Cloudflare Polish without `Cache-Control:
+  no-transform` while `X-Content-Type-Options: nosniff` is on. Polish
+  rewrites PNG/JPEG to WebP and leaves the original Content-Type;
+  Safari trusts the type and drops the file, Chrome sniffs the body
+  and looks fine. That is why the landing logo and the leadership
+  headshots used to vanish on Safari only.
+
 - Don't add login flows that use SPA `navigate('/dashboard')` — use
   `window.location.replace`. SPA nav races AuthProvider's mount.
 - Don't put ETag-cacheable responses on auth-bootstrap endpoints
@@ -1093,6 +1100,16 @@ row in the same transaction.
   retrying and failing nightly until this is resolved.
 
 ## Recent fixes / playbook notes
+
+- **Safari dropped the landing logo and the leadership photos, Chrome didn't (Sep '26)**:
+  Cloudflare Polish in front of thegriffinfund.org was rewriting PNG/JPEG
+  to WebP while still sending `Content-Type: image/png` (or jpeg). We
+  also send `X-Content-Type-Options: nosniff`, so Safari refused to paint
+  the file and the `onError` handlers hid the mark; Chrome sniffed the
+  body and looked healthy. `Cache-Control: no-transform` on the static
+  site is the documented Polish bypass. The griffin-logo PNG also
+  carried a 44KB C2PA `caBX` chunk from the export, which we stripped
+  while cropping the empty canvas so the login chip actually fills.
 
 - **Postgres text will not hold a NUL, and extraction produces them
   (Jul '26)**: one document with an embedded 0x00 failed the INSERT with

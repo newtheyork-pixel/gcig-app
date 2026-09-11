@@ -88,3 +88,11 @@ services:
       - path: /*
         name: Permissions-Policy
         value: "camera=(), microphone=(), geolocation=(), payment=()"
+      # Cloudflare Polish rewrites PNG/JPEG to WebP while leaving the
+      # original Content-Type. Combined with nosniff above, Safari then
+      # refuses to paint the file (Chrome sniffs the body and looks fine).
+      # no-transform is the documented Polish bypass; without it the
+      # landing logo and leadership headshots vanish on Safari only.
+      - path: /*
+        name: Cache-Control
+        value: "public, max-age=0, s-maxage=300, no-transform"
