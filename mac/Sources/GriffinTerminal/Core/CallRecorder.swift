@@ -20,6 +20,22 @@ import AVFoundation
 //
 // Output is 16 kHz PCM, which is what speech recognition wants and a
 // twentieth of the bytes of CD audio on a home connection.
+/// Holds the far end's converter, which cannot be built until the first
+/// buffer reveals the tap's format. Serialised by the audio thread that
+/// is its only caller.
+private final class ConverterBox: @unchecked Sendable {
+    private var converter: AVAudioConverter?
+    private var from: AVAudioFormat?
+
+    func get(for format: AVAudioFormat, to wire: AVAudioFormat) -> AVAudioConverter? {
+        if converter == nil || from != format {
+            converter = AVAudioConverter(from: format, to: wire)
+            from = format
+        }
+        return converter
+    }
+}
+
 /// One channel's bytes on their way to disk.
 ///
 /// Audio arrives on Core Audio's own threads and must not visit the main
@@ -260,10 +276,23 @@ final class CallRecorder: ObservableObject {
         let track = micTrack
         let converter = self.converter
         let wire = self.wire
-        input.installTap(onBus: 0, bufferSize: 2048, format: inFormat) { buffer, _ in
-            // No hop to the main actor. See TrackWriter.
+        // @Sendable is doing real work here and removing it crashes the
+        // app on the first buffer.
+        //
+        // This class is @MainActor, and a plain closure written inside it
+        // INHERITS that isolation. AVAudioEngine then calls it from a
+        // real-time audio thread, Swift 6 checks whether it is on the main
+        // actor, and traps. The symptom is the whole app quitting the
+        // instant a call starts, with the dial already placed — which is
+        // exactly as confusing as it sounds from the outside.
+        //
+        // Marking it @Sendable makes it non-isolated, which is the truth:
+        // everything it touches (TrackWriter, the converter, the format)
+        // is safe off the main actor by construction.
+        let onMic: @Sendable (AVAudioPCMBuffer, AVAudioTime) -> Void = { buffer, _ in
             track?.write(Self.convert(buffer, using: converter, to: wire))
         }
+        input.installTap(onBus: 0, bufferSize: 2048, format: inFormat, block: onMic)
         engine.prepare()
         try engine.start()
     }
@@ -282,12 +311,14 @@ final class CallRecorder: ObservableObject {
         track?.onFirstWrite = { [weak self] in
             Task { @MainActor in self?.farEndCaptured = true }
         }
-        var farConverter: AVAudioConverter?
-        capture.onBuffer = { buffer in
-            if farConverter == nil {
-                farConverter = AVAudioConverter(from: buffer.format, to: wire)
-            }
-            track?.write(Self.convert(buffer, using: farConverter, to: wire))
+        // Same trap as the microphone block above: written inside a
+        // @MainActor type, a plain closure inherits that isolation and
+        // Core Audio calls it from its own thread. The converter is built
+        // once on first buffer and only ever touched from that thread, so
+        // a box keeps it out of the isolation checker's way.
+        let farConverter = ConverterBox()
+        capture.onBuffer = { @Sendable buffer in
+            track?.write(Self.convert(buffer, using: farConverter.get(for: buffer.format, to: wire), to: wire))
         }
         do {
             try capture.start()

@@ -33,7 +33,11 @@ final class SystemAudioTap {
     }
 
     /// Delivered on a Core Audio thread. Keep the work short.
-    var onBuffer: ((AVAudioPCMBuffer) -> Void)?
+    /// @Sendable is load-bearing. Assigned from a @MainActor type, a plain
+    /// closure inherits that isolation, and Core Audio calls this from its
+    /// own thread — which traps and takes the whole app down on the first
+    /// buffer of the first call.
+    var onBuffer: (@Sendable (AVAudioPCMBuffer) -> Void)?
 
     private var tapID = AudioObjectID(kAudioObjectUnknown)
     private var deviceID = AudioObjectID(kAudioObjectUnknown)
@@ -97,8 +101,21 @@ final class SystemAudioTap {
         }
         deviceID = newDevice
 
-        let asbd = try streamFormat(of: newDevice)
-        guard let fmt = AVAudioFormat(streamDescription: [asbd].withUnsafeBufferPointer { $0.baseAddress! }) else {
+        var asbd = try streamFormat(of: newDevice)
+        // `withUnsafeBufferPointer` on a temporary array was the bug here,
+        // and it cost an app crash rather than an error: the pointer was
+        // dangling the moment the closure returned, AVAudioFormat read
+        // freed memory, and the object it built looked fine until
+        // AVAudioPCMBuffer refused it on the first buffer with
+        // "isPCMFormat(fmt) is false" and aborted the process.
+        //
+        // Measured on this machine, the tap actually reports 48 kHz
+        // stereo float32 interleaved, which AVAudioFormat takes happily
+        // when it is given a pointer that is still alive.
+        guard let fmt = withUnsafePointer(to: &asbd, { AVAudioFormat(streamDescription: $0) }),
+              asbd.mFormatID == kAudioFormatLinearPCM,
+              fmt.channelCount > 0,
+              fmt.sampleRate > 0 else {
             cleanUp()
             throw Failure(message: "The capture device reported a format we cannot read.")
         }
