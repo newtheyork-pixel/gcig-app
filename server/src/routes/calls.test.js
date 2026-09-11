@@ -59,6 +59,7 @@ function fakeDb({ callRow = null, answeredRows = [], claimCount = 1,
     },
     interview: {
       create: async (a) => ({ id: 4242, ...a.data }),
+      findUnique: async () => ({ transcript: 'we have the one and a half at 4,999' }),
       delete: async (a) => { seen.deleted.push(a.where.id); return {}; },
     },
   };
@@ -300,13 +301,22 @@ function recDeps(callRow, over = {}, dbOver = {}) {
   };
 }
 
-test('no disclosure logged means the audio is never sent and no interview appears', async () => {
-  const { deps, ingested } = recDeps({ ...openCall, consentSpoken: false, target: { name: 'Kay #1247' } });
-  const res = fakeRes();
-  await callRecordingHandler(recReq(), res, deps);
-  assert.equal(res.statusCode, 409);
-  assert.match(res.body.error, /No consent is logged/);
-  assert.equal(ingested.length, 0);
+test('an objection blocks the transcript, in either regime', async () => {
+  // The disclosure is read on every call, so the question is not whether
+  // somebody ticked a box. Somebody who said no to being recorded has
+  // not agreed to a transcript of the recording either, and that holds
+  // even where the law would have allowed the tape.
+  for (const consentRegime of ['all-party', 'one-party']) {
+    const { deps, ingested } = recDeps({
+      ...openCall, consentSpoken: false, consentRegime,
+      target: { name: 'Kay #1247' },
+    });
+    const res = fakeRes();
+    await callRecordingHandler(recReq(), res, deps);
+    assert.equal(res.statusCode, 409, consentRegime);
+    assert.match(res.body.error, /objected to/);
+    assert.equal(ingested.length, 0, 'nothing reaches the vendor');
+  }
 });
 
 test('a second upload against one dial is refused', async () => {
@@ -462,9 +472,9 @@ test('an unrecognised regime is refused at the door', async () => {
   assert.equal(res.statusCode, 400);
 });
 
-test('a one-party call does not need a disclosure to upload', async () => {
+test('a call nobody objected to transcribes without anyone ticking anything', async () => {
   const { deps, ingested } = recDeps({
-    ...openCall, consentSpoken: false, consentRegime: 'one-party',
+    ...openCall, consentSpoken: true, consentRegime: 'one-party',
     target: { id: 1, name: 'Kay #1247' },
   });
   const res = fakeRes();
@@ -473,14 +483,27 @@ test('a one-party call does not need a disclosure to upload', async () => {
   assert.equal(ingested.length, 1);
 });
 
-test('an unknown regime still has to ask', async () => {
-  // "Nobody decided" must not become the way round the disclosure.
-  const { deps, ingested } = recDeps({
-    ...openCall, consentSpoken: false, consentRegime: 'unknown',
-    target: { id: 1, name: 'Kay #1247' },
-  });
+test('the outcome is worked out rather than typed in', async () => {
+  const { deps } = recDeps(
+    { ...openCall, consentSpoken: true, outcome: null, target: { id: 1, name: 'Kay #1247' } },
+    {}
+  );
   const res = fakeRes();
   await callRecordingHandler(recReq(), res, deps);
-  assert.equal(res.statusCode, 409);
-  assert.equal(ingested.length, 0);
+  assert.equal(res.statusCode, 200);
+  // Whatever it decided, it must be reported as an inference rather than
+  // presented as though a person had judged it.
+  assert.ok('outcomeInference' in res.body);
+});
+
+test('a human outcome is never overwritten by the model', async () => {
+  const { deps } = recDeps(
+    { ...openCall, consentSpoken: true, outcome: 'Refused', target: { id: 1, name: 'Kay' } },
+  );
+  const res = fakeRes();
+  await callRecordingHandler(recReq(), res, deps);
+  assert.equal(res.body.outcome, 'Refused');
+  assert.equal(res.body.outcomeInference, null, 'no inference is even offered');
+  const [, update] = deps.db.seen.updated.find(([kind]) => kind === 'call');
+  assert.equal(update.data.outcome, undefined, 'the column is left alone');
 });

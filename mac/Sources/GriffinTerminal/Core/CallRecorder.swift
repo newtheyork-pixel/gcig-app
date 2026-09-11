@@ -39,6 +39,11 @@ private final class TrackWriter: @unchecked Sendable {
     private var handle: FileHandle?
     private var first: Date?
     private var wroteAnything = false
+    /// When this channel last carried something audible. A live call
+    /// pushes line noise continuously; a call that has ended pushes
+    /// digital silence or nothing at all, which is the difference that
+    /// lets the console notice a hangup without any permission.
+    private var lastAudible: Date?
     /// Called once, the first time real audio lands, so the UI can say
     /// the far end is being captured without being told 23 times a second.
     var onFirstWrite: (@Sendable () -> Void)?
@@ -55,11 +60,40 @@ private final class TrackWriter: @unchecked Sendable {
         queue.async { [self] in
             guard handle != nil else { return }
             if first == nil { first = Date() }
+            if Self.isAudible(data) { lastAudible = Date() }
             handle?.write(data)
             if !wroteAnything {
                 wroteAnything = true
                 onFirstWrite?()
             }
+        }
+    }
+
+    /// Seconds since this channel last carried audio, or nil if it never
+    /// has. Read under the queue so it cannot tear.
+    func silentFor() -> TimeInterval? {
+        var since: TimeInterval?
+        queue.sync { [self] in
+            if let lastAudible { since = Date().timeIntervalSince(lastAudible) }
+        }
+        return since
+    }
+
+    /// Any sample past a floor that ordinary line noise clears easily and
+    /// digital silence cannot. Sampled rather than scanned: a buffer is
+    /// thousands of frames and this runs on every one of them.
+    private static func isAudible(_ data: Data) -> Bool {
+        data.withUnsafeBytes { raw -> Bool in
+            let count = raw.count / MemoryLayout<Int16>.size
+            guard count > 0 else { return false }
+            let p = raw.baseAddress!.assumingMemoryBound(to: Int16.self)
+            let step = max(1, count / 64)
+            var i = 0
+            while i < count {
+                if abs(Int(p[i])) > 96 { return true }
+                i += step
+            }
+            return false
         }
     }
 
@@ -93,6 +127,11 @@ final class CallRecorder: ObservableObject {
     @Published private(set) var farEndCaptured = false
     /// Why it did not, in words somebody can act on.
     @Published private(set) var farEndNote: String?
+    /// How long the far end has been silent, or nil if it has never
+    /// carried audio. The console reads this to notice a hangup on a Mac
+    /// that has not granted Full Disk Access.
+    var farEndSilentFor: TimeInterval? { farTrack?.silentFor() }
+
     /// Whether the microphone channel is having the speakers subtracted
     /// out of it. On a speakerphone desk this is what keeps the two
     /// channels apart; with a headset there is nothing to cancel.

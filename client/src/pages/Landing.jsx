@@ -817,9 +817,13 @@ function FieldPlate({
   const apertureClip = seen
     ? 'inset(0% 0% 0% 0%)'
     : 'inset(50% 0% 50% 0%)';
+  // No blur: Safari will refuse to paint a 2200px JPEG that also has
+  // a CSS transform animation (Ken Burns) and a blur filter on the
+  // same <img>, and it surfaces as the broken-image glyph. Grayscale
+  // is enough for the arrival.
   const imgFilter = seen
-    ? `grayscale(0%) blur(0) saturate(${sat}) brightness(${bright})`
-    : 'grayscale(100%) blur(14px) saturate(0.4) brightness(0.85)';
+    ? `grayscale(0%) saturate(${sat}) brightness(${bright})`
+    : 'grayscale(100%) saturate(0.4) brightness(0.85)';
   const figureLift = seen ? 'translateY(0)' : 'translateY(28px)';
   const figureShadow = seen
     ? '0 1px 2px rgba(27,42,74,0.05), 0 6px 14px rgba(27,42,74,0.08), 0 28px 60px -20px rgba(27,42,74,0.30), 0 60px 120px -36px rgba(27,42,74,0.30)'
@@ -914,21 +918,24 @@ function FieldPlate({
               transition: `clip-path 1800ms cubic-bezier(0.77,0,0.175,1) 500ms, -webkit-clip-path 1800ms cubic-bezier(0.77,0,0.175,1) 500ms`,
             }}
           >
-            <picture>
-              <source media="(max-width: 767px)" srcSet={mobileSrc} />
-              <img
-                src={src}
-                alt={alt}
-                className="fv-kenburns absolute inset-0 h-full w-full object-cover"
-                style={{
-                  filter: imgFilter,
-                  transition: `filter 2200ms ${E} 500ms`,
-                  willChange: 'filter, transform',
-                }}
-                loading="lazy"
-                decoding="async"
-              />
-            </picture>
+            <div
+              className="absolute inset-0"
+              style={{
+                filter: imgFilter,
+                transition: `filter 2200ms ${E} 500ms`,
+              }}
+            >
+              <picture>
+                <source media="(max-width: 767px)" srcSet={mobileSrc} />
+                <img
+                  src={src}
+                  alt={alt}
+                  className="fv-kenburns absolute inset-0 h-full w-full object-cover"
+                  loading="lazy"
+                  decoding="async"
+                />
+              </picture>
+            </div>
 
             {/* Atmosphere stack — vignette tightens the eye toward
                 center; grain adds a film-still quality. */}
@@ -1102,7 +1109,7 @@ function Leadership() {
           <div className="mb-4 text-[10px] font-semibold uppercase tracking-[0.2em] text-navy-400 md:mb-6 md:text-[11px] md:tracking-[0.25em]">
             {presidents.title}
           </div>
-          <ul className="mb-12 grid grid-cols-1 gap-8 sm:grid-cols-2 sm:gap-12 md:mb-16 md:max-w-2xl">
+          <ul className="mb-12 space-y-8 md:mb-16 md:max-w-xl">
             {presidents.members.map((m) => (
               <li key={m.name} className="flex items-center gap-5">
                 <MemberAvatar member={m} gender={genderMap.get(m.name)} />
