@@ -57,6 +57,9 @@ struct ChannelCheckPanel: View {
     /// next call.
     @State private var transcribing = 0
     @State private var micAuth: AVAuthorizationStatus = .notDetermined
+    /// This row is a call that already finished somewhere else. No
+    /// timer, no recorder, just somewhere to put the outcome.
+    @State private var loggingOnly = false
     @State private var notes = ""
 
     @State private var adding = false
@@ -229,6 +232,22 @@ struct ChannelCheckPanel: View {
 
     // MARK: Queue
 
+    /// What a door's row says about itself.
+    ///
+    /// Refused is a RESULT, not a failure to get one. The protocol says
+    /// accept the first no, so a door that declined is worked and done,
+    /// and showing it as an untouched row is how somebody rings it four
+    /// times. Fox Valley was rung four times this afternoon.
+    static func badge(for door: Door) -> (text: String, tone: Color)? {
+        if door.everAnswered { return ("DONE", Term.positive) }
+        switch door.status {
+        case "Declined":    return ("WOULDN'T TALK", Term.orange)
+        case "Unreachable": return ("BAD NUMBER", Term.negative)
+        case "Contacted":   return ("REACHED", Term.positive)
+        default:            return nil
+        }
+    }
+
     private var queueColumn: some View {
         VStack(spacing: 0) {
             addBar
@@ -341,8 +360,13 @@ struct ChannelCheckPanel: View {
                         .foregroundStyle(door.dialable ? Term.fg : Term.fgMuted)
                         .lineLimit(1)
                     Spacer()
-                    if door.everAnswered {
-                        Text("DONE").font(Term.mono(8)).foregroundStyle(Term.positive)
+                    // The disposition, which the server has been keeping
+                    // all along and the list never showed. A door that
+                    // refused looked exactly like one nobody had rung,
+                    // so the only way to know what was left was to
+                    // remember it.
+                    if let badge = Self.badge(for: door) {
+                        Text(badge.text).font(Term.mono(8, weight: .bold)).foregroundStyle(badge.tone)
                     } else if door.attemptCount > 0 {
                         Text("×\(door.attemptCount)").font(Term.mono(8)).foregroundStyle(Term.fgMuted)
                     }
@@ -368,6 +392,7 @@ struct ChannelCheckPanel: View {
             .padding(.vertical, 7)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(selected?.id == door.id ? Term.bgPanelHover : Color.clear)
+            .opacity(Self.badge(for: door) == nil ? 1 : 0.55)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -474,6 +499,25 @@ struct ChannelCheckPanel: View {
                 .font(Term.mono(9))
                 .foregroundStyle(Term.fgMuted)
                 .fixedSize(horizontal: false, vertical: true)
+
+            // For a call that is already over. Without this the only way
+            // to record that a door was rung is to have pressed a button
+            // before ringing it, and a call nobody logged is a hole in
+            // the denominator that looks like a door nobody tried.
+            Button {
+                Task { await openCall(door, dial: false, record: false) }
+            } label: {
+                Text("ALREADY CALLED THEM")
+                    .font(Term.mono(9, weight: .bold))
+                    .foregroundStyle(Term.cyan)
+            }
+            .buttonStyle(.plain)
+            .disabled(working != nil)
+
+            Text("Writes the row for a call that already finished, so you can mark how it went. No recording.")
+                .font(Term.mono(9))
+                .foregroundStyle(Term.fgMuted)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
@@ -486,7 +530,8 @@ struct ChannelCheckPanel: View {
                 // The clock cannot see your call end. Saying what it is
                 // waiting for is the difference between a timer and a
                 // stopwatch somebody thinks has broken.
-                Text(autoClosing ? "closing"
+                Text(loggingOnly ? "logging a call that already happened"
+                     : autoClosing ? "closing"
                      : (history.isUsable || recorder.farEndCaptured) ? "closes when you hang up"
                      : "running until you pick an outcome")
                     .font(Term.mono(10)).foregroundStyle(Term.fgMuted)
@@ -884,7 +929,7 @@ struct ChannelCheckPanel: View {
     /// all identical; the only difference is that nothing is handed to
     /// FaceTime. Recording starts either way, because it starting is the
     /// entire point of the button.
-    private func openCall(_ door: Door, dial: Bool = true) async {
+    private func openCall(_ door: Door, dial: Bool = true, record: Bool = true) async {
         guard let project else { return }
         problem = nil
         working = "Opening the call…"
@@ -900,10 +945,12 @@ struct ChannelCheckPanel: View {
             autoClosing = false
             notes = ""
             if dial, let url = opened.telUrl { open(url) }
-            // Always. The disclosure is the first thing said on the
-            // call, so there is nothing to wait for, and a recorder
-            // that starts late loses the opening of every call.
-            beginRecording()
+            loggingOnly = !record
+            // Always, unless this is a call that already happened and we
+            // are only writing it down. The disclosure is the first thing
+            // said on a live call, so there is nothing to wait for, and a
+            // recorder that starts late loses the opening of every one.
+            if record { beginRecording() }
         } catch {
             problem = "Could not open the call: \(String(describing: error).prefix(140))"
         }
@@ -963,8 +1010,11 @@ struct ChannelCheckPanel: View {
         guard case .loaded(let payload) = queue else { return }
         let current = selected?.id
         let untried = payload.targets.filter { $0.dialable && $0.attemptCount == 0 && $0.id != current }
+        // A door that already declined is finished. Advancing onto one is
+        // how a store gets rung four times in an afternoon, which is
+        // exactly what happened to Fox Valley.
         selected = untried.first
-            ?? payload.targets.first { $0.dialable && !$0.everAnswered && $0.id != current }
+            ?? payload.targets.first { $0.dialable && Self.badge(for: $0) == nil && $0.id != current }
     }
 
     private func beginRecording() {
@@ -1096,6 +1146,7 @@ struct ChannelCheckPanel: View {
         elapsed = 0
         objected = false
         autoClosing = false
+        loggingOnly = false
         await loadQueue()
         advanceToNextDoor()
     }

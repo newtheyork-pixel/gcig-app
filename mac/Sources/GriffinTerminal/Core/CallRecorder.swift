@@ -156,6 +156,9 @@ final class CallRecorder: ObservableObject {
     /// to a single voice.
     var bothSidesLive: Bool { micHasAudio && farEndCaptured }
     @Published private(set) var micHasAudio = false
+    /// The microphone was refused, so this recording is one-sided by
+    /// permission rather than by fault.
+    @Published private(set) var micDenied = false
 
     /// How long the far end has been silent, or nil if it has never
     /// carried audio. The console reads this to notice a hangup on a Mac
@@ -200,7 +203,12 @@ final class CallRecorder: ObservableObject {
         farEndCaptured = false
         farEndNote = nil
 
-        try startMicrophone()
+        // The microphone is allowed to fail. The far end is the half we
+        // cannot reconstruct from notes, and a one-sided recording of a
+        // refusal still evidences the refusal.
+        do { try startMicrophone() } catch {
+            farEndNote = "Your side is not being recorded: \(error.localizedDescription)"
+        }
         startFarEnd()
         state = .recording
     }
@@ -292,20 +300,22 @@ final class CallRecorder: ObservableObject {
         // Refuse loudly rather than record silence. A denied microphone
         // produces buffers of zeroes, not an error, so without this check
         // the only symptom is a transcript with one voice in it.
+        // A denied microphone stops the microphone, not the recording.
+        //
+        // The first version of this threw, which meant a refusal in a
+        // state where we could not hear ourselves produced no transcript
+        // at all. That is the wrong trade: a store declining to discuss
+        // pricing is a finding, and half the tape proves it. So we capture
+        // what we can and say loudly which half is missing, rather than
+        // capturing nothing and saying nothing.
         switch Self.microphoneAuthorization {
-        case .denied, .restricted:
-            throw NSError(domain: "CallRecorder", code: 2, userInfo: [
-                NSLocalizedDescriptionKey:
-                    "Microphone access is turned off for Griffin Terminal, so only the other side of the "
-                    + "call would be recorded. Turn it on in System Settings, Privacy & Security, Microphone.",
-            ])
-        case .notDetermined:
-            throw NSError(domain: "CallRecorder", code: 3, userInfo: [
-                NSLocalizedDescriptionKey:
-                    "Microphone access has not been granted yet. Allow it when macOS asks.",
-            ])
+        case .denied, .restricted, .notDetermined:
+            micDenied = true
+            farEndNote = "Your microphone is off for this app, so only the other side of the call is "
+                + "being recorded. The transcript will hold their voice and not yours."
+            return
         default:
-            break
+            micDenied = false
         }
 
         let input = engine.inputNode
@@ -518,6 +528,13 @@ final class CallRecorder: ObservableObject {
         let micSamples = samples(mic, lead: micLeadFrames)
         if far.isEmpty {
             try write(channels: [micSamples], to: output)
+            return
+        }
+        // A microphone that was refused leaves an empty file, and pairing
+        // it with the far end would write a stereo recording whose left
+        // channel is pure silence. Mono says what actually happened.
+        if mic.isEmpty {
+            try write(channels: [samples(far, lead: 0)], to: output)
             return
         }
         let farSamples = samples(far, lead: farLeadFrames)
