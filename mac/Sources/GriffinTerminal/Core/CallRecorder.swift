@@ -20,6 +20,64 @@ import AVFoundation
 //
 // Output is 16 kHz PCM, which is what speech recognition wants and a
 // twentieth of the bytes of CD audio on a home connection.
+/// One channel's bytes on their way to disk.
+///
+/// Audio arrives on Core Audio's own threads and must not visit the main
+/// actor to be written. The first version hopped every buffer through
+/// `Task { @MainActor in … }`, which cost three things: ~45 synchronous
+/// file writes a second on the thread drawing the UI, a `@Published`
+/// assignment per buffer that re-rendered the whole panel, and — the one
+/// that actually corrupts a recording — no ordering guarantee, because
+/// unstructured Tasks are not delivered to an actor in submission order.
+/// PCM frames appended out of order are a garbled call.
+///
+/// A serial queue fixes all three. `finish()` drains it before closing,
+/// so the last seconds of a call are on disk before the file is read.
+private final class TrackWriter: @unchecked Sendable {
+    let url: URL
+    private let queue: DispatchQueue
+    private var handle: FileHandle?
+    private var first: Date?
+    private var wroteAnything = false
+    /// Called once, the first time real audio lands, so the UI can say
+    /// the far end is being captured without being told 23 times a second.
+    var onFirstWrite: (@Sendable () -> Void)?
+
+    init(url: URL, label: String) throws {
+        self.url = url
+        self.queue = DispatchQueue(label: "org.thegriffinfund.terminal.\(label)")
+        FileManager.default.createFile(atPath: url.path, contents: nil)
+        self.handle = try FileHandle(forWritingTo: url)
+    }
+
+    func write(_ data: Data) {
+        guard !data.isEmpty else { return }
+        queue.async { [self] in
+            guard handle != nil else { return }
+            if first == nil { first = Date() }
+            handle?.write(data)
+            if !wroteAnything {
+                wroteAnything = true
+                onFirstWrite?()
+            }
+        }
+    }
+
+    /// Drains every queued write, then closes. The `sync` is the whole
+    /// point: a serial queue runs FIFO, so returning from it means the
+    /// last buffer handed over is already on disk.
+    @discardableResult
+    func finish() -> Date? {
+        var startedAt: Date?
+        queue.sync { [self] in
+            startedAt = first
+            try? handle?.close()
+            handle = nil
+        }
+        return startedAt
+    }
+}
+
 @MainActor
 final class CallRecorder: ObservableObject {
 
@@ -46,10 +104,9 @@ final class CallRecorder: ObservableObject {
     private var converter: AVAudioConverter?
     private var tap: AnyObject?
 
-    private var micFile: FileHandle?
-    private var farFile: FileHandle?
-    private var micURL: URL?
-    private var farURL: URL?
+    private var micTrack: TrackWriter?
+    private var farTrack: TrackWriter?
+    private var workingDir: URL?
     private var micFirstAt: Date?
     private var farFirstAt: Date?
 
@@ -66,12 +123,13 @@ final class CallRecorder: ObservableObject {
         let dir = FileManager.default.temporaryDirectory
             .appendingPathComponent("griffin-call-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        micURL = dir.appendingPathComponent("mic.pcm")
-        farURL = dir.appendingPathComponent("far.pcm")
-        FileManager.default.createFile(atPath: micURL!.path, contents: nil)
-        FileManager.default.createFile(atPath: farURL!.path, contents: nil)
-        micFile = try FileHandle(forWritingTo: micURL!)
-        farFile = try FileHandle(forWritingTo: farURL!)
+        workingDir = dir
+        micTrack = try TrackWriter(url: dir.appendingPathComponent("mic.pcm"), label: "mic")
+        farTrack = try TrackWriter(url: dir.appendingPathComponent("far.pcm"), label: "far")
+        micFirstAt = nil
+        farFirstAt = nil
+        farEndCaptured = false
+        farEndNote = nil
 
         try startMicrophone()
         startFarEnd()
@@ -89,10 +147,16 @@ final class CallRecorder: ObservableObject {
         engine.stop()
         if #available(macOS 14.2, *), let tap = tap as? SystemAudioTap { tap.stop() }
         tap = nil
-        try? micFile?.close()
-        try? farFile?.close()
-        micFile = nil
-        farFile = nil
+
+        // Drain before reading. `finish()` blocks until the last buffer
+        // handed to the queue is on disk, which is how the tail of a call
+        // stops disappearing into a closed file handle.
+        micFirstAt = micTrack?.finish()
+        farFirstAt = farTrack?.finish()
+        let micURL = micTrack?.url
+        let farURL = farTrack?.url
+        micTrack = nil
+        farTrack = nil
 
         defer { state = .idle }
         guard let micURL, let farURL else { return nil }
@@ -114,10 +178,9 @@ final class CallRecorder: ObservableObject {
     /// so a machine that records forty calls in an afternoon is not
     /// quietly filling up with other people's voices.
     func discard() {
-        guard let dir = micURL?.deletingLastPathComponent() else { return }
+        guard let dir = workingDir else { return }
         try? FileManager.default.removeItem(at: dir)
-        micURL = nil
-        farURL = nil
+        workingDir = nil
         state = .idle
     }
 
@@ -155,14 +218,12 @@ final class CallRecorder: ObservableObject {
             ])
         }
         converter = AVAudioConverter(from: inFormat, to: wire)
-        input.installTap(onBus: 0, bufferSize: 2048, format: inFormat) { [weak self] buffer, _ in
-            guard let self else { return }
-            let data = Self.convert(buffer, using: self.converter, to: self.wire)
-            guard !data.isEmpty else { return }
-            Task { @MainActor in
-                if self.micFirstAt == nil { self.micFirstAt = Date() }
-                self.micFile?.write(data)
-            }
+        let track = micTrack
+        let converter = self.converter
+        let wire = self.wire
+        input.installTap(onBus: 0, bufferSize: 2048, format: inFormat) { buffer, _ in
+            // No hop to the main actor. See TrackWriter.
+            track?.write(Self.convert(buffer, using: converter, to: wire))
         }
         engine.prepare()
         try engine.start()
@@ -174,19 +235,20 @@ final class CallRecorder: ObservableObject {
             return
         }
         let capture = SystemAudioTap()
+        let track = farTrack
+        let wire = self.wire
+        // Announced ONCE, on the first buffer that carries audio. Setting
+        // a @Published property per buffer re-rendered the whole panel
+        // twenty-three times a second for the length of the call.
+        track?.onFirstWrite = { [weak self] in
+            Task { @MainActor in self?.farEndCaptured = true }
+        }
         var farConverter: AVAudioConverter?
-        capture.onBuffer = { [weak self] buffer in
-            guard let self else { return }
+        capture.onBuffer = { buffer in
             if farConverter == nil {
-                farConverter = AVAudioConverter(from: buffer.format, to: self.wire)
+                farConverter = AVAudioConverter(from: buffer.format, to: wire)
             }
-            let data = Self.convert(buffer, using: farConverter, to: self.wire)
-            guard !data.isEmpty else { return }
-            Task { @MainActor in
-                if self.farFirstAt == nil { self.farFirstAt = Date() }
-                self.farEndCaptured = true
-                self.farFile?.write(data)
-            }
+            track?.write(Self.convert(buffer, using: farConverter, to: wire))
         }
         do {
             try capture.start()

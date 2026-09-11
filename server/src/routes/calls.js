@@ -51,9 +51,11 @@ const canResearch = requireRole('Analyst');
 
 const upload = multer({
   storage: multer.memoryStorage(),
-  // A store call is minutes, not hours. Well clear of any real call and
-  // tight enough that a mistaken video file is refused at the door.
-  limits: { fileSize: 50 * 1024 * 1024 },
+  // CallRecorder writes uncompressed 16 kHz 16-bit stereo, which is
+  // 3.84 MB a minute, so a fifteen-minute call is ~58 MB and the old
+  // 50 MB ceiling refused it — as an opaque 500, because multer's
+  // LIMIT_FILE_SIZE carries no status. Matched to the interview route.
+  limits: { fileSize: 200 * 1024 * 1024 },
 });
 
 // Transcription costs money per minute. Sized for a genuine calling
@@ -63,6 +65,11 @@ const recordingLimiter = rateLimit({
   max: 60,
   standardHeaders: true,
   legacyHeaders: false,
+  // Keyed per CALLER, never per IP. In the building every member is
+  // behind one public address, so an IP bucket is one allowance the
+  // whole club shares and a single afternoon of calling locks everybody
+  // else out. This is the rule the rest of the repo already follows.
+  keyGenerator: (req) => `calls-recording:${req.user?.id || req.ip}`,
   message: { error: 'Too many recordings uploaded in the last hour.' },
 });
 
@@ -78,6 +85,18 @@ const OUTCOMES = new Set([
   'CallBackLater',
   'Failed',
 ]);
+
+// What each outcome says about whether a person picked up. Absent means
+// the outcome does not settle it, and null beats a guess: Voicemail is a
+// machine answering and WrongNumber could be either.
+const ANSWERED_BY_OUTCOME = {
+  Answered: true,
+  Refused: true,
+  CallBackLater: true,
+  NoAnswer: false,
+  Busy: false,
+  Failed: false,
+};
 
 // Where the duration came from. Kept apart because they are different
 // measurements and a column that renders them alike invites a precision
@@ -143,6 +162,12 @@ export async function callQueueHandler(req, res, deps = {}) {
       select: {
         id: true, name: true, employer: true, tier: true, status: true,
         phone: true, locationState: true, notes: true, priority: true,
+        // The count comes from the database, not from the three rows
+        // fetched for display. Deriving it from `take: 3` capped every
+        // badge at three and, worse, hid an Answered that had fallen off
+        // the end — so a door that HAD been reached came back looking
+        // untouched and got rung again.
+        _count: { select: { callAttempts: true } },
         callAttempts: {
           orderBy: { startedAt: 'desc' },
           take: 3,
@@ -152,6 +177,27 @@ export async function callQueueHandler(req, res, deps = {}) {
           },
         },
       },
+    });
+
+    // Which doors have EVER answered, across the whole history. One
+    // query for the project rather than a scan per door, and it answers
+    // the only question the badge is for: do not ring this one again
+    // without a reason.
+    const answeredRows = await db.callAttempt.findMany({
+      where: { projectId, outcome: 'Answered', targetId: { not: null } },
+      select: { targetId: true },
+      distinct: ['targetId'],
+    });
+    const answeredDoors = new Set(answeredRows.map((r) => r.targetId));
+
+    // Targets on this project carrying no number at all. They are NOT
+    // listed: on a project whose funnel is former employees reached by
+    // email, every one of them would be noise in a dial list. But the
+    // count is reported, because a queue of twenty-eight that silently
+    // dropped twelve doors nobody found a number for reads as a complete
+    // sample when it is not.
+    const withoutPhone = await db.researchTarget.count({
+      where: { projectId, phone: null },
     });
 
     const rows = targets.map((t) => {
@@ -166,17 +212,34 @@ export async function callQueueHandler(req, res, deps = {}) {
         dialable: Boolean(parsed),
         phoneDisplay: parsed ? formatPhone(parsed) : t.phone,
         telUrl: parsed ? telUrl(parsed) : null,
-        attemptCount: attempts.length,
+        _count: undefined,
+        attemptCount: t._count?.callAttempts ?? attempts.length,
         lastAttempt: attempts[0] || null,
         // Reached at least once, so a second ring needs a reason.
-        everAnswered: attempts.some((a) => a.outcome === 'Answered'),
+        everAnswered: answeredDoors.has(t.id),
       };
     });
 
+    // The order an afternoon is actually worked. Priority first, then
+    // the doors nobody has tried, then alphabetical. The docblock has
+    // promised this since the file was written and only the database's
+    // half of it was implemented, so a refused door sorted above an
+    // untouched one and got rung again.
+    rows.sort((a, b) => {
+      const pa = a.priority ?? Number.MAX_SAFE_INTEGER;
+      const pb = b.priority ?? Number.MAX_SAFE_INTEGER;
+      if (pa !== pb) return pa - pb;
+      const ta = a.attemptCount > 0 ? 1 : 0;
+      const tb = b.attemptCount > 0 ? 1 : 0;
+      if (ta !== tb) return ta - tb;
+      return String(a.name).localeCompare(String(b.name));
+    });
+
     res.json({
-      project: { id: project.id, title: project.title, ticker: project.ticker },
+      project: { id: project.id, name: project.name, ticker: project.ticker },
       // Said out loud so the queue never looks complete when it is not.
       undialable: rows.filter((r) => !r.dialable).length,
+      withoutPhone,
       targets: rows,
     });
   } catch (err) {
@@ -357,11 +420,17 @@ export async function updateCallHandler(req, res, deps = {}) {
     if (consentRegime !== undefined) data.consentRegime = String(consentRegime);
     if (notes !== undefined) data.notes = notes ? String(notes).slice(0, 10_000) : null;
 
-    // Answered is a claim about the call and outcome is the label for
-    // it; setting one without the other leaves a row that disagrees with
-    // itself, so the obvious implication is filled in and nothing else.
-    if (data.outcome === 'Answered' && answered === undefined) data.answered = true;
-    if (data.outcome && data.outcome !== 'Answered' && answered === undefined) data.answered = false;
+    // `answered` asks whether a HUMAN picked up, which is not the same
+    // question as whether the call produced anything. A refusal is
+    // somebody answering and declining, and filing it as unanswered
+    // undercounts the connect rate by exactly the rows this table
+    // exists to keep. Ambiguous outcomes are left null rather than
+    // guessed: a machine picking up is not a person, and a wrong number
+    // might be either.
+    if (data.outcome && answered === undefined) {
+      const implied = ANSWERED_BY_OUTCOME[data.outcome];
+      if (implied !== undefined) data.answered = implied;
+    }
 
     const call = await db.callAttempt.update({
       where: { id },
@@ -469,6 +538,11 @@ export async function callRecordingHandler(req, res, deps = {}) {
         ? call.target.relationship
         : 'CurrentEmployee';
 
+      // Find-or-create with no unique index, so two simultaneous first
+      // calls to one door can make two source rows. Accepted rather than
+      // migrated: corroboration keys on the employer STRING, so duplicate
+      // rows carrying the same door still collapse to one line of
+      // evidence. The cost is a tidy-up, not a wrong number.
       let source = await db.researchSource.findFirst({
         where: { employer: doorLabel, relationship },
       });
@@ -515,6 +589,24 @@ export async function callRecordingHandler(req, res, deps = {}) {
         },
       });
 
+      // Claim the dial BEFORE paying for a transcript. The read of
+      // `call.interviewId` above is a check-then-act: a double click
+      // sends two uploads, both see null, both create an Interview and
+      // both pay ElevenLabs, and the loser's unique-constraint failure
+      // used to leave a fully transcribed orphan in the project. This
+      // update is conditional on the column still being null, so exactly
+      // one request can win it.
+      const claim = await db.callAttempt.updateMany({
+        where: { id, interviewId: null },
+        data: { interviewId: interview.id, recorded: true },
+      });
+      if (claim.count === 0) {
+        await db.interview.delete({ where: { id: interview.id } }).catch(() => {});
+        return res.status(409).json({
+          error: 'Another upload for this call is already in progress.',
+        });
+      }
+
       let out;
       try {
         out = await ingest({
@@ -532,7 +624,11 @@ export async function callRecordingHandler(req, res, deps = {}) {
         // The interview row exists but has no transcript. Leaving it
         // would put an empty interview in the project for every failed
         // upload, and a project whose interview count is mostly ghosts
-        // is one nobody trusts.
+        // is one nobody trusts. The claim is released with it, so a
+        // retry is not locked out by the attempt that failed.
+        await db.callAttempt
+          .update({ where: { id }, data: { interviewId: null, recorded: false } })
+          .catch(() => {});
         await db.interview
           .delete({ where: { id: interview.id } })
           .catch(() => {});
@@ -545,7 +641,7 @@ export async function callRecordingHandler(req, res, deps = {}) {
         // than assumed from the regime: storage can fail, and a log that
         // says an audio file exists when it does not is worse than one
         // that says nothing.
-        data: { interviewId: interview.id, recorded: true, audioRetained: out.audioRetained === true },
+        data: { audioRetained: out.audioRetained === true },
       });
 
       res.json({ ...out, callId: id, interviewId: interview.id, sourceId: source.id });

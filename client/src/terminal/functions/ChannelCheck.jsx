@@ -210,10 +210,14 @@ export default function ChannelCheck({ ticker }) {
     }
   }
 
+  // Names no sector. CHK opens on any project, so a script naming the
+  // jewelry business was read to a trucking depot on CHRW and the false
+  // sentence was then stored verbatim as the record of what was
+  // disclosed, and copied onto the interview.
   const disclosure =
-    "Hi, this is a student analyst with the Griffin Fund at Grace Church School. "
-    + "We're doing research on the jewelry business and I had a couple of quick questions "
-    + 'about what\'s in your store. I\'m recording this so I get the details right. Is that OK?';
+    'Hi, this is a student analyst with the Griffin Fund at Grace Church School. '
+    + "We're doing some research and I had a couple of quick questions about your store. "
+    + "I'm recording this so I get the details right. Is that OK?";
 
   if (loading && !queue) return <div className="term-panel"><div className="term-loading">Loading the call queue…</div></div>;
   if (err) return <div className="term-panel"><div className="term-error">{err}</div></div>;
@@ -224,7 +228,7 @@ export default function ChannelCheck({ ticker }) {
     <div className="term-panel" style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
       <div style={{ display: 'flex', gap: 16, alignItems: 'baseline', marginBottom: 8 }}>
         <strong>CHK</strong>
-        <span style={{ opacity: 0.7 }}>{project?.title}</span>
+        <span style={{ opacity: 0.7 }}>{project?.name}</span>
         <span style={{ marginLeft: 'auto', fontSize: 11, opacity: 0.8 }}>
           {rollup
             ? `${rollup.dials} dials · ${rollup.byOutcome?.Answered || 0} answered · ${rollup.byOutcome?.Refused || 0} refused · ${rollup.transcribed} transcribed`
@@ -258,6 +262,12 @@ export default function ChannelCheck({ ticker }) {
               </label>
               <button type="button" className="term-btn" disabled={!draft.name || !draft.phone || busy === 'add'}
                       onClick={addDoor}>ADD</button>
+            </div>
+          )}
+
+          {queue?.withoutPhone > 0 && (
+            <div style={{ fontSize: 10, color: 'var(--term-amber)', margin: '6px 0' }}>
+              {queue.withoutPhone} target{queue.withoutPhone === 1 ? '' : 's'} on this project have no number
             </div>
           )}
 

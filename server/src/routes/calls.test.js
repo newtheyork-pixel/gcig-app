@@ -29,21 +29,29 @@ const req = (over = {}) => ({ params: {}, body: {}, user: analyst, ...over });
 
 const PROJECT = { id: 45, title: 'Signet field work', ticker: 'SIG', ownerOnly: false };
 
-function fakeDb({ callRow = null, ...over } = {}) {
+// Overrides are DATA, never replacement model objects. Handing in a bare
+// `{ researchTarget: { findMany } }` drops every other method the handler
+// calls, and the suite then fails for a reason that has nothing to do
+// with the behaviour under test — which is how the first version of this
+// file quietly watched the wrong recorder.
+function fakeDb({ callRow = null, answeredRows = [], claimCount = 1,
+                  targets = [], withoutPhone = 0, ...over } = {}) {
   const seen = { created: [], updated: [], deleted: [], sourceCreated: [] };
   const db = {
     seen,
     researchProject: { findFirst: async () => PROJECT },
     researchTarget: {
-      findMany: async () => [],
+      findMany: async () => targets,
       findFirst: async () => null,
+      count: async () => withoutPhone,
       update: async (a) => { seen.updated.push(['target', a]); return a.data; },
     },
     callAttempt: {
-      findMany: async () => [],
+      findMany: async () => answeredRows,
       findUnique: async () => callRow,
       create: async (a) => { seen.created.push(a.data); return { id: 901, ...a.data }; },
       update: async (a) => { seen.updated.push(['call', a]); return { id: a.where.id, ...a.data }; },
+      updateMany: async (a) => { seen.updated.push(['claim', a]); return { count: claimCount }; },
     },
     researchSource: {
       findFirst: async () => null,
@@ -63,12 +71,12 @@ test('a number that will not parse stays in the queue, flagged', async () => {
   // Filtering it out would make the sample look complete. A door you
   // cannot ring is a gap, and a gap has to be visible as one.
   const db = fakeDb({
-    researchTarget: {
-      findMany: async () => [
-        { id: 1, name: 'Kay #1247 Easton', phone: '(614) 555-0134', callAttempts: [] },
-        { id: 2, name: 'Kay #9002 Polaris', phone: 'ask at mall office', callAttempts: [] },
-      ],
-    },
+    targets: [
+      { id: 1, name: 'Kay #1247 Easton', phone: '(614) 555-0134', priority: 1,
+        _count: { callAttempts: 0 }, callAttempts: [] },
+      { id: 2, name: 'Kay #9002 Polaris', phone: 'ask at mall office', priority: 1,
+        _count: { callAttempts: 0 }, callAttempts: [] },
+    ],
   });
   const res = fakeRes();
   await callQueueHandler(req({ params: { id: '45' } }), res, { db });
@@ -81,23 +89,80 @@ test('a number that will not parse stays in the queue, flagged', async () => {
   assert.equal(res.body.targets[1].telUrl, null);
 });
 
+test('doors with no number at all are counted, not silently dropped', async () => {
+  // They are not listed, because on a project whose funnel is former
+  // employees reached by email every one of them would be noise. But a
+  // queue of one that quietly omitted twelve reads as a finished sample.
+  const db = fakeDb({
+    withoutPhone: 12,
+    targets: [{ id: 1, name: 'Kay #1247', phone: '6145550134',
+                _count: { callAttempts: 0 }, callAttempts: [] }],
+  });
+  const res = fakeRes();
+  await callQueueHandler(req({ params: { id: '45' } }), res, { db });
+  assert.equal(res.body.withoutPhone, 12);
+  assert.equal(res.body.targets.length, 1);
+});
+
 test('the queue says which doors have already answered', async () => {
   const db = fakeDb({
-    researchTarget: {
-      findMany: async () => [{
-        id: 1, name: 'Kay #1247', phone: '6145550134',
-        callAttempts: [
-          { id: 3, outcome: 'NoAnswer', startedAt: '2026-09-10T14:00:00Z' },
-          { id: 2, outcome: 'Answered', startedAt: '2026-09-09T14:00:00Z' },
-        ],
-      }],
-    },
+    answeredRows: [{ targetId: 1 }],
+    targets: [{
+      id: 1, name: 'Kay #1247', phone: '6145550134',
+      _count: { callAttempts: 2 },
+      callAttempts: [
+        { id: 3, outcome: 'NoAnswer', startedAt: '2026-09-10T14:00:00Z' },
+        { id: 2, outcome: 'Answered', startedAt: '2026-09-09T14:00:00Z' },
+      ],
+    }],
   });
   const res = fakeRes();
   await callQueueHandler(req({ params: { id: '45' } }), res, { db });
   assert.equal(res.body.targets[0].everAnswered, true);
   assert.equal(res.body.targets[0].attemptCount, 2);
   assert.equal(res.body.targets[0].lastAttempt.outcome, 'NoAnswer');
+});
+
+test('a door rung five times does not report three, and an old Answered is not forgotten', async () => {
+  // The display list is capped at three. Counting it, or scanning it for
+  // an Answered, quietly turns a door that HAS been reached back into a
+  // fresh one, and somebody rings a store that already talked.
+  const db = fakeDb({
+    answeredRows: [{ targetId: 1 }],
+    targets: [{
+      id: 1, name: 'Kay #1247', phone: '6145550134',
+      _count: { callAttempts: 5 },
+      callAttempts: [
+        { id: 9, outcome: 'NoAnswer', startedAt: '2026-09-10T18:00:00Z' },
+        { id: 8, outcome: 'NoAnswer', startedAt: '2026-09-10T16:00:00Z' },
+        { id: 7, outcome: 'Busy', startedAt: '2026-09-10T14:00:00Z' },
+      ],
+    }],
+  });
+  const res = fakeRes();
+  await callQueueHandler(req({ params: { id: '45' } }), res, { db });
+  assert.equal(res.body.targets[0].attemptCount, 5, "the count is the database's, not the page's");
+  assert.equal(res.body.targets[0].everAnswered, true, 'the Answered fell off the display list');
+});
+
+test('untried doors sort above ones already rung, inside the same priority', async () => {
+  // The handler has promised this since it was written and only the
+  // database half was implemented, so a refused door sorted alphabetically
+  // above an untouched one and got rung again.
+  const db = fakeDb({
+    targets: [
+      { id: 1, name: 'AAA Kay #0112', phone: '6145550111', priority: 1,
+        _count: { callAttempts: 2 }, callAttempts: [{ id: 5, outcome: 'Refused' }] },
+      { id: 2, name: 'ZZZ Zales #9400', phone: '6145550222', priority: 1,
+        _count: { callAttempts: 0 }, callAttempts: [] },
+      { id: 3, name: 'Higher priority', phone: '6145550333', priority: null,
+        _count: { callAttempts: 0 }, callAttempts: [] },
+    ],
+  });
+  const res = fakeRes();
+  await callQueueHandler(req({ params: { id: '45' } }), res, { db });
+  assert.deepEqual(res.body.targets.map((t) => t.id), [2, 1, 3],
+                   'untried before tried, and an unranked door still sorts last');
 });
 
 test('a project the caller may not see is a 404, not an empty queue', async () => {
@@ -160,20 +225,34 @@ test('an unrecognised metadata source is refused, because the duration means not
   assert.equal(res.statusCode, 400);
 });
 
-test('answered is filled in from the outcome so the row cannot disagree with itself', async () => {
-  const db = fakeDb({ callRow: openCall });
-  const res = fakeRes();
-  await updateCallHandler(
-    req({ params: { id: '901' }, body: { outcome: 'Answered' } }), res, { db });
-  const [, update] = db.seen.updated.find(([kind]) => kind === 'call');
-  assert.equal(update.data.answered, true);
+test('a refusal is somebody picking up, and the row must say so', async () => {
+  // `answered` asks whether a HUMAN answered, not whether the call was
+  // useful. Filing a refusal as unanswered undercounts the connect rate
+  // by exactly the rows this table exists to keep.
+  for (const [outcome, expected] of [
+    ['Answered', true],
+    ['Refused', true],
+    ['CallBackLater', true],
+    ['NoAnswer', false],
+    ['Busy', false],
+    ['Failed', false],
+  ]) {
+    const db = fakeDb({ callRow: openCall });
+    await updateCallHandler(req({ params: { id: '901' }, body: { outcome } }), fakeRes(), { db });
+    const [, update] = db.seen.updated.find(([kind]) => kind === 'call');
+    assert.equal(update.data.answered, expected, outcome);
+  }
+});
 
-  const db2 = fakeDb({ callRow: openCall });
-  const res2 = fakeRes();
-  await updateCallHandler(
-    req({ params: { id: '901' }, body: { outcome: 'Refused' } }), res2, { db: db2 });
-  const [, u2] = db2.seen.updated.find(([kind]) => kind === 'call');
-  assert.equal(u2.data.answered, false);
+test('an outcome that does not settle it leaves the question open', async () => {
+  // A machine picking up is not a person, and a wrong number could be
+  // either. Null beats a guess on a column somebody will later count.
+  for (const outcome of ['Voicemail', 'WrongNumber']) {
+    const db = fakeDb({ callRow: openCall });
+    await updateCallHandler(req({ params: { id: '901' }, body: { outcome } }), fakeRes(), { db });
+    const [, update] = db.seen.updated.find(([kind]) => kind === 'call');
+    assert.equal(update.data.answered, undefined, outcome);
+  }
 });
 
 test('the funnel moves itself: answered contacts the door, refused declines it', async () => {
@@ -207,9 +286,9 @@ const recReq = (over = {}) => req({
   ...over,
 });
 
-function recDeps(callRow, over = {}) {
+function recDeps(callRow, over = {}, dbOver = {}) {
   const ingested = [];
-  const db = fakeDb({ callRow });
+  const db = fakeDb({ callRow, ...dbOver });
   return {
     ingested,
     deps: {
@@ -345,7 +424,34 @@ test('the log records what happened to the tape, not what was intended', async (
   await callRecordingHandler(recReq(), fakeRes(), deps);
   const [, update] = deps.db.seen.updated.find(([kind]) => kind === 'call');
   assert.equal(update.data.audioRetained, false);
-  assert.equal(update.data.recorded, true);
+  const [, claim] = deps.db.seen.updated.find(([kind]) => kind === 'claim');
+  assert.equal(claim.data.recorded, true);
+  assert.equal(claim.where.interviewId, null, 'the claim is conditional on the column still being free');
+});
+
+test('a second upload racing the first is refused, and leaves no orphan interview', async () => {
+  // Both requests pass the check-then-act guard. The loser must not keep
+  // a fully transcribed Interview nobody can reach.
+  const { deps } = recDeps(
+    { ...openCall, consentSpoken: true, target: { id: 1, name: 'Kay #1247' } },
+    {}, { claimCount: 0 }
+  );
+  const res = fakeRes();
+  await callRecordingHandler(recReq(), res, deps);
+  assert.equal(res.statusCode, 409);
+  assert.deepEqual(deps.db.seen.deleted, [4242], 'the interview it created is removed');
+});
+
+test('a failed transcription releases the claim so a retry is possible', async () => {
+  const { deps } = recDeps(
+    { ...openCall, consentSpoken: true, target: { id: 1, name: 'Kay #1247' } },
+    { ingest: async () => { const e = new Error('nope'); e.code = 'EMPTY_TRANSCRIPT'; throw e; } }
+  );
+  await callRecordingHandler(recReq(), fakeRes(), deps);
+  const release = deps.db.seen.updated.filter(([kind]) => kind === 'call')
+    .map(([, a]) => a.data).find((d) => d.interviewId === null);
+  assert.ok(release, 'the call is unclaimed again');
+  assert.equal(release.recorded, false);
 });
 
 test('an unrecognised regime is refused at the door', async () => {

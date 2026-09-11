@@ -567,6 +567,50 @@ Sidebar, Landing, and `index.html`.
   - The web panel cannot record. A browser reaches the microphone but not
     the other end of a phone line, and a recording holding half a
     conversation while looking like it holds both is worse than none.
+
+  **What two reviews found on the way in, all fixed, each now tested.**
+  The first one is the reason the house rule exists:
+  - **The pane would not open at all.** `Proj` decoded `title`; the column
+    is `name`, which FLD already reads correctly. A required key the
+    server never sends makes `JSONDecoder` throw, so the failure is total
+    and silent rather than a blank field. Two decodables over one endpoint
+    is the shape that invites it; `LiveSmokeTests` now meets the real
+    payload with both.
+  - **Switching the recording rule away from one-party did not stop the
+    recorder**, and re-ticking consent was a no-op because `start()`
+    returns silently when already running. Audio caught before anyone was
+    asked then shipped with the consented file. Withdrawing consent now
+    discards rather than pausing.
+  - **`take: 3` on the queue's nested attempts** made `attemptCount` cap
+    at three and hid an older Answered, so a door that HAD been reached
+    came back looking fresh and got rung again. Counts come from the
+    database; answered-doors come from one query over the whole history.
+  - **A refusal was filed as unanswered.** `answered` asks whether a human
+    picked up, and a refusal is somebody picking up and declining.
+    Ambiguous outcomes (Voicemail, WrongNumber) stay null rather than
+    guessing.
+  - **Check-then-act on `interviewId`**: two uploads both passed the
+    guard, both paid ElevenLabs, and the loser left a transcribed orphan.
+    The dial is now claimed with a conditional `updateMany` BEFORE the
+    transcript is paid for, and released if it fails.
+  - **The uncompressed WAV is 3.84 MB a minute**, so a fifteen-minute call
+    was refused by a 50 MB cap as an opaque 500 — and the panel then
+    discarded the only copy of a one-party tape it was meant to keep.
+  - **The rate limiter keyed on IP**, which in a school is one allowance
+    the whole club shares. Per caller, like every other limiter here.
+  - **The disclosure named the jewelry business** on a panel that opens on
+    any project, and the false sentence was persisted verbatim as the
+    record of what was disclosed.
+  - **Audio buffers hopped to the main actor** through unstructured Tasks:
+    forty-five file writes a second on the UI thread, a `@Published`
+    assignment per buffer, and no ordering guarantee — out-of-order PCM is
+    a garbled call. A serial queue writes them and `finish()` drains it
+    before the file is read, which is also what stopped the tail of every
+    call disappearing into a closed handle.
+  - **The call-record window reached five minutes back** and took the
+    first match, so a redial inherited the previous attempt's duration and
+    answered flag while being stamped as the authoritative measurement.
+    Thirty seconds of skew slack, nearest match wins.
 - **Field research** (`services/transcription.js`, `claimExtraction.js`,
   `corroboration.js`, `routes/research.js`, `pages/FieldResearch.jsx`) —
   primary research: interviews with people who touch a business, and the

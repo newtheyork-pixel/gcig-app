@@ -47,6 +47,9 @@ struct ChannelCheckPanel: View {
     @State private var regime = "all-party"
     @StateObject private var recorder = CallRecorder()
     @State private var history: CallHistory.Availability = .absent
+    /// A finished recording whose upload has not succeeded yet. Held so a
+    /// network blip does not silently cost the tape.
+    @State private var pendingRecording: URL?
     @State private var notes = ""
 
     @State private var adding = false
@@ -69,12 +72,21 @@ struct ChannelCheckPanel: View {
 
     struct Proj: Decodable, Identifiable, Hashable {
         let id: Int
-        let title: String
+        // `name`, because that is the column. This said `title` and the
+        // whole pane died at bootstrap: a required key that the server
+        // never sends makes JSONDecoder throw, and the failure is total
+        // rather than a blank field. The house rule exists for this
+        // exact mistake — decodables come from reading the handler.
+        let name: String
         let ticker: String?
     }
 
     struct QueuePayload: Decodable {
         let undialable: Int
+        /// Targets on this project with no number at all. Not listed, but
+        /// counted: a queue that silently dropped them reads as a
+        /// complete sample when it is not.
+        let withoutPhone: Int?
         let targets: [Door]
     }
 
@@ -164,7 +176,7 @@ struct ChannelCheckPanel: View {
                 .font(Term.mono(12, weight: .bold))
                 .foregroundStyle(Term.amber)
             if let project {
-                Text(project.title)
+                Text(project.name)
                     .font(Term.mono(11))
                     .foregroundStyle(Term.fgDim)
                     .lineLimit(1)
@@ -270,6 +282,14 @@ struct ChannelCheckPanel: View {
                    retry: { Task { await loadQueue() } }) { payload in
             ScrollView {
                 LazyVStack(spacing: 0) {
+                    if let missing = payload.withoutPhone, missing > 0 {
+                        Text("\(missing) target\(missing == 1 ? "" : "s") on this project have no number")
+                            .font(Term.mono(9))
+                            .foregroundStyle(Term.orange)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
+                    }
                     if payload.undialable > 0 {
                         // Said out loud rather than filtered away: a door
                         // you cannot ring is a gap in the sample.
@@ -319,7 +339,7 @@ struct ChannelCheckPanel: View {
                     }
                 }
                 if let last = door.lastAttempt, let outcome = last.outcome {
-                    Text("last: \(outcome)\(stamp(last.startedAt).map { " · \($0)" } ?? "")")
+                    Text("last: \(outcome) · \(Fmt.date(last.startedAt))")
                         .font(Term.mono(8))
                         .foregroundStyle(Term.fgMuted)
                 }
@@ -507,10 +527,17 @@ struct ChannelCheckPanel: View {
                 .pickerStyle(.radioGroup)
                 .font(Term.mono(10))
                 .onChange(of: regime) { _, now in
-                    // Switching to one-party mid-call starts the
-                    // recorder; switching away never retro-authorises
-                    // anything already captured, it just stops.
-                    if now == "one-party", recorder.state != .recording { beginRecording() }
+                    if now == "one-party" {
+                        beginRecording()
+                    } else if !consentTicked {
+                        // Switching TO a rule that requires asking has to
+                        // stop a recorder that started under the rule that
+                        // did not, and throw away what it caught. Leaving
+                        // it running kept minutes of a stranger's voice
+                        // recorded before anyone was asked, and the later
+                        // consent tick then shipped the whole file.
+                        stopAndDiscard()
+                    }
                 }
                 // No state-to-rule table ships with this app, and one
                 // invented here would be worse than none: it would look
@@ -543,7 +570,10 @@ struct ChannelCheckPanel: View {
                 }
                 .toggleStyle(.checkbox)
                 .onChange(of: consentTicked) { _, agreed in
-                    if agreed { beginRecording() } else { _ = recorder.stop() }
+                    // Un-ticking discards rather than merely stopping:
+                    // somebody withdrawing consent means the audio should
+                    // not exist, not that it should stop growing.
+                    if agreed { beginRecording() } else { stopAndDiscard() }
                 }
 
                 Text("If they say no, carry on and take notes. The call is still worth having; it just is not recorded.")
@@ -590,11 +620,18 @@ struct ChannelCheckPanel: View {
         }
     }
 
+    /// What gets read out, and then stored verbatim as the call's consent
+    /// note and copied onto the interview.
+    ///
+    /// It used to name the jewelry business. CHK opens on any project, so
+    /// on CHRW that script was read to a trucking depot and the false
+    /// sentence was then persisted as the record of what was disclosed.
+    /// Nothing here names a sector: the store knows what it sells.
     private var disclosure: String {
         let who = analystName.map { "\($0), " } ?? ""
         return "Hi, this is \(who)a student analyst with the Griffin Fund at Grace Church School. "
-            + "We're doing research on the jewelry business and I had a couple of quick questions "
-            + "about what's in your store. I'm recording this so I get the details right. Is that OK?"
+            + "We're doing some research and I had a couple of quick questions about your store. "
+            + "I'm recording this so I get the details right. Is that OK?"
     }
 
     // MARK: Actions
@@ -635,11 +672,24 @@ struct ChannelCheckPanel: View {
         queue = .loading
         do {
             let data = try await API.shared.get("/research/projects/\(project.id)/call-queue")
-            queue = .loaded(try await API.shared.decode(QueuePayload.self, from: data))
-            let log = try await API.shared.get("/research/projects/\(project.id)/calls")
-            rollup = try? await API.shared.decode(LogPayload.self, from: log).rollup
+            let payload = try await API.shared.decode(QueuePayload.self, from: data)
+            queue = .loaded(payload)
+            // Re-resolve the open door against the rows we just fetched.
+            // Without it the selection keeps the attempt list it was drawn
+            // with, so the "already reached" warning stays suppressed for
+            // a door that answered thirty seconds ago.
+            if let current = selected {
+                selected = payload.targets.first { $0.id == current.id }
+            }
         } catch {
             queue = .failed(String(describing: error).prefix(160).description)
+            return
+        }
+        // The roll-up is a header statistic over a five-hundred-row query.
+        // It failing must not take the dial list down with it, which is
+        // what a shared catch did.
+        if let log = try? await API.shared.get("/research/projects/\(project.id)/calls") {
+            rollup = try? await API.shared.decode(LogPayload.self, from: log).rollup
         }
     }
 
@@ -694,11 +744,22 @@ struct ChannelCheckPanel: View {
     }
 
     private func beginRecording() {
+        // `start()` returns silently when it is already running, so a
+        // re-tick used to look like it had begun a fresh recording while
+        // the old one, started before consent, kept going.
+        guard recorder.state != .recording else { return }
         do {
             try recorder.start()
         } catch {
             problem = "Could not start recording: \(error.localizedDescription). The call is fine; take notes."
         }
+    }
+
+    /// Stop and destroy. Used whenever the authority the recording rested
+    /// on has gone away.
+    private func stopAndDiscard() {
+        _ = recorder.stop()
+        recorder.discard()
     }
 
     /// Hanging up: stop the tape, ask the phone what actually happened,
@@ -741,24 +802,44 @@ struct ChannelCheckPanel: View {
         do {
             _ = try await API.shared.patch("/research/calls/\(call.id)", json: body)
         } catch {
-            problem = "Could not save the outcome: \(String(describing: error).prefix(140))"
+            // The recorder has already been stopped and merged, so an
+            // early return here used to strand the finished WAV: pressing
+            // an outcome again got nil back from a recorder that was now
+            // idle, and the call was saved with no recording at all.
+            // The file is remembered instead, and the retry uses it.
+            pendingRecording = file ?? pendingRecording
+            problem = "Could not save the outcome: \(String(describing: error).prefix(140)). "
+                + (pendingRecording != nil ? "The recording is held; press an outcome again." : "")
             return
         }
 
-        if let file, consentTicked || regime == "one-party" {
+        let toUpload = file ?? pendingRecording
+        var uploaded = false
+        if let toUpload, consentTicked || regime == "one-party" {
             working = "Transcribing…"
             do {
                 _ = try await API.shared.upload("/research/calls/\(call.id)/recording",
-                                                fileURL: file, fields: [:])
+                                                fileURL: toUpload, fields: [:])
+                uploaded = true
             } catch {
                 problem = "The call is logged, but the recording did not go through: "
                     + "\(String(describing: error).prefix(120))"
             }
         }
-        // Local audio goes whatever happened. Under an all-party rule the
-        // server has already destroyed its copy; leaving ours in a temp
-        // directory would make that promise false on this machine.
-        recorder.discard()
+
+        // Under an all-party rule the audio goes either way: they agreed
+        // to a conversation being transcribed, not to us holding a copy,
+        // and leaving one in a temp directory would make that false on
+        // this machine. Under one-party the tape is the thing a contested
+        // claim gets walked back to, so a failed upload keeps it and says
+        // where it is rather than deleting the only copy.
+        if uploaded || regime != "one-party" {
+            recorder.discard()
+            pendingRecording = nil
+        } else if let toUpload {
+            pendingRecording = toUpload
+            problem = (problem ?? "") + " The recording is kept at \(toUpload.path)."
+        }
 
         self.call = nil
         startedAt = nil
@@ -781,6 +862,14 @@ struct ChannelCheckPanel: View {
             working = "Transcribing \(url.lastPathComponent)…"
             defer { working = nil }
             do {
+                // Consent lives on the call row and is only written when
+                // the call is closed, so attaching a file DURING a live
+                // all-party call posted audio the server had no record of
+                // anyone agreeing to, and it 409'd. Write it first.
+                _ = try await API.shared.patch("/research/calls/\(call.id)", json: [
+                    "consentSpoken": consentTicked,
+                    "consentRegime": regime,
+                ])
                 let scoped = url.startAccessingSecurityScopedResource()
                 defer { if scoped { url.stopAccessingSecurityScopedResource() } }
                 _ = try await API.shared.upload("/research/calls/\(call.id)/recording",
@@ -799,21 +888,9 @@ struct ChannelCheckPanel: View {
 
     // MARK: Formatting
 
+    /// Duration on the wall clock. Not `Fmt`: everything there formats a
+    /// date, and this is an elapsed count that has to tick every second.
     private func clock(_ seconds: Int) -> String {
         String(format: "%d:%02d", seconds / 60, seconds % 60)
-    }
-
-    /// Prisma stamps carry milliseconds, which the plain ISO8601 parser
-    /// refuses. Both are tried, because a date that will not parse turns
-    /// a working row into a blank one.
-    private func stamp(_ iso: String?) -> String? {
-        guard let iso else { return nil }
-        let f = ISO8601DateFormatter()
-        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        guard let d = f.date(from: iso) ?? ISO8601DateFormatter().date(from: iso) else { return nil }
-        let out = DateFormatter()
-        out.locale = Locale(identifier: "en_US_POSIX")
-        out.dateFormat = "MMM d"
-        return out.string(from: d)
     }
 }

@@ -132,6 +132,26 @@ final class CallHistoryTests: XCTestCase {
     /// digit filter over "+16145550134;ext=231" yields ten digits that
     /// belong to nobody, and the failure is invisible: the panel reports
     /// no call record for a store that was rung and answered.
+    /// The gap between a voicemail and the redial that follows it is
+    /// under a minute, and the window used to reach five minutes back.
+    /// The second attempt then inherited the first call's duration and
+    /// answered flag, stamped `callhistory` — labelled as the phone's own
+    /// authoritative measurement while being the wrong call entirely.
+    func testARedialDoesNotInheritThePreviousCall() throws {
+        let firstPlaced = Date()
+        let redialPlaced = firstPlaced.addingTimeInterval(45)
+        let url = try makeDB([
+            (firstPlaced.addingTimeInterval(3), 20, "+16145550134", 0, 1, false),
+            (redialPlaced.addingTimeInterval(4), 260, "+16145550134", 1, 1, false),
+        ])
+        let second = CallHistory.mostRecent(matching: "+16145550134", placedAt: redialPlaced, at: url)
+        XCTAssertEqual(second?.duration, 260, "the redial takes its own record")
+        XCTAssertEqual(second?.answered, true)
+
+        let first = CallHistory.mostRecent(matching: "+16145550134", placedAt: firstPlaced, at: url)
+        XCTAssertEqual(first?.duration, 20, "and the first attempt keeps its own")
+    }
+
     func testAnExtensionDoesNotPoisonTheMatch() throws {
         XCTAssertEqual(CallHistory.lastTen("+16145550134;ext=231"), "6145550134")
         let placed = Date()

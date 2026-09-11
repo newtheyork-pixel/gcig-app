@@ -247,4 +247,25 @@ final class LiveSmokeTests: XCTestCase {
         try requireToken()
         _ = try await dec(ProjectFull.self, "/research/projects/1")
     }
+
+    /// CHK's own project shape, which is a SECOND decodable over the same
+    /// endpoint FLD already reads.
+    ///
+    /// This is the test that would have caught it: CHK asked for `title`
+    /// where the column is `name`, so JSONDecoder threw on a required key
+    /// and the pane died at bootstrap with nothing on screen to say why.
+    /// Two decodables over one endpoint is the shape that invites it, and
+    /// the cure is that both of them meet the real payload here.
+    func testChannelCheckProject() async throws {
+        try requireToken()
+        let data = try await API.shared.get("/research/projects")
+        struct Wrap: Decodable { let projects: [ChannelCheckPanel.Proj] }
+        if let list = try? await API.shared.decode([ChannelCheckPanel.Proj].self, from: data) {
+            XCTAssertFalse(list.isEmpty)
+            XCTAssertFalse(list[0].name.isEmpty, "a project with no name means the key moved again")
+        } else {
+            let wrapped = try await API.shared.decode(Wrap.self, from: data)
+            XCTAssertFalse(wrapped.projects.isEmpty)
+        }
+    }
 }

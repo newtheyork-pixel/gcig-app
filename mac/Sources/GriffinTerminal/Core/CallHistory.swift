@@ -125,7 +125,13 @@ enum CallHistory {
 
         // Core Data counts from 2001. The window is applied in SQL so a
         // long history never has to be walked in Swift.
-        let from = placedAt.addingTimeInterval(-300).timeIntervalSinceReferenceDate
+        //
+        // The backward slack is 30 seconds and covers clock skew, nothing
+        // more. It used to be five minutes, which is longer than the gap
+        // between a voicemail and the redial that follows it — so the new
+        // attempt picked up the old call's duration and answered flag and
+        // stamped it `callhistory`, i.e. as the authoritative measurement.
+        let from = placedAt.addingTimeInterval(-30).timeIntervalSinceReferenceDate
         let to = placedAt.addingTimeInterval(window).timeIntervalSinceReferenceDate
         let sql = """
         SELECT \(layout.date), \(layout.duration), \(layout.address), \
@@ -140,18 +146,27 @@ enum CallHistory {
         sqlite3_bind_double(stmt, 1, from)
         sqlite3_bind_double(stmt, 2, to)
 
+        // The CLOSEST match to the moment we dialled, not the first one in
+        // the window. Taking the first made a redial inherit the call
+        // before it whenever both fell inside the slack.
+        var best: Record?
+        var bestGap = Double.greatestFiniteMagnitude
         while sqlite3_step(stmt) == SQLITE_ROW {
             let address = text(stmt, 2)
             guard lastTen(address) == wanted else { continue }
-            return Record(
-                startedAt: Date(timeIntervalSinceReferenceDate: sqlite3_column_double(stmt, 0)),
+            let startedAt = Date(timeIntervalSinceReferenceDate: sqlite3_column_double(stmt, 0))
+            let gap = abs(startedAt.timeIntervalSince(placedAt))
+            guard gap < bestGap else { continue }
+            bestGap = gap
+            best = Record(
+                startedAt: startedAt,
                 duration: sqlite3_column_double(stmt, 1),
                 answered: sqlite3_column_int(stmt, 3) != 0,
                 originated: sqlite3_column_int(stmt, 4) != 0,
                 address: address
             )
         }
-        return nil
+        return best
     }
 
     /// Opens the pane the grant is made in. There is no API to request
