@@ -246,13 +246,19 @@ struct ChannelCheckPanel: View {
         case "Contacted":   return ("REACHED", Term.positive)
         default: break
         }
-        // Three rings with nobody picking up is not a dead door and must
-        // not be marked as one: a ring-out is evidence about the hour, and
-        // the right answer is to come back at a different time of day.
-        // But it has to stop competing with doors nobody has tried, or
-        // the afternoon is spent redialling one kiosk.
-        if door.attemptCount >= 3 { return ("TRY ANOTHER HOUR", Term.fgMuted) }
-        return nil
+        // A ring-out is not a dead door and is never marked as one: it is
+        // evidence about the hour, and the store that does not pick up at
+        // four on a Thursday answers on a Tuesday morning. But it has been
+        // WORKED, and a row that looks untried is a row somebody redials
+        // instead of moving on. So it fades and says what happened, and
+        // the queue still keeps it for a second pass at a different time.
+        switch door.lastAttempt?.outcome {
+        case "NoAnswer":  return (door.attemptCount >= 3 ? "TRY ANOTHER HOUR" : "NO ANSWER", Term.fgMuted)
+        case "Busy":      return ("BUSY", Term.fgMuted)
+        case "Voicemail": return ("VOICEMAIL", Term.fgMuted)
+        case "Failed":    return ("DIDN'T CONNECT", Term.fgMuted)
+        default:          return nil
+        }
     }
 
     private var queueColumn: some View {
@@ -399,7 +405,7 @@ struct ChannelCheckPanel: View {
             .padding(.vertical, 7)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(selected?.id == door.id ? Term.bgPanelHover : Color.clear)
-            .opacity(Self.badge(for: door) == nil ? 1 : 0.55)
+            .opacity(Self.badge(for: door) == nil ? 1 : (door.attemptCount >= 3 ? 0.4 : 0.55))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
