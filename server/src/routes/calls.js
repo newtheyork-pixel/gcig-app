@@ -5,6 +5,8 @@ import prisma from '../db.js';
 import { isSuperAdminEmail, verifyJwt, requireRole, denyGuest } from '../middleware/auth.js';
 import { parsePhone, formatPhone, telUrl } from '../services/phone.js';
 import { ingestRecording } from '../services/recordingIngest.js';
+import { regimeFor } from '../services/recordingConsent.js';
+import { inferOutcome } from '../services/callOutcome.js';
 import { isConfigured as transcriptionConfigured } from '../services/transcription.js';
 
 // Store channel checks, placed from the terminal.
@@ -347,6 +349,19 @@ export async function openCallHandler(req, res, deps = {}) {
       });
     }
 
+    // The regime is derived, not chosen. Asking an analyst mid-call to
+    // rule on a state they have not looked up produced one answer every
+    // time, the safe one, which meant the tape was thrown away even on
+    // the calls where keeping it was both lawful and the point.
+    //
+    // Consent itself is not in question here: the disclosure is read on
+    // every call, which is what makes the recording lawful at both ends.
+    // This decides only whether the audio survives the transcript.
+    const consent = regimeFor({
+      storeState: target?.locationState,
+      callerState: req.body?.callerState,
+    });
+
     const call = await db.callAttempt.create({
       data: {
         projectId,
@@ -355,6 +370,11 @@ export async function openCallHandler(req, res, deps = {}) {
         dialedNumber: parsed.ext ? `${parsed.e164};ext=${parsed.ext}` : parsed.e164,
         callerId: req.user?.id ?? null,
         startedAt: new Date(),
+        consentRegime: consent.regime,
+        // True because the script requires the disclosure before anything
+        // else is said. A person who objects flips it false, which is the
+        // only thing that stops a transcript being made.
+        consentSpoken: true,
         notes: notes ? String(notes).slice(0, 10_000) : null,
       },
       include: { target: { select: { id: true, name: true, employer: true, locationState: true } } },
@@ -364,6 +384,10 @@ export async function openCallHandler(req, res, deps = {}) {
       ...call,
       telUrl: telUrl(parsed),
       phoneDisplay: formatPhone(parsed),
+      // Shown on the console so the analyst can see WHY the tape is being
+      // kept or dropped, rather than being told that it is.
+      consentReason: consent.reason,
+      consentUnknownEnd: consent.unknownEnd,
     });
   } catch (err) {
     console.error('calls/create failed:', err.message);
@@ -500,14 +524,14 @@ export async function callRecordingHandler(req, res, deps = {}) {
       const project = await loadProject(db, call.projectId, req);
       if (!project) return res.status(404).json({ error: 'Not found' });
 
-      // Whose agreement the recording rests on depends on the regime.
-      // Under one-party it is the caller's own and no disclosure was
-      // required; under anything else somebody has to have said yes out
-      // loud, and `unknown` is not a reason to skip asking.
-      if (!call.consentSpoken && !keepsAudio(call.consentRegime)) {
+      // The disclosure is read on every call, so the question here is not
+      // whether somebody ticked a box. It is whether anybody OBJECTED.
+      // An explicit objection blocks the transcript outright, in either
+      // regime: a person who said no to being recorded has not agreed to
+      // a transcript of the recording either.
+      if (call.consentSpoken === false) {
         return res.status(409).json({
-          error:
-            'No consent is logged for this call. Record the disclosure and the answer to it before uploading audio.',
+          error: 'This call was marked as objected to. No transcript can be made from it.',
         });
       }
       if (call.interviewId) {
@@ -635,16 +659,52 @@ export async function callRecordingHandler(req, res, deps = {}) {
         throw err;
       }
 
-      await db.callAttempt.update({
-        where: { id },
-        // What happened to the tape is read back off the ingest rather
-        // than assumed from the regime: storage can fail, and a log that
-        // says an audio file exists when it does not is worse than one
-        // that says nothing.
-        data: { audioRetained: out.audioRetained === true },
+      // What happened on the call, worked out rather than typed in.
+      //
+      // The eight outcome buttons were a tax on the wrong moment: an
+      // analyst who has just hung up is thinking about what the manager
+      // said, and they were also the only way to close a row, so a
+      // forgotten press left the timer running forever. The phone's own
+      // record settles whether anybody picked up; the local model reads
+      // the transcript for the rest. An outcome nobody could establish
+      // stays null and says so, because NoAnswer is the value that would
+      // quietly flatter the refusal rate.
+      const transcribed = await db.interview.findUnique({
+        where: { id: interview.id },
+        select: { transcript: true },
+      });
+      const inferred = await inferOutcome({
+        transcript: transcribed?.transcript,
+        record: { answered: call.answered, durationMs: call.durationMs },
       });
 
-      res.json({ ...out, callId: id, interviewId: interview.id, sourceId: source.id });
+      await db.callAttempt.update({
+        where: { id },
+        data: {
+          // What happened to the tape is read back off the ingest rather
+          // than assumed from the regime: storage can fail, and a log
+          // that says an audio file exists when it does not is worse
+          // than one that says nothing.
+          audioRetained: out.audioRetained === true,
+          // Never overwrite a human's call. A person who already picked
+          // an outcome has made a judgement the model does not get to
+          // revise.
+          ...(call.outcome ? {} : { outcome: inferred.outcome ?? undefined }),
+          ...(call.outcome || !inferred.outcome ? {} : {
+            answered: inferred.outcome === 'NoAnswer' ? false : call.answered ?? undefined,
+          }),
+        },
+      });
+
+      res.json({
+        ...out,
+        callId: id,
+        interviewId: interview.id,
+        sourceId: source.id,
+        outcome: call.outcome || inferred.outcome,
+        // Said out loud so a low-confidence guess is visible as one.
+        outcomeInference: call.outcome ? null : inferred,
+      });
     } catch (err) {
       if (err.status) return res.status(err.status).json({ error: err.message });
       if (err.code === 'NOT_CONFIGURED') return res.status(503).json({ error: err.message });

@@ -39,17 +39,18 @@ struct ChannelCheckPanel: View {
     @State private var call: OpenCall?
     @State private var startedAt: Date?
     @State private var elapsed = 0
-    @State private var consentTicked = false
-    /// Which recording rule this call is placed under. Decides whether a
-    /// disclosure is required and whether the tape survives the
-    /// transcript. Defaults to the strict reading, and this app does not
-    /// map states to rules: that table needs a source somebody can cite.
-    @State private var regime = "all-party"
+    /// Set only when somebody on the other end says no. It is the one
+    /// thing that stops a transcript being made, and it is a button
+    /// rather than a checkbox because the default case is the one that
+    /// happens forty times an afternoon.
+    @State private var objected = false
     @StateObject private var recorder = CallRecorder()
     @State private var history: CallHistory.Availability = .absent
     /// A finished recording whose upload has not succeeded yet. Held so a
     /// network blip does not silently cost the tape.
     @State private var pendingRecording: URL?
+    /// Guards against the tick firing `close()` twice while it runs.
+    @State private var autoClosing = false
     @State private var notes = ""
 
     @State private var adding = false
@@ -118,7 +119,16 @@ struct ChannelCheckPanel: View {
         let telUrl: String?
         let phoneDisplay: String?
         let dialedNumber: String
+        /// Decided by the SERVER from the states at both ends, not picked
+        /// here. Asking an analyst mid-call to rule on a state they have
+        /// not looked up produced the safe answer every time, which threw
+        /// away the tape even where keeping it was the point.
+        let consentRegime: String?
+        let consentReason: String?
+        let consentUnknownEnd: Bool?
     }
+
+    private var regime: String { call?.consentRegime ?? "all-party" }
 
     struct LogPayload: Decodable { let rollup: Rollup }
 
@@ -156,6 +166,7 @@ struct ChannelCheckPanel: View {
         .task { await bootstrap() }
         .onReceive(tick) { _ in
             if let startedAt { elapsed = Int(Date().timeIntervalSince(startedAt)) }
+            checkWhetherTheCallEnded()
         }
         .onDisappear {
             // Closing the pane mid-call must not leave a system-audio tap
@@ -438,7 +449,13 @@ struct ChannelCheckPanel: View {
                 Text(clock(elapsed))
                     .font(Term.mono(22, weight: .bold))
                     .foregroundStyle(Term.positive)
-                Text("on call").font(Term.mono(10)).foregroundStyle(Term.fgMuted)
+                // The clock cannot see your call end. Saying what it is
+                // waiting for is the difference between a timer and a
+                // stopwatch somebody thinks has broken.
+                Text(autoClosing ? "closing"
+                     : (history.isUsable || recorder.farEndCaptured) ? "closes when you hang up"
+                     : "running until you pick an outcome")
+                    .font(Term.mono(10)).foregroundStyle(Term.fgMuted)
                 Spacer()
                 if let url = call?.telUrl {
                     Button("Re-dial") { open(url) }
@@ -477,7 +494,10 @@ struct ChannelCheckPanel: View {
             }
 
             VStack(alignment: .leading, spacing: 6) {
-                Text("HOW DID IT END").font(Term.mono(9)).foregroundStyle(Term.fgMuted)
+                Text((history.isUsable || recorder.farEndCaptured)
+                     ? "IT CLOSES ITSELF WHEN YOU HANG UP — OR OVERRIDE HERE"
+                     : "HOW DID IT END")
+                    .font(Term.mono(9)).foregroundStyle(Term.fgMuted)
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 120), spacing: 6)], spacing: 6) {
                     ForEach(Self.outcomes, id: \.0) { code, label in
                         Button {
@@ -496,7 +516,7 @@ struct ChannelCheckPanel: View {
                 }
             }
 
-            if consentTicked || regime == "one-party" {
+            if !objected {
                 // The fallback, for a call recorded on a handset instead
                 // of by this app. Kept even now the recorder works,
                 // because an analyst in a car with a phone is the
@@ -518,71 +538,56 @@ struct ChannelCheckPanel: View {
 
     private func consentBlock(_ door: Door) -> some View {
         VStack(alignment: .leading, spacing: 10) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text("RECORDING RULE").font(Term.mono(9)).foregroundStyle(Term.fgMuted)
-                Picker("", selection: $regime) {
-                    Text("All-party — ask first, tape deleted after").tag("all-party")
-                    Text("One-party — no need to ask, tape kept").tag("one-party")
+            // Read on EVERY call, which is what makes the recording lawful
+            // at both ends. It is not a gate and there is nothing to tick:
+            // a gate that is satisfied forty times an afternoon stops
+            // being read and starts being clicked.
+            Text("READ THIS OUT, FIRST THING")
+                .font(Term.mono(9, weight: .bold))
+                .foregroundStyle(Term.orange)
+            Text(disclosure)
+                .font(Term.mono(11))
+                .foregroundStyle(Term.white)
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(10)
+                .background(Term.bg)
+                .overlay(Rectangle().stroke(Term.orange.opacity(0.5), lineWidth: 1))
+
+            HStack(spacing: 10) {
+                // The regime is shown, with its reason, rather than asked.
+                Text(regime == "one-party" ? "Tape kept" : "Tape deleted after transcribing")
+                    .font(Term.mono(10, weight: .bold))
+                    .foregroundStyle(regime == "one-party" ? Term.positive : Term.fgDim)
+                if let why = call?.consentReason {
+                    Text(why)
+                        .font(Term.mono(9))
+                        .foregroundStyle(call?.consentUnknownEnd == true ? Term.orange : Term.fgMuted)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
-                .pickerStyle(.radioGroup)
-                .font(Term.mono(10))
-                .onChange(of: regime) { _, now in
-                    if now == "one-party" {
-                        beginRecording()
-                    } else if !consentTicked {
-                        // Switching TO a rule that requires asking has to
-                        // stop a recorder that started under the rule that
-                        // did not, and throw away what it caught. Leaving
-                        // it running kept minutes of a stranger's voice
-                        // recorded before anyone was asked, and the later
-                        // consent tick then shipped the whole file.
-                        stopAndDiscard()
-                    }
-                }
-                // No state-to-rule table ships with this app, and one
-                // invented here would be worse than none: it would look
-                // authoritative. The store's own state is shown instead,
-                // and a person decides.
-                Text(door.locationState.map { "This store is in \($0). You are picking the rule." }
-                     ?? "No state recorded for this store. You are picking the rule.")
-                    .font(Term.mono(9))
-                    .foregroundStyle(Term.orange)
-                    .fixedSize(horizontal: false, vertical: true)
             }
 
-            if regime == "all-party" {
-                Text("READ THIS OUT, THEN TICK IT")
-                    .font(Term.mono(9, weight: .bold))
-                    .foregroundStyle(Term.orange)
-                Text(disclosure)
-                    .font(Term.mono(11))
-                    .foregroundStyle(Term.white)
-                    .textSelection(.enabled)
+            if objected {
+                Text("Marked as objected to. The recording has been destroyed and no transcript will be made.")
+                    .font(Term.mono(10))
+                    .foregroundStyle(Term.negative)
                     .fixedSize(horizontal: false, vertical: true)
-                    .padding(10)
-                    .background(Term.bg)
-                    .overlay(Rectangle().stroke(Term.orange.opacity(0.5), lineWidth: 1))
-
-                Toggle(isOn: $consentTicked) {
-                    Text("They heard it and agreed to be recorded")
-                        .font(Term.mono(10))
-                        .foregroundStyle(Term.fg)
+            } else {
+                Button {
+                    // One press, for the rare person who says no. Stops
+                    // and destroys rather than pausing: somebody
+                    // withdrawing means the audio should not exist.
+                    objected = true
+                    stopAndDiscard()
+                } label: {
+                    Text("THEY SAID NO — STOP RECORDING")
+                        .font(Term.mono(9, weight: .bold))
+                        .foregroundStyle(Term.bg)
+                        .padding(.horizontal, 12).padding(.vertical, 5)
+                        .background(Term.negative)
                 }
-                .toggleStyle(.checkbox)
-                .onChange(of: consentTicked) { _, agreed in
-                    // Un-ticking discards rather than merely stopping:
-                    // somebody withdrawing consent means the audio should
-                    // not exist, not that it should stop growing.
-                    if agreed { beginRecording() } else { stopAndDiscard() }
-                }
-
-                Text("If they say no, carry on and take notes. The call is still worth having; it just is not recorded.")
-                    .font(Term.mono(9))
-                    .foregroundStyle(Term.fgMuted)
-                    .fixedSize(horizontal: false, vertical: true)
+                .buttonStyle(.plain)
             }
-
-            recorderStatus
         }
     }
 
@@ -731,16 +736,62 @@ struct ChannelCheckPanel: View {
             call = opened
             startedAt = Date()
             elapsed = 0
-            consentTicked = false
+            objected = false
+            autoClosing = false
             notes = ""
             if let url = opened.telUrl { open(url) }
-            // Under a one-party rule the recording rests on our own
-            // consent, so it can start with the call. Under anything
-            // else nothing is captured until somebody has said yes.
-            if regime == "one-party" { beginRecording() }
+            // Always. The disclosure is the first thing said on the
+            // call, so there is nothing to wait for, and a recorder
+            // that starts late loses the opening of every call.
+            beginRecording()
         } catch {
             problem = "Could not open the call: \(String(describing: error).prefix(140))"
         }
+    }
+
+    /// macOS writes a call into its own history when the call ENDS, so
+    /// the row appearing is the only signal we can get that the handset
+    /// hung up. There is no public API for live call state, which is why
+    /// the timer used to run until somebody pressed a button.
+    ///
+    /// Without Full Disk Access there is no record to read and the
+    /// buttons remain the way out. The panel says so rather than leaving
+    /// a clock running with no explanation.
+    private func checkWhetherTheCallEnded() {
+        guard call != nil, startedAt != nil, !autoClosing, working == nil else { return }
+        // Do not race the dial. A record can exist for a previous attempt
+        // and the nearest-match rule needs a few seconds of daylight.
+        guard elapsed >= 12 else { return }
+
+        if endedAccordingToThePhone() || endedAccordingToTheAudio() {
+            autoClosing = true
+            Task { await close() }
+        }
+    }
+
+    /// The reliable signal, and the one that also gives a true duration.
+    /// Needs Full Disk Access, which is why the audio fallback exists.
+    private func endedAccordingToThePhone() -> Bool {
+        guard history.isUsable, let call, let startedAt else { return false }
+        guard let record = CallHistory.mostRecent(matching: call.dialedNumber, placedAt: startedAt)
+        else { return false }
+        // A duration means a finished conversation. A record with none,
+        // once the phone has plainly given up ringing, is a ring-out.
+        return record.duration > 0 || (record.answered == false && elapsed >= 45)
+    }
+
+    /// The signal that needs no permission at all.
+    ///
+    /// A live call pushes line noise into the far channel continuously,
+    /// even while nobody is talking. A call that has ended pushes digital
+    /// silence. Twenty-five seconds of that, on a call that had audio in
+    /// the first place, is a hangup rather than a pause — and the cost of
+    /// being wrong is a row closed early, which a person can reopen, not
+    /// a recording lost.
+    private func endedAccordingToTheAudio() -> Bool {
+        guard recorder.farEndCaptured, elapsed >= 30 else { return false }
+        guard let silent = recorder.farEndSilentFor else { return false }
+        return silent >= 25
     }
 
     private func beginRecording() {
@@ -769,7 +820,15 @@ struct ChannelCheckPanel: View {
     /// a transcription failure must not cost the log its row — the dial
     /// happened whether or not the recording survived, and that is the
     /// number the denominator is built from.
-    private func close(outcome: String) async {
+    /// Close the call.
+    ///
+    /// `outcome` is optional and usually nil. It used to be the only way
+    /// out of a row, eight buttons at the moment an analyst is still
+    /// thinking about what the manager said, and a forgotten press left
+    /// the timer running forever. The phone's record says whether anybody
+    /// picked up and the model reads the transcript for the rest; a
+    /// button press is now an override, not a toll.
+    private func close(outcome: String? = nil) async {
         guard let call else { return }
         working = "Saving…"
         defer { working = nil }
@@ -777,16 +836,19 @@ struct ChannelCheckPanel: View {
         let file = recorder.stop()
 
         var body: [String: Any] = [
-            "outcome": outcome,
             "endedAt": ISO8601DateFormatter().string(from: Date()),
             "durationMs": elapsed * 1000,
             // Named for what it is. This clock started when a human
             // pressed DIAL, so it counts ringing and the seconds spent
             // finding the handset.
             "metadataSource": "apptimer",
-            "consentSpoken": consentTicked,
-            "consentRegime": regime,
+            // False only if somebody objected. The disclosure is read
+            // every time, so the default is the honest one.
+            "consentSpoken": !objected,
         ]
+        // Sent only when a human overrode it. Absent, the server works it
+        // out from the call record and the transcript.
+        if let outcome { body["outcome"] = outcome }
         // The phone kept its own record. Where it is readable it wins,
         // because it knows when the call CONNECTED and our clock only
         // knows when somebody pressed a button.
@@ -796,7 +858,9 @@ struct ChannelCheckPanel: View {
             body["metadataSource"] = "callhistory"
             body["answered"] = record.answered
         }
-        if consentTicked { body["consentNote"] = "Read aloud and agreed: \(disclosure)" }
+        body["consentNote"] = objected
+            ? "Disclosure read; they objected. Recording destroyed, no transcript made."
+            : "Read aloud at the top of the call: \(disclosure)"
         if !notes.isEmpty { body["notes"] = notes }
 
         do {
@@ -815,7 +879,7 @@ struct ChannelCheckPanel: View {
 
         let toUpload = file ?? pendingRecording
         var uploaded = false
-        if let toUpload, consentTicked || regime == "one-party" {
+        if let toUpload, !objected {
             working = "Transcribing…"
             do {
                 _ = try await API.shared.upload("/research/calls/\(call.id)/recording",
@@ -844,7 +908,8 @@ struct ChannelCheckPanel: View {
         self.call = nil
         startedAt = nil
         elapsed = 0
-        consentTicked = false
+        objected = false
+        autoClosing = false
         await loadQueue()
     }
 
@@ -867,8 +932,7 @@ struct ChannelCheckPanel: View {
                 // all-party call posted audio the server had no record of
                 // anyone agreeing to, and it 409'd. Write it first.
                 _ = try await API.shared.patch("/research/calls/\(call.id)", json: [
-                    "consentSpoken": consentTicked,
-                    "consentRegime": regime,
+                    "consentSpoken": !objected,
                 ])
                 let scoped = url.startAccessingSecurityScopedResource()
                 defer { if scoped { url.stopAccessingSecurityScopedResource() } }
