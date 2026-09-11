@@ -40,7 +40,11 @@ function Reveal({ children, delay = 0, className = '' }) {
       { threshold: 0.15 },
     );
     observer.observe(el);
-    return () => observer.disconnect();
+    const failsafe = window.setTimeout(() => setVisible(true), 1800);
+    return () => {
+      observer.disconnect();
+      window.clearTimeout(failsafe);
+    };
   }, []);
 
   return (
@@ -81,7 +85,14 @@ function useInView(threshold = 0.15) {
       { threshold },
     );
     obs.observe(el);
-    return () => obs.disconnect();
+    // Safari's IO on inline / transformed nodes is flaky: WordReveal
+    // starts at opacity 0 and can stay there. Force the reveal through
+    // if the observer never fires.
+    const failsafe = window.setTimeout(() => setSeen(true), 1800);
+    return () => {
+      obs.disconnect();
+      window.clearTimeout(failsafe);
+    };
   }, [threshold]);
   return [ref, seen];
 }
@@ -324,7 +335,11 @@ function Header() {
           <img
             src="/grace-logo.png"
             alt="Grace Church School"
-            className="h-8 w-auto shrink-0 md:h-10"
+            width={250}
+            height={53}
+            decoding="async"
+            fetchPriority="high"
+            className="hidden h-8 w-auto shrink-0 sm:block md:h-10"
             style={{ transition: `transform 500ms ${EASE_OUT}` }}
             onError={(e) => {
               e.currentTarget.style.display = 'none';
@@ -369,20 +384,20 @@ function Hero() {
 
   return (
     <section ref={sectionRef} className="relative border-b border-navy-50 overflow-hidden">
-      {/* Parallax background — disabled on mobile (iOS fixed-bg bug).
-          The mouse-spring also translates this layer, so we keep the cover
-          slightly larger via scale(1.04) to hide the edges. */}
+      {/* Parallax background. Never `background-attachment: fixed`:
+          Safari blanks that layer as soon as a transform (the
+          mouse-spring) is applied, which is how the skyline used to
+          vanish on the landing hero. */}
       <style>{`
         .hero-bg {
           background-image: url('/hero-skyline.jpg');
           background-size: cover;
           background-position: center;
-          background-attachment: fixed;
+          /* Never attachment:fixed. Safari blanks that layer the
+             moment a transform (the mouse-spring) is applied. */
+          background-attachment: scroll;
           transform: scale(1.04);
           will-change: transform;
-        }
-        @media (max-width: 767px) {
-          .hero-bg { background-attachment: scroll; }
         }
         @keyframes heroEyebrowFade {
           from { opacity: 0; transform: translateY(8px); }
@@ -402,7 +417,7 @@ function Hero() {
           />
           <h1 className="font-serif text-3xl font-semibold leading-[1.15] tracking-tight text-navy md:text-6xl">
             <WordReveal
-              text="The Griffin Fund was founded on the premise that disciplined investing is best learned by doing — with real capital, rigorous research, and accountability to the school community."
+              text="The Griffin Fund was founded on the premise that disciplined investing is best learned by doing, with real capital, rigorous research, and accountability to the school community."
               base={300}
               step={45}
               duration={1000}
@@ -431,7 +446,7 @@ function Premise() {
             </div>
             <div className="font-serif text-[17px] leading-relaxed text-navy md:text-xl">
               <p>
-                The Griffin Fund is the Grace Church School Investment Group — a
+                The Griffin Fund is the Grace Church School Investment Group, a
                 student-run investment fund established in 2021 to manage a
                 real, multi-year capital pool on behalf of the school community.
               </p>
@@ -441,7 +456,7 @@ function Premise() {
                 school
                 and from an advisory board of parent volunteers who work in
                 finance. The fund invests only in publicly traded US equities,
-                ETFs, and cash equivalents — no derivatives, no commodities, no
+                ETFs, and cash equivalents: no derivatives, no commodities, no
                 short-term speculation. Every position is researched, pitched,
                 and voted on before capital is committed.
               </p>
@@ -463,11 +478,11 @@ function Pillars() {
   const pillars = [
     {
       heading: 'Research',
-      body: 'Every pitch begins with written analysis — thesis, valuation, risks, and catalysts. Ideas are workshopped inside sector pods before they reach the full body, and only positions that survive that scrutiny come to a vote.',
+      body: 'Every pitch begins with written analysis: thesis, valuation, risks, and catalysts. Ideas are workshopped inside sector pods before they reach the full body, and only positions that survive that scrutiny come to a vote.',
     },
     {
       heading: 'Discipline',
-      body: 'The fund operates inside a written Investment Policy Statement. Positions are held for the long term, capped in size, and reviewed on a standing schedule. When the market moves against us, we revisit the thesis — we don\'t panic out of it.',
+      body: 'The fund operates inside a written Investment Policy Statement. Positions are held for the long term, capped in size, and reviewed on a standing schedule. When the market moves against us, we revisit the thesis. We don\'t panic out of it.',
     },
     {
       heading: 'Stewardship',
@@ -662,7 +677,7 @@ function FieldVisit() {
           </h2>
           <p className="mt-4 max-w-xl font-serif text-base leading-relaxed text-navy-500 md:mt-6 md:text-lg">
             <WordReveal
-              text="The fund spends time inside the institutions whose discipline informs our own — and brings the people who do this for a living back into the room. Real visits, real conversations, real questions."
+              text="The fund spends time inside the institutions whose discipline informs our own, and brings the people who do this for a living back into the room. Real visits, real conversations, real questions."
               base={600}
               step={28}
               duration={750}
@@ -680,10 +695,10 @@ function FieldVisit() {
           mobileSrc="/field-visit-mobile.jpg"
           alt="Members of The Griffin Fund inside the atrium of JPMorgan's headquarters during a Spring 2025 tour and meeting."
           eyebrow="JPMorgan · Spring 2025"
-          caption="We spent a morning at JPMorgan — got a tour of the building, then sat down with some of their team."
+          caption="We spent a morning at JPMorgan, got a tour of the building, then sat down with some of their team."
           plateNumeral="01"
           plateLabel="Plate I"
-          pictured="Pictured — Members of the fund, with faculty advisor."
+          pictured="Pictured: Members of the fund, with faculty advisor."
           showWatermark
         />
         <FieldPlate
@@ -691,10 +706,10 @@ function FieldVisit() {
           mobileSrc="/field-visit-2-mobile.jpg"
           alt="Jacob Perman '16 speaking to members of The Griffin Fund in a Grace Church School classroom during a November 2025 alumni visit."
           eyebrow="Jacob Perman '16 · November 2025"
-          caption="Jacob Perman '16 came back to walk us through what he actually does — leveraged finance at Wells Fargo."
+          caption="Jacob Perman '16 came back to walk us through what he actually does: leveraged finance at Wells Fargo."
           plateNumeral="02"
           plateLabel="Plate II"
-          pictured="Pictured — Jacob Perman '16, addressing the club."
+          pictured="Pictured: Jacob Perman '16, addressing the club."
           className="mt-20 md:mt-32"
         />
       </div>
@@ -998,33 +1013,36 @@ function FieldPlate({
 function Leadership() {
   const groups = [
     {
-      title: 'Executive Leadership',
-      // Ordered by rank (President > CIO); alphabetical by last name inside
-      // each rank. `photo` is optional — members without one get a serif
-      // monogram of their initials tinted by inferred gender.
+      title: 'Presidents',
       members: [
-        { name: 'Grey Griscom', role: 'President' },
-        { name: 'Sander Olinick', role: 'President', photo: '/leadership/sander-olinick.jpg' },
-        { name: 'Thomas Seirer', role: 'President', photo: '/leadership/thomas-seirer.jpg' },
-        { name: 'Felix Westergaard', role: 'President', photo: '/leadership/felix-westergaard.jpg' },
-        { name: 'Eric Winter', role: 'Chief Investment Officer', photo: '/leadership/eric-winter.jpg' },
+        { name: 'Sander Olinick', role: 'President', photo: '/leadership/sander-olinick.jpg', size: 'xl' },
+        { name: 'Thomas Seirer', role: 'President', photo: '/leadership/thomas-seirer.jpg', size: 'xl' },
+      ],
+    },
+    {
+      title: 'Director of Research',
+      members: [
+        { name: 'Carter Bayerd', role: 'Director of Research', photo: '/leadership/carter-bayerd.jpg', size: 'lg' },
+      ],
+    },
+    {
+      title: 'Chief Investment Officers',
+      members: [
+        { name: 'Cole H. Fader', role: 'Chief Investment Officer', size: 'md' },
+        { name: 'Eric Winter', role: 'Chief Investment Officer', photo: '/leadership/eric-winter.jpg', size: 'md' },
       ],
     },
     {
       title: 'Portfolio Managers',
-      // Ordered by rank (Senior PM > PM); alphabetical by last name inside
-      // each rank.
       members: [
-        { name: 'Cole H. Fader', role: 'Senior Portfolio Manager · Technology' },
-        { name: 'Carter Bayerd', role: 'Portfolio Manager · Industrials', photo: '/leadership/carter-bayerd.jpg' },
-        { name: 'Harry de Mendonca', role: 'Portfolio Manager · ETF' },
-        { name: 'Eli Friedman', role: 'Portfolio Manager · Consumers', photo: '/leadership/eli-friedman.jpg' },
-        { name: 'Elliot Meyers-Kane', role: 'Portfolio Manager · Energy' },
+        { name: 'Harry de Mendonca', role: 'Portfolio Manager · ETF', size: 'sm' },
+        { name: 'Eli Friedman', role: 'Portfolio Manager · Consumers', photo: '/leadership/eli-friedman.jpg', size: 'sm' },
+        { name: 'Elliot Meyers-Kane', role: 'Portfolio Manager · Energy', size: 'sm' },
       ],
     },
   ];
 
-  // Batch-look up inferred gender for every member name — used to tint
+  // Batch-look up inferred gender for every member name. Used to tint
   // the monogram fallback. Public endpoint, single request.
   const allNames = useMemo(
     () => groups.flatMap((g) => g.members.map((m) => m.name)),
@@ -1047,12 +1065,15 @@ function Leadership() {
         setGenderMap(m);
       })
       .catch(() => {
-        /* fall back to the default (neutral) tint — harmless if this fails. */
+        /* fall back to the default (neutral) tint if this fails. */
       });
     return () => {
       cancelled = true;
     };
   }, [allNames]);
+
+  const presidents = groups[0];
+  const rest = groups.slice(1);
 
   return (
     <section className="border-b border-navy-50">
@@ -1077,36 +1098,38 @@ function Leadership() {
           </div>
         </Reveal>
 
-        <div className="grid gap-10 md:grid-cols-2 md:gap-16">
-          {groups.map((group, gi) => (
-            <Reveal key={group.title} delay={gi * 100}>
-              <div>
-                <div className="mb-4 text-[10px] font-semibold uppercase tracking-[0.2em] text-navy-400 md:mb-6 md:text-[11px] md:tracking-[0.25em]">
-                  {group.title}
+        <Reveal>
+          <div className="mb-4 text-[10px] font-semibold uppercase tracking-[0.2em] text-navy-400 md:mb-6 md:text-[11px] md:tracking-[0.25em]">
+            {presidents.title}
+          </div>
+          <ul className="mb-12 grid grid-cols-1 gap-8 sm:grid-cols-2 sm:gap-12 md:mb-16 md:max-w-2xl">
+            {presidents.members.map((m) => (
+              <li key={m.name} className="flex items-center gap-5">
+                <MemberAvatar member={m} gender={genderMap.get(m.name)} />
+                <div className="min-w-0">
+                  <div className="font-serif text-xl font-semibold text-navy md:text-2xl">
+                    {m.name}
+                  </div>
+                  <div className="text-[10px] uppercase tracking-[0.15em] text-navy-400 md:text-[11px] md:tracking-[0.2em]">
+                    {m.role}
+                  </div>
                 </div>
-                <ul className="space-y-4">
-                  {group.members.map((m, mi) => (
-                    <Reveal key={m.name} delay={gi * 100 + (mi + 1) * 100}>
-                      <li
-                        className="member-row flex items-center gap-4"
-                        style={{ transition: `transform 280ms ${EASE_OUT}` }}
-                      >
-                        <MemberAvatar member={m} gender={genderMap.get(m.name)} />
-                        <div className="min-w-0">
-                          <div className="font-serif text-lg font-semibold text-navy">
-                            {m.name}
-                          </div>
-                          <div className="text-[10px] uppercase tracking-[0.15em] text-navy-400 md:text-[11px] md:tracking-[0.2em]">
-                            {m.role}
-                          </div>
-                        </div>
-                      </li>
-                    </Reveal>
-                  ))}
-                </ul>
-              </div>
-            </Reveal>
-          ))}
+              </li>
+            ))}
+          </ul>
+        </Reveal>
+
+        <div className="grid gap-10 md:grid-cols-2 md:gap-16">
+          <div className="space-y-10">
+            {rest.slice(0, 2).map((group, gi) => (
+              <Reveal key={group.title} delay={gi * 100}>
+                <MemberGroup group={group} genderMap={genderMap} delay={gi * 100} />
+              </Reveal>
+            ))}
+          </div>
+          <Reveal delay={200}>
+            <MemberGroup group={rest[2]} genderMap={genderMap} delay={200} />
+          </Reveal>
         </div>
 
         <Reveal delay={700}>
@@ -1116,6 +1139,38 @@ function Leadership() {
         </Reveal>
       </div>
     </section>
+  );
+}
+
+function MemberGroup({ group, genderMap, delay }) {
+  return (
+    <div>
+      <div className="mb-4 text-[10px] font-semibold uppercase tracking-[0.2em] text-navy-400 md:mb-6 md:text-[11px] md:tracking-[0.25em]">
+        {group.title}
+      </div>
+      <ul className="space-y-4">
+        {group.members.map((m, mi) => (
+          <li
+            key={m.name}
+            className="member-row flex items-center gap-4"
+            style={{
+              transition: `transform 280ms ${EASE_OUT}`,
+              transitionDelay: `${delay + (mi + 1) * 80}ms`,
+            }}
+          >
+            <MemberAvatar member={m} gender={genderMap.get(m.name)} />
+            <div className="min-w-0">
+              <div className="font-serif text-lg font-semibold text-navy">
+                {m.name}
+              </div>
+              <div className="text-[10px] uppercase tracking-[0.15em] text-navy-400 md:text-[11px] md:tracking-[0.2em]">
+                {m.role}
+              </div>
+            </div>
+          </li>
+        ))}
+      </ul>
+    </div>
   );
 }
 
@@ -1163,6 +1218,8 @@ function Footer() {
           <img
             src="/grace-logo.png"
             alt=""
+            width={250}
+            height={53}
             className="h-8 w-auto opacity-80"
             onError={(e) => {
               e.currentTarget.style.display = 'none';
@@ -1198,19 +1255,34 @@ const AVATAR_TINT = {
   U: { bg: 'bg-navy-100', fg: 'text-navy' },
 };
 
+const AVATAR_SIZE = {
+  xl: 'h-28 w-28 md:h-32 md:w-32',
+  lg: 'h-20 w-20 md:h-24 md:w-24',
+  md: 'h-16 w-16 md:h-20 md:w-20',
+  sm: 'h-12 w-12',
+};
+
+const AVATAR_TYPE = {
+  xl: 'text-xl md:text-2xl',
+  lg: 'text-lg',
+  md: 'text-base',
+  sm: 'text-sm',
+};
+
 function MemberAvatar({ member, gender }) {
   const initials = member.name
     .split(/\s+/)
-    .filter(Boolean)
+    .filter((p) => p && !/^[A-Za-z]\.$/.test(p))
     .map((p) => p[0])
     .slice(0, 2)
     .join('')
     .toUpperCase();
   const tint = AVATAR_TINT[gender] || AVATAR_TINT.U;
+  const size = member.size || 'sm';
 
   return (
     <div
-      className={`member-avatar relative h-12 w-12 shrink-0 overflow-hidden rounded-full border border-navy-100 ${tint.bg}`}
+      className={`member-avatar relative shrink-0 overflow-hidden rounded-full border border-navy-100 ${AVATAR_SIZE[size]} ${tint.bg}`}
       style={{ transition: `box-shadow 320ms ${EASE_OUT}` }}
     >
       {member.photo && (
@@ -1218,7 +1290,8 @@ function MemberAvatar({ member, gender }) {
           src={member.photo}
           alt={member.name}
           loading="lazy"
-          className="absolute inset-0 h-full w-full object-cover"
+          decoding="async"
+          className="absolute inset-0 z-10 h-full w-full object-cover object-top"
           onError={(e) => {
             e.currentTarget.style.display = 'none';
           }}
@@ -1229,7 +1302,8 @@ function MemberAvatar({ member, gender }) {
           infer (or haven't fetched yet), the neutral navy-100 variant is
           used so the tile still reads. */}
       <div
-        className={`flex h-full w-full items-center justify-center font-serif text-sm font-semibold ${tint.fg}`}
+        aria-hidden={!!member.photo}
+        className={`flex h-full w-full items-center justify-center font-serif font-semibold ${AVATAR_TYPE[size]} ${tint.fg}`}
       >
         {initials}
       </div>

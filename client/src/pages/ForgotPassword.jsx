@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext.jsx';
+import AuthBrandMark from '../components/AuthBrandMark.jsx';
 import Button from '../components/Button.jsx';
 
 export default function ForgotPassword() {
@@ -33,14 +34,7 @@ export default function ForgotPassword() {
       />
       <div className="relative w-full max-w-md">
         <div className="mb-8 flex flex-col items-center text-center">
-          <div className="rounded-xl bg-white px-8 py-5">
-            <img
-              src="/griffin-logo.png"
-              alt="The Griffin Fund — Grace Church School"
-              className="h-16 w-auto"
-              onError={(e) => { e.currentTarget.style.display = 'none'; }}
-            />
-          </div>
+          <AuthBrandMark />
           <div className="mt-3 text-[10px] font-semibold uppercase tracking-[0.3em] text-gold">
             Grace Church School Investment Group
           </div>

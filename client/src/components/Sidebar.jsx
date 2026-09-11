@@ -111,6 +111,8 @@ export default function Sidebar({ onNavigate }) {
             <img
               src="/grace-logo.png"
               alt="Grace Church School"
+              width={250}
+              height={53}
               className="h-10 w-auto"
               // Hide the CHIP, not just the image: a failed load used to
               // leave an empty white box. On error we drop the whole thing
