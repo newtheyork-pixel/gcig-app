@@ -244,8 +244,15 @@ struct ChannelCheckPanel: View {
         case "Declined":    return ("WOULDN'T TALK", Term.orange)
         case "Unreachable": return ("BAD NUMBER", Term.negative)
         case "Contacted":   return ("REACHED", Term.positive)
-        default:            return nil
+        default: break
         }
+        // Three rings with nobody picking up is not a dead door and must
+        // not be marked as one: a ring-out is evidence about the hour, and
+        // the right answer is to come back at a different time of day.
+        // But it has to stop competing with doors nobody has tried, or
+        // the afternoon is spent redialling one kiosk.
+        if door.attemptCount >= 3 { return ("TRY ANOTHER HOUR", Term.fgMuted) }
+        return nil
     }
 
     private var queueColumn: some View {
