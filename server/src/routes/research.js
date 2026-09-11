@@ -19,6 +19,8 @@ import { synthesize } from '../services/synthesis.js';
 import { screenTranscript, RISK } from '../services/mnpiScreen.js';
 import { screenOutreach } from '../services/outreachScreen.js';
 import { uploadFile } from '../services/oneDriveStorage.js';
+import { ingestRecording } from '../services/recordingIngest.js';
+import { parsePhone } from '../services/phone.js';
 
 // Field research — sources, interviews, and the claim ledger.
 //
@@ -1537,7 +1539,7 @@ function cleanEmail(v) {
 
 router.post('/projects/:id/targets', canResearch, async (req, res) => {
   const projectId = Number(req.params.id);
-  const { name, relationship, employer, role, channel, notes, email, priority, tier } = req.body || {};
+  const { name, relationship, employer, role, channel, notes, email, priority, tier, phone, locationState } = req.body || {};
   if (!Number.isInteger(projectId)) return res.status(400).json({ error: 'Bad id' });
   if (!name || !relationship) {
     return res.status(400).json({ error: 'name and relationship are required' });
@@ -1546,6 +1548,16 @@ router.post('/projects/:id/targets', canResearch, async (req, res) => {
   // it would leave the caller believing the list is reachable.
   if (email && !cleanEmail(email)) {
     return res.status(400).json({ error: `Not a valid email address: ${String(email).slice(0, 80)}` });
+  }
+  // Same rule as the address: a number that will not dial is worse than
+  // a blank, because a blank shows up as a gap in the sample and a bad
+  // number shows up as a door somebody thinks they can ring.
+  let parsedPhone;
+  if (phone) {
+    parsedPhone = parsePhone(phone);
+    if (!parsedPhone) {
+      return res.status(400).json({ error: `Not a dialable number: ${String(phone).slice(0, 40)}` });
+    }
   }
   const pri = Number(priority);
   try {
@@ -1558,6 +1570,12 @@ router.post('/projects/:id/targets', canResearch, async (req, res) => {
         role: role ? String(role).slice(0, 200) : null,
         channel: channel ? String(channel).slice(0, 300) : null,
         email: cleanEmail(email),
+        // Stored in E.164 with any extension attached, so the client
+        // never has to guess at a country code to build a tel: URL.
+        phone: parsedPhone
+          ? (parsedPhone.ext ? `${parsedPhone.e164};ext=${parsedPhone.ext}` : parsedPhone.e164)
+          : null,
+        locationState: locationState ? String(locationState).trim().slice(0, 40) : null,
         priority: Number.isInteger(pri) ? pri : null,
         tier: tier ? String(tier).slice(0, 40) : null,
         // Generous: a target's notes hold the whole correspondence —
@@ -1671,6 +1689,22 @@ router.patch('/targets/:id', canResearch, async (req, res) => {
   }
   if (req.body?.channel !== undefined) {
     data.channel = req.body.channel ? String(req.body.channel).slice(0, 300) : null;
+  }
+  if (req.body?.phone !== undefined) {
+    if (req.body.phone) {
+      const p = parsePhone(req.body.phone);
+      if (!p) {
+        return res.status(400).json({ error: `Not a dialable number: ${String(req.body.phone).slice(0, 40)}` });
+      }
+      data.phone = p.ext ? `${p.e164};ext=${p.ext}` : p.e164;
+    } else {
+      data.phone = null;
+    }
+  }
+  if (req.body?.locationState !== undefined) {
+    data.locationState = req.body.locationState
+      ? String(req.body.locationState).trim().slice(0, 40)
+      : null;
   }
   if (req.body?.email !== undefined) {
     if (req.body.email && !cleanEmail(req.body.email)) {
@@ -3145,113 +3179,28 @@ router.post(
     const id = Number(req.params.id);
     if (!Number.isInteger(id)) return res.status(400).json({ error: 'Bad id' });
     if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+    if (!transcriptionConfigured()) {
+      return res.status(503).json({
+        error: 'Transcription is not configured — set ELEVENLABS_API_KEY.',
+      });
+    }
     try {
-      const interview = await prisma.interview.findUnique({ where: { id } });
-      if (!interview) return res.status(404).json({ error: 'Not found' });
-      if (!interview.consentObtained) {
-        return res.status(409).json({
-          error:
-            'Consent is not recorded for this interview. Record consent before uploading audio.',
-        });
-      }
-      if (!transcriptionConfigured()) {
-        return res.status(503).json({
-          error: 'Transcription is not configured — set ELEVENLABS_API_KEY.',
-        });
-      }
-
-      // Store the audio alongside every other member upload so the
-      // recording outlives anyone's laptop.
-      let recordingRef = interview.recordingRef;
-      try {
-        const stored = await uploadFile({
-          buffer: req.file.buffer,
-          filename: req.file.originalname || `interview-${id}.m4a`,
-          contentType: req.file.mimetype || 'audio/mpeg',
-        });
-        if (stored?.id) recordingRef = `onedrive:${stored.id}`;
-      } catch (err) {
-        // Storage failing should not cost us the transcription — the
-        // transcript is the evidence, the audio is the backup.
-        console.error(`research: recording upload failed for ${id}:`, err.message);
-      }
-
-      const result = await transcribe(req.file.buffer, {
+      const out = await ingestRecording({
+        interviewId: id,
+        buffer: req.file.buffer,
         filename: req.file.originalname,
+        mimetype: req.file.mimetype,
         numSpeakers: Number(req.body?.numSpeakers) || 2,
+        userId: req.user?.id ?? null,
+        // A scheduled interview keeps its tape. The store-call route is
+        // the one that does not, and it says so there rather than here.
+        retainAudio: true,
       });
-
-      // Screen every transcript the moment it exists, before anyone
-      // reads it or extracts from it. Doing this at ingest rather than
-      // on request means an interview cannot sit unscreened in the
-      // archive, and the result is stored on the row as the audit trail.
-      const source = await prisma.researchSource.findUnique({
-        where: { id: interview.sourceId },
-        select: { relationship: true },
-      });
-      const screen = await screenTranscript(result.transcript, {
-        relationship: source?.relationship,
-      });
-
-      const updated = await prisma.interview.update({
-        where: { id },
-        data: {
-          recordingRef,
-          transcript: result.transcript,
-          transcriptWords: result.words,
-          transcriptModel: result.model,
-          durationMs: result.durationMs,
-          status: screen.risk === RISK.PROHIBITED ? 'Quarantined' : 'Transcribed',
-          mnpiRisk: screen.risk,
-          screenedAt: new Date(),
-          screenedById: req.user?.id ?? null,
-          // Prohibited quarantines immediately: material non-public
-          // information must not reach the ledger while someone gets
-          // round to reviewing it. A person can release it afterwards —
-          // the safe default is the reversible one.
-          quarantined: screen.risk === RISK.PROHIBITED,
-          quarantineNote:
-            screen.risk === RISK.PROHIBITED
-              ? `Auto-quarantined by MNPI screen: ${screen.reason}`
-              : null,
-          screenResult: {
-            risk: screen.risk,
-            reason: screen.reason,
-            hits: screen.hits,
-            modelAvailable: screen.modelAvailable,
-          },
-        },
-        select: { id: true, status: true, durationMs: true, transcriptModel: true, mnpiRisk: true, quarantined: true },
-      });
-
-      res.json({
-        ...updated,
-        wordCount: result.words.length,
-        speakerCount: result.speakerCount,
-        screen: {
-          risk: screen.risk,
-          reason: screen.reason,
-          hits: screen.hits,
-          // A "low" that only the crude pass produced is not the same
-          // as a clean bill of health, and the UI should not present it
-          // as one.
-          modelAvailable: screen.modelAvailable,
-        },
-        // One separated voice on a two-party call means diarization
-        // failed, and every attribution from it would be a guess. The
-        // caller is told rather than left to discover it in a footnote.
-        diarizationWarning:
-          result.speakerCount < 2
-            ? 'Only one speaker was separated — attributions from this transcript are unreliable.'
-            : null,
-      });
+      res.json(out);
     } catch (err) {
-      if (err.code === 'NOT_CONFIGURED') {
-        return res.status(503).json({ error: err.message });
-      }
-      if (err.code === 'EMPTY_TRANSCRIPT') {
-        return res.status(422).json({ error: err.message });
-      }
+      if (err.status) return res.status(err.status).json({ error: err.message });
+      if (err.code === 'NOT_CONFIGURED') return res.status(503).json({ error: err.message });
+      if (err.code === 'EMPTY_TRANSCRIPT') return res.status(422).json({ error: err.message });
       console.error('research/recording failed:', err.message);
       res.status(502).json({ error: err.message });
     }

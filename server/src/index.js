@@ -58,6 +58,7 @@ import shortInterestRoutes from './routes/shortInterest.js';
 import haltsRoutes from './routes/halts.js';
 import notesRoutes from './routes/notes.js';
 import researchRoutes from './routes/research.js';
+import callRoutes from './routes/calls.js';
 import outreachLabelingRoutes from './routes/outreachLabeling.js';
 import { attachHoot } from './realtime/hoot.js';
 import { ensureRecurringMeetings } from './services/recurringMeetings.js';
@@ -187,6 +188,10 @@ app.use('/api/gmail', gmailRoutes);
 app.use('/api/subscriptions', subscriptionRoutes);
 app.use('/api/notes', notesRoutes);
 app.use('/api/research', researchRoutes);
+// Store channel checks by phone. Mounted on the same prefix because it
+// is the same subsystem — separate file only because research.js is
+// already four thousand lines and the dial log is a coherent piece.
+app.use('/api/research', callRoutes);
 app.use('/api/outreach-labeling', outreachLabelingRoutes);
 
 // Generic error handler. Logs the full error server-side for debugging but

@@ -128,6 +128,16 @@ actor API {
         return try await send("POST", path, query: [:], body: body)
     }
 
+    /// PATCH, for routes that correct part of a row rather than replace
+    /// it. Goes through the same `send` as everything else so it inherits
+    /// the token rotation and generation guard — a hand-rolled
+    /// URLRequest here would be a second transport with its own idea of
+    /// when a session has ended.
+    func patch(_ path: String, json: [String: Any]) async throws -> Data {
+        let body = try JSONSerialization.data(withJSONObject: json)
+        return try await send("PATCH", path, query: [:], body: body)
+    }
+
     /// DELETE, for the two routes that remove something rather than
     /// creating it. No body, because a delete that carries one is a delete
     /// somebody will eventually treat as an update.

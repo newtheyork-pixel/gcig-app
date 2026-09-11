@@ -104,6 +104,7 @@ model User {
   researchNotes             ResearchNote[]
   researchSourcesCreated    ResearchSource[]      @relation("ResearchSourceCreator")
   interviewsConducted       Interview[]           @relation("InterviewInterviewer")
+  callsPlaced               CallAttempt[]         @relation("CallAttemptCaller")
   interviewsScreened        Interview[]           @relation("InterviewScreener")
   interviewsAttested        Interview[]           @relation("InterviewAttester")
   interviewsReviewed        Interview[]           @relation("InterviewReviewer")
@@ -981,6 +982,7 @@ model Interview {
   createdAt DateTime        @default(now())
   updatedAt DateTime        @updatedAt
   claims    ResearchClaim[]
+  callAttempt CallAttempt?
 
   @@index([ticker, conductedAt(sort: Desc)])
   @@index([sourceId])
@@ -1091,6 +1093,7 @@ model ResearchProject {
   targets    ResearchTarget[]
   visits     SiteVisit[]
   valuations ResearchValuation[]
+  callAttempts CallAttempt[]
 
   @@index([ticker, updatedAt(sort: Desc)])
   @@index([status])
@@ -1236,6 +1239,15 @@ model ResearchTarget {
   // `channel` because a mailto link cannot be built from "LinkedIn, or
   // ask Sarah" and a list you cannot click is a list nobody works.
   email         String?
+  // A number we can actually dial. Targets that are PLACES rather than
+  // people are reached by ringing them, and a queue you cannot dial from
+  // is just a spreadsheet. E.164, so one click builds a tel: URL without
+  // the client guessing at a country code.
+  phone         String?
+  // Where the phone rings. Recording rules turn on where BOTH ends of a
+  // call sit, so this is a precondition for recording rather than
+  // decoration, and it is on the target because the store does not move.
+  locationState String?
   // Call order. An outreach list is not a set, it is a queue — the
   // whole question on a given afternoon is who to ring first, and a
   // table sorted by insertion time answers a question nobody asked.
@@ -1276,6 +1288,7 @@ model ResearchTarget {
   createdBy     User?             @relation("ResearchTargetCreator", fields: [createdById], references: [id], onDelete: SetNull)
   drafts        OutreachDraft[]
   messages      OutreachMessage[]
+  callAttempts  CallAttempt[]
   createdAt     DateTime          @default(now())
   updatedAt     DateTime          @updatedAt
 
@@ -1613,6 +1626,107 @@ model SiteObservation {
 
   @@index([visitId])
   @@index([questionId])
+}
+
+// One dial. Most of them do not become interviews, which is exactly why
+// this table exists.
+//
+// A store check is a queue worked by hand: you ring forty doors, eleven
+// answer, four will talk, and the seven refusals are a finding — a banner
+// whose staff are told not to discuss pricing is telling you something.
+// If only the successful calls were kept, as Interview rows, the
+// denominator would vanish and every read off this work would quietly
+// become "of the stores that felt like talking".
+//
+// So the attempt is the unit. An Interview hangs off it when there is a
+// recording worth keeping, and the row stands alone when there is not.
+model CallAttempt {
+  id        Int             @id @default(autoincrement())
+  projectId Int
+  project   ResearchProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  // Nullable because a number worth ringing is sometimes found mid-call
+  // ("try Polaris, they hold more stock") and making someone create a
+  // target first would mean it never gets logged at all.
+  targetId  Int?
+  target    ResearchTarget? @relation(fields: [targetId], references: [id], onDelete: SetNull)
+  ticker    String?
+
+  // What we actually dialled, E.164. Stored here rather than read back
+  // off the target, because a wrong number gets corrected on the target
+  // afterwards and the log still has to say what rang that afternoon.
+  dialedNumber String
+  callerId     Int?
+  caller       User?   @relation("CallAttemptCaller", fields: [callerId], references: [id], onDelete: SetNull)
+
+  startedAt  DateTime
+  endedAt    DateTime?
+  durationMs Int?
+
+  // Answered | NoAnswer | Busy | Voicemail | Refused | WrongNumber |
+  // CallBackLater | Failed. Null while the call is still up.
+  //
+  // Refused and NoAnswer are different facts, and a UI offering one
+  // "didn't work" button collects neither. Refused is evidence about the
+  // banner; NoAnswer is evidence about the hour you chose.
+  outcome String?
+
+  // callhistory | apptimer | manual.
+  //
+  // A duration the phone recorded and a duration the app timed are not
+  // the same fact, and a column that renders them alike invites a
+  // precision nobody measured. The app timer starts when a human presses
+  // dial, so it includes ringing, misdials, and the seconds spent
+  // finding the handset.
+  metadataSource String   @default("apptimer")
+  // Null means nobody established it. Distinct from false, which is a
+  // ring-out somebody sat through.
+  answered       Boolean?
+
+  // Consent is a statement about THIS call, spoken aloud, before the
+  // recorder runs. It lives beside the dial rather than only on the
+  // Interview because the disclosure happens whether or not a recording
+  // is ever kept, and a call where somebody said no is a row that has to
+  // survive.
+  consentSpoken Boolean @default(false)
+  consentNote   String?
+  recorded      Boolean @default(false)
+
+  // one-party | all-party | unknown.
+  //
+  // Which rule the call was placed under, and therefore what happens to
+  // the tape afterwards. Under a one-party reading the recording is
+  // lawful on the caller's own consent and is KEPT, because the audio is
+  // the thing a claim can be walked back to. Under an all-party reading
+  // we asked, they agreed to a conversation being recorded for notes,
+  // and the file is destroyed once the transcript exists.
+  //
+  // The default is the strict one on purpose. `unknown` is treated as
+  // all-party everywhere in the code: a jurisdiction nobody has
+  // established is not a licence, and the failure mode of guessing wrong
+  // in the other direction is a recording of a stranger that we had no
+  // right to keep.
+  //
+  // Nothing in this repo maps states to regimes. That table has to come
+  // from a source somebody can cite, and until it does this field is set
+  // by the person placing the call.
+  consentRegime String  @default("all-party")
+  // What actually happened to the audio, said rather than inferred from
+  // a null pointer somewhere else.
+  audioRetained Boolean @default(false)
+
+  // Set once a recording from this call reaches the ledger. Unique: one
+  // call is one interview, and a second upload against the same dial is
+  // a mistake the database should refuse rather than a second opinion.
+  interviewId Int?       @unique
+  interview   Interview? @relation(fields: [interviewId], references: [id], onDelete: SetNull)
+
+  notes     String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([projectId, startedAt(sort: Desc)])
+  @@index([targetId])
+  @@index([outcome])
 }
 
 // What the work concluded a share is worth, and what it assumed to get
