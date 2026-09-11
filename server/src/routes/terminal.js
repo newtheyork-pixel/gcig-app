@@ -129,6 +129,7 @@ const KNOWN_FUNCTIONS = [
   { id: 'MACRO', label: 'Macro Sensitivity', summary: 'Portfolio β to 10Y / WTI / USD / VIX / SPY (252-day OLS), top contributors, scenario preview.' },
   { id: 'RSCH', label: 'Research', summary: 'The whole research effort on one company — the brief and questions it set out to answer, who we reached out to, interviews and transcripts, site visits, valuation models, filings and data, and the claim ledger with each claim pinned to a source and timestamp. Also answers to FLD, which is what it was called when it only held fieldwork.' },
   { id: 'FLD', label: 'Research', summary: 'Alias for RSCH.' },
+  { id: 'CHK', label: 'Channel Check', summary: 'Store channel checks by telephone: the queue of doors to ring, the recording disclosure to read aloud, the outcome of every dial including the refusals, and the transcript filed as an interview. Also answers to CALL.' },
   { id: 'ARCH', label: 'Archive', summary: 'The club\'s own archive — research reports and pitch decks we have already written, readable in full with their AI summaries. Ticker-scoped or searched across everything. Finished write-ups; RSCH is the work and the evidence they were built from.' },
   { id: 'HELP', label: 'Help', summary: 'List of available terminal functions.' },
 ];

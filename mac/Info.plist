@@ -24,6 +24,8 @@
   <key>NSAppTransportSecurity</key>
   <dict><key>NSAllowsArbitraryLoads</key><false/></dict>
   <key>NSMicrophoneUsageDescription</key>
-  <string>Griffin Terminal uses your microphone for the desk squawk box — hold to talk to your team.</string>
+  <string>Griffin Terminal uses your microphone for the desk squawk box, and to record your side of a store channel check.</string>
+  <key>NSAudioCaptureUsageDescription</key>
+  <string>Griffin Terminal records the other side of a store channel check so the call can be transcribed. It captures audio only while a call is running and only after the recording rule for that call has been set.</string>
 </dict>
 </plist>

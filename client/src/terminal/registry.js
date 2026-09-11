@@ -30,6 +30,7 @@ import Portfolio from './functions/Portfolio.jsx';
 import SupplyChain from './functions/SupplyChain.jsx';
 import Research from './functions/Research.jsx';
 import FieldWork from './functions/FieldWork.jsx';
+import ChannelCheck from './functions/ChannelCheck.jsx';
 import ComingSoon from './functions/ComingSoon.jsx';
 import Organization from './functions/Organization.jsx';
 import Alerts from './functions/Alerts.jsx';
@@ -109,6 +110,7 @@ export const FUNCTIONS = [
   // because a code someone has in their fingers should not stop working
   // to serve a rename.
   { id: 'RSCH', aliases: ['FLD'], label: 'Research', help: 'Everything on one name: the brief and questions, outreach, interviews and transcripts, site visits, valuation models, filings and data, and the claim ledger with every claim pinned to a source and timestamp.', requires: null, component: FieldWork, w: 860, h: 680 },
+  { id: 'CHK', aliases: ['CALL'], label: 'Channel Check', help: 'Ring stores from the desk: the queue of doors, the disclosure to read aloud, the outcome of every dial including the refusals, and the transcript.', requires: null, component: ChannelCheck, w: 940, h: 680 },
   // Ticker-optional: `ARCH` opens the whole archive, `AIT ARCH` scopes
   // it. Wider/taller than the default because this pane is read, not
   // scanned — prose at 580px wraps every few words. RSCH is the work and

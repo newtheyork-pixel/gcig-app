@@ -501,6 +501,72 @@ Sidebar, Landing, and `index.html`.
   nullable (a one-off call is still real) and SetNull on delete —
   deleting a project must never delete the evidence gathered under it.
   FLD is what we went and found; RSCH is what we already wrote up.
+- **CHK — store channel checks by phone** (`server/src/routes/calls.js`,
+  `services/phone.js`, `services/recordingIngest.js`,
+  `mac/.../ChannelCheckPanel.swift`, `client/.../ChannelCheck.jsx`). Ring
+  a store from the terminal: the queue of doors, the disclosure, the
+  outcome, the transcript. There is no carrier. A `tel:` URL hands the
+  call to the analyst's own handset, which on a Mac with Continuity means
+  the iPhone is the radio and the Mac is the handset.
+
+  **Every dial is a row.** `CallAttempt` exists because most calls fail.
+  Ring forty doors and eleven answer; logging only the conversations, as
+  Interview rows, deletes the denominator and turns the read into "of the
+  stores that felt like talking". A refusal is evidence about the banner,
+  a ring-out about the hour. The Interview hangs off the attempt,
+  nullable and unique.
+
+  **A door is its own source.** corroboration.js bounds independence by
+  distinct EMPLOYER, so eight calls filed under "Kay Jewelers" come back
+  `clustered` — one line of evidence however many stores were rung. Each
+  door therefore becomes its own ResearchSource whose employer is that
+  door, which is the same rule the question spine already states for
+  observations. It is not a free pass: two doors in one district are
+  independent on what is on their shelf and NOT independent on what head
+  office told them, and nothing computes that difference for you.
+
+  **The relationship decides the MNPI floor.** Staff in a company-owned
+  store are CurrentEmployee and start elevated, which is correct — the
+  reason to ring a store manager is that they sometimes know something
+  head office has not said. A third-party counter carries its own
+  relationship. Anything vague falls back to the stricter reading; a
+  screen that can be softened by leaving a field blank is not a screen.
+
+  **`consentRegime` decides what happens to the audio, and nothing else
+  does.** one-party keeps the tape, all-party destroys it once the
+  transcript exists, `unknown` reads as all-party everywhere. No
+  state-to-regime table ships here and none should be invented: it would
+  look authoritative and be nobody's work. The panel shows the store's
+  state and a person picks.
+
+  **`metadataSource` keeps two unlike measurements apart.** `apptimer`
+  starts when somebody presses DIAL and counts the ringing;
+  `callhistory` is read back from macOS's own record after the call.
+  Averaging them later would invent a precision nobody took.
+
+  Mac-side pieces, each with its own trap:
+  - `CallRecorder` records the analyst on the microphone and the far end
+    on a system-audio tap, as two channels — attribution from wiring, not
+    from a diarizer's guess. **Echo cancellation is load-bearing**: the
+    desk setup is Mac speakers and Mac microphone, so without
+    `setVoiceProcessingEnabled` the store's voice lands in BOTH channels
+    and the separation that justified the whole design is gone.
+  - `SystemAudioTap` is a GLOBAL tap excluding ourselves, not one aimed
+    at a process: we do not know whether the call is in FaceTime or a
+    browser tab, and a tap on the wrong app records silence while looking
+    like it worked. Needs macOS 14.2; every failure degrades to
+    microphone-only and says so on screen.
+  - `CallHistory` reads the phone's own record for the true connect time.
+    Behind Full Disk Access, and TCC makes a protected directory look
+    ABSENT rather than forbidden, so the two are told apart deliberately.
+    The schema is Apple's and undocumented, so the table and columns are
+    discovered at runtime rather than hardcoded. **Strip the extension
+    before matching a number**: `+16145550134;ext=231` through a naive
+    digit filter yields ten digits belonging to nobody, and the failure
+    is invisible — it reads as a store that was never rung.
+  - The web panel cannot record. A browser reaches the microphone but not
+    the other end of a phone line, and a recording holding half a
+    conversation while looking like it holds both is worse than none.
 - **Field research** (`services/transcription.js`, `claimExtraction.js`,
   `corroboration.js`, `routes/research.js`, `pages/FieldResearch.jsx`) —
   primary research: interviews with people who touch a business, and the

@@ -7,7 +7,12 @@ let package = Package(
     targets: [
         .executableTarget(
             name: "GriffinTerminal",
-            path: "Sources/GriffinTerminal"
+            path: "Sources/GriffinTerminal",
+            // The system SQLite, for reading the phone's own call
+            // record. A system library, not a package: the no-third-party
+            // rule is about what we ship, and libsqlite3 is already on
+            // every Mac this runs on.
+            linkerSettings: [.linkedLibrary("sqlite3")]
         ),
         .testTarget(
             name: "GriffinTerminalTests",
