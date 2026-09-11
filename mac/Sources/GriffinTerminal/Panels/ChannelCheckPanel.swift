@@ -465,6 +465,14 @@ struct ChannelCheckPanel: View {
                 }
             }
 
+            // Rendered again. It was defined and never called after the
+            // consent block was rewritten, which meant the one line that
+            // says whether your own voice is being captured was missing
+            // from the screen for the whole of the first real calling
+            // session. A recorder you cannot see is a recorder you cannot
+            // check.
+            recorderStatus
+
             if history == .needsFullDiskAccess {
                 // Offered rather than demanded. Without it the duration
                 // is the app's own timer, which is honest but coarser,
@@ -596,9 +604,11 @@ struct ChannelCheckPanel: View {
         if recorder.state == .recording {
             HStack(spacing: 6) {
                 Circle().fill(Term.negative).frame(width: 7, height: 7)
-                Text(recorder.farEndCaptured ? "Recording both sides" : "Recording your side")
+                Text(recorder.bothSidesLive ? "Recording both sides"
+                     : recorder.farEndCaptured ? "Recording them, NOT you"
+                     : "Recording you only")
                     .font(Term.mono(10))
-                    .foregroundStyle(Term.fg)
+                    .foregroundStyle(recorder.bothSidesLive ? Term.fg : Term.orange)
                 if regime == "one-party" {
                     Text("· tape kept").font(Term.mono(9)).foregroundStyle(Term.fgMuted)
                 } else {

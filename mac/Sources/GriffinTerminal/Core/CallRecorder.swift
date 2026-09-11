@@ -54,15 +54,19 @@ private final class TrackWriter: @unchecked Sendable {
     private let queue: DispatchQueue
     private var handle: FileHandle?
     private var first: Date?
-    private var wroteAnything = false
+    private var heardAnything = false
     /// When this channel last carried something audible. A live call
     /// pushes line noise continuously; a call that has ended pushes
     /// digital silence or nothing at all, which is the difference that
     /// lets the console notice a hangup without any permission.
     private var lastAudible: Date?
-    /// Called once, the first time real audio lands, so the UI can say
-    /// the far end is being captured without being told 23 times a second.
-    var onFirstWrite: (@Sendable () -> Void)?
+    /// Called once, the first time AUDIBLE audio lands.
+    ///
+    /// Audible, not merely written: a channel delivering buffers of
+    /// silence looks identical to a working one from the outside, and
+    /// that is precisely how a store call reached the ledger transcribed
+    /// to a single voice while the panel said nothing was wrong.
+    var onFirstAudio: (@Sendable () -> Void)?
 
     init(url: URL, label: String) throws {
         self.url = url
@@ -76,12 +80,14 @@ private final class TrackWriter: @unchecked Sendable {
         queue.async { [self] in
             guard handle != nil else { return }
             if first == nil { first = Date() }
-            if Self.isAudible(data) { lastAudible = Date() }
-            handle?.write(data)
-            if !wroteAnything {
-                wroteAnything = true
-                onFirstWrite?()
+            if Self.isAudible(data) {
+                lastAudible = Date()
+                if !heardAnything {
+                    heardAnything = true
+                    onFirstAudio?()
+                }
             }
+            handle?.write(data)
         }
     }
 
@@ -143,6 +149,14 @@ final class CallRecorder: ObservableObject {
     @Published private(set) var farEndCaptured = false
     /// Why it did not, in words somebody can act on.
     @Published private(set) var farEndNote: String?
+    /// Both channels have actually carried audio. Distinct from
+    /// `farEndCaptured`, which only says the tap is delivering: a
+    /// microphone that is being read but producing silence looked
+    /// identical to a working one, and shipped a store call transcribed
+    /// to a single voice.
+    var bothSidesLive: Bool { micHasAudio && farEndCaptured }
+    @Published private(set) var micHasAudio = false
+
     /// How long the far end has been silent, or nil if it has never
     /// carried audio. The console reads this to notice a hangup on a Mac
     /// that has not granted Full Disk Access.
@@ -259,21 +273,47 @@ final class CallRecorder: ObservableObject {
         // format, so the format is read afterwards. It is allowed to
         // fail: on a headset there is nothing to cancel, and a recording
         // with some bleed beats no recording.
-        do {
-            try input.setVoiceProcessingEnabled(true)
-            echoCancelled = true
-        } catch {
-            echoCancelled = false
+        if ProcessInfo.processInfo.environment["GRIFFIN_NO_AEC"] == nil {
+            do {
+                try input.setVoiceProcessingEnabled(true)
+                echoCancelled = true
+            } catch {
+                echoCancelled = false
+            }
         }
 
         let inFormat = input.inputFormat(forBus: 0)
+        if ProcessInfo.processInfo.environment["GRIFFIN_MIC_DIAG"] != nil {
+            FileHandle.standardError.write(Data("MICFMT \(inFormat)\n".utf8))
+        }
         guard inFormat.sampleRate > 0 else {
             throw NSError(domain: "CallRecorder", code: 1, userInfo: [
                 NSLocalizedDescriptionKey: "No microphone is available.",
             ])
         }
-        converter = AVAudioConverter(from: inFormat, to: wire)
+        // Convert from a MONO version of the input, not from the input
+        // itself.
+        //
+        // The default input on this machine reports NINE channels, and
+        // AVAudioConverter handed a 9-channel source and a 1-channel
+        // destination returns the right NUMBER of samples and fills them
+        // with silence. That is the whole bug behind a real store call
+        // transcribing to one voice: the tap fired, buffers arrived with
+        // audio in them, bytes were written, and every one of those bytes
+        // was zero. Nothing errored anywhere.
+        //
+        // So the downmix happens here, where it can be seen, and the
+        // converter only ever does the job it is reliable at: one channel
+        // at one rate to one channel at another.
+        let monoIn = AVAudioFormat(commonFormat: .pcmFormatFloat32,
+                                   sampleRate: inFormat.sampleRate,
+                                   channels: 1,
+                                   interleaved: false)
+        converter = monoIn.flatMap { AVAudioConverter(from: $0, to: self.wire) }
         let track = micTrack
+        track?.onFirstAudio = { [weak self] in
+            Task { @MainActor in self?.micHasAudio = true }
+        }
         let converter = self.converter
         let wire = self.wire
         // @Sendable is doing real work here and removing it crashes the
@@ -289,8 +329,17 @@ final class CallRecorder: ObservableObject {
         // Marking it @Sendable makes it non-isolated, which is the truth:
         // everything it touches (TrackWriter, the converter, the format)
         // is safe off the main actor by construction.
+        let diag = ProcessInfo.processInfo.environment["GRIFFIN_MIC_DIAG"] != nil
         let onMic: @Sendable (AVAudioPCMBuffer, AVAudioTime) -> Void = { buffer, _ in
-            track?.write(Self.convert(buffer, using: converter, to: wire))
+            let data = Self.convert(Self.downmix(buffer) ?? buffer, using: converter, to: wire)
+            if diag {
+                var peakIn: Float = 0
+                if let ch = buffer.floatChannelData {
+                    for i in 0..<Int(buffer.frameLength) { peakIn = max(peakIn, abs(ch[0][i])) }
+                }
+                FileHandle.standardError.write(Data("MICBUF frames=\(buffer.frameLength) peakIn=\(peakIn) outBytes=\(data.count)\n".utf8))
+            }
+            track?.write(data)
         }
         input.installTap(onBus: 0, bufferSize: 2048, format: inFormat, block: onMic)
         engine.prepare()
@@ -308,7 +357,7 @@ final class CallRecorder: ObservableObject {
         // Announced ONCE, on the first buffer that carries audio. Setting
         // a @Published property per buffer re-rendered the whole panel
         // twenty-three times a second for the length of the call.
-        track?.onFirstWrite = { [weak self] in
+        track?.onFirstAudio = { [weak self] in
             Task { @MainActor in self?.farEndCaptured = true }
         }
         // Same trap as the microphone block above: written inside a
@@ -318,7 +367,8 @@ final class CallRecorder: ObservableObject {
         // a box keeps it out of the isolation checker's way.
         let farConverter = ConverterBox()
         capture.onBuffer = { @Sendable buffer in
-            track?.write(Self.convert(buffer, using: farConverter.get(for: buffer.format, to: wire), to: wire))
+            guard let mono = Self.downmix(buffer) else { return }
+            track?.write(Self.convert(mono, using: farConverter.get(for: mono.format, to: wire), to: wire))
         }
         do {
             try capture.start()
@@ -330,6 +380,35 @@ final class CallRecorder: ObservableObject {
     }
 
     // MARK: Conversion
+
+    /// Every channel averaged into one, at the source rate.
+    ///
+    /// Done by hand because AVAudioConverter does not do it reliably:
+    /// given a many-channel source and a one-channel destination it
+    /// returns the correct number of silent samples. Averaging rather
+    /// than taking channel zero, because on a device with nine inputs
+    /// there is no guarantee the live microphone is the first one.
+    nonisolated static func downmix(_ buffer: AVAudioPCMBuffer) -> AVAudioPCMBuffer? {
+        let channels = Int(buffer.format.channelCount)
+        let frames = Int(buffer.frameLength)
+        guard frames > 0 else { return nil }
+        if channels == 1, buffer.format.commonFormat == .pcmFormatFloat32 { return buffer }
+        guard let src = buffer.floatChannelData else { return nil }
+        guard let fmt = AVAudioFormat(commonFormat: .pcmFormatFloat32,
+                                      sampleRate: buffer.format.sampleRate,
+                                      channels: 1, interleaved: false),
+              let out = AVAudioPCMBuffer(pcmFormat: fmt, frameCapacity: AVAudioFrameCount(frames)),
+              let dst = out.floatChannelData
+        else { return nil }
+        out.frameLength = AVAudioFrameCount(frames)
+        let scale = 1.0 / Float(channels)
+        for i in 0..<frames {
+            var sum: Float = 0
+            for c in 0..<channels { sum += src[c][i] }
+            dst[0][i] = sum * scale
+        }
+        return out
+    }
 
     /// One buffer, resampled to the wire format, as raw little-endian
     /// Int16. Empty on any failure, because a dropped buffer is a click

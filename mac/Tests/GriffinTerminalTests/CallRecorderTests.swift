@@ -249,12 +249,33 @@ final class CallRecorderLiveTests: XCTestCase {
 
         let url = recorder.stop()
         XCTAssertNotNil(url, "a started recorder must produce a file")
-        if let url {
-            let bytes = (try? Data(contentsOf: url).count) ?? 0
-            // A WAV header alone is 44 bytes; anything past that means
-            // real buffers crossed the thread boundary and were written.
-            XCTAssertGreaterThan(bytes, 44, "no audio reached the file")
+        if let url, let d = try? Data(contentsOf: url) {
+            XCTAssertGreaterThan(d.count, 44, "no audio reached the file")
+            // Per CHANNEL, not per file. The first version of this test
+            // asserted only that the file had bytes in it, which a
+            // recording of the store alone passes — and that is exactly
+            // what shipped: the far end captured perfectly and the
+            // microphone channel was silence, so the transcript held one
+            // voice and looked like a working channel check.
+            let ch = Self.channelEnergy(d)
+            print("CHANNELS: mic=\(ch.mic) far=\(ch.far)")
+            XCTAssertGreaterThan(ch.mic, 0, "the microphone channel is silent")
         }
         recorder.discard()
+    }
+
+    /// Peak absolute sample on each channel of a 16-bit stereo WAV.
+    static func channelEnergy(_ d: Data) -> (mic: Int, far: Int) {
+        guard d.count > 44 else { return (0, 0) }
+        let channels = Int(d[22..<24].withUnsafeBytes { $0.loadUnaligned(as: UInt16.self) })
+        var mic = 0, far = 0, i = 44
+        while i + channels * 2 <= d.count {
+            for c in 0..<channels {
+                let v = Int(d[i..<i+2].withUnsafeBytes { $0.loadUnaligned(as: Int16.self) })
+                if c == 0 { mic = max(mic, abs(v)) } else { far = max(far, abs(v)) }
+                i += 2
+            }
+        }
+        return (mic, far)
     }
 }
