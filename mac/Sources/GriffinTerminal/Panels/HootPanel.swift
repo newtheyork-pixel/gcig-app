@@ -114,6 +114,17 @@ struct HootPanel: View {
             }
             .padding(12)
 
+            if let problem = hoot.captureProblem {
+                // The button says LIVE whatever happens, because talking is
+                // set optimistically to prove the gesture fired. This is
+                // the line that says whether anything is actually going
+                // out, which is the difference between a squawk box that
+                // is broken and one that is broken invisibly.
+                Text(problem)
+                    .font(Term.mono(10)).foregroundStyle(Term.negative)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, 12).padding(.bottom, 10)
+            }
             if hoot.micDenied {
                 Text("mic blocked — allow the microphone in System Settings ▸ Privacy")
                     .font(Term.mono(10)).foregroundStyle(Term.negative)
