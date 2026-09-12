@@ -386,20 +386,20 @@ together or an analyst opens the terminal and 403s on every panel.
 
 ## Brand assets
 
-- `client/public/griffin-logo.webp` — combined mark (shield + GRIFFIN
-  FUND wordmark), the file the auth pages actually load. Sized at `h-16
-  w-auto` on a white rounded chip. The `.png` next to it is the source.
-- `client/public/grace-logo.webp` — shield only. Use where height is
-  constrained: sidebar, landing-page top nav, landing footer mark,
-  the alternate-icon favicon. The wordmark would be unreadable at
-  those sizes. `.png` is the source; apple-touch-icon still points
-  at the PNG because iOS wants that format.
+- `client/src/brand/logos.js` — inlined data URIs for the two marks.
+  Cloudflare Polish rewrites PNG/JPEG (and ignores no-transform on
+  this zone), so the header, footer, sidebar and login chip must not
+  fetch those files. The `.png` / `.webp` copies in `client/public/`
+  remain as sources and as the apple-touch-icon.
+- `client/public/grace-logo.png` — source for the shield. apple-touch-icon
+  still points here because iOS wants PNG.
+- `client/public/griffin-logo.png` — source for the combined mark.
 - `client/public/favicon.svg` — primary favicon. SVG so it stays
   crisp at every tab size.
 
-If you ever swap the design of either, replace the PNG in place,
-re-encode the `.webp`, and leave the references on the WebP — Polish
-will break a PNG on Safari.
+If you ever swap the design of either, replace the PNG, re-encode the
+`.webp`, and regenerate `logos.js`. Do not point an `<img src>` at a
+PNG or JPEG on this origin: Safari will drop it.
 
 ---
 
@@ -962,9 +962,10 @@ Hit-rate stats count `Approved` toward Voted Yes too.
   type and drops the file, Chrome sniffs the body and looks fine.
   `Cache-Control: no-transform` is the documented bypass and we send it,
   but Polish on thegriffinfund.org ignores it — a cache-MISS of
-  `grace-logo.png` still came back `image/png` with a WebP body. Logos
-  and headshots that must paint on Safari are served as `.webp`,
-  which Polish does not rewrite.
+  `grace-logo.png` still came back `image/png` with a WebP body. The
+  header, login and sidebar marks are inlined as data URIs
+  (`client/src/brand/logos.js`) so Polish never sees them. Headshots and
+  field plates are served as `.webp`, which Polish does not rewrite.
 
 - Don't add login flows that use SPA `navigate('/dashboard')` — use
   `window.location.replace`. SPA nav races AuthProvider's mount.
@@ -1111,10 +1112,12 @@ row in the same transaction.
   Chrome sniffs the body and looks fine. `Cache-Control: no-transform`
   is the documented Polish bypass and we send it; Polish on this zone
   ignores it (cache-MISS of grace-logo.png still returned a WebP
-  body under image/png). Logos, field plates and headshots are served
-  as `.webp`, which Polish does not rewrite. The griffin-logo PNG also
-  carried a 44KB C2PA `caBX` chunk from the export, which we stripped
-  while cropping the empty canvas so the login chip actually fills.
+  body under image/png). The header, login and sidebar marks are
+  inlined as data URIs so Polish never sees them. Field plates and
+  headshots are served as `.webp`, which Polish does not rewrite. The
+  griffin-logo PNG also carried a 44KB C2PA `caBX` chunk from the
+  export, which we stripped while cropping the empty canvas so the
+  login chip actually fills.
 
 - **Postgres text will not hold a NUL, and extraction produces them
   (Jul '26)**: one document with an embedded 0x00 failed the INSERT with

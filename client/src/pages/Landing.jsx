@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext.jsx';
 import api from '../api/client.js';
+import { graceLogo } from '../brand/logos.js';
 
 // Public landing for The Griffin Fund. Modeled on Select Equity Group's
 // website: text-forward, institutional, restrained palette (white page, navy
@@ -333,7 +334,7 @@ function Header() {
       <div className="mx-auto flex max-w-6xl items-center justify-between gap-3 px-4 py-4 md:px-10 md:py-7">
         <Link to="/" className="group flex items-center gap-2 md:gap-3 min-w-0">
           <img
-            src="/grace-logo.webp"
+            src={graceLogo}
             alt="Grace Church School"
             width={250}
             height={53}
@@ -1223,7 +1224,7 @@ function Footer() {
       <div className="mx-auto flex max-w-6xl flex-col gap-5 px-4 py-8 md:flex-row md:items-center md:justify-between md:gap-6 md:px-10 md:py-10">
         <div className="flex items-center gap-3">
           <img
-            src="/grace-logo.webp"
+            src={graceLogo}
             alt=""
             width={250}
             height={53}

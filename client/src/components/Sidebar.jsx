@@ -27,6 +27,7 @@ import {
 import { useAuth } from '../context/AuthContext.jsx';
 import RoleBadge from './RoleBadge.jsx';
 import api from '../api/client.js';
+import { graceLogo } from '../brand/logos.js';
 
 // Grouped sidebar nav. Sections with a header collapse the crowd of items
 // into 4 scannable clusters instead of a flat list of 12.
@@ -109,7 +110,7 @@ export default function Sidebar({ onNavigate }) {
         {!logoFailed && (
           <div className="rounded-lg bg-white px-3 py-2">
             <img
-              src="/grace-logo.webp"
+              src={graceLogo}
               alt="Grace Church School"
               width={250}
               height={53}
