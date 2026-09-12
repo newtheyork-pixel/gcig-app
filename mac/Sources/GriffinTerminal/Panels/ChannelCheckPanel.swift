@@ -613,7 +613,7 @@ struct ChannelCheckPanel: View {
                 Text(loggingOnly ? "logging a call that already happened"
                      : autoClosing ? "closing"
                      : liveSince == nil ? "dialling — the clock starts when you hear them"
-                     : "on the call — closes when you hang up")
+                     : "on the call — pick an outcome when you hang up")
                     .font(Term.mono(10)).foregroundStyle(Term.fgMuted)
                 Spacer()
                 if let url = call?.telUrl {
@@ -1077,32 +1077,27 @@ struct ChannelCheckPanel: View {
         guard call != nil, !autoClosing, working == nil else { return }
         guard #available(macOS 14.2, *) else { return }
 
-        // TWO signals, because the process one is not enough on its own.
+        // Audio STARTS the clock. It is never allowed to END the call.
         //
-        // Matching FaceTime's bundle assumed FaceTime carries the call.
-        // On this machine it does not: the panel sat on "dialling" while
-        // the recorder was plainly capturing both sides, which is only
-        // possible if some other process is moving that audio. Rather
-        // than chase whichever bundle it turns out to be on each macOS
-        // release, the far end being AUDIBLE is taken as proof the call
-        // is live — it is the same evidence, one layer lower, and it is
-        // already proven to work here.
+        // Twice now a heuristic has closed a row out from under a live
+        // call, and silence was the second. The far channel goes quiet
+        // between rings and between sentences, the audible floor sits
+        // above the line noise that would prove the line is still up, and
+        // a few seconds of that reads exactly like a hangup — a call at
+        // nineteen seconds, still ringing, was marked closing.
+        //
+        // Nothing available here honestly means "ended". The phone's own
+        // record does, once it carries a duration, and close() already
+        // reads it for the true length. Until Full Disk Access makes that
+        // readable, the outcome buttons end a call and nothing else does.
+        //
+        // A timer that runs long costs one button press. A row closed
+        // early costs the call, the recording and the transcript.
+        guard liveSince == nil else { return }
         let farEndAudible = recorder.farEndCaptured
             && (recorder.farEndSilentFor ?? .greatestFiniteMagnitude) < 8
-        let processCarryingCall = CallActivity.snapshot().live
-
-        switch tracker.observe(live: farEndAudible || processCarryingCall) {
-        case .nothingYet:
-            break
-        case .started:
-            // The line is ringing. THIS is when the clock should start,
-            // not when somebody pressed a button several seconds ago.
+        if farEndAudible || CallActivity.snapshot().live {
             liveSince = Date()
-        case .continuing:
-            break
-        case .ended:
-            autoClosing = true
-            Task { await close() }
         }
     }
 
