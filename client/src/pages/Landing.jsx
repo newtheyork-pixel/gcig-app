@@ -3,6 +3,13 @@ import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext.jsx';
 import api from '../api/client.js';
 import { graceLogo } from '../brand/logos.js';
+import {
+  sanderOlinick,
+  thomasSeirer,
+  carterBayerd,
+  ericWinter,
+  eliFriedman,
+} from '../brand/headshots.js';
 
 // Public landing for The Griffin Fund. Modeled on Select Equity Group's
 // website: text-forward, institutional, restrained palette (white page, navy
@@ -560,10 +567,11 @@ function Pillar({ pillar, index }) {
 // FieldVisit — editorial "field studies" section. A page header (eyebrow,
 // gold rule, heading, supporting line) sets the frame, then a sequence of
 // FieldPlate figures each take their own turn: the arrival timeline is
-// gated on each plate's own scroll-into-view, a slow Ken Burns drift runs
-// underneath, and scroll-coupled parallax + saturation decay tie the image
-// to viewport position so the moment "fades" the further it leaves the
-// page. All motion is opt-out via prefers-reduced-motion.
+// gated on each plate's own scroll-into-view. The photograph itself is a
+// plain <img> — Safari will not paint a large photo that also carries a
+// CSS filter, clip-path, or Ken Burns transform, and it surfaces as the
+// broken-image glyph. Parallax lives on the wrapper, like the skyline.
+// All remaining motion is opt-out via prefers-reduced-motion.
 function FieldVisit() {
   return (
     <section className="relative overflow-hidden border-b border-navy-50 bg-white">
@@ -582,48 +590,9 @@ function FieldVisit() {
           the section. Scoped via the .fv-seen toggle each plate applies
           to its own wrapper so reveals stay independent. */}
       <style>{`
-        @keyframes fv-kenburns {
-          0%   { transform: scale(1.04) translate(0%, 0%); }
-          50%  { transform: scale(1.12) translate(-1.8%, 1.2%); }
-          100% { transform: scale(1.05) translate(1.4%, -0.9%); }
-        }
-        @keyframes fv-grain {
-          0%   { transform: translate(0,0); }
-          10%  { transform: translate(-1%, 1%); }
-          25%  { transform: translate(1%, -1%); }
-          40%  { transform: translate(-1%, -1%); }
-          55%  { transform: translate(1%, 1%); }
-          70%  { transform: translate(-2%, 0.5%); }
-          85%  { transform: translate(2%, -0.5%); }
-          100% { transform: translate(0,0); }
-        }
-        @keyframes fv-vignette-pulse {
-          0%, 100% { opacity: 0.45; }
-          50%      { opacity: 0.55; }
-        }
         @keyframes fv-eyebrow-blink {
           0%, 90%, 100% { opacity: 1; }
           92%, 98%      { opacity: 0.35; }
-        }
-        .fv-kenburns {
-          animation: fv-kenburns 28s ease-in-out infinite alternate;
-          will-change: transform;
-        }
-        .fv-grain {
-          position: absolute; inset: -2%;
-          mix-blend-mode: overlay;
-          opacity: 0.18;
-          pointer-events: none;
-          background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0.55 0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
-          background-size: 160px 160px;
-          animation: fv-grain 9s steps(1) infinite;
-        }
-        .fv-vignette {
-          position: absolute; inset: 0;
-          background: radial-gradient(ellipse 95% 80% at 50% 50%, transparent 55%, rgba(13,22,38,0.32) 100%);
-          mix-blend-mode: multiply;
-          pointer-events: none;
-          animation: fv-vignette-pulse 12s ease-in-out infinite;
         }
         .fv-corner {
           position: absolute;
@@ -656,10 +625,6 @@ function FieldVisit() {
           writing-mode: vertical-rl;
           transform: rotate(180deg);
           font-feature-settings: 'liga' 0;
-        }
-        @media (max-width: 767px) {
-          .fv-kenburns { animation-duration: 36s; }
-          .fv-grain { opacity: 0.12; }
         }
       `}</style>
 
@@ -755,13 +720,6 @@ function FieldPlate({
   // under reduced-motion.
   const parallaxY = reduced ? 0 : (sp - 0.5) * 36;
 
-  // Soft saturation/luminance decay as the plate leaves the viewport —
-  // the photograph reads as a captured moment that recedes, not just
-  // scrolls off-screen.
-  const decay = reduced ? 1 : Math.max(0, 1 - Math.abs(sp - 0.5) * 1.55);
-  const sat = 0.55 + decay * 0.45;
-  const bright = 0.92 + decay * 0.08;
-
   // Cursor parallax — pointer movement nudges the image inside its
   // frame. Disabled on touch / reduced-motion.
   const figureRef = useRef(null);
@@ -817,19 +775,6 @@ function FieldPlate({
   };
 
   const E = EASE_OUT;
-  // Animation gates derived from `seen`. The reduced-motion path lives
-  // inside the hooks above — by the time we render, `seen` is either
-  // true (animations finished) or driving the transition.
-  const apertureClip = seen
-    ? 'inset(0% 0% 0% 0%)'
-    : 'inset(50% 0% 50% 0%)';
-  // No blur: Safari will refuse to paint a 2200px JPEG that also has
-  // a CSS transform animation (Ken Burns) and a blur filter on the
-  // same <img>, and it surfaces as the broken-image glyph. Grayscale
-  // is enough for the arrival.
-  const imgFilter = seen
-    ? `grayscale(0%) saturate(${sat}) brightness(${bright})`
-    : 'grayscale(100%) saturate(0.4) brightness(0.85)';
   const figureLift = seen ? 'translateY(0)' : 'translateY(28px)';
   const figureShadow = seen
     ? '0 1px 2px rgba(27,42,74,0.05), 0 6px 14px rgba(27,42,74,0.08), 0 28px 60px -20px rgba(27,42,74,0.30), 0 60px 120px -36px rgba(27,42,74,0.30)'
@@ -903,9 +848,10 @@ function FieldPlate({
           <span className="fv-corner br" aria-hidden="true" />
         </div>
 
-        {/* Image stage. The wrapper clips a Ken-Burns-animated inner
-            element, with a vertical aperture that opens from center and
-            a desaturate → color crossfade in parallel. */}
+        {/* Photograph. Same rule as the hero skyline: a plain <img>
+            with no CSS filter, clip-path, or Ken Burns transform on it.
+            Safari will not paint a large photo under that stack, and
+            it surfaces as the broken-image glyph on a grey field. */}
         <div
           ref={imgWrapRef}
           className="relative aspect-[4/3] w-full overflow-hidden bg-navy-50"
@@ -916,50 +862,27 @@ function FieldPlate({
             willChange: 'transform',
           }}
         >
-          <div
-            className="absolute inset-0"
-            style={{
-              clipPath: apertureClip,
-              WebkitClipPath: apertureClip,
-              transition: `clip-path 1800ms cubic-bezier(0.77,0,0.175,1) 500ms, -webkit-clip-path 1800ms cubic-bezier(0.77,0,0.175,1) 500ms`,
-            }}
-          >
-            <div
-              className="absolute inset-0"
-              style={{
-                filter: imgFilter,
-                transition: `filter 2200ms ${E} 500ms`,
-              }}
-            >
-              <picture>
-                <source media="(max-width: 767px)" srcSet={mobileSrc} />
-                <img
-                  src={src}
-                  alt={alt}
-                  className="fv-kenburns absolute inset-0 h-full w-full object-cover"
-                  loading="lazy"
-                  decoding="async"
-                />
-              </picture>
-            </div>
-
-            {/* Atmosphere stack — vignette tightens the eye toward
-                center; grain adds a film-still quality. */}
-            <div className="fv-vignette" aria-hidden="true" />
-            <div className="fv-grain" aria-hidden="true" />
-
-            {/* Lower scrim — a soft navy-to-transparent gradient that
-                sits behind the caption so type lifts off the image
-                instead of fighting it. */}
-            <div
-              aria-hidden="true"
-              className="pointer-events-none absolute bottom-0 left-0 right-0 h-2/5"
-              style={{
-                background:
-                  'linear-gradient(to top, rgba(13,22,38,0.62) 0%, rgba(13,22,38,0.20) 55%, transparent 100%)',
-              }}
+          <picture>
+            <source media="(max-width: 767px)" srcSet={mobileSrc} />
+            <img
+              src={src}
+              alt={alt}
+              className="absolute inset-0 h-full w-full object-cover"
+              decoding="async"
             />
-          </div>
+          </picture>
+
+          {/* Lower scrim — a soft navy-to-transparent gradient that
+              sits behind the caption so type lifts off the image
+              instead of fighting it. */}
+          <div
+            aria-hidden="true"
+            className="pointer-events-none absolute bottom-0 left-0 right-0 h-2/5"
+            style={{
+              background:
+                'linear-gradient(to top, rgba(13,22,38,0.62) 0%, rgba(13,22,38,0.20) 55%, transparent 100%)',
+            }}
+          />
 
           {/* Index label — top-right, tiny tracked caps. */}
           <div
@@ -1028,28 +951,28 @@ function Leadership() {
     {
       title: 'Presidents',
       members: [
-        { name: 'Sander Olinick', role: 'President', photo: '/leadership/sander-olinick.webp', size: 'xl' },
-        { name: 'Thomas Seirer', role: 'President', photo: '/leadership/thomas-seirer.webp', size: 'xl' },
+        { name: 'Sander Olinick', role: 'President', photo: sanderOlinick, size: 'xl' },
+        { name: 'Thomas Seirer', role: 'President', photo: thomasSeirer, size: 'xl' },
       ],
     },
     {
       title: 'Director of Research',
       members: [
-        { name: 'Carter Bayerd', role: 'Director of Research', photo: '/leadership/carter-bayerd.webp', size: 'lg' },
+        { name: 'Carter Bayerd', role: 'Director of Research', photo: carterBayerd, size: 'lg' },
       ],
     },
     {
       title: 'Chief Investment Officers',
       members: [
         { name: 'Cole H. Fader', role: 'Chief Investment Officer', size: 'md' },
-        { name: 'Eric Winter', role: 'Chief Investment Officer', photo: '/leadership/eric-winter.webp', size: 'md' },
+        { name: 'Eric Winter', role: 'Chief Investment Officer', photo: ericWinter, size: 'md' },
       ],
     },
     {
       title: 'Portfolio Managers',
       members: [
         { name: 'Harry de Mendonca', role: 'Portfolio Manager · ETF', size: 'sm' },
-        { name: 'Eli Friedman', role: 'Portfolio Manager · Consumers', photo: '/leadership/eli-friedman.webp', size: 'sm' },
+        { name: 'Eli Friedman', role: 'Portfolio Manager · Consumers', photo: eliFriedman, size: 'sm' },
         { name: 'Elliot Meyers-Kane', role: 'Portfolio Manager · Energy', size: 'sm' },
       ],
     },
@@ -1302,12 +1225,8 @@ function MemberAvatar({ member, gender }) {
         <img
           src={member.photo}
           alt={member.name}
-          loading="lazy"
           decoding="async"
           className="absolute inset-0 z-10 h-full w-full object-cover object-top"
-          onError={(e) => {
-            e.currentTarget.style.display = 'none';
-          }}
         />
       )}
       {/* Monogram sits behind the image; if the image fails or is absent,
