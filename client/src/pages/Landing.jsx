@@ -385,29 +385,34 @@ function Hero() {
 
   return (
     <section ref={sectionRef} className="relative border-b border-navy-50 overflow-hidden">
-      {/* Parallax background. Never `background-attachment: fixed`:
-          Safari blanks that layer as soon as a transform (the
-          mouse-spring) is applied, which is how the skyline used to
-          vanish on the landing hero. */}
+      {/* Skyline is an <img>, not a CSS background. Safari blanks a
+          background-image the moment a transform (the mouse-spring)
+          is applied to the same element, which is how this layer went
+          missing. Polish also rewrites the JPEG; .webp it leaves
+          alone. */}
       <style>{`
-        .hero-bg {
-          background-image: url('/hero-skyline.jpg');
-          background-size: cover;
-          background-position: center;
-          /* Never attachment:fixed. Safari blanks that layer the
-             moment a transform (the mouse-spring) is applied. */
-          background-attachment: scroll;
-          transform: scale(1.04);
-          will-change: transform;
-        }
         @keyframes heroEyebrowFade {
           from { opacity: 0; transform: translateY(8px); }
           to   { opacity: 1; transform: translateY(0); }
         }
         .hero-eyebrow { animation: heroEyebrowFade 800ms ${EASE_OUT} both; animation-delay: 1400ms; }
       `}</style>
-      <div ref={bgRef} className="hero-bg absolute inset-0" aria-hidden="true" />
-      <div className="absolute inset-0 bg-white/[0.88]" aria-hidden="true" />
+      <div
+        ref={bgRef}
+        className="pointer-events-none absolute inset-0"
+        style={{ transform: 'scale(1.04)', willChange: 'transform' }}
+        aria-hidden="true"
+      >
+        <img
+          src="/hero-skyline.webp"
+          alt=""
+          width={1920}
+          height={1280}
+          decoding="async"
+          className="absolute inset-0 h-full w-full object-cover"
+        />
+      </div>
+      <div className="absolute inset-0 bg-white/[0.75]" aria-hidden="true" />
 
       <div className="relative">
         <div className="mx-auto max-w-5xl px-4 py-16 md:px-10 md:py-36">
