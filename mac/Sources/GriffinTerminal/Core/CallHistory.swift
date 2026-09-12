@@ -56,47 +56,42 @@ enum CallHistory {
             .appendingPathComponent("Library/Application Support/CallHistoryDB/CallHistory.storedata")
     }
 
-    /// Cheap enough to call before showing a button that depends on it.
+    /// Cheap enough to call repeatedly, which matters: Full Disk Access
+    /// is granted in System Settings while this app is already running,
+    /// so a probe taken once at launch reports "denied" forever and the
+    /// grant appears to do nothing.
+    ///
+    /// Deliberately just tries to open the file. The earlier version
+    /// checked the directory first to tell absence from refusal, and got
+    /// that wrong often enough to report a denial as an absence — which
+    /// hid the one message that would have told somebody what to do.
     static func probe() -> Availability {
         let url = databaseURL
-        // `isReadableFile` answers false for both "not there" and "not
-        // allowed", which are different problems with different fixes, so
-        // the directory is checked separately to tell them apart.
-        let dir = url.deletingLastPathComponent()
-        if !FileManager.default.fileExists(atPath: dir.path) {
-            // TCC makes a protected directory look absent to a process
-            // without the grant, so this is checked by trying to list it:
-            // a real absence and a refusal give different errors.
-            do {
-                _ = try FileManager.default.contentsOfDirectory(atPath: dir.path)
-            } catch let err as NSError {
-                if err.code == NSFileReadNoPermissionError || err.code == 257 {
-                    return .needsFullDiskAccess
-                }
-                return .absent
-            }
-        }
-        guard FileManager.default.fileExists(atPath: url.path) else {
-            if (try? FileManager.default.contentsOfDirectory(atPath: dir.path)) == nil {
-                return .needsFullDiskAccess
-            }
-            return .absent
-        }
-
         var db: OpaquePointer?
         defer { if db != nil { sqlite3_close(db) } }
-        let flags = SQLITE_OPEN_READONLY | SQLITE_OPEN_NOMUTEX
-        guard sqlite3_open_v2(url.path, &db, flags, nil) == SQLITE_OK, let db else {
-            return .needsFullDiskAccess
+        let status = sqlite3_open_v2(url.path, &db,
+                                     SQLITE_OPEN_READONLY | SQLITE_OPEN_NOMUTEX, nil)
+        guard status == SQLITE_OK, let db else {
+            // SQLite cannot distinguish "not allowed" from "not there", so
+            // the filesystem is asked separately. TCC makes a protected
+            // path look absent, so a listing that throws a permission
+            // error is the tell.
+            let dir = url.deletingLastPathComponent()
+            do {
+                _ = try FileManager.default.contentsOfDirectory(atPath: dir.path)
+                return .absent
+            } catch let err as NSError {
+                return err.code == NSFileReadNoPermissionError || err.code == 257
+                    ? .needsFullDiskAccess : .absent
+            }
         }
         guard let table = findTable(db) else {
             return .unexpectedSchema("no call-record table in \(tableNames(db).joined(separator: ", "))")
         }
         let cols = columns(db, table: table)
-        guard let layout = Layout(columns: cols) else {
+        guard Layout(columns: cols) != nil else {
             return .unexpectedSchema("\(table) has \(cols.joined(separator: ", "))")
         }
-        _ = layout
         return .ok
     }
 
