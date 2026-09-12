@@ -52,6 +52,11 @@ struct ChannelCheckPanel: View {
     @State private var pendingRecording: URL?
     /// Guards against the tick firing `close()` twice while it runs.
     @State private var autoClosing = false
+    /// Turns the audio signal into start and end, with enough hysteresis
+    /// that a momentary gap is not a hangup.
+    @State private var tracker = CallActivityTracker()
+    /// When the line actually went live. Nil while it is still dialling.
+    @State private var liveSince: Date?
     /// Recordings still uploading. Shown in the header rather than as a
     /// spinner over the console, because the console is needed for the
     /// next call.
@@ -180,13 +185,11 @@ struct ChannelCheckPanel: View {
         .background(Term.bgPanel)
         .task { await bootstrap() }
         .onReceive(tick) { _ in
-            if let startedAt { elapsed = Int(Date().timeIntervalSince(startedAt)) }
-            // Re-probe while it is not working. The grant happens in
-            // System Settings with this app already open, so a single
-            // probe at launch means turning the switch on appears to do
-            // nothing at all.
+            // The clock measures the CALL, from the first ring, not the
+            // time since a button was pressed.
+            if let liveSince { elapsed = Int(Date().timeIntervalSince(liveSince)) }
             if !history.isUsable, elapsed % 5 == 0 { history = CallHistory.probe() }
-            checkWhetherTheCallEnded()
+            pollCallState()
         }
         .onDisappear {
             // Closing the pane mid-call must not leave a system-audio tap
@@ -601,16 +604,16 @@ struct ChannelCheckPanel: View {
     private func liveCall(_ door: Door) -> some View {
         VStack(alignment: .leading, spacing: 16) {
             HStack(spacing: 10) {
-                Text(clock(elapsed))
+                Text(liveSince == nil ? "—:—" : clock(elapsed))
                     .font(Term.mono(22, weight: .bold))
-                    .foregroundStyle(Term.positive)
+                    .foregroundStyle(liveSince == nil ? Term.fgMuted : Term.positive)
                 // The clock cannot see your call end. Saying what it is
                 // waiting for is the difference between a timer and a
                 // stopwatch somebody thinks has broken.
                 Text(loggingOnly ? "logging a call that already happened"
                      : autoClosing ? "closing"
-                     : (history.isUsable || recorder.farEndCaptured) ? "closes when you hang up"
-                     : "running until you pick an outcome")
+                     : liveSince == nil ? "dialling — the clock starts when it rings"
+                     : "on the call — closes when you hang up")
                     .font(Term.mono(10)).foregroundStyle(Term.fgMuted)
                 Spacer()
                 if let url = call?.telUrl {
@@ -1035,6 +1038,8 @@ struct ChannelCheckPanel: View {
             objected = false
             autoClosing = false
             notes = ""
+            tracker = CallActivityTracker()
+            liveSince = nil
             if dial, let url = opened.telUrl { open(url) }
             loggingOnly = !record
             // Always, unless this is a call that already happened and we
@@ -1055,52 +1060,35 @@ struct ChannelCheckPanel: View {
     /// Without Full Disk Access there is no record to read and the
     /// buttons remain the way out. The panel says so rather than leaving
     /// a clock running with no explanation.
-    private func checkWhetherTheCallEnded() {
-        guard call != nil, startedAt != nil, !autoClosing, working == nil else { return }
-        // Do not race the dial. A record can exist for a previous attempt
-        // and the nearest-match rule needs a few seconds of daylight.
-        guard elapsed >= 12 else { return }
-
-        if endedAccordingToThePhone() || endedAccordingToTheAudio() {
+    /// Watch the actual call, rather than guessing at it.
+    ///
+    /// Core Audio says whether FaceTime is moving audio, which is true
+    /// from the first ringback to the moment somebody hangs up. Every
+    /// earlier version of this inferred the same thing from the phone's
+    /// call-history database and got it wrong: the worst of those closed
+    /// rows out from under calls that were still ringing, because a
+    /// ringing call and an unanswered one have identical records.
+    ///
+    /// What this cannot see is a call dialled on a handset across the
+    /// room, since nothing on this Mac is carrying it. That case stays on
+    /// the buttons, and the panel says so rather than leaving a clock
+    /// running with no explanation.
+    private func pollCallState() {
+        guard call != nil, !autoClosing, working == nil else { return }
+        guard #available(macOS 14.2, *) else { return }
+        switch tracker.observe(live: CallActivity.snapshot().live) {
+        case .nothingYet:
+            break
+        case .started:
+            // The line is ringing. THIS is when the clock should start,
+            // not when somebody pressed a button several seconds ago.
+            liveSince = Date()
+        case .continuing:
+            break
+        case .ended:
             autoClosing = true
             Task { await close() }
         }
-    }
-
-    /// The reliable signal, and the one that also gives a true duration.
-    /// Needs Full Disk Access, which is why the audio fallback exists.
-    private func endedAccordingToThePhone() -> Bool {
-        guard history.isUsable, let call, let startedAt else { return false }
-        guard let record = CallHistory.mostRecent(matching: call.dialedNumber, placedAt: startedAt)
-        else { return false }
-        // ONLY a finished call closes the row.
-        //
-        // This used to also close when the record said answered:false and
-        // the app timer had passed forty-five seconds, on the theory that
-        // the phone had given up ringing. It had not. A call that is STILL
-        // RINGING has exactly that record — a row with no duration and
-        // nobody having picked up — so a store that took a minute to reach
-        // the counter had its call closed out from under it while it rang.
-        //
-        // There is no signal here for "has stopped ringing", so none is
-        // invented. A duration means the call happened and finished; that
-        // is the only thing this can honestly conclude, and everything
-        // else waits for a person to press a button.
-        return record.duration > 0
-    }
-
-    /// The signal that needs no permission at all.
-    ///
-    /// A live call pushes line noise into the far channel continuously,
-    /// even while nobody is talking. A call that has ended pushes digital
-    /// silence. Twenty-five seconds of that, on a call that had audio in
-    /// the first place, is a hangup rather than a pause — and the cost of
-    /// being wrong is a row closed early, which a person can reopen, not
-    /// a recording lost.
-    private func endedAccordingToTheAudio() -> Bool {
-        guard recorder.farEndCaptured, elapsed >= 30 else { return false }
-        guard let silent = recorder.farEndSilentFor else { return false }
-        return silent >= 25
     }
 
     /// Move to the next door worth ringing.
@@ -1249,6 +1237,8 @@ struct ChannelCheckPanel: View {
         objected = false
         autoClosing = false
         loggingOnly = false
+        tracker = CallActivityTracker()
+        liveSince = nil
         await loadQueue()
         advanceToNextDoor()
     }
