@@ -32,6 +32,8 @@ final class Hoot: ObservableObject {
     @Published private(set) var muted = false
     @Published private(set) var target: Int?  // nil = Trade Desk
     @Published private(set) var micDenied = false
+    /// Why the microphone produced nothing on the last press, if it did.
+    @Published private(set) var captureProblem: String?
     private(set) var selfId: Int?
     /// This connection's own display name, from `welcome`. Used to label a
     /// roster entry that is your OWN account on another device — with
@@ -52,6 +54,9 @@ final class Hoot: ObservableObject {
     func start() {
         guard closed else { return }
         closed = false
+        audio.onProblem = { [weak self] reason in
+            Task { @MainActor in self?.captureProblem = reason }
+        }
         audio.startEngine()  // playback only; the mic waits for the button
         connect()
         activeTimer?.invalidate()
@@ -326,12 +331,29 @@ final class HootAudio: @unchecked Sendable {
     // installed, is the reliable way to actually pull the microphone on
     // macOS — installing an input tap on the shared playback engine
     // mid-run does not engage the mic (no orange indicator, no frames).
+    /// Reports why the microphone is not producing anything, or nil when
+    /// it is fine. Set from here, published by Hoot, shown by the panel.
+    var onProblem: (@Sendable (String?) -> Void)?
+
     func startCapture() {
-        guard captureEngine == nil else { return }
+        // EVERY exit below used to be silent, and all four look identical
+        // from the outside: the button turns LIVE, the dot lights on
+        // everyone else's roster, and not one audio frame is ever sent.
+        // Carter held the button and the desk saw five presence frames and
+        // zero audio, which is this function returning early and telling
+        // nobody. A push-to-talk that cannot say why it is not talking is
+        // the whole bug, more than any one of the four causes.
+        guard captureEngine == nil else {
+            onProblem?("The microphone was still busy from the last press.")
+            return
+        }
         let eng = AVAudioEngine()
         let input = eng.inputNode
         let fmt = input.outputFormat(forBus: 0)
-        guard fmt.sampleRate > 0 else { return }
+        guard fmt.sampleRate > 0 else {
+            onProblem?("No usable microphone. Check the input device in Sound settings.")
+            return
+        }
         // Convert from a MONO version of the input, never from the input
         // itself.
         //
@@ -351,6 +373,13 @@ final class HootAudio: @unchecked Sendable {
                                    sampleRate: fmt.sampleRate,
                                    channels: 1, interleaved: false)
         capConv = monoIn.flatMap { AVAudioConverter(from: $0, to: wire) }
+        guard capConv != nil else {
+            // On the old build this was built straight from the device
+            // format and came back nil for anything unusual, after which
+            // onCapture discarded every buffer for the life of the press.
+            onProblem?("This Mac's microphone format cannot be converted for the desk.")
+            return
+        }
         input.installTap(onBus: 0, bufferSize: 2048, format: fmt) { [weak self] buf, _ in
             self?.onCapture(buf, inFmt: fmt)
         }
@@ -358,8 +387,10 @@ final class HootAudio: @unchecked Sendable {
         do {
             try eng.start()
             captureEngine = eng
+            onProblem?(nil)
         } catch {
             captureEngine = nil
+            onProblem?("The microphone would not start: \(error.localizedDescription)")
         }
     }
 
