@@ -391,6 +391,10 @@ together or an analyst opens the terminal and 403s on every panel.
   this zone), so the header, footer, sidebar and login chip must not
   fetch those files. The `.png` / `.webp` copies in `client/public/`
   remain as sources and as the apple-touch-icon.
+- `client/src/brand/headshots.js` — inlined WebP data URIs for the
+  leadership portraits on the landing page. Same reason as the logos:
+  a CDN fetch plus `onError` hide, or a CSS filter on the `<img>`,
+  has already blanked these in Safari once. Cole has no photo file.
 - `client/public/grace-logo.png` — source for the shield. apple-touch-icon
   still points here because iOS wants PNG.
 - `client/public/griffin-logo.png` — source for the combined mark.
@@ -399,7 +403,11 @@ together or an analyst opens the terminal and 403s on every panel.
 
 If you ever swap the design of either, replace the PNG, re-encode the
 `.webp`, and regenerate `logos.js`. Do not point an `<img src>` at a
-PNG or JPEG on this origin: Safari will drop it.
+PNG or JPEG on this origin: Safari will drop it. Do not put a CSS
+`filter`, `clip-path`, or Ken Burns `transform` on a large landing
+`<img>` either — Safari paints the broken-image glyph, which is how
+the JPMorgan and Perman field plates vanished while the skyline
+(plain `<img>`, transform on the wrapper) kept working.
 
 ---
 
@@ -964,8 +972,13 @@ Hit-rate stats count `Approved` toward Voted Yes too.
   but Polish on thegriffinfund.org ignores it — a cache-MISS of
   `grace-logo.png` still came back `image/png` with a WebP body. The
   header, login and sidebar marks are inlined as data URIs
-  (`client/src/brand/logos.js`) so Polish never sees them. Headshots and
-  field plates are served as `.webp`, which Polish does not rewrite.
+  (`client/src/brand/logos.js`) so Polish never sees them. Leadership
+  headshots are inlined the same way (`client/src/brand/headshots.js`).
+  Field plates stay as real `.webp` files, which Polish does not rewrite
+  — but they must be a plain `<img>` (no CSS filter, clip-path, or Ken
+  Burns on the photograph itself). Safari will otherwise paint the
+  broken-image glyph on a grey field, which is how JPMorgan / Perman
+  vanished while the skyline kept working.
 
 - Don't add login flows that use SPA `navigate('/dashboard')` — use
   `window.location.replace`. SPA nav races AuthProvider's mount.
@@ -1113,9 +1126,13 @@ row in the same transaction.
   is the documented Polish bypass and we send it; Polish on this zone
   ignores it (cache-MISS of grace-logo.png still returned a WebP
   body under image/png). The header, login and sidebar marks are
-  inlined as data URIs so Polish never sees them. Field plates and
-  headshots are served as `.webp`, which Polish does not rewrite. The
-  griffin-logo PNG also carried a 44KB C2PA `caBX` chunk from the
+  inlined as data URIs so Polish never sees them. Field plates stay
+  as `.webp` files (Polish leaves those alone) but must be a plain
+  `<img>`: Safari refuses to paint a large photo that also has a CSS
+  filter, clip-path, or Ken Burns transform, and it looks like a
+  broken image. Leadership portraits are inlined in
+  `client/src/brand/headshots.js` for the same reason as the logos.
+  The griffin-logo PNG also carried a 44KB C2PA `caBX` chunk from the
   export, which we stripped while cropping the empty canvas so the
   login chip actually fills.
 
