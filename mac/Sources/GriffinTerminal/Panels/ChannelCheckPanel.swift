@@ -612,7 +612,7 @@ struct ChannelCheckPanel: View {
                 // stopwatch somebody thinks has broken.
                 Text(loggingOnly ? "logging a call that already happened"
                      : autoClosing ? "closing"
-                     : liveSince == nil ? "dialling — the clock starts when it rings"
+                     : liveSince == nil ? "dialling — the clock starts when you hear them"
                      : "on the call — closes when you hang up")
                     .font(Term.mono(10)).foregroundStyle(Term.fgMuted)
                 Spacer()
@@ -1076,7 +1076,22 @@ struct ChannelCheckPanel: View {
     private func pollCallState() {
         guard call != nil, !autoClosing, working == nil else { return }
         guard #available(macOS 14.2, *) else { return }
-        switch tracker.observe(live: CallActivity.snapshot().live) {
+
+        // TWO signals, because the process one is not enough on its own.
+        //
+        // Matching FaceTime's bundle assumed FaceTime carries the call.
+        // On this machine it does not: the panel sat on "dialling" while
+        // the recorder was plainly capturing both sides, which is only
+        // possible if some other process is moving that audio. Rather
+        // than chase whichever bundle it turns out to be on each macOS
+        // release, the far end being AUDIBLE is taken as proof the call
+        // is live — it is the same evidence, one layer lower, and it is
+        // already proven to work here.
+        let farEndAudible = recorder.farEndCaptured
+            && (recorder.farEndSilentFor ?? .greatestFiniteMagnitude) < 8
+        let processCarryingCall = CallActivity.snapshot().live
+
+        switch tracker.observe(live: farEndAudible || processCarryingCall) {
         case .nothingYet:
             break
         case .started:
