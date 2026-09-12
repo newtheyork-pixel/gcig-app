@@ -109,7 +109,7 @@ export default function Sidebar({ onNavigate }) {
         {!logoFailed && (
           <div className="rounded-lg bg-white px-3 py-2">
             <img
-              src="/grace-logo.png"
+              src="/grace-logo.webp"
               alt="Grace Church School"
               width={250}
               height={53}

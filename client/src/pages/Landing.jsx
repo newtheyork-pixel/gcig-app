@@ -333,13 +333,13 @@ function Header() {
       <div className="mx-auto flex max-w-6xl items-center justify-between gap-3 px-4 py-4 md:px-10 md:py-7">
         <Link to="/" className="group flex items-center gap-2 md:gap-3 min-w-0">
           <img
-            src="/grace-logo.png"
+            src="/grace-logo.webp"
             alt="Grace Church School"
             width={250}
             height={53}
             decoding="async"
             fetchPriority="high"
-            className="hidden h-8 w-auto shrink-0 sm:block md:h-10"
+            className="h-7 w-auto shrink-0 sm:h-8 md:h-10"
             style={{ transition: `transform 500ms ${EASE_OUT}` }}
             onError={(e) => {
               e.currentTarget.style.display = 'none';
@@ -691,8 +691,8 @@ function FieldVisit() {
             does. The first plate carries the side watermark; the second
             is left clean. */}
         <FieldPlate
-          src="/field-visit.jpg"
-          mobileSrc="/field-visit-mobile.jpg"
+          src="/field-visit.webp"
+          mobileSrc="/field-visit-mobile.webp"
           alt="Members of The Griffin Fund inside the atrium of JPMorgan's headquarters during a Spring 2025 tour and meeting."
           eyebrow="JPMorgan · Spring 2025"
           caption="We spent a morning at JPMorgan, got a tour of the building, then sat down with some of their team."
@@ -702,8 +702,8 @@ function FieldVisit() {
           showWatermark
         />
         <FieldPlate
-          src="/field-visit-2.jpg"
-          mobileSrc="/field-visit-2-mobile.jpg"
+          src="/field-visit-2.webp"
+          mobileSrc="/field-visit-2-mobile.webp"
           alt="Jacob Perman '16 speaking to members of The Griffin Fund in a Grace Church School classroom during a November 2025 alumni visit."
           eyebrow="Jacob Perman '16 · November 2025"
           caption="Jacob Perman '16 came back to walk us through what he actually does: leveraged finance at Wells Fargo."
@@ -1022,28 +1022,28 @@ function Leadership() {
     {
       title: 'Presidents',
       members: [
-        { name: 'Sander Olinick', role: 'President', photo: '/leadership/sander-olinick.jpg', size: 'xl' },
-        { name: 'Thomas Seirer', role: 'President', photo: '/leadership/thomas-seirer.jpg', size: 'xl' },
+        { name: 'Sander Olinick', role: 'President', photo: '/leadership/sander-olinick.webp', size: 'xl' },
+        { name: 'Thomas Seirer', role: 'President', photo: '/leadership/thomas-seirer.webp', size: 'xl' },
       ],
     },
     {
       title: 'Director of Research',
       members: [
-        { name: 'Carter Bayerd', role: 'Director of Research', photo: '/leadership/carter-bayerd.jpg', size: 'lg' },
+        { name: 'Carter Bayerd', role: 'Director of Research', photo: '/leadership/carter-bayerd.webp', size: 'lg' },
       ],
     },
     {
       title: 'Chief Investment Officers',
       members: [
         { name: 'Cole H. Fader', role: 'Chief Investment Officer', size: 'md' },
-        { name: 'Eric Winter', role: 'Chief Investment Officer', photo: '/leadership/eric-winter.jpg', size: 'md' },
+        { name: 'Eric Winter', role: 'Chief Investment Officer', photo: '/leadership/eric-winter.webp', size: 'md' },
       ],
     },
     {
       title: 'Portfolio Managers',
       members: [
         { name: 'Harry de Mendonca', role: 'Portfolio Manager · ETF', size: 'sm' },
-        { name: 'Eli Friedman', role: 'Portfolio Manager · Consumers', photo: '/leadership/eli-friedman.jpg', size: 'sm' },
+        { name: 'Eli Friedman', role: 'Portfolio Manager · Consumers', photo: '/leadership/eli-friedman.webp', size: 'sm' },
         { name: 'Elliot Meyers-Kane', role: 'Portfolio Manager · Energy', size: 'sm' },
       ],
     },
@@ -1223,7 +1223,7 @@ function Footer() {
       <div className="mx-auto flex max-w-6xl flex-col gap-5 px-4 py-8 md:flex-row md:items-center md:justify-between md:gap-6 md:px-10 md:py-10">
         <div className="flex items-center gap-3">
           <img
-            src="/grace-logo.png"
+            src="/grace-logo.webp"
             alt=""
             width={250}
             height={53}
