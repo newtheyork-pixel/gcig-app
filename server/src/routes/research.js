@@ -1539,7 +1539,7 @@ function cleanEmail(v) {
 
 router.post('/projects/:id/targets', canResearch, async (req, res) => {
   const projectId = Number(req.params.id);
-  const { name, relationship, employer, role, channel, notes, email, priority, tier, phone, locationState } = req.body || {};
+  const { name, relationship, employer, role, channel, notes, email, priority, tier, phone, locationState, hours, timezone } = req.body || {};
   if (!Number.isInteger(projectId)) return res.status(400).json({ error: 'Bad id' });
   if (!name || !relationship) {
     return res.status(400).json({ error: 'name and relationship are required' });
@@ -1576,6 +1576,8 @@ router.post('/projects/:id/targets', canResearch, async (req, res) => {
           ? (parsedPhone.ext ? `${parsedPhone.e164};ext=${parsedPhone.ext}` : parsedPhone.e164)
           : null,
         locationState: locationState ? String(locationState).trim().slice(0, 40) : null,
+        hours: Array.isArray(hours) ? hours : undefined,
+        timezone: timezone ? String(timezone).slice(0, 64) : null,
         priority: Number.isInteger(pri) ? pri : null,
         tier: tier ? String(tier).slice(0, 40) : null,
         // Generous: a target's notes hold the whole correspondence —
@@ -1705,6 +1707,12 @@ router.patch('/targets/:id', canResearch, async (req, res) => {
     data.locationState = req.body.locationState
       ? String(req.body.locationState).trim().slice(0, 40)
       : null;
+  }
+  if (req.body?.hours !== undefined) {
+    data.hours = Array.isArray(req.body.hours) ? req.body.hours : null;
+  }
+  if (req.body?.timezone !== undefined) {
+    data.timezone = req.body.timezone ? String(req.body.timezone).slice(0, 64) : null;
   }
   if (req.body?.email !== undefined) {
     if (req.body.email && !cleanEmail(req.body.email)) {

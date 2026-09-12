@@ -1248,6 +1248,24 @@ model ResearchTarget {
   // call sit, so this is a precondition for recording rather than
   // decoration, and it is on the target because the store does not move.
   locationState String?
+  // When the door is open, in ITS OWN local time.
+  //
+  // [{ "day": "Monday", "opens": "11:00", "closes": "19:00" }, …] as the
+  // banner's own locator publishes it. Kept as JSON because a store that
+  // shuts for an hour at lunch, or opens twice on a Sunday, is a shape a
+  // pair of columns cannot hold.
+  //
+  // This is not convenience. The sample spans three time zones, and the
+  // two worst moments to ask a salesperson for two minutes are the
+  // opening rush and the last half hour before close. A queue that
+  // cannot see the clock in the store sends people to both.
+  hours         Json?
+  // IANA zone for the store, because "11:00" means nothing without it.
+  // Derived from the state, which is exact for every state in the
+  // current sample and wrong for the ones that straddle a boundary —
+  // El Paso is Mountain while the rest of Texas is Central — so it is
+  // stored per door rather than computed at read time.
+  timezone      String?
   // Call order. An outreach list is not a set, it is a queue — the
   // whole question on a given afternoon is who to ring first, and a
   // table sorted by insertion time answers a question nobody asked.
