@@ -38,6 +38,8 @@ final class Hoot: ObservableObject {
     /// per-connection presence, your second device shows up as a separate
     /// participant, and this stops it reading as a stranger with your name.
     private(set) var selfName: String?
+    /// Seconds before the next reconnect attempt, doubling to a ceiling.
+    private var retryDelay: TimeInterval = 3
 
     private let session = URLSession(configuration: .default)
     private var task: URLSessionWebSocketTask?
@@ -91,10 +93,32 @@ final class Hoot: ObservableObject {
     private func onDrop() {
         guard !closed else { return }
         status = .off
-        DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
+        // Backoff with a ceiling. This used to retry every three seconds
+        // forever, and the cases that never succeed are common ones: a
+        // guest account, a member below Analyst, a signed-out session. A
+        // full TLS and auth round trip every three seconds for as long as
+        // the app is open is a lot of noise for a socket that is never
+        // going to open.
+        retryDelay = min(retryDelay * 2, 60)
+        DispatchQueue.main.asyncAfter(deadline: .now() + retryDelay) { [weak self] in
             guard let self, !self.closed else { return }
             self.connect()
         }
+    }
+
+    /// Tell the server what we already believe, the moment it says hello.
+    ///
+    /// A reconnect gives us a BRAND NEW connection, and the server starts
+    /// it at target: null, muted: false, talking: false. The client kept
+    /// its own idea of all three and never mentioned them again, so after
+    /// a wifi blip the panel still read "HOLD TO TALK · Sarah" while every
+    /// word went to the whole desk, a mute silently lapsed, and a button
+    /// held across the reconnect streamed audio the server discarded
+    /// because as far as it knew nobody was keyed up.
+    private func resendState() {
+        if let target { send(["t": "target", "to": target]) }
+        if muted { send(["t": "mute", "on": true]) }
+        if talking { send(["t": "ptt", "on": true]) }
     }
 
     private func send(_ obj: [String: Any]) {
@@ -141,6 +165,8 @@ final class Hoot: ObservableObject {
                 selfName = me["name"] as? String
             }
             members = Self.parseMembers(obj["members"])
+            retryDelay = 3
+            resendState()
         case "presence":
             members = Self.parseMembers(obj["members"])
         case "ptt":
@@ -232,6 +258,7 @@ final class HootAudio: @unchecked Sendable {
 
     var socket: URLSessionWebSocketTask?
     var transmitting = false
+    private var lastRebuild = Date.distantPast
 
     func startEngine() {
         guard !started else { return }
@@ -258,6 +285,15 @@ final class HootAudio: @unchecked Sendable {
     private func buildPlaybackGraph() {
         _ = engine.outputNode  // force the output chain to exist
         let out = engine.mainMixerNode.outputFormat(forBus: 0)
+        // No sample rate means no usable output — every output removed,
+        // or a virtual device vanishing, which is precisely the
+        // configuration change this code exists to survive.
+        // AVAudioEngine.connect answers that with an uncatchable
+        // CoreAudio exception, so the app does not fail to play, it quits.
+        guard out.sampleRate > 0, out.channelCount > 0 else {
+            started = false
+            return
+        }
         if player.engine == nil { engine.attach(player) }
         engine.connect(player, to: engine.mainMixerNode, format: out)
         playConv = AVAudioConverter(from: wire, to: out)
@@ -296,7 +332,25 @@ final class HootAudio: @unchecked Sendable {
         let input = eng.inputNode
         let fmt = input.outputFormat(forBus: 0)
         guard fmt.sampleRate > 0 else { return }
-        capConv = AVAudioConverter(from: fmt, to: wire)
+        // Convert from a MONO version of the input, never from the input
+        // itself.
+        //
+        // Handed a many-channel source and a one-channel destination,
+        // AVAudioConverter returns the correct NUMBER of samples and
+        // fills every one with zero. No error, no nil, no short buffer —
+        // so the mic engages, frames go out at the right rate, and
+        // everybody on the desk hears silence. The identical bug was
+        // found in the call recorder the same day, where a nine-channel
+        // default input made a real store call transcribe to one voice.
+        //
+        // One channel is the common case and this costs nothing there.
+        // It costs everything the day somebody's default input is an
+        // aggregate, a virtual device like Teams, or a multichannel
+        // interface — and the failure is silent in both senses.
+        let monoIn = AVAudioFormat(commonFormat: .pcmFormatFloat32,
+                                   sampleRate: fmt.sampleRate,
+                                   channels: 1, interleaved: false)
+        capConv = monoIn.flatMap { AVAudioConverter(from: $0, to: wire) }
         input.installTap(onBus: 0, bufferSize: 2048, format: fmt) { [weak self] buf, _ in
             self?.onCapture(buf, inFmt: fmt)
         }
@@ -316,8 +370,37 @@ final class HootAudio: @unchecked Sendable {
         captureEngine = nil
     }
 
-    private func onCapture(_ buf: AVAudioPCMBuffer, inFmt: AVAudioFormat) {
+    /// Every channel averaged into one, at the source rate.
+    ///
+    /// By hand, because AVAudioConverter does not do this reliably. See
+    /// the note where `capConv` is built. Averaging rather than taking
+    /// channel zero, because on a device with several inputs there is no
+    /// guarantee the live microphone is the first one.
+    static func downmix(_ buffer: AVAudioPCMBuffer) -> AVAudioPCMBuffer? {
+        let channels = Int(buffer.format.channelCount)
+        let frames = Int(buffer.frameLength)
+        guard frames > 0 else { return nil }
+        if channels == 1, buffer.format.commonFormat == .pcmFormatFloat32 { return buffer }
+        guard let src = buffer.floatChannelData,
+              let fmt = AVAudioFormat(commonFormat: .pcmFormatFloat32,
+                                      sampleRate: buffer.format.sampleRate,
+                                      channels: 1, interleaved: false),
+              let out = AVAudioPCMBuffer(pcmFormat: fmt, frameCapacity: AVAudioFrameCount(frames)),
+              let dst = out.floatChannelData
+        else { return nil }
+        out.frameLength = AVAudioFrameCount(frames)
+        let scale = 1.0 / Float(channels)
+        for i in 0..<frames {
+            var sum: Float = 0
+            for c in 0..<channels { sum += src[c][i] }
+            dst[0][i] = sum * scale
+        }
+        return out
+    }
+
+    private func onCapture(_ raw: AVAudioPCMBuffer, inFmt: AVAudioFormat) {
         guard transmitting, let conv = capConv, let sock = socket else { return }
+        guard let buf = Self.downmix(raw) else { return }
         let ratio = wire.sampleRate / inFmt.sampleRate
         let cap = AVAudioFrameCount(Double(buf.frameLength) * ratio) + 32
         guard let outBuf = AVAudioPCMBuffer(pcmFormat: wire, frameCapacity: cap) else { return }
@@ -336,8 +419,15 @@ final class HootAudio: @unchecked Sendable {
 
     func play(_ pcm: Data) {
         // Heal a stopped engine on the next incoming frame, in case a
-        // configuration change slipped through without a notification.
-        if !engine.isRunning { restartPlayback() }
+        // configuration change slipped through without a notification —
+        // but not faster than once a second. Frames arrive every 20 to 40
+        // milliseconds, so an engine that will not start turned this into
+        // twenty-five to fifty full graph rebuilds a second on the main
+        // thread, for as long as anybody was talking.
+        if !engine.isRunning, Date().timeIntervalSince(lastRebuild) > 1 {
+            lastRebuild = Date()
+            restartPlayback()
+        }
         guard started, let conv = playConv else { return }
         let frames = pcm.count / MemoryLayout<Int16>.size
         guard frames > 0,

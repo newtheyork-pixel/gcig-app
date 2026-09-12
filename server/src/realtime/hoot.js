@@ -185,7 +185,19 @@ export function attachHoot(server) {
     });
 
     const drop = () => {
-      if (peers.delete(connId)) sendPresence();
+      if (!peers.delete(connId)) return;
+      // Anybody pointed AT this connection is now aimed at nothing.
+      //
+      // Leaving the stale id costs the worst failure this thing has: the
+      // speaker's frames are handed to sendToConn, which finds no peer
+      // and discards every one, while their panel falls back to reading
+      // "Trade Desk" because the roster lookup misses. They hold the
+      // button, the level meter moves, and nobody anywhere hears a word,
+      // with nothing on screen suggesting why.
+      for (const p of peers.values()) {
+        if (p.target === connId) p.target = null;
+      }
+      sendPresence();
     };
     ws.on('close', drop);
     ws.on('error', drop);
