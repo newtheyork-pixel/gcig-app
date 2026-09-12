@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import AVFoundation
 
 // CHK — store channel checks, placed from the terminal.
 //
@@ -51,6 +52,14 @@ struct ChannelCheckPanel: View {
     @State private var pendingRecording: URL?
     /// Guards against the tick firing `close()` twice while it runs.
     @State private var autoClosing = false
+    /// Recordings still uploading. Shown in the header rather than as a
+    /// spinner over the console, because the console is needed for the
+    /// next call.
+    @State private var transcribing = 0
+    @State private var micAuth: AVAuthorizationStatus = .notDetermined
+    /// This row is a call that already finished somewhere else. No
+    /// timer, no recorder, just somewhere to put the outcome.
+    @State private var loggingOnly = false
     @State private var notes = ""
 
     @State private var adding = false
@@ -203,6 +212,9 @@ struct ChannelCheckPanel: View {
                     stat("ANSWERED", "\(r.byOutcome["Answered"] ?? 0)")
                     stat("REFUSED", "\(r.byOutcome["Refused"] ?? 0)", tone: Term.orange)
                     stat("TRANSCRIBED", "\(r.transcribed)")
+                    if transcribing > 0 {
+                        stat("UPLOADING", "\(transcribing)", tone: Term.cyan)
+                    }
                 }
             }
         }
@@ -219,6 +231,40 @@ struct ChannelCheckPanel: View {
     }
 
     // MARK: Queue
+
+    /// What a door's row says about itself.
+    ///
+    /// Refused is a RESULT, not a failure to get one. The protocol says
+    /// accept the first no, so a door that declined is worked and done,
+    /// and showing it as an untouched row is how somebody rings it four
+    /// times. Fox Valley was rung four times this afternoon.
+    static func badge(for door: Door) -> (text: String, tone: Color)? {
+        if door.everAnswered { return ("DONE", Term.positive) }
+        switch door.status {
+        case "Declined":    return ("WOULDN'T TALK", Term.orange)
+        case "Unreachable": return ("BAD NUMBER", Term.negative)
+        case "Contacted":   return ("REACHED", Term.positive)
+        default: break
+        }
+        // A ring-out is not a dead door and is never marked as one: it is
+        // evidence about the hour, and the store that does not pick up at
+        // four on a Thursday answers on a Tuesday morning. But it has been
+        // WORKED, and a row that looks untried is a row somebody redials
+        // instead of moving on. So it fades and says what happened, and
+        // the queue still keeps it for a second pass at a different time.
+        // Everything else that has been rung reads as TRIED, with the
+        // count, because the question the list has to answer at a glance
+        // is "have I already had a go at this one" — and the specific
+        // flavour of not-getting-through is on the row underneath.
+        switch door.lastAttempt?.outcome {
+        case "NoAnswer", "Busy", "Voicemail", "Failed", "CallBackLater":
+            return (door.attemptCount >= 3 ? "TRIED ×\(door.attemptCount) — ANOTHER HOUR"
+                                           : "TRIED ×\(door.attemptCount)", Term.fgMuted)
+        default:
+            // Rung, but the row was never closed. Still tried.
+            return door.attemptCount > 0 ? ("TRIED ×\(door.attemptCount)", Term.fgMuted) : nil
+        }
+    }
 
     private var queueColumn: some View {
         VStack(spacing: 0) {
@@ -332,8 +378,13 @@ struct ChannelCheckPanel: View {
                         .foregroundStyle(door.dialable ? Term.fg : Term.fgMuted)
                         .lineLimit(1)
                     Spacer()
-                    if door.everAnswered {
-                        Text("DONE").font(Term.mono(8)).foregroundStyle(Term.positive)
+                    // The disposition, which the server has been keeping
+                    // all along and the list never showed. A door that
+                    // refused looked exactly like one nobody had rung,
+                    // so the only way to know what was left was to
+                    // remember it.
+                    if let badge = Self.badge(for: door) {
+                        Text(badge.text).font(Term.mono(8, weight: .bold)).foregroundStyle(badge.tone)
                     } else if door.attemptCount > 0 {
                         Text("×\(door.attemptCount)").font(Term.mono(8)).foregroundStyle(Term.fgMuted)
                     }
@@ -349,8 +400,15 @@ struct ChannelCheckPanel: View {
                         Text(tier).font(Term.mono(9)).foregroundStyle(Term.cyan)
                     }
                 }
-                if let last = door.lastAttempt, let outcome = last.outcome {
-                    Text("last: \(outcome) · \(Fmt.date(last.startedAt))")
+                if let last = door.lastAttempt, last.outcome == nil {
+                    Text("tried · \(Fmt.shortDateTime(last.startedAt)) · still open")
+                        .font(Term.mono(8))
+                        .foregroundStyle(Term.fgMuted)
+                } else if let last = door.lastAttempt, let outcome = last.outcome {
+                    // The clock time, because "11 Sep" is useless for
+                    // deciding whether to ring again this afternoon and
+                    // the whole point of a ring-out is which hour it was.
+                    Text("last: \(outcome) · \(Fmt.shortDateTime(last.startedAt))")
                         .font(Term.mono(8))
                         .foregroundStyle(Term.fgMuted)
                 }
@@ -359,6 +417,7 @@ struct ChannelCheckPanel: View {
             .padding(.vertical, 7)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(selected?.id == door.id ? Term.bgPanelHover : Color.clear)
+            .opacity(Self.badge(for: door) == nil ? 1 : (door.attemptCount >= 3 ? 0.4 : 0.55))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -465,6 +524,25 @@ struct ChannelCheckPanel: View {
                 .font(Term.mono(9))
                 .foregroundStyle(Term.fgMuted)
                 .fixedSize(horizontal: false, vertical: true)
+
+            // For a call that is already over. Without this the only way
+            // to record that a door was rung is to have pressed a button
+            // before ringing it, and a call nobody logged is a hole in
+            // the denominator that looks like a door nobody tried.
+            Button {
+                Task { await openCall(door, dial: false, record: false) }
+            } label: {
+                Text("ALREADY CALLED THEM")
+                    .font(Term.mono(9, weight: .bold))
+                    .foregroundStyle(Term.cyan)
+            }
+            .buttonStyle(.plain)
+            .disabled(working != nil)
+
+            Text("Writes the row for a call that already finished, so you can mark how it went. No recording.")
+                .font(Term.mono(9))
+                .foregroundStyle(Term.fgMuted)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
@@ -477,7 +555,8 @@ struct ChannelCheckPanel: View {
                 // The clock cannot see your call end. Saying what it is
                 // waiting for is the difference between a timer and a
                 // stopwatch somebody thinks has broken.
-                Text(autoClosing ? "closing"
+                Text(loggingOnly ? "logging a call that already happened"
+                     : autoClosing ? "closing"
                      : (history.isUsable || recorder.farEndCaptured) ? "closes when you hang up"
                      : "running until you pick an outcome")
                     .font(Term.mono(10)).foregroundStyle(Term.fgMuted)
@@ -498,6 +577,27 @@ struct ChannelCheckPanel: View {
             // check.
             recorderStatus
 
+            if micAuth == .denied || micAuth == .restricted {
+                // Stated where it will be read, in the colour of a
+                // problem. Without the microphone this records the store
+                // and not you, which looks like a working channel check
+                // until somebody reads the transcript.
+                HStack(spacing: 8) {
+                    Text("Microphone is OFF for this app, so only the store will be recorded.")
+                        .font(Term.mono(10))
+                        .foregroundStyle(Term.negative)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Button("Open settings") {
+                        if let u = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone") {
+                            NSWorkspace.shared.open(u)
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .font(Term.mono(9))
+                    .foregroundStyle(Term.cyan)
+                }
+            }
+
             if history == .needsFullDiskAccess {
                 // Offered rather than demanded. Without it the duration
                 // is the app's own timer, which is honest but coarser,
@@ -515,6 +615,8 @@ struct ChannelCheckPanel: View {
             }
 
             consentBlock(door)
+
+            scriptBlock
 
             VStack(alignment: .leading, spacing: 4) {
                 Text("NOTES").font(Term.mono(9)).foregroundStyle(Term.fgMuted)
@@ -624,6 +726,71 @@ struct ChannelCheckPanel: View {
         }
     }
 
+    /// The banner's questions, on screen while the call is live.
+    ///
+    /// These are not variations on one sheet. Banter sells no bridal and
+    /// carries no engagement-ring question at all; Jared's anchors are
+    /// four and eight thousand dollars where Banter's is a hundred and
+    /// fifty. The wrong sheet in front of somebody mid-call is a wasted
+    /// door, which is why it keys off the banner rather than being one
+    /// list everybody scrolls past.
+    @ViewBuilder
+    private var scriptBlock: some View {
+        if let script {
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 8) {
+                    Text("\(script.banner.uppercased()) — \(script.questions.count) QUESTIONS")
+                        .font(Term.mono(9, weight: .bold))
+                        .foregroundStyle(Term.amber)
+                }
+                Text(script.note)
+                    .font(Term.mono(9))
+                    .foregroundStyle(Term.fgMuted)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                ForEach(Array(script.questions.enumerated()), id: \.offset) { i, q in
+                    VStack(alignment: .leading, spacing: 2) {
+                        HStack(alignment: .top, spacing: 8) {
+                            Text("\(i + 1)")
+                                .font(Term.mono(10, weight: .bold))
+                                .foregroundStyle(Term.bg)
+                                .frame(width: 16, height: 16)
+                                .background(Term.amber)
+                            Text(q.text)
+                                .font(Term.mono(11))
+                                .foregroundStyle(Term.white)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        if !q.why.isEmpty {
+                            Text(q.why)
+                                .font(Term.mono(9))
+                                .foregroundStyle(Term.fgMuted)
+                                .padding(.leading, 24)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                }
+
+                Text(script.followUps)
+                    .font(Term.mono(9))
+                    .foregroundStyle(Term.cyan)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text("DO NOT ASK: \(script.doNotAsk)")
+                    .font(Term.mono(9))
+                    .foregroundStyle(Term.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(10)
+            .background(Term.bg)
+            .overlay(Rectangle().stroke(Term.border, lineWidth: 1))
+        } else {
+            Text("No call sheet for this banner. Set the door's banner to Kay, Kay Outlet, Zales, Jared or Banter and the questions appear here.")
+                .font(Term.mono(9))
+                .foregroundStyle(Term.orange)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
     @ViewBuilder
     private var recorderStatus: some View {
         if recorder.state == .recording {
@@ -631,14 +798,27 @@ struct ChannelCheckPanel: View {
                 Circle().fill(Term.negative).frame(width: 7, height: 7)
                 Text(recorder.bothSidesLive ? "Recording both sides"
                      : recorder.farEndCaptured ? "Recording them, NOT you"
-                     : "Recording you only")
+                     : "Recording the microphone")
                     .font(Term.mono(10))
-                    .foregroundStyle(recorder.bothSidesLive ? Term.fg : Term.orange)
+                    .foregroundStyle(recorder.bothSidesLive ? Term.fg
+                                     : recorder.micHasAudio ? Term.fg : Term.orange)
                 if regime == "one-party" {
                     Text("· tape kept").font(Term.mono(9)).foregroundStyle(Term.fgMuted)
                 } else {
                     Text("· tape deleted after transcribing").font(Term.mono(9)).foregroundStyle(Term.fgMuted)
                 }
+            }
+            if recorder.micHasAudio && !recorder.farEndCaptured {
+                // Not a fault. It means the call is not running through
+                // this Mac, which is the normal case when somebody dials
+                // on their own handset. On speaker the microphone carries
+                // both voices and the transcript separates them, which is
+                // how the first two-speaker transcript we got was made.
+                Text("The call is not routed through this Mac, so only the microphone is capturing. "
+                     + "Put the handset on SPEAKER and both voices land on it.")
+                    .font(Term.mono(9))
+                    .foregroundStyle(Term.fgMuted)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             if recorder.farEndCaptured && !recorder.echoCancelled {
                 // Worth saying only in this combination. On speakers
@@ -667,11 +847,26 @@ struct ChannelCheckPanel: View {
     /// on CHRW that script was read to a trucking depot and the false
     /// sentence was then persisted as the record of what was disclosed.
     /// Nothing here names a sector: the store knows what it sells.
+    /// The banner's own sheet where there is one, and Thomas wrote them
+    /// under the heading SAY IT EXACTLY LIKE THIS, so they are verbatim
+    /// with the caller's name filled in.
+    ///
+    /// One sentence is appended: the recording disclosure. The sheets
+    /// were written for a process that took notes and did not record, and
+    /// this app records. Reading the sheet as written while a recorder
+    /// runs would remove the thing that makes the recording lawful.
+    private var script: CallScript? { CallScript.forBanner(selected?.tier) }
+
     private var disclosure: String {
-        let who = analystName.map { "\($0), " } ?? ""
-        return "Hi, this is \(who)a student analyst with the Griffin Fund at Grace Church School. "
-            + "We're doing some research and I had a couple of quick questions about your store. "
-            + "I'm recording this so I get the details right. Is that OK?"
+        let who = analystName ?? "[name]"
+        if let script {
+            return script.opener.replacingOccurrences(of: "[name]", with: who)
+                + " " + CallScript.recordingLine
+        }
+        return "Hi, my name is \(who). I'm a high school student at Grace Church School in New York "
+            + "and I'm doing a research project on the jewellery business for our school investment club. "
+            + "Do you have two minutes for a few questions about what's in the store? "
+            + CallScript.recordingLine
     }
 
     // MARK: Actions
@@ -679,6 +874,11 @@ struct ChannelCheckPanel: View {
     private func bootstrap() async {
         analystName = try? await API.shared.me().name
         history = CallHistory.probe()
+        // Raise the microphone prompt when the panel opens, not when a
+        // call starts. A permission dialog appearing over a live call is
+        // a dialog somebody dismisses to get back to the person talking,
+        // and the cost of dismissing it is a recording with one voice.
+        micAuth = await CallRecorder.requestMicrophone()
         do {
             var query: [String: String] = [:]
             if let ticker, !ticker.isEmpty { query["ticker"] = ticker.uppercased() }
@@ -767,7 +967,7 @@ struct ChannelCheckPanel: View {
     /// all identical; the only difference is that nothing is handed to
     /// FaceTime. Recording starts either way, because it starting is the
     /// entire point of the button.
-    private func openCall(_ door: Door, dial: Bool = true) async {
+    private func openCall(_ door: Door, dial: Bool = true, record: Bool = true) async {
         guard let project else { return }
         problem = nil
         working = "Opening the call…"
@@ -783,10 +983,12 @@ struct ChannelCheckPanel: View {
             autoClosing = false
             notes = ""
             if dial, let url = opened.telUrl { open(url) }
-            // Always. The disclosure is the first thing said on the
-            // call, so there is nothing to wait for, and a recorder
-            // that starts late loses the opening of every call.
-            beginRecording()
+            loggingOnly = !record
+            // Always, unless this is a call that already happened and we
+            // are only writing it down. The disclosure is the first thing
+            // said on a live call, so there is nothing to wait for, and a
+            // recorder that starts late loses the opening of every one.
+            if record { beginRecording() }
         } catch {
             problem = "Could not open the call: \(String(describing: error).prefix(140))"
         }
@@ -835,6 +1037,22 @@ struct ChannelCheckPanel: View {
         guard recorder.farEndCaptured, elapsed >= 30 else { return false }
         guard let silent = recorder.farEndSilentFor else { return false }
         return silent >= 25
+    }
+
+    /// Move to the next door worth ringing.
+    ///
+    /// An afternoon of channel checks is a queue worked top to bottom,
+    /// and making somebody find their place again after every call is how
+    /// a list of forty becomes a list of eleven.
+    private func advanceToNextDoor() {
+        guard case .loaded(let payload) = queue else { return }
+        let current = selected?.id
+        let untried = payload.targets.filter { $0.dialable && $0.attemptCount == 0 && $0.id != current }
+        // A door that already declined is finished. Advancing onto one is
+        // how a store gets rung four times in an afternoon, which is
+        // exactly what happened to Fox Valley.
+        selected = untried.first
+            ?? payload.targets.first { $0.dialable && Self.badge(for: $0) == nil && $0.id != current }
     }
 
     private func beginRecording() {
@@ -920,40 +1138,55 @@ struct ChannelCheckPanel: View {
             return
         }
 
+        // The upload runs BEHIND you, not in front of you.
+        //
+        // Transcription is a minute of somebody else's server time, and
+        // making the analyst watch it meant the queue stopped dead after
+        // every call. The row is already saved by this point, so the only
+        // thing still outstanding is audio, and nothing about the next
+        // door depends on it.
         let toUpload = file ?? pendingRecording
-        var uploaded = false
+        let dir = recorder.detachWorkingDirectory()
+        let callId = call.id
+        let keepOnFailure = (regime == "one-party")
         if let toUpload, !objected {
-            working = "Transcribing…"
-            do {
-                _ = try await API.shared.upload("/research/calls/\(call.id)/recording",
-                                                fileURL: toUpload, fields: [:])
-                uploaded = true
-            } catch {
-                problem = "The call is logged, but the recording did not go through: "
-                    + "\(String(describing: error).prefix(120))"
+            transcribing += 1
+            Task {
+                defer { transcribing -= 1 }
+                do {
+                    _ = try await API.shared.upload("/research/calls/\(callId)/recording",
+                                                    fileURL: toUpload, fields: [:])
+                    if let dir { try? FileManager.default.removeItem(at: dir) }
+                } catch {
+                    // Under all-party the audio goes either way: they
+                    // agreed to a conversation being transcribed, not to
+                    // us holding a copy. Under one-party the tape is what
+                    // a contested claim gets walked back to, so a failed
+                    // upload keeps it rather than deleting the only copy.
+                    if keepOnFailure {
+                        problem = "Call \(callId) is logged, but its recording did not go through. "
+                            + "It is kept at \(toUpload.path)."
+                    } else {
+                        if let dir { try? FileManager.default.removeItem(at: dir) }
+                        problem = "Call \(callId) is logged, but the transcript failed and the audio is gone, "
+                            + "because this one was all-party."
+                    }
+                }
+                await loadQueue()
             }
+        } else if let dir {
+            try? FileManager.default.removeItem(at: dir)
         }
-
-        // Under an all-party rule the audio goes either way: they agreed
-        // to a conversation being transcribed, not to us holding a copy,
-        // and leaving one in a temp directory would make that false on
-        // this machine. Under one-party the tape is the thing a contested
-        // claim gets walked back to, so a failed upload keeps it and says
-        // where it is rather than deleting the only copy.
-        if uploaded || regime != "one-party" {
-            recorder.discard()
-            pendingRecording = nil
-        } else if let toUpload {
-            pendingRecording = toUpload
-            problem = (problem ?? "") + " The recording is kept at \(toUpload.path)."
-        }
+        pendingRecording = nil
 
         self.call = nil
         startedAt = nil
         elapsed = 0
         objected = false
         autoClosing = false
+        loggingOnly = false
         await loadQueue()
+        advanceToNextDoor()
     }
 
     /// Audio only. The server takes what it is given, but a video file is
