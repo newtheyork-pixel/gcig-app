@@ -879,7 +879,12 @@ router.get('/projects/:id', async (req, res) => {
     res.json({
       ...project,
       targets: targets.map((t) => ({ ...t, followUp: chaseById.get(t.id) || null })),
-      followUps: chase,
+      // The summary only. `chase.rows` is one row per target and the line
+      // above has already inlined the identical object onto each target,
+      // so shipping it whole sent the same 93 KB twice in one response —
+      // byte-identical, verified across all 359 rows. Nothing reads the
+      // top-level rows: the clients all go through `target.followUp`.
+      followUps: { counts: chase.counts, dueNow: chase.dueNow, nextDueAt: chase.nextDueAt },
       // Priced valuations first, then newest.
       //
       // These two were saved twenty-one seconds apart, and pure
@@ -3065,7 +3070,20 @@ router.get('/interviews', async (req, res) => {
         ...(Number.isInteger(projectId) ? { projectId } : {}),
       },
       orderBy: { conductedAt: 'desc' },
-      include: {
+      // Explicit columns. `include` returns every scalar, and two of them
+      // have no business in a list: transcriptWords, the per-word timing
+      // array the extractor writes, and the transcript text itself. The
+      // comment below has claimed since this route was written that the
+      // transcript is not shipped here; it was, and so was the word array
+      // at roughly ten times its size — 3.1 MB of a 3.45 MB response, on
+      // every mount of the panel and every keystroke in the ticker filter,
+      // parsed and thrown away. The project route learned this already
+      // (see the interviews select above); this one never did.
+      select: {
+        id: true, ticker: true, title: true, conductedAt: true, status: true,
+        recordingRef: true, transcriptModel: true, durationMs: true,
+        consentObtained: true, mnpiRisk: true, quarantined: true,
+        projectId: true, sourceId: true, createdAt: true,
         source: { select: SOURCE_PUBLIC },
         interviewer: { select: { id: true, name: true } },
         _count: { select: { claims: true } },

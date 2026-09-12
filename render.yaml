@@ -91,8 +91,21 @@ services:
       # Cloudflare Polish rewrites PNG/JPEG to WebP while leaving the
       # original Content-Type. Combined with nosniff above, Safari then
       # refuses to paint the file (Chrome sniffs the body and looks fine).
-      # no-transform is the documented Polish bypass; without it the
-      # landing logo and leadership headshots vanish on Safari only.
+      # no-transform is the documented bypass and we send it, but Polish
+      # on this zone ignores it (verified 2026-09: a cache-MISS of
+      # grace-logo.png still came back image/png with a WebP body).
+      # Logos and headshots are therefore served as .webp, which Polish
+      # does not rewrite.
       - path: /*
         name: Cache-Control
         value: "public, max-age=0, s-maxage=300, no-transform"
+      # Everything under /assets carries a content hash in its filename,
+      # so the bytes behind a given URL can never change: a new build
+      # produces a new name. max-age=0 therefore bought nothing and cost
+      # a revalidation round trip on every asset on every reload, about
+      # 100ms each for a 304 on the JS, the CSS and every hashed image.
+      # A year, immutable, is the whole point of hashing the name. Keep
+      # no-transform: the Polish problem above applies here too.
+      - path: /assets/*
+        name: Cache-Control
+        value: "public, max-age=31536000, immutable, no-transform"

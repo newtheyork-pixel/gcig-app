@@ -30,9 +30,19 @@ export function pickLatestDef14A(filings) {
 // future proxy exceeds this the gate will catch it.
 const MAX_HTML = 8 * 1024 * 1024;
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+// One proxy is up to MAX_HTML, so an unbounded map keyed by ticker is an
+// invitation: twelve holdings is comfortably tens of megabytes and the
+// 162-name watchlist is far past the dyno. This is the same shape as the
+// companyfacts cache that took the API down, and the cure is the same,
+// a small LRU with a byte budget. Keep the per-entry cap: the comment
+// above is why it is 8 MB and not 4.
+const CACHE_MAX_ENTRIES = 4;
+const CACHE_MAX_BYTES = 12 * 1024 * 1024;
+let cacheBytes = 0;
 const cache = new Map();
 export function _resetProxyCache() {
   cache.clear();
+  cacheBytes = 0;
 }
 
 async function defaultFilingsFetch(ticker) {
@@ -75,6 +85,22 @@ export async function getProxyStatement(ticker, deps = {}) {
     payload = empty;
   }
 
-  cache.set(sym, { at: Date.now(), payload });
+  // Buffer round trip rather than a bare slice: V8 keeps the whole parent
+  // string alive behind `s.slice(0, n)`, so capping at 8 MB was retaining
+  // whatever SEC actually sent.
+  if (payload && typeof payload.html === 'string' && payload.html.length > 0) {
+    payload = { ...payload, html: Buffer.from(payload.html, 'utf8').toString('utf8') };
+  }
+  const bytes = payload?.html ? Buffer.byteLength(payload.html, 'utf8') : 0;
+  const prev = cache.get(sym);
+  if (prev) cacheBytes -= prev.bytes || 0;
+  cache.set(sym, { at: Date.now(), payload, bytes });
+  cacheBytes += bytes;
+  while (cache.size > CACHE_MAX_ENTRIES || (cacheBytes > CACHE_MAX_BYTES && cache.size > 1)) {
+    const oldest = cache.keys().next().value;
+    if (oldest === undefined) break;
+    cacheBytes -= cache.get(oldest)?.bytes || 0;
+    cache.delete(oldest);
+  }
   return payload;
 }

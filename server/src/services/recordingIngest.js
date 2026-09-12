@@ -152,11 +152,23 @@ export async function ingestRecording(
       // health, and the UI must not present it as one.
       modelAvailable: screen.modelAvailable,
     },
+    // What the tape actually caught, per voice.
+    audioQuality: result.quality || null,
     // One separated voice on a two-party call means diarization failed,
     // and every attribution from it would be a guess. The caller is told
     // rather than left to discover it in a footnote.
+    //
+    // Speaker COUNT alone is not enough, and a real call proved it: a
+    // kiosk answered, the far channel recorded noise instead of speech,
+    // and Scribe dutifully labelled that noise as a second speaker. Two
+    // voices, warning silent, and every answer the associate gave landed
+    // in the ledger as "[static]". The quality check catches the channel
+    // that produced events and no words; the count still catches the one
+    // that produced nothing at all.
     diarizationWarning:
-      result.speakerCount < 2
+      result.quality && !result.quality.ok
+        ? result.quality.problems.map((p) => p.detail).join(' ')
+        : result.speakerCount < 2
         ? 'Only one speaker was separated — attributions from this transcript are unreliable.'
         : null,
   };

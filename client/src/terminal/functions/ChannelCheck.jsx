@@ -48,6 +48,35 @@ export default function ChannelCheck({ ticker }) {
   const [call, setCall] = useState(null);
   const [startedAt, setStartedAt] = useState(null);
   const [elapsed, setElapsed] = useState(0);
+  // Belt as well as braces. Even with the anchor above, a reload, a
+  // crash or a stray navigation during a call would strand the attempt
+  // open forever, and the only way out of a call is an outcome button.
+  // The open attempt is therefore written down, and picked back up on
+  // mount with its original start time so the timer does not restart.
+  // When somebody actually picked up, as against when DIAL was pressed.
+  // The clock used to start at DIAL and count the ringing, so a logged
+  // duration was the conversation plus however long the phone rang, and
+  // two calls with identical talk time could differ by half a minute.
+  // The Mac reconciles against the phone's own record; a browser cannot,
+  // so it asks instead.
+  const [connectedAt, setConnectedAt] = useState(null);
+  const LIVE_KEY = 'gcig_chk_live_call';
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(LIVE_KEY);
+      if (!raw) return;
+      const saved = JSON.parse(raw);
+      // Anything older than two hours is a forgotten tab, not a call.
+      if (!saved?.call?.id || Date.now() - saved.startedAt > 2 * 60 * 60 * 1000) {
+        localStorage.removeItem(LIVE_KEY);
+        return;
+      }
+      setCall(saved.call);
+      setStartedAt(saved.startedAt);
+      setConnectedAt(saved.connectedAt || null);
+      setElapsed(Math.floor((Date.now() - saved.startedAt) / 1000));
+    } catch { /* a browser refusing storage is not a reason to fail the panel */ }
+  }, []);
   const [regime, setRegime] = useState('all-party');
   const [consent, setConsent] = useState(false);
   const [notes, setNotes] = useState('');
@@ -134,15 +163,34 @@ export default function ChannelCheck({ ticker }) {
     setFlash(null);
     try {
       const { data } = await api.post(`${me}/calls`, { targetId: door.id });
+      const began = Date.now();
       setCall(data);
-      setStartedAt(Date.now());
+      setStartedAt(began);
       setElapsed(0);
       setConsent(false);
+      setConnectedAt(null);
       setNotes('');
+      try { localStorage.setItem(LIVE_KEY, JSON.stringify({ call: data, startedAt: began })); } catch { /* ignore */ }
       // Hands off to whatever the machine uses for tel:. On a Mac with a
       // paired iPhone that rings the phone; elsewhere it may do nothing,
       // which is why the number is also printed to dial by hand.
-      if (data.telUrl) window.location.href = data.telUrl;
+      //
+      // Through a clicked anchor, NOT window.location.href. Assigning to
+      // location is a navigation: the browser tears this panel down to go
+      // to the tel: URL, React state goes with it, and the attempt we
+      // just opened can never be closed because `call` is gone. That is
+      // what leaves rows sitting at outcome None with a timer that looks
+      // like it is still running. An anchor with target=_blank hands the
+      // URL to the OS and leaves the page standing.
+      if (data.telUrl) {
+        const a = document.createElement('a');
+        a.href = data.telUrl;
+        a.target = '_blank';
+        a.rel = 'noopener';
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+      }
     } catch (e) {
       setFlash(e.response?.data?.error || e.message);
     } finally {
@@ -156,11 +204,12 @@ export default function ChannelCheck({ ticker }) {
     const body = {
       outcome,
       endedAt: new Date().toISOString(),
-      durationMs: elapsed * 1000,
-      // This clock started when somebody pressed DIAL, so it counts the
-      // ringing. The native app reconciles against the phone's own
-      // record; a browser cannot see it, and the log says which it got.
-      metadataSource: 'apptimer',
+      // Talk time if the caller marked the pickup, ringing included if not.
+      // Never silently one labelled as the other: metadataSource says which
+      // measurement this row carries, the same way the native app
+      // distinguishes its own clock from the phone's record.
+      durationMs: connectedAt ? Math.max(0, Date.now() - connectedAt) : elapsed * 1000,
+      metadataSource: connectedAt ? 'apptimer-talk' : 'apptimer',
       consentSpoken: consent,
       consentRegime: regime,
     };
@@ -168,9 +217,11 @@ export default function ChannelCheck({ ticker }) {
     if (notes) body.notes = notes;
     try {
       await api.patch(`/research/calls/${call.id}`, body);
+      try { localStorage.removeItem(LIVE_KEY); } catch { /* ignore */ }
       const done = call;
       setCall(null);
       setStartedAt(null);
+      setConnectedAt(null);
       setElapsed(0);
       // Kept on screen only if there is still a recording to attach.
       if (!(consent || regime === 'one-party')) setPicked(null);
@@ -328,10 +379,39 @@ export default function ChannelCheck({ ticker }) {
 
               {call && (
                 <div style={{ display: 'grid', gap: 12 }}>
-                  <div style={{ fontSize: 20, color: 'var(--term-positive, #6c6)' }}>
-                    {Math.floor(elapsed / 60)}:{String(elapsed % 60).padStart(2, '0')}
-                    <span style={{ fontSize: 10, opacity: 0.6, marginLeft: 8 }}>on call</span>
+                  <div style={{ fontSize: 20, color: 'var(--term-positive, #6c6)',
+                                fontVariantNumeric: 'tabular-nums', fontFeatureSettings: '"tnum"' }}>
+                    {(() => {
+                      const secs = connectedAt
+                        ? Math.max(0, Math.floor((startedAt + elapsed * 1000 - connectedAt) / 1000))
+                        : elapsed;
+                      return `${Math.floor(secs / 60)}:${String(secs % 60).padStart(2, '0')}`;
+                    })()}
+                    <span style={{ fontSize: 10, opacity: 0.6, marginLeft: 8 }}>
+                      {connectedAt ? 'talking' : 'ringing'}
+                    </span>
+                    {connectedAt && startedAt ? (
+                      <span style={{ fontSize: 10, opacity: 0.45, marginLeft: 8 }}>
+                        rang {Math.round((connectedAt - startedAt) / 1000)}s
+                      </span>
+                    ) : null}
                   </div>
+
+                  {!connectedAt && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const at = Date.now();
+                        setConnectedAt(at);
+                        try {
+                          localStorage.setItem(LIVE_KEY, JSON.stringify({ call, startedAt, connectedAt: at }));
+                        } catch { /* ignore */ }
+                      }}
+                      style={{ justifySelf: 'start', fontSize: 11 }}
+                    >
+                      They picked up — start the clock
+                    </button>
+                  )}
 
                   <div>
                     <div style={{ fontSize: 10, opacity: 0.6 }}>RECORDING RULE</div>

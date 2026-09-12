@@ -113,8 +113,17 @@ function docUrl(cikRaw, id) {
 // therefore enumerable without any search at all.
 
 const companyDocsCache = new Map(); // cik -> { at, docs }
-const docTextCache = new Map(); // url -> { at, text }
+const docTextCache = new Map(); // url -> { at, text, bytes }
 const DOC_CACHE_MAX = 40;
+// A count cap is not a cap. Forty entries of up to MAX_DOC_BYTES each is
+// 120MB held for a day on a 512MB dyno, and the boot warm-up walks every
+// holding without anybody opening a panel. Budget the bytes as well.
+const DOC_CACHE_MAX_BYTES = 8 * 1024 * 1024;
+let docCacheBytes = 0;
+// A fetch that failed is not a document that does not exist. Twenty-four
+// hours is the right life for a filing and the wrong one for a throttle,
+// which is the rule CLAUDE.md already states for the other SEC readers.
+const FAIL_TTL_MS = 2 * 60 * 1000;
 
 async function candidateDocs(cikStr, fetcher) {
   const hit = companyDocsCache.get(cikStr);
@@ -161,19 +170,36 @@ async function candidateDocs(cikStr, fetcher) {
 
 async function docText(url, fetcher) {
   const hit = docTextCache.get(url);
-  if (hit && Date.now() - hit.at < TTL_MS) return hit.text;
+  if (hit && Date.now() - hit.at < (hit.text === null ? FAIL_TTL_MS : TTL_MS)) return hit.text;
   let text = null;
   try {
     const res = await fetcher(url, { headers: { 'User-Agent': SEC_UA } });
-    text = (await res.text()).slice(0, MAX_DOC_BYTES);
+    const raw = await res.text();
+    // Buffer round trip, not a bare slice. V8 represents `s.slice(0, n)`
+    // as a view that keeps the WHOLE parent string alive, so capping at
+    // three megabytes retained the entire filing anyway — which is how a
+    // forty-entry cache was holding far more than forty times the cap.
+    text = raw.length > MAX_DOC_BYTES
+      ? Buffer.from(raw.slice(0, MAX_DOC_BYTES), 'utf8').toString('utf8')
+      : raw;
   } catch {
     text = null;
   }
   // Cached even as a null: fifteen officers walking the same dead URL
-  // is fifteen times one failure otherwise.
-  docTextCache.set(url, { at: Date.now(), text });
-  if (docTextCache.size > DOC_CACHE_MAX) {
-    docTextCache.delete(docTextCache.keys().next().value);
+  // is fifteen times one failure otherwise. It just does not get to live
+  // for a day.
+  const bytes = text ? Buffer.byteLength(text, 'utf8') : 0;
+  const prev = docTextCache.get(url);
+  if (prev) docCacheBytes -= prev.bytes || 0;
+  docTextCache.set(url, { at: Date.now(), text, bytes });
+  docCacheBytes += bytes;
+  // Oldest out first, by insertion order, until both budgets are met.
+  while (docTextCache.size > DOC_CACHE_MAX
+         || (docCacheBytes > DOC_CACHE_MAX_BYTES && docTextCache.size > 1)) {
+    const oldest = docTextCache.keys().next().value;
+    if (oldest === undefined) break;
+    docCacheBytes -= docTextCache.get(oldest)?.bytes || 0;
+    docTextCache.delete(oldest);
   }
   return text;
 }

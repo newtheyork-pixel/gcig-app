@@ -386,20 +386,20 @@ together or an analyst opens the terminal and 403s on every panel.
 
 ## Brand assets
 
-- `client/public/griffin-logo.png` — combined mark (shield + GRIFFIN
-  FUND wordmark). Use in spacious contexts: login, accept-invite,
-  forgot-password, reset-password card headers. Sized at `h-16
-  w-auto` on a white rounded chip.
-- `client/public/grace-logo.png` — shield only. Use where height is
+- `client/public/griffin-logo.webp` — combined mark (shield + GRIFFIN
+  FUND wordmark), the file the auth pages actually load. Sized at `h-16
+  w-auto` on a white rounded chip. The `.png` next to it is the source.
+- `client/public/grace-logo.webp` — shield only. Use where height is
   constrained: sidebar, landing-page top nav, landing footer mark,
   the alternate-icon favicon. The wordmark would be unreadable at
-  those sizes.
+  those sizes. `.png` is the source; apple-touch-icon still points
+  at the PNG because iOS wants that format.
 - `client/public/favicon.svg` — primary favicon. SVG so it stays
   crisp at every tab size.
 
-If you ever swap the design of either, replace the file in place
-rather than renaming — references are scattered across auth pages,
-Sidebar, Landing, and `index.html`.
+If you ever swap the design of either, replace the PNG in place,
+re-encode the `.webp`, and leave the references on the WebP — Polish
+will break a PNG on Safari.
 
 ---
 
@@ -956,12 +956,15 @@ Hit-rate stats count `Approved` toward Voted Yes too.
 
 ## Things NOT to do
 
-- Don't serve images through Cloudflare Polish without `Cache-Control:
-  no-transform` while `X-Content-Type-Options: nosniff` is on. Polish
-  rewrites PNG/JPEG to WebP and leaves the original Content-Type;
-  Safari trusts the type and drops the file, Chrome sniffs the body
-  and looks fine. That is why the landing logo and the leadership
-  headshots used to vanish on Safari only.
+- Don't serve PNG/JPEG through Cloudflare Polish while
+  `X-Content-Type-Options: nosniff` is on. Polish rewrites them to
+  WebP and often leaves the original Content-Type; Safari trusts the
+  type and drops the file, Chrome sniffs the body and looks fine.
+  `Cache-Control: no-transform` is the documented bypass and we send it,
+  but Polish on thegriffinfund.org ignores it — a cache-MISS of
+  `grace-logo.png` still came back `image/png` with a WebP body. Logos
+  and headshots that must paint on Safari are served as `.webp`,
+  which Polish does not rewrite.
 
 - Don't add login flows that use SPA `navigate('/dashboard')` — use
   `window.location.replace`. SPA nav races AuthProvider's mount.
@@ -1102,12 +1105,14 @@ row in the same transaction.
 ## Recent fixes / playbook notes
 
 - **Safari dropped the landing logo and the leadership photos, Chrome didn't (Sep '26)**:
-  Cloudflare Polish in front of thegriffinfund.org was rewriting PNG/JPEG
-  to WebP while still sending `Content-Type: image/png` (or jpeg). We
-  also send `X-Content-Type-Options: nosniff`, so Safari refused to paint
-  the file and the `onError` handlers hid the mark; Chrome sniffed the
-  body and looked healthy. `Cache-Control: no-transform` on the static
-  site is the documented Polish bypass. The griffin-logo PNG also
+  Cloudflare Polish in front of thegriffinfund.org rewrites PNG/JPEG
+  to WebP. Combined with `X-Content-Type-Options: nosniff`, Safari
+  refuses to paint a file whose Content-Type still says image/png;
+  Chrome sniffs the body and looks fine. `Cache-Control: no-transform`
+  is the documented Polish bypass and we send it; Polish on this zone
+  ignores it (cache-MISS of grace-logo.png still returned a WebP
+  body under image/png). Logos, field plates and headshots are served
+  as `.webp`, which Polish does not rewrite. The griffin-logo PNG also
   carried a 44KB C2PA `caBX` chunk from the export, which we stripped
   while cropping the empty canvas so the login chip actually fills.
 

@@ -55,9 +55,11 @@ function toMs(seconds) {
 /**
  * Normalize Scribe's word stream into the shape we persist.
  *
- * Keeps only real words — Scribe also emits `spacing` and `audio_event`
- * entries, which carry no citable content and would inflate every offset
- * lookup. Exported for tests.
+ * Drops `spacing`. Keeps `audio_event` (laughter, a doorbell, line
+ * noise) but marks it, because it matters for reading a transcript and
+ * must never be quoted as speech. The doc here used to claim events were
+ * dropped while the code kept them, which is how "[static]" ended up
+ * glued to the front of a speaker's sentence. Exported for tests.
  */
 export function normalizeWords(words) {
   const out = [];
@@ -84,6 +86,64 @@ export function normalizeWords(words) {
 }
 
 /**
+ * What the tape actually caught, per voice.
+ *
+ * A dual-channel call recording fails in two ways that both reach the
+ * ledger looking healthy. One channel can be digitally silent, and the
+ * call then transcribes to a single voice with one side of the
+ * conversation missing. Or a channel can carry noise rather than speech,
+ * and Scribe renders every one of that speaker's turns as an audio event
+ * — which is how a store associate's answers arrived as a column of
+ * `[static]` under the caller's questions.
+ *
+ * Neither shows up as an error, so neither was ever reported. This
+ * measures both. Exported for tests.
+ */
+export function assessTranscript(words, durationMs) {
+  const speech = new Map();
+  const events = new Map();
+  for (const w of words) {
+    const who = w.speaker || 'unlabelled';
+    const bucket = w.type && w.type !== 'word' ? events : speech;
+    bucket.set(who, (bucket.get(who) || 0) + 1);
+  }
+  const voices = new Set([...speech.keys(), ...events.keys()]);
+  const problems = [];
+  for (const who of voices) {
+    const said = speech.get(who) || 0;
+    const noise = events.get(who) || 0;
+    // A voice that is nothing but audio events is a dead channel, not a
+    // quiet participant. Three events is the floor so a single cough on
+    // an otherwise silent line does not raise it.
+    if (said === 0 && noise >= 3) {
+      problems.push({
+        code: 'CHANNEL_NOISE_ONLY',
+        speaker: who,
+        detail: `${who} produced ${noise} audio events and not one word. That channel recorded noise, not speech, so whatever was said on it is lost.`,
+      });
+    }
+  }
+  const speakingVoices = [...speech.keys()].length;
+  // Two people on a phone call for more than a minute should be two
+  // voices. One means either a dead channel or a diarization failure,
+  // and both make every attribution below it untrustworthy.
+  if (speakingVoices <= 1 && (durationMs || 0) > 60_000) {
+    problems.push({
+      code: 'SINGLE_VOICE',
+      speaker: [...speech.keys()][0] || null,
+      detail: `A ${Math.round((durationMs || 0) / 1000)}s call came back as one voice. Either a channel was silent or diarization failed; either way the two sides are not separated.`,
+    });
+  }
+  return {
+    ok: problems.length === 0,
+    speakingVoices,
+    speechWords: [...speech.values()].reduce((a, b) => a + b, 0),
+    eventTokens: [...events.values()].reduce((a, b) => a + b, 0),
+    problems,
+  };
+}
+
+/**
  * Group a word stream into speaker turns — the readable transcript.
  * A new turn starts whenever the speaker label changes.
  *
@@ -93,8 +153,23 @@ export function normalizeWords(words) {
 export function toTurns(words) {
   const turns = [];
   for (const w of words) {
+    const isEvent = !!w.type && w.type !== 'word';
     const last = turns[turns.length - 1];
-    if (last && last.speaker === w.speaker) {
+    // An audio event is not something anybody said. Scribe still gives it
+    // a speaker label, so joining on the label alone glued "[static]" and
+    // "[phone ringing]" onto the front of real sentences and, on a noisy
+    // line, scattered them through the middle of them. Events get their
+    // own turn, and a run of the same event collapses rather than
+    // printing eleven times while one person talks.
+    if (isEvent) {
+      if (last && last.event && last.text === w.text) {
+        last.endMs = w.endMs ?? last.endMs;
+        continue;
+      }
+      turns.push({ speaker: w.speaker, startMs: w.startMs, endMs: w.endMs, text: w.text, event: true });
+      continue;
+    }
+    if (last && !last.event && last.speaker === w.speaker) {
       last.text += (last.text ? ' ' : '') + w.text;
       last.endMs = w.endMs ?? last.endMs;
     } else {
@@ -114,6 +189,9 @@ export function renderTranscript(turns) {
   return turns
     .map((t) => {
       const stamp = formatStamp(t.startMs);
+      // No speaker name on an audio event: nobody said it, and printing
+      // "Speaker 0: [static]" invites a reader to treat noise as a turn.
+      if (t.event) return `[${stamp}] ${t.text}`;
       const who = t.speaker ? t.speaker.replace(/^speaker_/, 'Speaker ') : 'Unknown';
       return `[${stamp}] ${who}: ${t.text}`;
     })
@@ -285,5 +363,14 @@ export async function transcribe(buffer, opts = {}, deps = {}) {
     // interview that comes back with one speaker means diarization
     // failed, and every attribution downstream is then suspect.
     speakerCount: new Set(words.map((w) => w.speaker).filter(Boolean)).size,
+    // Never thrown, always reported. Refusing the transcript would throw
+    // away the half of the call that DID record, and half a store call is
+    // still evidence. The caller has to be told, though, because a
+    // transcript that looks complete and is not is worse than one that
+    // says so.
+    quality: assessTranscript(
+      words,
+      words[words.length - 1].endMs || words[words.length - 1].startMs
+    ),
   };
 }
