@@ -34,6 +34,8 @@ final class Hoot: ObservableObject {
     @Published private(set) var micDenied = false
     /// Why the microphone produced nothing on the last press, if it did.
     @Published private(set) var captureProblem: String?
+    /// Which press a microphone-permission answer belongs to.
+    private var pressToken = 0
     private(set) var selfId: Int?
     /// This connection's own display name, from `welcome`. Used to label a
     /// roster entry that is your OWN account on another device — with
@@ -121,9 +123,34 @@ final class Hoot: ObservableObject {
     /// held across the reconnect streamed audio the server discarded
     /// because as far as it knew nobody was keyed up.
     private func resendState() {
-        if let target { send(["t": "target", "to": target]) }
+        // NOTE what is missing: the target.
+        //
+        // Replaying it was wrong in both directions. A target is a
+        // per-CONNECTION id, and the server's counter restarts at one on
+        // every deploy, so the id held from before a reconnect can belong
+        // to a different person entirely — a private line silently
+        // reopened onto somebody else. And re-asserting it undoes the
+        // server's own cleanup, which clears targets aimed at a peer that
+        // has gone.
+        //
+        // Mute and keyed-up are safe because they are statements about
+        // this connection only, and the second is what stops a button
+        // held across a reconnect from streaming into a server that does
+        // not think anybody is talking.
         if muted { send(["t": "mute", "on": true]) }
         if talking { send(["t": "ptt", "on": true]) }
+    }
+
+    /// Take the server's word for who we are pointed at.
+    ///
+    /// The roster already carries every peer's own target and the client
+    /// was throwing it away, so when the server cleared a dangling target
+    /// — which means the shared desk — the panel went on showing a
+    /// private line while every word went to everyone. That is worse than
+    /// the bug it replaced, which at least failed silent.
+    private func adoptServerTarget() {
+        guard let selfId else { return }
+        target = members.first(where: { $0.id == selfId })?.target
     }
 
     private func send(_ obj: [String: Any]) {
@@ -172,8 +199,10 @@ final class Hoot: ObservableObject {
             members = Self.parseMembers(obj["members"])
             retryDelay = 3
             resendState()
+            adoptServerTarget()
         case "presence":
             members = Self.parseMembers(obj["members"])
+            adoptServerTarget()
         case "ptt":
             if let id = obj["id"] as? Int, let on = obj["on"] as? Bool,
                let idx = members.firstIndex(where: { $0.id == id }) {
@@ -218,22 +247,57 @@ final class Hoot: ObservableObject {
 
     func pressToTalk() {
         guard !talking, !muted else { return }
+        captureProblem = nil
+        pressToken &+= 1
+        let token = pressToken
         // Optimistic: the button turns LIVE the instant you press, which
         // proves the gesture fired even before the mic is granted. The mic
         // engages independently of the socket; only the send waits on it.
         talking = true
-        if status == .on { send(["t": "ptt", "on": true]) }
+        // The desk is told AFTER the microphone is confirmed, not before.
+        //
+        // It used to be told first, so every one of the ways capture can
+        // fail still lit the speaker's dot on every other Mac. That is the
+        // measured failure in this feature: five presence frames and zero
+        // audio. A red line on the speaker's own screen does not help the
+        // desk, which is the side waiting on somebody who cannot speak.
         AVCaptureDevice.requestAccess(for: .audio) { [weak self] granted in
             Task { @MainActor in
-                guard let self, self.talking, !self.muted else { return }
+                guard let self else { return }
+                // Correlate with the press that asked. On a first grant
+                // the system dialog holds this completion until somebody
+                // clicks Allow — by which time they have released the
+                // button to do it, and the old guard on `talking` alone
+                // dropped the whole thing on the floor without a word.
+                guard token == self.pressToken else { return }
+                guard self.talking, !self.muted else { return }
                 if !granted {
                     self.micDenied = true
                     self.releaseToTalk()
                     return
                 }
                 self.micDenied = false
-                self.audio.startCapture()
+                guard self.audio.startCapture() else {
+                    // startCapture has already said why.
+                    self.releaseToTalk()
+                    return
+                }
                 self.audio.transmitting = true
+                if self.status == .on { self.send(["t": "ptt", "on": true]) }
+                // Watchdog. The four named reasons only cover the ways
+                // startCapture itself can fail; everything discovered
+                // AFTER it reports success has been invisible, which is
+                // how this shipped twice. Half a second of holding the
+                // button with nothing reaching the socket is the general
+                // symptom, whatever the particular cause.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
+                    guard let self, token == self.pressToken, self.talking else { return }
+                    if self.audio.framesSent == 0 {
+                        self.captureProblem = self.audio.framesSeen == 0
+                            ? "The microphone is open but delivering nothing. Check the input device in Sound settings."
+                            : "The microphone is delivering audio this Mac cannot convert for the desk."
+                    }
+                }
             }
         }
     }
@@ -264,6 +328,11 @@ final class HootAudio: @unchecked Sendable {
     var socket: URLSessionWebSocketTask?
     var transmitting = false
     private var lastRebuild = Date.distantPast
+    /// Buffers the tap handed us, and frames that actually reached the
+    /// socket. The gap between them is every silent failure downstream of
+    /// a successful start, which is the class this file has shipped twice.
+    var framesSeen = 0
+    var framesSent = 0
 
     func startEngine() {
         guard !started else { return }
@@ -313,6 +382,12 @@ final class HootAudio: @unchecked Sendable {
     }
 
     private func restartPlayback() {
+        // Stamped here rather than only in play(), because the
+        // configuration-change observer calls straight into this and so
+        // skipped the throttle entirely — and macOS emits those in bursts
+        // when a dock is plugged in or a machine wakes. Each one is a
+        // blocking stop, attach, connect and start on the main queue.
+        lastRebuild = Date()
         started = false
         engine.stop()
         buildPlaybackGraph()
@@ -335,7 +410,8 @@ final class HootAudio: @unchecked Sendable {
     /// it is fine. Set from here, published by Hoot, shown by the panel.
     var onProblem: (@Sendable (String?) -> Void)?
 
-    func startCapture() {
+    @discardableResult
+    func startCapture() -> Bool {
         // EVERY exit below used to be silent, and all four look identical
         // from the outside: the button turns LIVE, the dot lights on
         // everyone else's roster, and not one audio frame is ever sent.
@@ -345,14 +421,14 @@ final class HootAudio: @unchecked Sendable {
         // the whole bug, more than any one of the four causes.
         guard captureEngine == nil else {
             onProblem?("The microphone was still busy from the last press.")
-            return
+            return false
         }
         let eng = AVAudioEngine()
         let input = eng.inputNode
         let fmt = input.outputFormat(forBus: 0)
         guard fmt.sampleRate > 0 else {
             onProblem?("No usable microphone. Check the input device in Sound settings.")
-            return
+            return false
         }
         // Convert from a MONO version of the input, never from the input
         // itself.
@@ -378,19 +454,23 @@ final class HootAudio: @unchecked Sendable {
             // format and came back nil for anything unusual, after which
             // onCapture discarded every buffer for the life of the press.
             onProblem?("This Mac's microphone format cannot be converted for the desk.")
-            return
+            return false
         }
         input.installTap(onBus: 0, bufferSize: 2048, format: fmt) { [weak self] buf, _ in
             self?.onCapture(buf, inFmt: fmt)
         }
         eng.prepare()
+        framesSeen = 0
+        framesSent = 0
         do {
             try eng.start()
             captureEngine = eng
             onProblem?(nil)
+            return true
         } catch {
             captureEngine = nil
             onProblem?("The microphone would not start: \(error.localizedDescription)")
+            return false
         }
     }
 
@@ -431,7 +511,16 @@ final class HootAudio: @unchecked Sendable {
 
     private func onCapture(_ raw: AVAudioPCMBuffer, inFmt: AVAudioFormat) {
         guard transmitting, let conv = capConv, let sock = socket else { return }
-        guard let buf = Self.downmix(raw) else { return }
+        // Fall back to the raw buffer rather than dropping the frame.
+        //
+        // downmix returns nil for anything that is not float32, and an
+        // engine input in Int16 passes every check in startCapture — so
+        // success was reported, the banner was cleared, and then every
+        // single frame was discarded for the life of the press with
+        // nothing on screen. That is the bug this file keeps making: a
+        // silent exit downstream of a success message.
+        let buf = Self.downmix(raw) ?? raw
+        framesSeen &+= 1
         let ratio = wire.sampleRate / inFmt.sampleRate
         let cap = AVAudioFrameCount(Double(buf.frameLength) * ratio) + 32
         guard let outBuf = AVAudioPCMBuffer(pcmFormat: wire, frameCapacity: cap) else { return }
@@ -445,6 +534,7 @@ final class HootAudio: @unchecked Sendable {
         }
         guard err == nil, outBuf.frameLength > 0, let ch = outBuf.int16ChannelData else { return }
         let data = Data(bytes: ch[0], count: Int(outBuf.frameLength) * MemoryLayout<Int16>.size)
+        framesSent &+= 1
         sock.send(.data(data)) { _ in }
     }
 

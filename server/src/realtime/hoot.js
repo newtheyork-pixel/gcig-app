@@ -36,6 +36,30 @@ export function attachHoot(server) {
   let nextConnId = 1;
   const now = () => Date.now();
 
+  // The ONLY way a peer leaves. Both the close event and the heartbeat
+  // reaper come through here.
+  //
+  // They did not before, and that was the hole: the reaper deleted the
+  // peer itself, so the close event that followed found nothing to delete
+  // and returned early, before clearing anybody who was pointed at it. A
+  // closed laptop leaves no FIN, which is exactly why the reaper exists,
+  // so the most common way a member leaves the desk was the one path that
+  // skipped the cleanup.
+  //
+  // Anybody aimed at a departing connection is reset to the shared desk,
+  // and presence goes out so their client can see it. Leaving the stale
+  // id means their audio is handed to a lookup that finds nothing and is
+  // discarded, while their panel cannot name the target and falls back to
+  // printing "Trade Desk" — the button says one thing, the server does
+  // another, and nobody hears a word.
+  const removePeer = (id) => {
+    if (!peers.delete(id)) return;
+    for (const p of peers.values()) {
+      if (p.target === id) p.target = null;
+    }
+    sendPresence();
+  };
+
   server.on('upgrade', (req, socket, head) => {
     let url;
     try {
@@ -171,7 +195,17 @@ export function attachHoot(server) {
           if (to === 'desk' || to == null) me.target = null;
           else {
             const id = Number(to);
-            me.target = Number.isFinite(id) ? id : null;
+            // Must name a LIVE peer, and never yourself.
+            //
+            // Anything finite used to be accepted, which let three things
+            // through: a stale id from before a restart, which is a
+            // private line onto whoever now holds that number; zero,
+            // which no connection can ever have and which therefore
+            // became a black hole no cleanup could clear; and your own
+            // id, which the desk path explicitly guards against and this
+            // one did not — your voice returned to your own speakers
+            // beside an open microphone, which is a feedback loop.
+            me.target = Number.isInteger(id) && id !== connId && peers.has(id) ? id : null;
           }
           sendPresence();
           break;
@@ -184,21 +218,7 @@ export function attachHoot(server) {
       }
     });
 
-    const drop = () => {
-      if (!peers.delete(connId)) return;
-      // Anybody pointed AT this connection is now aimed at nothing.
-      //
-      // Leaving the stale id costs the worst failure this thing has: the
-      // speaker's frames are handed to sendToConn, which finds no peer
-      // and discards every one, while their panel falls back to reading
-      // "Trade Desk" because the roster lookup misses. They hold the
-      // button, the level meter moves, and nobody anywhere hears a word,
-      // with nothing on screen suggesting why.
-      for (const p of peers.values()) {
-        if (p.target === connId) p.target = null;
-      }
-      sendPresence();
-    };
+    const drop = () => removePeer(connId);
     ws.on('close', drop);
     ws.on('error', drop);
   });
@@ -214,7 +234,7 @@ export function attachHoot(server) {
         } catch {
           /* ignore */
         }
-        peers.delete(id);
+        removePeer(id);
         reaped = true;
         continue;
       }
