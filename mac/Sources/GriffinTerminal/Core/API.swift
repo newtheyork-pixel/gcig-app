@@ -82,6 +82,11 @@ actor API {
 
     enum Failure: LocalizedError {
         case unauthorized
+        /// Throttled, not broken. Kept apart from `http` because the
+        /// panels render a failure as COULD NOT LOAD, and a member
+        /// reading that about a temporary rate limit concludes the server
+        /// is down and their session is gone. It is neither.
+        case rateLimited(String)
         case http(Int, String)
         case transport(String)
         case decoding(String)
@@ -89,6 +94,7 @@ actor API {
         var errorDescription: String? {
             switch self {
             case .unauthorized:        return "Signed out. Reopen the terminal to sign in."
+            case .rateLimited(let m): return m.isEmpty ? "Too many requests just now. It will clear in a minute." : m
             case .http(let c, let m):  return m.isEmpty ? "Server returned \(c)." : m
             case .transport(let m):    return "Could not reach the server. \(m)"
             case .decoding(let m):     return "Server sent something unexpected. \(m)"
@@ -210,7 +216,8 @@ actor API {
     private func send(_ method: String, _ path: String,
                       query: [String: String], body: Data?,
                       contentType: String = "application/json",
-                      timeout: TimeInterval = 30) async throws -> Data {
+                      timeout: TimeInterval = 30,
+                      attempt: Int = 0) async throws -> Data {
         guard var comps = URLComponents(string: base + path) else {
             throw Failure.transport("Bad URL for \(path)")
         }
@@ -296,6 +303,27 @@ actor API {
             }
             throw Failure.http(401, reason.isEmpty ? "Not permitted." : reason)
         }
+        // 429 is a WAIT, not a failure, and it was being surfaced as one.
+        //
+        // The limiter is keyed per caller, so anything sharing this
+        // session's token shares its allowance: a release upload, a
+        // backfill script, a second device. When it trips, every panel
+        // printed COULD NOT LOAD and the header printed OFFLINE, which
+        // reads as the server being down and the login being gone. Both
+        // are wrong and the app can simply wait.
+        if http.statusCode == 429, attempt < 2 {
+            let after = http.value(forHTTPHeaderField: "Retry-After").flatMap(Double.init)
+            let wait = min(max(after ?? Double(attempt + 1) * 2.0, 1.0), 20.0)
+            try? await Task.sleep(nanoseconds: UInt64(wait * 1_000_000_000))
+            return try await send(method, path, query: query, body: body,
+                                  contentType: contentType, timeout: timeout,
+                                  attempt: attempt + 1)
+        }
+        if http.statusCode == 429 {
+            let body = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+            throw Failure.rateLimited((body?["error"] as? String) ?? "")
+        }
+
         guard (200..<300).contains(http.statusCode) else {
             // Surface the server's own sentence when it sent one. Our
             // routes return { error } with something a person can act
