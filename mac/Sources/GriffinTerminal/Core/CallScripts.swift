@@ -137,14 +137,18 @@ struct CallScript {
         note: "Banter by Piercing Pagoda. Mall kiosks, no bridal. Confirm the banner before you start.",
         opener: "Hi, is this Banter? … My name is [name]. I'm a high school student at Grace Church School in New York and I'm doing a research project on the jewellery business for our school investment club. Do you have two minutes for a few questions about what's in the case?",
         questions: [
-            .init(text: "What's the cheapest chain you have in the case right now that's real gold, and what does it cost?", why: ""),
-            .init(text: "When you look at the gold chains in the case, what karat are they?",
-                  why: "Open form. Do NOT offer \"10 or 14\" as a choice."),
-            .init(text: "If someone came in with a hundred and fifty dollars for a gift, what could you actually sell them in real gold?", why: ""),
-            .init(text: "What are the cheapest earrings someone can get pierced with, and what are those made of?", why: ""),
-            .init(text: "When you sell a gold chain, is the price already on the tag, or do you weigh it and work it out off a gold price chart?", why: ""),
+            .init(text: "When you sell a gold chain, is the price already on the tag, or do you weigh it and work it out off a gold price chart?",
+                  why: "Whether the entry price point reprices with the metal or sits on a tag until it sells."),
+            .init(text: "Gold has gone up a lot. Has what's in the case changed because of it?",
+                  why: "Open. Do not suggest an answer."),
+            .init(text: "When somebody walks up to the kiosk, are they usually there to get pierced or to buy something?",
+                  why: "Which half of the kiosk is the business."),
+            .init(text: "Have any other Banter kiosks near you closed in the last year or two?",
+                  why: "Observable from where they stand, unlike anything about their own numbers."),
+            .init(text: "If someone's buying a hundred and fifty dollar chain, do they usually pay for it outright or put it on the card?",
+                  why: "The nearest thing to a consumer-health read that a person at a counter can actually see."),
         ],
-        followUps: "TWO FOR THE WHOLE CALL. After 3, once: \"If it was a hundred dollars instead, what would you show them?\" After 5, once: \"When the gold price moves, do the tags in the case get changed, or does a chain keep its price until it sells?\"",
+        followUps: "TWO FOR THE WHOLE CALL, NOT TWO PER QUESTION. If they name a price, ask what it was before. If they say something has changed, ask when.",
         doNotAsk: "Engagement rings, bridal, anything at a $1,200 price point. Anything about what is selling well, which is a performance question wearing a stock question's clothes."
     )
 }
