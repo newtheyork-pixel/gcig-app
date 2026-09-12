@@ -181,6 +181,11 @@ struct ChannelCheckPanel: View {
         .task { await bootstrap() }
         .onReceive(tick) { _ in
             if let startedAt { elapsed = Int(Date().timeIntervalSince(startedAt)) }
+            // Re-probe while it is not working. The grant happens in
+            // System Settings with this app already open, so a single
+            // probe at launch means turning the switch on appears to do
+            // nothing at all.
+            if !history.isUsable, elapsed % 5 == 0 { history = CallHistory.probe() }
             checkWhetherTheCallEnded()
         }
         .onDisappear {
@@ -677,7 +682,7 @@ struct ChannelCheckPanel: View {
 
             VStack(alignment: .leading, spacing: 6) {
                 Text((history.isUsable || recorder.farEndCaptured)
-                     ? "IT CLOSES ITSELF WHEN YOU HANG UP — OR OVERRIDE HERE"
+                     ? "IT CLOSES ITSELF ONCE THE CALL CONNECTS AND ENDS — OR PICK ONE"
                      : "HOW DID IT END")
                     .font(Term.mono(9)).foregroundStyle(Term.fgMuted)
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 120), spacing: 6)], spacing: 6) {
@@ -1017,6 +1022,7 @@ struct ChannelCheckPanel: View {
     private func openCall(_ door: Door, dial: Bool = true, record: Bool = true) async {
         guard let project else { return }
         problem = nil
+        history = CallHistory.probe()
         working = "Opening the call…"
         defer { working = nil }
         do {
@@ -1067,9 +1073,20 @@ struct ChannelCheckPanel: View {
         guard history.isUsable, let call, let startedAt else { return false }
         guard let record = CallHistory.mostRecent(matching: call.dialedNumber, placedAt: startedAt)
         else { return false }
-        // A duration means a finished conversation. A record with none,
-        // once the phone has plainly given up ringing, is a ring-out.
-        return record.duration > 0 || (record.answered == false && elapsed >= 45)
+        // ONLY a finished call closes the row.
+        //
+        // This used to also close when the record said answered:false and
+        // the app timer had passed forty-five seconds, on the theory that
+        // the phone had given up ringing. It had not. A call that is STILL
+        // RINGING has exactly that record — a row with no duration and
+        // nobody having picked up — so a store that took a minute to reach
+        // the counter had its call closed out from under it while it rang.
+        //
+        // There is no signal here for "has stopped ringing", so none is
+        // invented. A duration means the call happened and finished; that
+        // is the only thing this can honestly conclude, and everything
+        // else waits for a person to press a button.
+        return record.duration > 0
     }
 
     /// The signal that needs no permission at all.
