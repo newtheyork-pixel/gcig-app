@@ -60,10 +60,20 @@ export default function FieldResearch() {
   const [busy, setBusy] = useState('');
   const [flash, setFlash] = useState(null);
 
+  // The filter is a text input and `load` fires four requests, so typing
+  // "SIG" cost twelve. Wait for the typing to stop. 250ms is below the
+  // gap between keystrokes for anybody hunting for a ticker and above
+  // the gap for anybody typing one they already know.
+  const [debouncedTicker, setDebouncedTicker] = useState(ticker);
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedTicker(ticker), 250);
+    return () => clearTimeout(t);
+  }, [ticker]);
+
   const load = useCallback(async () => {
     setLoading(true);
     setErr('');
-    const qs = ticker ? `?ticker=${encodeURIComponent(ticker)}` : '';
+    const qs = debouncedTicker ? `?ticker=${encodeURIComponent(debouncedTicker)}` : '';
     try {
       const [s, i, c, pr] = await Promise.all([
         api.get(`/research/sources${qs}`).then((r) => r.data),
@@ -80,7 +90,7 @@ export default function FieldResearch() {
     } finally {
       setLoading(false);
     }
-  }, [ticker]);
+  }, [debouncedTicker]);
 
   useEffect(() => {
     load();

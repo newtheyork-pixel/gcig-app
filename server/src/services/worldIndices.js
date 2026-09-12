@@ -73,7 +73,11 @@ async function fetchIndexLevel(symbol, deps = {}) {
   // proxy, which is the wrong number rather than a missing one.
   for (let attempt = 0; attempt < 3; attempt += 1) {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 12_000);
+    // Five, not twelve. Three attempts at a twelve-second ceiling is a
+    // thirty-six-second request against an upstream that either answers
+    // in under a second or is refusing us, and the panel measured a
+    // fifteen-second stall once a minute living entirely in here.
+    const timer = setTimeout(() => controller.abort(), 5_000);
     try {
       // range=1d, because chartPreviousClose is the close before the
       // WINDOW: ask for 2d and "prev" is two sessions back, which
@@ -186,8 +190,33 @@ async function fetchFinnhubProxy(symbol) {
 
 // One row per index, Stooq first then the Finnhub proxy. A total miss
 // still returns a stub so the panel renders "—" rather than failing.
+let refreshing = null;
+
 export async function getWorldIndices(deps = {}) {
   if (cache && Date.now() - cache.at < CACHE_TTL_MS) return cache.rows;
+
+  // Stale while revalidating. The cache holds for a minute, so one
+  // unlucky request a minute was paying the whole refill — twenty-one
+  // symbols against an upstream that throttles bursts, measured at
+  // fifteen seconds. Anybody arriving on an expired cache now gets the
+  // slightly old numbers immediately and the refill happens behind
+  // them. `refreshing` collapses a thundering herd into one refill.
+  // A cold cache still waits, because there is nothing else to show.
+  if (cache) {
+    if (!refreshing) {
+      refreshing = buildWorldIndices(deps)
+        .then((rows) => { cache = { at: Date.now(), rows }; return rows; })
+        .catch(() => cache.rows)
+        .finally(() => { refreshing = null; });
+    }
+    return cache.rows;
+  }
+  if (refreshing) return refreshing;
+  refreshing = buildWorldIndices(deps).finally(() => { refreshing = null; });
+  return refreshing;
+}
+
+async function buildWorldIndices(deps = {}) {
 
   // The index level first, always. The ETF proxy is a fallback and is
   // marked as one — it tracks the percentage and not the level, so a

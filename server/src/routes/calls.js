@@ -103,7 +103,13 @@ const ANSWERED_BY_OUTCOME = {
 // Where the duration came from. Kept apart because they are different
 // measurements and a column that renders them alike invites a precision
 // nobody took.
-const METADATA_SOURCES = new Set(['apptimer', 'callhistory', 'manual']);
+// 'apptimer' counts from the moment DIAL was pressed and therefore
+// includes the ringing. 'apptimer-talk' counts from the moment the
+// caller marked the pickup, so it is conversation only. They are two
+// different measurements of two different things and are kept apart
+// for the same reason apptimer and callhistory are: averaging them
+// later would invent a precision nobody took.
+const METADATA_SOURCES = new Set(['apptimer', 'apptimer-talk', 'callhistory', 'manual']);
 
 // Relationships a door may carry through to the source it becomes.
 // Deliberately not every string the funnel accepts: an unrecognised one

@@ -463,11 +463,21 @@ function ProjectPane({ id, onBack }) {
   // returning to that tab later does not re-open the same row.
   const [focus, setFocus] = useState(null);
 
+  // Twenty-three call sites reload the project after a one-bit write —
+  // logging an interview, importing a transcript, marking a draft sent.
+  // Every one of them used to raise `loading`, which unmounts the whole
+  // tab: the reader lost their scroll position, their filter and the row
+  // they were working on, and watched "Opening project…" for the better
+  // part of a second. Only the FIRST load is allowed to blank the panel.
+  // After that the data swaps in underneath whatever is on screen.
+  const opened = useRef(false);
+  useEffect(() => { opened.current = false; }, [id]);
+
   const load = useCallback(() => {
-    setLoading(true);
+    if (!opened.current) setLoading(true);
     api
       .get(`/research/projects/${id}`)
-      .then(({ data }) => setP(data))
+      .then(({ data }) => { setP(data); opened.current = true; })
       .catch((e) => setErr(e.response?.data?.error || e.message || 'Failed'))
       .finally(() => setLoading(false));
   }, [id]);
