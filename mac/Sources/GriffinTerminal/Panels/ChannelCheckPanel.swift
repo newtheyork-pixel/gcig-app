@@ -113,6 +113,12 @@ struct ChannelCheckPanel: View {
         let attemptCount: Int
         let everAnswered: Bool
         let lastAttempt: LastAttempt?
+        /// When the door is open, in its own local time, as the banner's
+        /// own locator publishes it.
+        let hours: [StoreClock.Hours]?
+        let timezone: String?
+
+        var clock: StoreClock.Status { StoreClock.status(hours: hours, timezone: timezone) }
     }
 
     struct LastAttempt: Decodable, Hashable {
@@ -231,6 +237,29 @@ struct ChannelCheckPanel: View {
     }
 
     // MARK: Queue
+
+    /// Whether this door can be rung in the next two minutes, in ITS time
+    /// zone. Nil when no hours are on file, because an invented answer
+    /// here sends somebody to a closed shop.
+    static func openLabel(_ door: Door) -> (text: String, tone: Color)? {
+        switch door.clock {
+        case .open(let m):
+            return ("open · \(StoreClock.brief(m)) left", Term.positive)
+        case .justOpened(let m):
+            return ("just opened · \(m)m ago", Term.positive)
+        case .closingSoon(let m):
+            // Named rather than shown as open. A salesperson cashing up
+            // says no for reasons that have nothing to do with the
+            // questions, and that refusal is indistinguishable in the log
+            // from a real one — which would quietly corrupt the only rate
+            // this whole exercise measures.
+            return ("closing in \(m)m — leave it", Term.orange)
+        case .closed(let m):
+            return (m.map { "closed · opens in \(StoreClock.brief($0))" } ?? "closed", Term.fgMuted)
+        case .unknown:
+            return nil
+        }
+    }
 
     /// What a door's row says about itself.
     ///
@@ -389,6 +418,12 @@ struct ChannelCheckPanel: View {
                         Text("×\(door.attemptCount)").font(Term.mono(8)).foregroundStyle(Term.fgMuted)
                     }
                 }
+                if let open = Self.openLabel(door) {
+                    HStack(spacing: 5) {
+                        Circle().fill(open.tone).frame(width: 6, height: 6)
+                        Text(open.text).font(Term.mono(9)).foregroundStyle(open.tone)
+                    }
+                }
                 HStack(spacing: 6) {
                     Text(door.phoneDisplay ?? "no number")
                         .font(Term.mono(9))
@@ -462,6 +497,18 @@ struct ChannelCheckPanel: View {
     private func doorHeading(_ door: Door) -> some View {
         VStack(alignment: .leading, spacing: 3) {
             Text(door.name).font(Term.mono(14, weight: .bold)).foregroundStyle(Term.white)
+            if let open = Self.openLabel(door) {
+                HStack(spacing: 8) {
+                    Circle().fill(open.tone).frame(width: 7, height: 7)
+                    Text(open.text).font(Term.mono(10)).foregroundStyle(open.tone)
+                    if let local = StoreClock.localTime(timezone: door.timezone) {
+                        // Both clocks. Ringing Denver on New York time and
+                        // reading the silence as a refusal is the error
+                        // this whole feature exists to stop.
+                        Text("\(local) there").font(Term.mono(9)).foregroundStyle(Term.fgMuted)
+                    }
+                }
+            }
             HStack(spacing: 8) {
                 Text(door.phoneDisplay ?? "—").font(Term.mono(11)).foregroundStyle(Term.fgDim)
                 if let e = door.employer, !e.isEmpty {

@@ -164,6 +164,7 @@ export async function callQueueHandler(req, res, deps = {}) {
       select: {
         id: true, name: true, employer: true, tier: true, status: true,
         phone: true, locationState: true, notes: true, priority: true,
+        hours: true, timezone: true,
         // The count comes from the database, not from the three rows
         // fetched for display. Deriving it from `take: 3` capped every
         // badge at three and, worse, hid an Answered that had fallen off
