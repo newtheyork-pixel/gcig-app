@@ -60,6 +60,7 @@ import notesRoutes from './routes/notes.js';
 import researchRoutes from './routes/research.js';
 import callRoutes from './routes/calls.js';
 import outreachLabelingRoutes from './routes/outreachLabeling.js';
+import meetRoutes from './routes/meet.js';
 import { attachHoot } from './realtime/hoot.js';
 import { ensureRecurringMeetings } from './services/recurringMeetings.js';
 import cron from 'node-cron';
@@ -193,6 +194,7 @@ app.use('/api/research', researchRoutes);
 // already four thousand lines and the dial log is a coherent piece.
 app.use('/api/research', callRoutes);
 app.use('/api/outreach-labeling', outreachLabelingRoutes);
+app.use('/api/meet', meetRoutes);
 
 // Generic error handler. Logs the full error server-side for debugging but
 // never leaks internal details (stack traces, Prisma error bodies, etc.) to
