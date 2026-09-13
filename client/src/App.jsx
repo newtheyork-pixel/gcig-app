@@ -17,6 +17,7 @@ import PreviousPitches from './pages/PreviousPitches.jsx';
 import Portfolio from './pages/Portfolio.jsx';
 import Reports from './pages/Reports.jsx';
 import Attendance from './pages/Attendance.jsx';
+import Meeting from './pages/Meeting.jsx';
 import Members from './pages/Members.jsx';
 import Profile from './pages/Profile.jsx';
 import Votes from './pages/Votes.jsx';
@@ -98,6 +99,7 @@ export default function App() {
         <Route path="/cpi" element={<CPI />} />
         <Route path="/tankers" element={<Tankers />} />
         <Route path="/attendance" element={<Attendance />} />
+        <Route path="/meeting" element={<Meeting />} />
         <Route path="/chat" element={<Chat />} />
         <Route path="/broadcast" element={<Broadcast />} />
         <Route path="/ai-chat" element={<AiChat />} />

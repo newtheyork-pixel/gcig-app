@@ -787,3 +787,58 @@ export async function sendInviteEmail(toEmail, { name, role, inviteUrl }) {
     `,
   });
 }
+
+// The meeting link, sent to the member's OWN address and nowhere else.
+//
+// Inviting other people is deliberately not done here. A handler that mails
+// a link to an arbitrary recipient is outreach, and outreach in this
+// codebase is staged for a person to send rather than sent by code. This
+// puts the link in your inbox so you can forward it yourself, with whatever
+// context the recipient actually needs.
+export async function sendMeetingLinkEmail(
+  toEmail,
+  { name, title, startsAt, durationMinutes, url, organiser }
+) {
+  const when = startsAt
+    ? new Date(startsAt).toLocaleString('en-US', {
+        weekday: 'long', month: 'long', day: 'numeric',
+        hour: 'numeric', minute: '2-digit', timeZoneName: 'short',
+      })
+    : null;
+
+  await getTransporter().sendMail({
+    from: from(),
+    to: toEmail,
+    subject: when ? `Meeting link: ${title} — ${when}` : `Meeting link: ${title}`,
+    html: `
+      <div style="font-family: 'Inter', system-ui, sans-serif; max-width: 480px; margin: 0 auto; padding: 32px;">
+        <div style="text-align: center; margin-bottom: 24px;">
+          <h1 style="color: #1B2A4A; font-size: 20px; margin: 0; font-family: Georgia, serif; letter-spacing: -0.01em;">The Griffin Fund</h1>
+          <p style="color: #C9A84C; font-size: 11px; text-transform: uppercase; letter-spacing: 2px; margin: 4px 0 0;">
+            Grace Church School Investment Group
+          </p>
+        </div>
+        <div style="background: #F7F8FB; border-radius: 12px; padding: 24px;">
+          <p style="color: #1B2A4A; font-size: 14px; margin: 0 0 8px;">Hi ${name},</p>
+          <p style="color: #1B2A4A; font-size: 14px; margin: 0 0 4px;">
+            Here is the link for <strong>${title}</strong>.
+          </p>
+          ${when ? `<p style="color: #8C99BB; font-size: 13px; margin: 0 0 4px;">${when}${durationMinutes ? ` · ${durationMinutes} minutes` : ''}</p>` : ''}
+          ${organiser ? `<p style="color: #8C99BB; font-size: 13px; margin: 0 0 16px;">Called by ${organiser}</p>` : ''}
+          <div style="text-align: center; margin: 24px 0;">
+            <a href="${url}" style="display: inline-block; background: #C9A84C; color: #1B2A4A; font-size: 14px; font-weight: 600; text-decoration: none; padding: 12px 32px; border-radius: 8px;">
+              Join the meeting
+            </a>
+          </div>
+          <p style="color: #1B2A4A; font-size: 11px; font-family: monospace; word-break: break-all; margin: 8px 0 0;">
+            ${url}
+          </p>
+          <p style="color: #8C99BB; font-size: 12px; margin: 16px 0 0;">
+            Forward this to anyone who should be there. Griffin members sign in to open the
+            room; guests can join once it is open, without an account.
+          </p>
+        </div>
+      </div>
+    `,
+  });
+}

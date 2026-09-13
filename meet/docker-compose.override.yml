@@ -1,0 +1,31 @@
+# The public front door.
+#
+# cloudflared DIALS OUT to Cloudflare, so the web side needs no inbound port
+# and no certificate of its own. That matters here for two reasons beyond
+# convenience: the house is on a dynamic residential address, and browsers
+# refuse to run WebRTC outside a secure context, so plain HTTP would be
+# unusable no matter how correct the rest of the stack is.
+#
+# It runs INSIDE the compose network and addresses the web container by its
+# service name. Pointing it at a published port on the host instead would
+# drag in WSL2's mirrored-networking loopback behaviour, which has already
+# cost this project an evening.
+#
+# Only the media port is exposed at the router: one UDP port, forwarded to
+# this machine, carrying nothing but RTP for sessions the bridge already
+# authorised.
+services:
+    cloudflared:
+        image: cloudflare/cloudflared:2026.9.1
+        restart: ${RESTART_POLICY:-unless-stopped}
+        command: tunnel --no-autoupdate --config /etc/cloudflared/config.yml run
+        # The image runs as its own unprivileged account, which cannot read a
+        # 0600 credentials file owned by the host user. Run as that user
+        # instead of widening the permissions on a tunnel secret.
+        user: "1000:1000"
+        volumes:
+            - ${CONFIG}/cloudflared:/etc/cloudflared:ro
+        networks:
+            meet.jitsi:
+        depends_on:
+            - web

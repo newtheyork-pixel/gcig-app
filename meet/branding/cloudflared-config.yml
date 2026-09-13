@@ -1,0 +1,23 @@
+# Ingress for the Griffin meeting server. `tunnel` and `credentials-file`
+# are filled in by install-remote.sh from whatever tunnel this host owns, so
+# this file stays free of anything secret.
+#
+# The service target is the compose service name and the port nginx listens
+# on INSIDE the container (8000), not the port published on the host (8016).
+tunnel: __TUNNEL_ID__
+credentials-file: /etc/cloudflared/creds.json
+
+# Jitsi signalling runs over a WebSocket at /xmpp-websocket and stays open for
+# the length of a meeting. Cloudflare carries WebSocket fine, but the default
+# 90s idle timeout will cut a quiet call, so give the connection real room.
+originRequest:
+    connectTimeout: 30s
+    tcpKeepAlive: 30s
+    noHappyEyeballs: true
+    keepAliveTimeout: 90s
+    httpHostHeader: meet.thegriffinfund.org
+
+ingress:
+    - hostname: meet.thegriffinfund.org
+      service: http://web:8000
+    - service: http_status:404
