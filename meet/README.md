@@ -140,6 +140,41 @@ Run `cloudflared` as a container on the Docker network pointing at
 Cloudflare terminates TLS. Requires a one-time `cloudflared tunnel login`
 in a browser.
 
+## Branding reaches three different layers, and they do not overlap
+
+This cost more time than the networking did, because each layer fails in a
+way that looks like the others working.
+
+**The theme JSON is read under `muiBrandedTheme`, not `customTheme`.**
+jitsi-meet's dynamic-branding reducer destructures a fixed list of field
+names and discards everything else silently. `customTheme` is not on that
+list, so a perfectly valid 241-key palette was fetched with a 200 and
+thrown away. The tell was that the logo appeared while every colour stayed
+default: `interface_config` asks for the logo by relative path, so it
+never depended on the theme at all. Check field names against
+`react/features/dynamic-branding/reducer.ts`.
+
+**The theme URL must be relative.** An absolute
+`https://meet.thegriffinfund.org/...` is fetched by the browser and falls
+back to stock whenever that name does not resolve from wherever the page
+is open. `/griffin/branding.json` follows whatever host serves the page.
+
+**Editing the config volume changes nothing until the web container
+restarts.** The image does `cp -r /config/. /run/web/config` once at
+start, and nginx serves that copy. The old theme kept being served with a
+200 and the right content type; the only clue was a byte count that did
+not match the file on disk. `install-remote.sh` now force-recreates web
+and compares served bytes against disk, and says so if they differ.
+
+**Dynamic branding does not reach the document or the welcome page.**
+It themes the React conference UI. The `<title>`, the social tags and the
+welcome page are static assets with "Jitsi Meet" compiled in. The title is
+rewritten with nginx `sub_filter`, which matters because members see it on
+every browser tab and in every link preview. The welcome page is turned
+off rather than half-branded: it is a static page with its own heading and
+stock photograph, and members arrive at a room URL from the Griffin app
+regardless.
+
 ## The trap that cost the most
 
 **WSL2 shuts its VM down when no session holds it open, and a keepalive

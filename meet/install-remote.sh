@@ -20,5 +20,24 @@ cp branding/custom-config.js branding/custom-interface_config.js "$CFG/web/"
 
 docker compose pull -q
 docker compose up -d
-sleep 5
+
+# The web image does `cp -r /config/. /run/web/config` ONCE at container
+# start, and nginx serves that copy. So editing the config volume changes
+# nothing until the container restarts: the old theme keeps being served,
+# with a 200 and the right content type, and the only clue is a byte count
+# that does not match the file on disk. Always recreate web after touching
+# branding.
+docker compose up -d --force-recreate web
+sleep 8
+
+CFG_JSON="$CFG/web/griffin/branding.json"
+IP=$(docker inspect griffin-meet-web-1 --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}')
+ON_DISK=$(stat -c%s "$CFG_JSON")
+SERVED=$(curl -s --max-time 10 "http://$IP:8000/griffin/branding.json" | wc -c)
+if [ "$ON_DISK" = "$SERVED" ]; then
+    echo "branding served matches disk ($SERVED bytes)"
+else
+    echo "WARNING: serving $SERVED bytes but disk has $ON_DISK; the web container is stale" >&2
+fi
+
 docker compose ps
