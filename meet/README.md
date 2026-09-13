@@ -20,7 +20,8 @@ decision or a password that is not mine to supply.
 | SEG theme, 241 tokens | serving, verified live |
 | Brand marks and favicon | serving, verified as real PNG bytes |
 | Room auth via Griffin-minted JWT | configured, untested end to end |
-| Reachable from outside the host | **no**, see below |
+| Reachable from the LAN | yes, 12 of 12 probes over 3 minutes |
+| Reachable from the internet | not yet, needs one router forward |
 
 ## The palette
 
@@ -125,35 +126,55 @@ not. Confirmed working: the bridge found `68.175.66.192` on its own.
 
 Two steps. Neither is code.
 
-**1. Inbound to the host.** The stack answers correctly from inside the
-box and from the Windows loopback, and refuses every connection from the
-LAN, from Tailscale, and from the internet. This is not Docker: a plain
-Python listener in WSL is equally unreachable, and a Docker published
-port on a normal machine works fine. WSL2 is in mirrored networking mode,
-whose Hyper-V firewall defaults to `DefaultInboundAction: Block`. Rules
-scoped to the WSL VM creator id were created and are enabled, and inbound
-is still refused, which usually means WSL has to restart before they
-apply.
+**1. The router.** UDP 10000 needs forwarding at `192.168.1.1` to
+`192.168.1.38`. There is no UPnP, so it is a manual change and the only
+remaining step for media. Without it, calls of three or more people
+connect and then carry nothing; two-person calls still work, because they
+go peer to peer and never touch the bridge.
+
+**2. A public name and a certificate.** WebRTC only runs in a secure
+context, so plain HTTP will not work for real use no matter what else is
+right: Chrome answers "WebRTC is not available in your browser" and stops.
+Run `cloudflared` as a container on the Docker network pointing at
+`web:80`. A tunnel dials outward, so it needs no inbound at all, and
+Cloudflare terminates TLS. Requires a one-time `cloudflared tunnel login`
+in a browser.
+
+## The trap that cost the most
+
+**WSL2 shuts its VM down when no session holds it open, and a keepalive
+task must run as the user who owns the distro.** The symptom was maddening
+and looked like a firewall problem for an hour: the server answered
+instantly after any ssh command touched the box, then refused every
+connection for the next five minutes. Twenty probes, twenty failures, and
+a stack that was demonstrably up and listening the whole time.
+
+Two separate things were wrong.
+
+`.wslconfig` had no `vmIdleTimeout`, so WSL reclaimed the VM on its own
+and took the containers with it. Setting `vmIdleTimeout=-1` stops that,
+and the change needs a `wsl --shutdown` to apply.
+
+The keepalive itself was created to run as `SYSTEM`. WSL instances are
+**per-user**, so a task running as SYSTEM starts and holds a completely
+different VM from the one the logged-in user's distro runs in. It looked
+correct, reported Running, and protected nothing. Recreating it to run as
+`thoma` fixed it, and the same probe sequence then passed 12 of 12.
 
 ```powershell
-Get-NetFirewallHyperVVMSetting -PolicyStore ActiveStore   # shows Block
-Get-NetFirewallHyperVRule -VMCreatorId '{40E0AC32-46A5-438A-A0B2-2B479E8F2E90}'
+schtasks /create /tn GriffinMeetWSLKeepalive /sc onlogon /ru thoma /rl HIGHEST `
+  /tr "C:\Windows\System32\wsl.exe -d Ubuntu-22.04 --exec sleep infinity" /f
 ```
 
-Restarting WSL (`wsl --shutdown`) is the next thing to try. The LLM
-router is a Windows process and is unaffected; only the containers and
-the WSL-side Tailscale node stop, and both come back.
+Check it is real, rather than trusting the task's own status:
 
-The web half can avoid this entirely by running `cloudflared` as a
-container on the same Docker network pointing at `web:80`, since a tunnel
-dials outward and needs no inbound at all. The media port cannot: UDP
-10000 has to arrive.
+```bash
+wsl -d Ubuntu-22.04 -- pgrep -af "sleep infinity"
+```
 
-**2. The media port from the internet.** Even with WSL fixed, UDP 10000
-needs a forward on the router at `192.168.1.1` to `192.168.1.38`. There
-is no UPnP on it, so it is a manual change. Without it, calls of three or
-more people connect and then carry no audio or video; two-person calls
-still work, because they go peer to peer and never touch the bridge.
+Windows connecting to its own LAN address (`192.168.1.38`) still fails
+while every other machine succeeds. That is a loopback hairpin quirk, not
+a fault, and it misleads if it is the first thing you test.
 
 ## Deploying
 
