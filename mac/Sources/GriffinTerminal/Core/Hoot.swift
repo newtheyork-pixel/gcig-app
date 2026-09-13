@@ -451,6 +451,19 @@ final class HootAudio: @unchecked Sendable {
         engine.prepare()
         do {
             try engine.start()
+            // And CHECK AGAIN once it is running.
+            //
+            // prepare() settles the format on this machine, but start()
+            // is the other moment it can rebind, and which one does it is
+            // not something to take on faith after tonight. If the mixer
+            // moved, the converter and the stored format move with it —
+            // otherwise the graph is mis-wired again in exactly the way
+            // that made the desk silent.
+            let settled = engine.mainMixerNode.outputFormat(forBus: 0)
+            if settled.sampleRate != out.sampleRate || settled.channelCount != out.channelCount {
+                playConv = AVAudioConverter(from: wire, to: settled)
+                playFormat = settled
+            }
             player.play()
             started = true
         } catch {
@@ -627,7 +640,16 @@ final class HootAudio: @unchecked Sendable {
         // has stopped. `started` going false while the engine still runs
         // left this returning on every frame forever, which is silence
         // with nothing anywhere saying so.
-        if (!engine.isRunning || !started || playConv == nil),
+        // A converter that no longer matches the mixer is the state that
+        // cost an entire evening: engine running, started true, converter
+        // non-nil, and every frame rejected. The heal condition tested
+        // that the converter EXISTED, never that it still fitted.
+        let stale = playConv.map { conv in
+            let live = engine.mainMixerNode.outputFormat(forBus: 0)
+            return conv.outputFormat.sampleRate != live.sampleRate
+                || conv.outputFormat.channelCount != live.channelCount
+        } ?? true
+        if (!engine.isRunning || !started || stale),
            Date().timeIntervalSince(lastRebuild) > 1 {
             lastRebuild = Date()
             restartPlayback()
