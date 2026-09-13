@@ -404,10 +404,12 @@ together or an analyst opens the terminal and 403s on every panel.
 If you ever swap the design of either, replace the PNG, re-encode the
 `.webp`, and regenerate `logos.js`. Do not point an `<img src>` at a
 PNG or JPEG on this origin: Safari will drop it. Do not put a CSS
-`filter`, `clip-path`, or Ken Burns `transform` on a large landing
-`<img>` either — Safari paints the broken-image glyph, which is how
-the JPMorgan and Perman field plates vanished while the skyline
-(plain `<img>`, transform on the wrapper) kept working.
+`filter`, `clip-path`, Ken Burns `transform`, or a `<picture>` wrapper
+on a large landing `<img>` either — Safari paints the broken-image
+glyph (alt text + "?"), which is how the JPMorgan and Perman plates
+stayed blank after Ken Burns came off. Field plates are in-flow
+`<img>`s imported through Vite so the URL is a hashed `/assets/…`
+file, not `/field-visit.webp`.
 
 ---
 
@@ -975,10 +977,12 @@ Hit-rate stats count `Approved` toward Voted Yes too.
   (`client/src/brand/logos.js`) so Polish never sees them. Leadership
   headshots are inlined the same way (`client/src/brand/headshots.js`).
   Field plates stay as real `.webp` files, which Polish does not rewrite
-  — but they must be a plain `<img>` (no CSS filter, clip-path, or Ken
-  Burns on the photograph itself). Safari will otherwise paint the
-  broken-image glyph on a grey field, which is how JPMorgan / Perman
-  vanished while the skyline kept working.
+  — but they must be an in-flow `<img>` with intrinsic width/height
+  (no `<picture>`, no transform on the photo or any ancestor). A
+  `<picture>` plus `translate3d` on the overflow box still produced
+  Safari's broken-image glyph after Ken Burns was removed. Vite hashes
+  them into `/assets/` so Safari cannot reuse a poisoned cache of
+  `/field-visit.webp`.
 
 - Don't add login flows that use SPA `navigate('/dashboard')` — use
   `window.location.replace`. SPA nav races AuthProvider's mount.
@@ -1127,11 +1131,13 @@ row in the same transaction.
   ignores it (cache-MISS of grace-logo.png still returned a WebP
   body under image/png). The header, login and sidebar marks are
   inlined as data URIs so Polish never sees them. Field plates stay
-  as `.webp` files (Polish leaves those alone) but must be a plain
-  `<img>`: Safari refuses to paint a large photo that also has a CSS
-  filter, clip-path, or Ken Burns transform, and it looks like a
-  broken image. Leadership portraits are inlined in
-  `client/src/brand/headshots.js` for the same reason as the logos.
+  as `.webp` files (Polish leaves those alone) but must be an in-flow
+  `<img>` with width/height: a `<picture>` wrapper or a `translate3d`
+  on the overflow box is enough for Safari to paint the broken-image
+  glyph (alt text + "?"). Vite hashes them into `/assets/` so Safari
+  cannot reuse a poisoned cache of `/field-visit.webp`. Leadership
+  portraits are inlined in `client/src/brand/headshots.js` for the
+  same reason as the logos.
   The griffin-logo PNG also carried a 44KB C2PA `caBX` chunk from the
   export, which we stripped while cropping the empty canvas so the
   login chip actually fills.
