@@ -62,6 +62,18 @@ test('the shareable url carries no token', () => {
   assert.ok(u.includes('config.subject'), 'the title rides in the hash so Jitsi shows it, not the code');
 });
 
+test('a member with a token walks straight in; a guest still gets asked who they are', () => {
+  const member = meetingUrl({ code: 'c', token: 'TOK', title: 'T' });
+  assert.match(member, /config\.prejoinConfig\.enabled=false/,
+    'the token already carries their name, so do not ask for it again');
+
+  const guest = meetingUrl({ code: 'c', title: 'T' });
+  assert.ok(!guest.includes('prejoinConfig'),
+    'a forwarded link has no token and no name, so the prejoin screen must stay');
+  assert.ok(!guest.includes('requireDisplayName=false'),
+    'a guest walking into a meeting nameless is exactly what that screen prevents');
+});
+
 // --- codes ---------------------------------------------------------------
 
 test('slug is readable and the suffix is what makes it unguessable', () => {
