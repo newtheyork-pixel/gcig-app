@@ -26,7 +26,7 @@
   "logoImageUrl": "/griffin/wordmark.png",
   "logoClickUrl": "https://thegriffinfund.org",
   "backgroundColor": "#0b2540",
-  "premeetingBackground": "linear-gradient(160deg, #f4f2ec 0%, #f4f2ec 46%, #e1ecf8 46%, #e1ecf8 100%)",
+  "premeetingBackground": "url('/griffin/wordmark.png') no-repeat 40px 36px / 190px auto, linear-gradient(160deg, #f4f2ec 0%, #f4f2ec 46%, #e1ecf8 46%, #e1ecf8 100%)",
   "muiBrandedTheme": {
     "palette": {
       "uiBackground": "#0b2540",
