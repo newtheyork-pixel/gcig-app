@@ -18,6 +18,23 @@ rm -rf "$CFG/web/griffin" "$CFG/web/nginx-custom"
 cp -r branding/griffin branding/nginx-custom "$CFG/web/"
 cp branding/custom-config.js branding/custom-interface_config.js "$CFG/web/"
 
+# Cloudflare tunnel: stage the ingress config and this host's credentials
+# into the config volume. The credentials are per-tunnel secrets and never
+# live in the repo.
+CF_BIN=/home/thom/bin/cloudflared
+if [ -x "$CF_BIN" ] && [ -f "$HOME/.cloudflared/cert.pem" ]; then
+    TUNNEL_ID=$("$CF_BIN" tunnel list 2>/dev/null | awk '/griffin-meet/{print $1}' | head -1)
+    if [ -n "$TUNNEL_ID" ] && [ -f "$HOME/.cloudflared/$TUNNEL_ID.json" ]; then
+        mkdir -p "$CFG/cloudflared"
+        sed "s#__TUNNEL_ID__#$TUNNEL_ID#" branding/cloudflared-config.yml > "$CFG/cloudflared/config.yml"
+        cp "$HOME/.cloudflared/$TUNNEL_ID.json" "$CFG/cloudflared/creds.json"
+        chmod 600 "$CFG/cloudflared/creds.json"
+        echo "cloudflared configured for tunnel $TUNNEL_ID"
+    else
+        echo "note: tunnel 'griffin-meet' not found; run cloudflared tunnel create griffin-meet" >&2
+    fi
+fi
+
 docker compose pull -q
 docker compose up -d
 

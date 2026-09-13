@@ -20,7 +20,7 @@ WINDIR='C:/Users/thoma'
 
 echo "==> packing"
 tar czf /tmp/griffin-meet.tgz \
-    docker-compose.yml .env.example setup.sh install-remote.sh branding \
+    docker-compose.yml docker-compose.override.yml .env.example setup.sh install-remote.sh branding \
     $( [[ -f .env ]] && echo .env )
 
 echo "==> copying to $HOST"
