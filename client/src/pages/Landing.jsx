@@ -108,22 +108,62 @@ function useInView(threshold = 0.15) {
 }
 
 // Word-reveal — splits children-as-string into spans that rise individually.
+//
+// Two things here are easy to get wrong and were both wrong.
+//
+// The split uses a CAPTURE group, so the whitespace stays in the array and
+// the words sit at every other index. Staggering by array position therefore
+// counted each gap as another word and doubled every delay: a thirty-word
+// sentence ran on a fifty-nine step ladder. The stagger now counts words.
+//
+// And an un-capped stagger means a long sentence keeps getting slower the
+// more you write. The hero headline is thirty words, so at 45ms a word the
+// last one did not begin moving until nearly three seconds in, and anyone
+// who scrolled or screenshotted before then saw a half-written sentence
+// over a photo. The ladder is now compressed to fit a fixed budget, so the
+// sentence always finishes in about the same time however long it is.
+const REVEAL_BUDGET_MS = 1100;
+
 function WordReveal({ text, base = 0, step = 80, duration = 900, className = '' }) {
-  const [ref, seen] = useInView(0.2);
-  const words = text.split(/(\s+)/);
+  const [ref, seen] = useInView(0.05);
+
+  // A headline must never depend on an animation finishing in order to be
+  // readable. The hero sentence was reaching "disciplined investing is" at
+  // desktop widths and stopping there permanently: thirty seconds and a
+  // 1500px viewport still left half of it at opacity 0, so the words were
+  // not merely mid-transition. Whatever stalls it, the answer is the same —
+  // after a short grace period every word is shown outright, transition
+  // removed, so the worst case is a sentence that appears without its
+  // flourish rather than a sentence nobody can read.
+  const [settled, setSettled] = useState(false);
+  useEffect(() => {
+    const t = window.setTimeout(() => setSettled(true), 4000);
+    return () => window.clearTimeout(t);
+  }, []);
+
+  const parts = text.split(/(\s+)/);
+  const wordCount = parts.reduce((n, p) => (/^\s+$/.test(p) ? n : n + 1), 0);
+  const gaps = Math.max(1, wordCount - 1);
+  const effectiveStep = Math.min(step, REVEAL_BUDGET_MS / gaps);
+
+  let wordIndex = -1;
   return (
     <span ref={ref} className={className} style={{ display: 'inline' }}>
-      {words.map((w, i) => {
+      {parts.map((w, i) => {
         if (/^\s+$/.test(w)) return <span key={i}>{w}</span>;
+        wordIndex += 1;
+        const delay = Math.round(base + wordIndex * effectiveStep);
         return (
           <span
             key={i}
             style={{
               display: 'inline-block',
-              opacity: seen ? 1 : 0,
-              transform: seen ? 'translateY(0)' : 'translateY(40%)',
-              transition: `opacity ${duration}ms ${EASE_OUT} ${base + i * step}ms, transform ${duration}ms ${EASE_OUT} ${base + i * step}ms`,
-              willChange: 'transform, opacity',
+              opacity: settled || seen ? 1 : 0,
+              transform: settled || seen ? 'translateY(0)' : 'translateY(40%)',
+              transition: settled
+                ? 'none'
+                : `opacity ${duration}ms ${EASE_OUT} ${delay}ms, transform ${duration}ms ${EASE_OUT} ${delay}ms`,
+              willChange: settled ? 'auto' : 'transform, opacity',
             }}
           >
             {w}
@@ -389,7 +429,10 @@ function Hero() {
           from { opacity: 0; transform: translateY(8px); }
           to   { opacity: 1; transform: translateY(0); }
         }
-        .hero-eyebrow { animation: heroEyebrowFade 800ms ${EASE_OUT} both; animation-delay: 1400ms; }
+        .hero-eyebrow { opacity: 1; animation: heroEyebrowFade 800ms ${EASE_OUT} backwards; animation-delay: 1400ms; }
+        @media (prefers-reduced-motion: reduce) {
+          .hero-eyebrow { animation: none; }
+        }
       `}</style>
       <div
         ref={bgRef}
@@ -406,7 +449,15 @@ function Hero() {
           className="absolute inset-0 h-full w-full object-cover"
         />
       </div>
-      <div className="absolute inset-0 bg-white/[0.75]" aria-hidden="true" />
+      {/* The skyline needs a wash for the navy serif to stay legible, but a
+          flat 75% left it at a quarter strength and the top half of this
+          photo is pale sky, so it read as a blank white page. A gradient
+          keeps the contrast where the words actually are and lets the
+          buildings and the ferry come through lower down. */}
+      <div
+        className="absolute inset-0 bg-gradient-to-br from-white/[0.82] via-white/[0.6] to-white/[0.38]"
+        aria-hidden="true"
+      />
 
       <div className="relative">
         <div className="mx-auto max-w-5xl px-4 py-16 md:px-10 md:py-36">
@@ -423,7 +474,7 @@ function Hero() {
               duration={1000}
             />
           </h1>
-          <div className="hero-eyebrow mt-8 text-[10px] font-semibold uppercase tracking-[0.25em] text-navy-400 md:mt-10 md:text-[11px] md:tracking-[0.3em]">
+          <div className="hero-eyebrow mt-8 text-[10px] font-semibold uppercase tracking-[0.25em] text-navy-700 md:mt-10 md:text-[11px] md:tracking-[0.3em]">
             Grace Church School · Est. 2021
           </div>
         </div>
