@@ -12,17 +12,38 @@ if [[ -f .env ]]; then
     exit 1
 fi
 
-gen() { LC_ALL=C tr -dc 'a-zA-Z0-9' < /dev/urandom | head -c 40; }
+# Secrets are generated in python, deliberately.
+#
+# The shell version of this was `tr -dc ... < /dev/urandom | head -c 40`, and
+# it silently destroyed the whole deployment's security. head exits after 40
+# bytes, tr takes SIGPIPE, pipefail turns that into a failed pipeline, and
+# set -e aborted the script one line after it had copied .env.example into
+# place. Result: every password and the JWT signing secret stayed as the
+# literal string __GENERATE__, the stack came up perfectly, and nothing
+# anywhere reported a problem. A known signing secret means anyone can mint
+# themselves a moderator token.
+#
+# re.sub with a function is called once per match, so each placeholder gets
+# its OWN secret rather than all of them sharing one.
+python3 - <<'PYGEN'
+import re, secrets, string
+alphabet = string.ascii_letters + string.digits
+src = open('.env').read()
+out, n = re.subn(r'__GENERATE__',
+                 lambda m: ''.join(secrets.choice(alphabet) for _ in range(40)),
+                 src)
+open('.env', 'w').write(out)
+print(f"  generated {n} secrets")
+if re.search(r'__GENERATE__', out):
+    raise SystemExit("placeholder survived generation")
+PYGEN
 
-cp .env.example .env
-# Each __GENERATE__ gets its OWN secret. A single sed with one value would
-# hand Prosody the same password for five different accounts.
-while grep -q '__GENERATE__' .env; do
-    secret="$(gen)"
-    # Replace only the first remaining placeholder, then loop.
-    awk -v s="$secret" 'BEGIN{done=0} {if(!done && index($0,"__GENERATE__")){sub(/__GENERATE__/,s); done=1} print}' .env > .env.tmp
-    mv .env.tmp .env
-done
+# Fail loudly rather than ship a known secret.
+if grep -q '__GENERATE__' .env; then
+    echo "FATAL: secrets were not generated; refusing to continue" >&2
+    exit 1
+fi
+
 chmod 600 .env
 
 CONFIG="$(grep -E '^CONFIG=' .env | cut -d= -f2-)"
