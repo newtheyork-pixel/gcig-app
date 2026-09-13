@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext.jsx';
 import api from '../api/client.js';
-import { graceLogo } from '../brand/logos.js';
+import { griffinLogo } from '../brand/logos.js';
 import {
   sanderOlinick,
   thomasSeirer,
@@ -341,31 +341,16 @@ function Header() {
   return (
     <header className="border-b border-navy-50">
       <div className="mx-auto flex max-w-6xl items-center justify-between gap-3 px-4 py-4 md:px-10 md:py-7">
-        <Link to="/" className="group flex items-center gap-2 md:gap-3 min-w-0">
+        <Link to="/" className="min-w-0">
           <img
-            src={graceLogo}
-            alt="Grace Church School"
-            width={250}
-            height={53}
+            src={griffinLogo}
+            alt="The Griffin Fund"
+            width={900}
+            height={396}
             decoding="async"
             fetchPriority="high"
-            className="h-7 w-auto shrink-0 sm:h-8 md:h-10"
-            style={{ transition: `transform 500ms ${EASE_OUT}` }}
-            onError={(e) => {
-              e.currentTarget.style.display = 'none';
-            }}
+            className="h-12 w-auto sm:h-14 md:h-16"
           />
-          <style>{`.group:hover img[alt="Grace Church School"] { transform: rotate(-8deg); }`}</style>
-          <div className="leading-tight min-w-0">
-            <div className="font-serif text-base font-semibold tracking-tight text-navy md:text-lg">
-              The Griffin Fund
-            </div>
-            {/* Subtitle hidden on phones to keep the header on one line with
-                the Member Login button. */}
-            <div className="hidden text-[10px] uppercase tracking-[0.25em] text-navy-400 sm:block">
-              Grace Church School
-            </div>
-          </div>
         </Link>
         <Link
           to="/login"
@@ -1070,18 +1055,14 @@ function Footer() {
       <div className="mx-auto flex max-w-6xl flex-col gap-5 px-4 py-8 md:flex-row md:items-center md:justify-between md:gap-6 md:px-10 md:py-10">
         <div className="flex items-center gap-3">
           <img
-            src={graceLogo}
-            alt=""
-            width={250}
-            height={53}
-            className="h-8 w-auto opacity-80"
-            onError={(e) => {
-              e.currentTarget.style.display = 'none';
-            }}
+            src={griffinLogo}
+            alt="The Griffin Fund"
+            width={900}
+            height={396}
+            className="h-10 w-auto md:h-12"
           />
-          <div className="text-xs leading-tight text-navy-400">
-            <div className="font-semibold text-navy">The Griffin Fund</div>
-            <div>Grace Church School Investment Group</div>
+          <div className="text-[10px] uppercase tracking-[0.25em] text-navy-400">
+            Grace Church School
           </div>
         </div>
         <div className="flex items-center gap-6 text-[10px] font-semibold uppercase tracking-[0.25em] text-navy-400">
