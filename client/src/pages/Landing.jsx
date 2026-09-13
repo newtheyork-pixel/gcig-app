@@ -10,6 +10,8 @@ import {
   ericWinter,
   eliFriedman,
 } from '../brand/headshots.js';
+import fieldVisitJpmorgan from '../brand/plates/field-visit.webp';
+import fieldVisitPerman from '../brand/plates/field-visit-2.webp';
 
 // Public landing for The Griffin Fund. Modeled on Select Equity Group's
 // website: text-forward, institutional, restrained palette (white page, navy
@@ -662,8 +664,7 @@ function FieldVisit() {
             does. The first plate carries the side watermark; the second
             is left clean. */}
         <FieldPlate
-          src="/field-visit.webp"
-          mobileSrc="/field-visit-mobile.webp"
+          src={fieldVisitJpmorgan}
           alt="Members of The Griffin Fund inside the atrium of JPMorgan's headquarters during a Spring 2025 tour and meeting."
           eyebrow="JPMorgan · Spring 2025"
           caption="We spent a morning at JPMorgan, got a tour of the building, then sat down with some of their team."
@@ -673,8 +674,7 @@ function FieldVisit() {
           showWatermark
         />
         <FieldPlate
-          src="/field-visit-2.webp"
-          mobileSrc="/field-visit-2-mobile.webp"
+          src={fieldVisitPerman}
           alt="Jacob Perman '16 speaking to members of The Griffin Fund in a Grace Church School classroom during a November 2025 alumni visit."
           eyebrow="Jacob Perman '16 · November 2025"
           caption="Jacob Perman '16 came back to walk us through what he actually does: leveraged finance at Wells Fargo."
@@ -688,17 +688,14 @@ function FieldVisit() {
   );
 }
 
-// FieldPlate — one framed photograph staged with the full reveal stack:
-// arrival lift, four enclosing rules drawing in clockwise, gold L-shaped
-// corner accents, a vertical clip-path aperture that opens from the
-// centerline, a B&W + blur → full color crossfade running in parallel,
-// a slow Ken Burns drift underneath, scroll-coupled vertical parallax,
-// saturation/brightness decay at the edges of the viewport, and a
-// critically-damped cursor parallax on desktop. Caption + index label +
-// printed-plate footer all key off the same `seen` gate.
+// FieldPlate — one framed photograph. The photo itself is an in-flow
+// <img> with intrinsic width/height, no <picture>, and no transform /
+// filter / clip-path on it or any ancestor. Safari still paints the
+// broken-image glyph (alt text + "?") when any of that stack is
+// present, which is why JPMorgan and Perman stayed blank after Ken
+// Burns came off. Reveal motion lives on the caption overlays only.
 function FieldPlate({
   src,
-  mobileSrc,
   alt,
   eyebrow,
   caption,
@@ -709,73 +706,8 @@ function FieldPlate({
   className = '',
 }) {
   const [sectionRef, seen] = useInView(0.18);
-  const [progressRef, sp] = useScrollProgress();
-
-  const reduced =
-    typeof window !== 'undefined' &&
-    window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-
-  // Vertical parallax centered on sp=0.5 so the photo sits still when it
-  // owns the middle of the screen and floats at the extremes. Disabled
-  // under reduced-motion.
-  const parallaxY = reduced ? 0 : (sp - 0.5) * 36;
-
-  // Cursor parallax — pointer movement nudges the image inside its
-  // frame. Disabled on touch / reduced-motion.
-  const figureRef = useRef(null);
-  const imgWrapRef = useRef(null);
-  useEffect(() => {
-    if (reduced) return;
-    const scope = figureRef.current;
-    const target = imgWrapRef.current;
-    if (!scope || !target) return;
-    if (window.matchMedia('(pointer: coarse)').matches) return;
-
-    let tx = 0, ty = 0, cx = 0, cy = 0, raf = null, inside = false;
-    const RANGE = 14;
-    const onMove = (e) => {
-      const r = scope.getBoundingClientRect();
-      const nx = (e.clientX - r.left) / r.width - 0.5;
-      const ny = (e.clientY - r.top) / r.height - 0.5;
-      tx = nx * RANGE;
-      ty = ny * (RANGE * 0.55);
-      inside = true;
-      if (!raf) raf = requestAnimationFrame(tick);
-    };
-    const onLeave = () => {
-      tx = 0; ty = 0; inside = false;
-      if (!raf) raf = requestAnimationFrame(tick);
-    };
-    const tick = () => {
-      cx += (tx - cx) * 0.07;
-      cy += (ty - cy) * 0.07;
-      target.style.setProperty('--cx', `${cx.toFixed(2)}px`);
-      target.style.setProperty('--cy', `${cy.toFixed(2)}px`);
-      if (Math.abs(tx - cx) > 0.05 || Math.abs(ty - cy) > 0.05 || inside) {
-        raf = requestAnimationFrame(tick);
-      } else {
-        raf = null;
-      }
-    };
-    scope.addEventListener('pointermove', onMove, { passive: true });
-    scope.addEventListener('pointerleave', onLeave);
-    return () => {
-      scope.removeEventListener('pointermove', onMove);
-      scope.removeEventListener('pointerleave', onLeave);
-      if (raf) cancelAnimationFrame(raf);
-    };
-  }, [reduced]);
-
-  // Both refs need to land on the same wrapper so useInView gates the
-  // reveal and useScrollProgress reads the viewport position from the
-  // same element.
-  const setRefs = (el) => {
-    sectionRef.current = el;
-    progressRef.current = el;
-  };
 
   const E = EASE_OUT;
-  const figureLift = seen ? 'translateY(0)' : 'translateY(28px)';
   const figureShadow = seen
     ? '0 1px 2px rgba(27,42,74,0.05), 0 6px 14px rgba(27,42,74,0.08), 0 28px 60px -20px rgba(27,42,74,0.30), 0 60px 120px -36px rgba(27,42,74,0.30)'
     : '0 1px 2px rgba(27,42,74,0.04), 0 4px 10px rgba(27,42,74,0.04)';
@@ -792,7 +724,7 @@ function FieldPlate({
 
   return (
     <div
-      ref={setRefs}
+      ref={sectionRef}
       className={`relative ${seen ? 'fv-seen' : ''} ${className}`}
     >
       {/* Side watermark — vertical institutional tag, desktop only. Only
@@ -811,15 +743,7 @@ function FieldPlate({
         </div>
       )}
 
-      <figure
-        ref={figureRef}
-        className="relative mx-auto"
-        style={{
-          maxWidth: '1080px',
-          transform: figureLift,
-          transition: `transform 1300ms ${E} 100ms`,
-        }}
-      >
+      <figure className="relative mx-auto" style={{ maxWidth: '1080px' }}>
         {/* Four enclosing rules — each animates in along its long axis,
             chasing the previous one clockwise from the top edge. */}
         <div className="pointer-events-none absolute inset-0 z-20">
@@ -848,29 +772,23 @@ function FieldPlate({
           <span className="fv-corner br" aria-hidden="true" />
         </div>
 
-        {/* Photograph. Same rule as the hero skyline: a plain <img>
-            with no CSS filter, clip-path, or Ken Burns transform on it.
-            Safari will not paint a large photo under that stack, and
-            it surfaces as the broken-image glyph on a grey field. */}
+        {/* Photograph. In-flow, intrinsic size, hashed URL so Safari
+            cannot reuse a poisoned cache of /field-visit.webp. */}
         <div
-          ref={imgWrapRef}
-          className="relative aspect-[4/3] w-full overflow-hidden bg-navy-50"
+          className="relative w-full overflow-hidden bg-navy-50"
           style={{
             boxShadow: figureShadow,
             transition: `box-shadow 1500ms ${E} 400ms`,
-            transform: `translate3d(var(--cx, 0px), calc(${parallaxY}px + var(--cy, 0px)), 0)`,
-            willChange: 'transform',
           }}
         >
-          <picture>
-            <source media="(max-width: 767px)" srcSet={mobileSrc} />
-            <img
-              src={src}
-              alt={alt}
-              className="absolute inset-0 h-full w-full object-cover"
-              decoding="async"
-            />
-          </picture>
+          <img
+            src={src}
+            alt={alt}
+            width={2200}
+            height={1650}
+            decoding="async"
+            className="block h-auto w-full"
+          />
 
           {/* Lower scrim — a soft navy-to-transparent gradient that
               sits behind the caption so type lifts off the image
