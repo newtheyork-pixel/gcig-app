@@ -37,7 +37,7 @@ jobs:
           echo "subject=GCIG Weekly Update: $WEEK_AGO - $TODAY" >> $GITHUB_OUTPUT
 
       - name: Send email
-        uses: dawidd6/action-send-mail@v3
+        uses: dawidd6/action-send-mail@v18
         with:
           server_address: smtp.sendgrid.net
           server_port: 587
