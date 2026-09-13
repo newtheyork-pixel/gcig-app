@@ -99,3 +99,23 @@ config.enableOpusRed = true;
 // question before it is a technical one. Local recording stays available
 // and tells the room it has started.
 config.localRecording = { disable: false, notifyAllParticipants: true };
+
+// ---------------------------------------------------------------------
+// The logo.
+//
+// This has to be set in THREE places because Jitsi moved it and kept the
+// old names working-but-ignored, which is the worst combination:
+//
+//   config.defaultLogoUrl              <- the one current Jitsi reads
+//   interfaceConfig.DEFAULT_LOGO_URL   <- deprecated; Jitsi's own shipped
+//                                         interface_config.js literally
+//                                         says "Please use defaultLogoUrl
+//                                         from config.js" above it
+//   branding.json logoImageUrl         <- dynamic branding, for clients
+//                                         that read the theme first
+//
+// Setting only the interfaceConfig one looks completely correct and does
+// nothing. The giveaway was the access log: across every page load, not a
+// single request for the wordmark ever arrived. The favicon was fetched,
+// the theme was fetched, the logo was never asked for at all.
+config.defaultLogoUrl = '/griffin/wordmark.png';
