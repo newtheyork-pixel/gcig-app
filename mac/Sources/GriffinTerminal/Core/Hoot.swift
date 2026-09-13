@@ -241,7 +241,7 @@ final class Hoot: ObservableObject {
                     let arrived = self.audio.framesHeard - heardBefore
                     let played = self.audio.framesPlayed - playedBefore
                     if arrived > 0 && played == 0 {
-                        self.captureProblem = "Their audio is arriving but not playing. Check the output device in Sound settings."
+                        self.captureProblem = "Their audio is arriving but not playing."
                     } else if arrived == 0 {
                         self.captureProblem = nil
                     }
@@ -363,6 +363,7 @@ final class HootAudio: @unchecked Sendable {
     private let wire = AVAudioFormat(
         commonFormat: .pcmFormatInt16, sampleRate: 16000, channels: 1, interleaved: true)!
     private var playConv: AVAudioConverter?
+    private var playFormat: AVAudioFormat?
     private var capConv: AVAudioConverter?
     private var started = false
     private var captureEngine: AVAudioEngine?
@@ -407,6 +408,25 @@ final class HootAudio: @unchecked Sendable {
     /// exists.
     private func buildPlaybackGraph() {
         _ = engine.outputNode  // force the output chain to exist
+        // PREPARE FIRST, then ask the mixer what format it is in.
+        //
+        // This one line of ordering was the whole bug. An AVAudioEngine
+        // that has not been prepared reports a hard-coded placeholder of
+        // 2 channels at 44100 from its main mixer, whatever the hardware
+        // actually is. prepare() is the moment it snaps to the real rate,
+        // which on essentially every modern Mac is 48000.
+        //
+        // So the converter below was built for 44100 while play() read
+        // the live format and allocated its output buffer at 48000, and
+        // AVAudioConverter answered every frame with 'fmt?' —
+        // kAudioConverterErr_FormatNotSupported — which the caller
+        // treated as a frame to drop. Every frame, for the life of the
+        // session, silently.
+        //
+        // Measured: before prepare 44100, after prepare 48000, and a
+        // graph built consistently after prepare renders at peak 0.678
+        // where the shipped one rendered 0.0.
+        engine.prepare()
         let out = engine.mainMixerNode.outputFormat(forBus: 0)
         // No sample rate means no usable output — every output removed,
         // or a virtual device vanishing, which is precisely the
@@ -420,6 +440,14 @@ final class HootAudio: @unchecked Sendable {
         if player.engine == nil { engine.attach(player) }
         engine.connect(player, to: engine.mainMixerNode, format: out)
         playConv = AVAudioConverter(from: wire, to: out)
+        // Remember what the graph was actually built against. play() used
+        // to re-read the mixer on every frame, which is how the two ends
+        // disagreed in the first place — and worse, a later device change
+        // that alters the CHANNEL COUNT would then hand scheduleBuffer a
+        // buffer of the wrong shape, which does not fail quietly: it
+        // terminates the process with an uncaught exception. Today the
+        // converter error was accidentally shielding that.
+        playFormat = out
         engine.prepare()
         do {
             try engine.start()
@@ -615,7 +643,9 @@ final class HootAudio: @unchecked Sendable {
                 memcpy(dst[0], base, frames * MemoryLayout<Int16>.size)
             }
         }
-        let out = engine.mainMixerNode.outputFormat(forBus: 0)
+        // The format the converter and the connection were built against,
+        // never a fresh read. See buildPlaybackGraph.
+        guard let out = playFormat else { return }
         let ratio = out.sampleRate / wire.sampleRate
         let cap = AVAudioFrameCount(Double(frames) * ratio) + 32
         guard let outBuf = AVAudioPCMBuffer(pcmFormat: out, frameCapacity: cap) else { return }
