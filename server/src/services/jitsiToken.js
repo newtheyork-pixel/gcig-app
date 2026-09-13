@@ -103,5 +103,19 @@ export function meetingUrl({ code, token, title, base } = {}) {
   if (token) url.searchParams.set('jwt', token);
   const hash = [];
   if (title) hash.push(`config.subject=${encodeURIComponent(JSON.stringify(title))}`);
+
+  // A member arriving WITH a token has already proved who they are, and the
+  // token carries their name. Making them stop at a prejoin screen to type
+  // it again is asking a question we know the answer to, so that screen is
+  // switched off for them and they land straight in the room.
+  //
+  // It stays on for everyone else. A guest following a forwarded link has no
+  // token and no name, and the prejoin screen is the only place they can say
+  // who they are before walking into a meeting.
+  if (token) {
+    hash.push('config.prejoinConfig.enabled=false');
+    hash.push('config.requireDisplayName=false');
+  }
+
   return hash.length ? `${url.toString()}#${hash.join('&')}` : url.toString();
 }
