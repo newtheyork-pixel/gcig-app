@@ -328,7 +328,7 @@ private struct CommandBarView: View {
             return (Parser.looksLikeTicker(first) ? first : nil,
                     cleaned.dropFirst().joined(separator: " "))
         }
-        if Registry.all.contains(where: { $0.id.hasPrefix(first) }) { return (nil, first) }
+        if Registry.ids.contains(where: { $0.hasPrefix(first) }) { return (nil, first) }
         if Parser.looksLikeTicker(first) { return (first, "") }
         return (nil, first)
     }
@@ -338,10 +338,11 @@ private struct CommandBarView: View {
         func score(_ f: TerminalFunction) -> Int {
             if q.isEmpty { return 1 }
             let label = f.label.uppercased()
-            if f.id == q { return 100 }
-            if f.id.hasPrefix(q) { return 80 }
+            let ids = [f.id] + f.aliases
+            if ids.contains(q) { return 100 }
+            if ids.contains(where: { $0.hasPrefix(q) }) { return 80 }
             if label.hasPrefix(q) { return 60 }
-            if f.id.contains(q) { return 40 }
+            if ids.contains(where: { $0.contains(q) }) { return 40 }
             if label.contains(q) { return 20 }
             return -1
         }

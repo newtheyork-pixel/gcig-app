@@ -30,8 +30,12 @@ import { authenticateToken, hasTerminalAccess } from '../middleware/auth.js';
 
 const MAX_FRAME = 64 * 1024; // a keyed PCM frame is ~20-40ms; cap the rest
 
-export function attachHoot(server) {
-  const wss = new WebSocketServer({ noServer: true });
+export function attachHoot(server, deps = {}) {
+  // URLSessionWebSocketTask has a long history of dropping frames once
+  // permessage-deflate is negotiated. Presence JSON is tiny; PCM does
+  // not benefit enough to keep the fight.
+  const auth = deps.authenticateToken || authenticateToken;
+  const wss = new WebSocketServer({ noServer: true, perMessageDeflate: false });
   const peers = new Map(); // connId -> { ws, user, talking, muted, target, lastActive, alive }
   let nextConnId = 1;
   const now = () => Date.now();
@@ -68,7 +72,7 @@ export function attachHoot(server) {
       return socket.destroy();
     }
     if (url.pathname !== '/ws/hoot') return socket.destroy();
-    authenticateToken(url.searchParams.get('token'))
+    auth(url.searchParams.get('token'))
       .then((user) => {
         // The desk is club-only: a guest collaborator does not join it.
         if (!user || !hasTerminalAccess(user) || user.isGuest) {
@@ -146,13 +150,18 @@ export function attachHoot(server) {
     });
 
     ws.on('message', (data, isBinary) => {
-      if (isBinary) {
+      const bytes = Buffer.isBuffer(data) ? data : Buffer.from(data);
+      // A JSON frame that arrived as binary still starts with `{`.
+      // Treat that as text rather than dropping it as an audio frame
+      // that is not keyed up.
+      const looksLikeJson = bytes.length > 0 && bytes[0] === 0x7b;
+      if (isBinary && !looksLikeJson) {
         // Audio flows only while keyed up and not muted.
-        if (me.muted || !me.talking || data.length > MAX_FRAME) return;
+        if (me.muted || !me.talking || bytes.length > MAX_FRAME) return;
         me.lastActive = now();
         const header = Buffer.allocUnsafe(4);
         header.writeUInt32BE(connId >>> 0, 0);
-        const frame = Buffer.concat([header, data]);
+        const frame = Buffer.concat([header, bytes]);
         if (me.target == null) {
           for (const [cid, p] of peers) {
             if (cid === connId) continue; // never back to the speaker's own connection
@@ -172,7 +181,7 @@ export function attachHoot(server) {
 
       let msg;
       try {
-        msg = JSON.parse(data.toString());
+        msg = JSON.parse(bytes.toString());
       } catch {
         return;
       }
