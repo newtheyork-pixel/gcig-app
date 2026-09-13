@@ -1120,6 +1120,57 @@ row in the same transaction.
   The general rule: any system where one person does every step hides every
   bug that distinguishes the steps. Adding the second person is the test.
 
+## Audio on the Mac: three traps, all paid for (Sep '26)
+
+Every one of these produced SILENCE with no error anywhere, which is why
+they took a day between them. The squawk box and the CHK call recorder
+both hit the same class.
+
+**Never ask an AVAudioEngine its format before it has settled.** An
+engine that has not been prepared reports a hard-coded placeholder of 2ch
+at 44100 from its main mixer, whatever the hardware is. `prepare()` snaps
+it to the real rate — 48000 on essentially every modern Mac — and
+`start()` can rebind it again. HOOT built its playback converter against
+the placeholder and then allocated buffers from the live format, so
+AVAudioConverter answered every frame with `'fmt?'` and the caller
+dropped it. Nobody heard anybody, for the life of the session. Read the
+format after the graph settles, STORE it, and build the connection, the
+converter and every buffer from that one stored value — never re-read per
+frame, because a device change that alters the CHANNEL COUNT then hands
+scheduleBuffer the wrong shape, and that does not fail quietly, it
+terminates the process.
+
+Diagnostic that settles it in one command: read
+`mainMixerNode.outputFormat` before and after `prepare()`. If they
+differ, anything built from the first read is wrong. A converter test
+that reads the format ONCE and uses it on both sides will pass while the
+real code fails, which is exactly how this was missed for hours.
+
+**AVAudioConverter from a many-channel source to one channel returns
+silence, not an error.** The correct NUMBER of samples, every one zero.
+The default input reported nine channels while a tap's aggregate device
+existed, and a real Signet store call transcribed to one voice because of
+it. Downmix by hand — average every channel, do not take channel zero,
+there is no guarantee the live mic is first — and let the converter only
+change sample rate. `CallRecorder.downmix` and `HootAudio.downmix` both
+do this; keep them in step.
+
+**A closure written inside a @MainActor type INHERITS that isolation.**
+AVAudioEngine calls a tap block from a real-time thread, Swift 6 checks
+the actor and traps, and the app quits on the first buffer. Mark audio
+callbacks `@Sendable` explicitly. Related: never let a pointer escape the
+closure that owns it — `withUnsafeBufferPointer` on a temporary array
+gave AVAudioFormat freed memory, which parsed into an object that looked
+fine until AVAudioPCMBuffer refused it and aborted the process.
+
+**The general lesson, worth more than the three bugs.** Sending audio is
+measurable from the server by anyone with a token; arriving audio is
+measurable by nobody. So every investigation drifted to the sending side
+and the receiving side failed in silence for an evening. Both halves now
+count frames — `framesSeen`/`framesSent` on capture, `framesHeard`/
+`framesPlayed` on playback — and say so when the gap is total. Any audio
+path that can fail should carry a counter on both ends of itself.
+
 ## Known issues (open)
 
 - **GSAM Daily Rates PDF returns HTTP 403 from Render (May '26)**: the
