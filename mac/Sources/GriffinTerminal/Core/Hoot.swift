@@ -229,6 +229,24 @@ final class Hoot: ObservableObject {
             members = Self.parseMembers(obj["members"])
             adoptServerTarget()
         case "ptt":
+            // Somebody keyed up. Check a second later whether anything
+            // they said actually reached the speakers. Sending has been
+            // measurable from the server all along; hearing never was,
+            // and that is the half that stayed broken.
+            if let on = obj["on"] as? Bool, on {
+                let heardBefore = audio.framesHeard
+                let playedBefore = audio.framesPlayed
+                DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+                    guard let self else { return }
+                    let arrived = self.audio.framesHeard - heardBefore
+                    let played = self.audio.framesPlayed - playedBefore
+                    if arrived > 0 && played == 0 {
+                        self.captureProblem = "Their audio is arriving but not playing. Check the output device in Sound settings."
+                    } else if arrived == 0 {
+                        self.captureProblem = nil
+                    }
+                }
+            }
             if let id = HootJSON.int(obj["id"]), let on = obj["on"] as? Bool,
                let idx = members.firstIndex(where: { $0.id == id }) {
                 members[idx].talking = on
@@ -358,6 +376,12 @@ final class HootAudio: @unchecked Sendable {
     /// a successful start, which is the class this file has shipped twice.
     var framesSeen = 0
     var framesSent = 0
+    /// Frames that arrived from the desk, and frames that reached the
+    /// speakers. The gap between them is every way playback can fail
+    /// quietly — and it failed quietly for a whole evening while the
+    /// sending side was proven good by measurement.
+    var framesHeard = 0
+    var framesPlayed = 0
 
     func startEngine() {
         guard !started else { return }
@@ -570,7 +594,13 @@ final class HootAudio: @unchecked Sendable {
         // milliseconds, so an engine that will not start turned this into
         // twenty-five to fifty full graph rebuilds a second on the main
         // thread, for as long as anybody was talking.
-        if !engine.isRunning, Date().timeIntervalSince(lastRebuild) > 1 {
+        framesHeard &+= 1
+        // Rebuild when the graph is not USABLE, not only when the engine
+        // has stopped. `started` going false while the engine still runs
+        // left this returning on every frame forever, which is silence
+        // with nothing anywhere saying so.
+        if (!engine.isRunning || !started || playConv == nil),
+           Date().timeIntervalSince(lastRebuild) > 1 {
             lastRebuild = Date()
             restartPlayback()
         }
@@ -598,6 +628,7 @@ final class HootAudio: @unchecked Sendable {
             return inBuf
         }
         if err == nil, outBuf.frameLength > 0 {
+            framesPlayed &+= 1
             player.scheduleBuffer(outBuf, at: nil, options: [], completionHandler: nil)
         }
     }
