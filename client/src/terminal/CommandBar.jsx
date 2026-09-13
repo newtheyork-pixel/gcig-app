@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { parseMnemonic } from './parser.js';
-import { FUNCTIONS } from './registry.js';
+import { FUNCTIONS, FUNCTION_IDS } from './registry.js';
 import api from '../api/client.js';
 
 // The amber command bar. Local mnemonic parse first; only falls back to the
@@ -27,19 +27,22 @@ function splitInput(raw) {
     return { ticker: TICKER_RE.test(tokens[0]) ? tokens[0] : null, q: tokens.slice(1).join(' ') };
   }
   const t = tokens[0];
-  if (FUNCTIONS.some((f) => f.id.startsWith(t))) return { ticker: null, q: t };
+  // Aliases live in FUNCTION_IDS, not as their own FUNCTIONS rows.
+  // Checking only f.id made FLD and HOOT's SQUAWK/DESK look like
+  // tickers, and Enter then opened DES for a company that is not one.
+  if ([...FUNCTION_IDS].some((id) => id.startsWith(t))) return { ticker: null, q: t };
   if (TICKER_RE.test(t)) return { ticker: t, q: '' };
   return { ticker: null, q: t };
 }
 
 function scoreFn(f, q) {
   if (!q) return 1;
-  const id = f.id;
+  const ids = [f.id, ...(f.aliases || [])];
   const label = f.label.toUpperCase();
-  if (id === q) return 100;
-  if (id.startsWith(q)) return 80;
+  if (ids.includes(q)) return 100;
+  if (ids.some((id) => id.startsWith(q))) return 80;
   if (label.startsWith(q)) return 60;
-  if (id.includes(q)) return 40;
+  if (ids.some((id) => id.includes(q))) return 40;
   if (label.includes(q)) return 20;
   return -1;
 }
@@ -79,7 +82,7 @@ export default function CommandBar({ onCommand, lastInterpretation }) {
   // per pause, not per keystroke.
   const symQuery = useMemo(() => {
     if (!ticker || ticker.length < 2) return '';
-    if (FUNCTIONS.some((f) => f.id === ticker)) return '';
+    if (FUNCTION_IDS.has(ticker)) return '';
     return ticker;
   }, [ticker]);
 

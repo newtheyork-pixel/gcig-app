@@ -41,6 +41,7 @@ import Correlation from './functions/Correlation.jsx';
 import Economic from './functions/Economic.jsx';
 import ShortInterest from './functions/ShortInterest.jsx';
 import Halts from './functions/Halts.jsx';
+import Hoot from './functions/Hoot.jsx';
 
 export const FUNCTIONS = [
   {
@@ -111,6 +112,7 @@ export const FUNCTIONS = [
   // to serve a rename.
   { id: 'RSCH', aliases: ['FLD'], label: 'Research', help: 'Everything on one name: the brief and questions, outreach, interviews and transcripts, site visits, valuation models, filings and data, and the claim ledger with every claim pinned to a source and timestamp.', requires: null, component: FieldWork, w: 860, h: 680 },
   { id: 'CHK', aliases: ['CALL'], label: 'Channel Check', help: 'Ring stores from the desk: the queue of doors, the disclosure to read aloud, the outcome of every dial including the refusals, and the transcript.', requires: null, component: ChannelCheck, w: 940, h: 680 },
+  { id: 'HOOT', aliases: ['SQUAWK', 'DESK'], label: 'Squawk Box', help: 'The desk squawk box: who is on the terminal, the shared Trade Desk, and a direct line to any one person. Hold to talk.', requires: null, component: Hoot, w: 460, h: 460 },
   // Ticker-optional: `ARCH` opens the whole archive, `AIT ARCH` scopes
   // it. Wider/taller than the default because this pane is read, not
   // scanned — prose at 580px wraps every few words. RSCH is the work and

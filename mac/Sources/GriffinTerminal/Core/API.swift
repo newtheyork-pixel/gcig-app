@@ -109,9 +109,11 @@ actor API {
     /// A WebSocket URL under our origin, carrying the session token as a
     /// query parameter — a WebSocket cannot set an Authorization header,
     /// same as the browser. `path` is rooted at the host (e.g. "/ws/hoot"),
-    /// not under /api.
+    /// not under /api. Nil when there is no token: the handshake would
+    /// 401, and retrying a known-dead URL just looks like the desk is
+    /// offline for a reason that lives on the other end.
     func webSocketURL(_ path: String) -> URL? {
-        guard let apiURL = URL(string: base) else { return nil }
+        guard let apiURL = URL(string: base), token != nil else { return nil }
         var comps = URLComponents()
         comps.scheme = apiURL.scheme == "http" ? "ws" : "wss"
         comps.host = apiURL.host

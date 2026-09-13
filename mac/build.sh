@@ -94,7 +94,11 @@ else
   # download-on-demand are missing.
   echo "==> file provider off (set GRIFFIN_FILE_PROVIDER=1 to build it)"
   rm -rf "$EXT"
-  codesign --force --deep --sign - "$APP" 2>/dev/null || echo "   (unsigned)"
+  # Ad-hoc, but still stamp the mic entitlement. Without it, a later
+  # hardened-runtime wrap grants the prompt and then never delivers frames.
+  codesign --force --deep --sign - --entitlements GriffinTerminal.entitlements "$APP" \
+    2>/dev/null || codesign --force --deep --sign - "$APP" 2>/dev/null \
+    || echo "   (unsigned)"
 fi
 
 echo "==> $APP"

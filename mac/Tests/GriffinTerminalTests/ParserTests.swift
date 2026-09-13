@@ -50,6 +50,9 @@ final class ParserTests: XCTestCase {
         expect("CMP AIT JNJ",         nil,     "CMP",  "AIT JNJ")
         expect("NOTE hello world",    nil,     "NOTE", "HELLO WORLD")
         expect("HELP",                nil,     "HELP", nil)
+        expect("HOOT",                nil,     "HOOT", nil)
+        expect("SQUAWK",              nil,     "SQUAWK", nil)
+        expect("DESK",                nil,     "DESK", nil)
         expect("BI what is this",     nil,     "BI",   "WHAT IS THIS")
         expect("AIT DES extra args",  "AIT",   "DES",  "EXTRA ARGS")
         expect("RSCH CHRW",           nil,     "RSCH", "CHRW")
@@ -69,9 +72,9 @@ final class ParserTests: XCTestCase {
     func testEveryWebMnemonicIsKnown() {
         // If the web adds a function and this app does not, the command
         // bar says "not a function" for something that plainly is one.
-        let web = ["ARCH","BI","CMP","CN","CON","DES","EARN","ECO","FA","FIL","FLD",
-                   "GF","GIP","GP","HELP","ICLUSTER","INSDR","MACRO","MGMT","MOVR",
-                   "NOTE","ORG","PEER","PM","RDR","RSCH","SPLC","TOP","WEI","WX"]
+        let web = ["ARCH","BI","CHK","CMP","CN","CON","DES","DESK","EARN","ECO","FA","FIL","FLD",
+                   "GF","GIP","GP","HELP","HOOT","ICLUSTER","INSDR","MACRO","MGMT","MOVR",
+                   "NOTE","ORG","PEER","PM","RDR","RSCH","SPLC","SQUAWK","TOP","WEI","WX"]
         let missing = web.filter { !Registry.ids.contains($0) }
         XCTAssertTrue(missing.isEmpty, "registry is missing web mnemonics: \(missing)")
     }

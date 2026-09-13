@@ -1,6 +1,19 @@
 import SwiftUI
 import AVFoundation
 
+// JSONSerialization turns every JSON number into NSNumber. `as? Int`
+// on that is a coin flip — sometimes the box was a Double — and a
+// failed cast dropped the whole roster, so the desk looked empty while
+// the socket was fine. NSNumber.intValue is the read that always works.
+enum HootJSON {
+    static func int(_ any: Any?) -> Int? {
+        if let i = any as? Int { return i }
+        if let n = any as? NSNumber { return n.intValue }
+        if let d = any as? Double { return Int(d) }
+        return nil
+    }
+}
+
 // The desk squawk box, native. Shared for the whole terminal session: it
 // joins presence the moment the terminal opens (silent — no bar), so the
 // HOOT panel can show who is on the desk. Two ways to be heard, matching
@@ -87,8 +100,13 @@ final class Hoot: ObservableObject {
             guard !self.closed else { return }
             guard let url else {
                 self.status = .off
+                DispatchQueue.main.asyncAfter(deadline: .now() + self.retryDelay) { [weak self] in
+                    guard let self, !self.closed else { return }
+                    self.connect()
+                }
                 return
             }
+            self.task?.cancel(with: .goingAway, reason: nil)
             let t = self.session.webSocketTask(with: url)
             self.task = t
             self.audio.socket = t
@@ -174,7 +192,14 @@ final class Hoot: ObservableObject {
                     }
                 case .data(let d):
                     Task { @MainActor in
-                        if d.count > 4 { self?.audio.play(d.subdata(in: 4 ..< d.count)) }
+                        // URLSession sometimes delivers a text frame as
+                        // Data. `{` is never a PCM prefix (those start
+                        // with a 4-byte speaker id), so this is JSON.
+                        if let s = String(data: d, encoding: .utf8), s.first == "{" {
+                            self?.handleText(s)
+                        } else if d.count > 4 {
+                            self?.audio.play(d.subdata(in: 4 ..< d.count))
+                        }
                         self?.receive()
                     }
                 @unknown default:
@@ -193,7 +218,7 @@ final class Hoot: ObservableObject {
         case "welcome":
             status = .on
             if let me = obj["self"] as? [String: Any] {
-                selfId = me["id"] as? Int
+                selfId = HootJSON.int(me["id"])
                 selfName = me["name"] as? String
             }
             members = Self.parseMembers(obj["members"])
@@ -204,7 +229,7 @@ final class Hoot: ObservableObject {
             members = Self.parseMembers(obj["members"])
             adoptServerTarget()
         case "ptt":
-            if let id = obj["id"] as? Int, let on = obj["on"] as? Bool,
+            if let id = HootJSON.int(obj["id"]), let on = obj["on"] as? Bool,
                let idx = members.firstIndex(where: { $0.id == id }) {
                 members[idx].talking = on
             }
@@ -216,13 +241,13 @@ final class Hoot: ObservableObject {
     private static func parseMembers(_ raw: Any?) -> [Member] {
         guard let arr = raw as? [[String: Any]] else { return [] }
         return arr.compactMap { m in
-            guard let id = m["id"] as? Int, let name = m["name"] as? String else { return nil }
+            guard let id = HootJSON.int(m["id"]), let name = m["name"] as? String else { return nil }
             return Member(
                 id: id, name: name,
                 talking: (m["talking"] as? Bool) ?? false,
                 muted: (m["muted"] as? Bool) ?? false,
-                idleMs: (m["idleMs"] as? Int) ?? 0,
-                target: m["target"] as? Int)
+                idleMs: HootJSON.int(m["idleMs"]) ?? 0,
+                target: HootJSON.int(m["target"]))
         }
     }
 
