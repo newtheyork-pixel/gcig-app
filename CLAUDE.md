@@ -401,7 +401,10 @@ together or an analyst opens the terminal and 403s on every panel.
   Cloudflare Polish rewrites PNG/JPEG (and ignores no-transform on
   this zone), so the header, footer, sidebar and login chip must not
   fetch those files. The `.png` / `.webp` copies in `client/public/`
-  remain as sources and as the apple-touch-icon.
+  remain as sources and as the apple-touch-icon. The public landing
+  header and footer use `griffinLogo` (crest + GRIFFIN FUND), not
+  the Grace wordmark. Do not set the two side by side — the lockup
+  already says the fund's name.
 - `client/src/brand/headshots.js` — inlined WebP data URIs for the
   leadership portraits on the landing page. Same reason as the logos:
   a CDN fetch plus `onError` hide, or a CSS filter on the `<img>`,
