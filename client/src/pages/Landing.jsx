@@ -10,6 +10,7 @@ import {
   ericWinter,
   eliFriedman,
 } from '../brand/headshots.js';
+import heroSkyline from '../brand/hero-skyline.webp';
 import fieldVisitJpmorgan from '../brand/plates/field-visit.webp';
 import fieldVisitPerman from '../brand/plates/field-visit-2.webp';
 
@@ -312,6 +313,12 @@ function useScrollProgress() {
 function useHeroParallax(scopeRef, targetRef, range = 12) {
   useEffect(() => {
     if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    // Safari still paints the broken-image glyph on a large <img>
+    // inside a transformed ancestor (same failure as the field
+    // plates). Chrome is fine. Skip the mouse-spring here so the
+    // skyline has no transform on it or above it.
+    const ua = navigator.userAgent;
+    if (/Safari/i.test(ua) && !/Chrome|Chromium|CriOS|Android|Edg/i.test(ua)) return;
     const scope = scopeRef.current;
     const target = targetRef.current;
     if (!scope || !target) return;
@@ -419,11 +426,11 @@ function Hero() {
 
   return (
     <section ref={sectionRef} className="relative border-b border-navy-50 overflow-hidden">
-      {/* Skyline is an <img>, not a CSS background. Safari blanks a
-          background-image the moment a transform (the mouse-spring)
-          is applied to the same element, which is how this layer went
-          missing. Polish also rewrites the JPEG; .webp it leaves
-          alone. */}
+      {/* Skyline is a hashed <img>, not /hero-skyline.webp and not a
+          CSS background. Safari blanks a background-image, or a
+          large <img> under a transform, and it will reuse a poisoned
+          cache of the stable public URL. Vite hashes this into
+          /assets/ like the field plates. Parallax is Chrome-only. */}
       <style>{`
         @keyframes heroEyebrowFade {
           from { opacity: 0; transform: translateY(8px); }
@@ -437,11 +444,10 @@ function Hero() {
       <div
         ref={bgRef}
         className="pointer-events-none absolute inset-0"
-        style={{ transform: 'scale(1.04)', willChange: 'transform' }}
         aria-hidden="true"
       >
         <img
-          src="/hero-skyline.webp"
+          src={heroSkyline}
           alt=""
           width={1920}
           height={1280}
