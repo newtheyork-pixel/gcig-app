@@ -64,7 +64,7 @@ export default function AcceptInvite() {
       const { data } = await api.post('/auth/accept-invite', { token, password });
       localStorage.setItem('gcig_token', data.token);
       localStorage.setItem('gcig_user', JSON.stringify(data.user));
-      window.location.href = '/dashboard';
+      window.location.replace('/dashboard');
     } catch (err) {
       setError(err.response?.data?.error || 'Failed to set up account');
     } finally {
@@ -86,9 +86,6 @@ export default function AcceptInvite() {
       <div className="relative w-full max-w-md">
         <div className="mb-8 flex flex-col items-center text-center">
           <AuthBrandMark />
-          <div className="mt-3 text-[10px] font-semibold uppercase tracking-[0.3em] text-gold">
-            Grace Church School Investment Group
-          </div>
         </div>
 
         <div className="rounded-xl bg-white p-8 shadow-xl">

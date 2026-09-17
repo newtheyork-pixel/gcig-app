@@ -7,6 +7,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { generalLimiter } from './middleware/rateLimit.js';
 import { guestFirewall } from './middleware/auth.js';
+import { noStoreApi } from './middleware/noStore.js';
 
 import authRoutes from './routes/auth.js';
 import userRoutes from './routes/users.js';
@@ -76,6 +77,10 @@ const app = express();
 
 // Trust Render's proxy so express-rate-limit + req.ip use the real client IP.
 app.set('trust proxy', 1);
+// Authenticated JSON plus X-New-Token must not be replayed from a
+// browser cache. Express's default ETag with no Cache-Control is what
+// let a breakfast response overwrite a live token at lunch.
+app.set('etag', false);
 
 // Security headers. We're an API — the client is a separate static site —
 // so we don't need a CSP here, but clickjacking and MIME-sniffing defenses
@@ -130,6 +135,7 @@ app.use(
   })
 );
 app.use('/api', generalLimiter);
+app.use('/api', noStoreApi);
 // Outside-collaborator lockdown: a guest may reach only an explicit set of
 // API areas (see GUEST_API_ALLOW). Non-guests pass straight through.
 app.use('/api', guestFirewall);

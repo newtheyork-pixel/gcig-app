@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { format } from 'date-fns';
 import { Download, ChevronDown, ChevronUp } from 'lucide-react';
 import api, { API_BASE } from '../api/client.js';
+import { adoptFromResponseHeaders } from '../api/session.js';
 import { useAuth } from '../context/AuthContext.jsx';
 import PageHeader from '../components/PageHeader.jsx';
 import Card from '../components/Card.jsx';
@@ -28,7 +29,7 @@ function AdvisoryAttendance() {
       <PageHeader
         kicker="Meetings"
         title="Attendance"
-        subtitle="Attendance tracking is for active club members only."
+        subtitle="Attendance tracking is for active members only."
       />
       <Card>
         <div className="py-10 text-center text-navy-400">
@@ -53,7 +54,7 @@ function MineAttendance() {
       <PageHeader
         kicker="Meetings"
         title="My Attendance"
-        subtitle="Your attendance record across all club meetings and events."
+        subtitle="Your attendance record across meetings and events."
       />
 
       <EditorialMasthead
@@ -192,8 +193,10 @@ function AdminAttendance() {
   async function downloadCsv() {
     const token = localStorage.getItem('gcig_token');
     const res = await fetch(`${API_BASE}/attendance/export.csv`, {
+      cache: 'no-store',
       headers: { Authorization: `Bearer ${token}` },
     });
+    adoptFromResponseHeaders(res.headers);
     const blob = await res.blob();
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -230,7 +233,7 @@ function AdminAttendance() {
                 possible > 0 ? Math.round((presentCount / possible) * 100) : 0;
               return [
                 {
-                  kicker: 'Club Attendance',
+                  kicker: 'Fund attendance',
                   value: `${rate}%`,
                   sub: `${presentCount} present of ${possible} records`,
                 },

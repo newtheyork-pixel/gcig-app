@@ -757,14 +757,11 @@ struct LiveQuote: Decodable {
 
 // MARK: Writes
 //
-// The shared API actor speaks GET and POST; the research routes also
-// need PATCH (target status, question status, draft edits) and DELETE
-// (withdrawing an approval). Its transport internals are private to
-// Core, and this panel owns exactly one file — so the two extra verbs
-// are implemented here with the same contract: Keychain token, silent
-// X-New-Token rotation, and the server's own error sentence surfaced
-// instead of a generic failure. If a third panel ever needs these verbs
-// they belong on the actor, and this enum should be deleted.
+// PATCH and DELETE go through the shared API actor so they inherit
+// rotation and the AUTH-only teardown. This wrapper exists because
+// the call sites already speak ResearchHTTP; it is not a second
+// transport. ResearchWrite.create still builds the JSON off the
+// main actor (Swift 6 sending).
 /// Builds the JSON body OFF the main actor and posts it.
 ///
 /// The add-forms assemble their payload from a handful of optional text
@@ -789,59 +786,15 @@ private enum ResearchWrite {
 }
 
 private enum ResearchHTTP {
-    struct WriteError: LocalizedError {
-        let message: String
-        var errorDescription: String? { message }
-    }
-
     static func patch(_ path: String, json: [String: Any]) async throws {
-        try await send("PATCH", path, json: json)
+        // Encode here so the actor receives Sendable Data, not a
+        // `[String: Any]` that Swift 6 will not let cross the boundary.
+        let body = try JSONSerialization.data(withJSONObject: json)
+        _ = try await API.shared.patch(path, body: body)
     }
 
     static func delete(_ path: String) async throws {
-        try await send("DELETE", path, json: nil)
-    }
-
-    private static func send(_ method: String, _ path: String, json: [String: Any]?) async throws {
-        let base = ProcessInfo.processInfo.environment["GRIFFIN_API"]
-            ?? "https://gcig-api.onrender.com/api"
-        guard let url = URL(string: base + path) else {
-            throw WriteError(message: "Bad URL for \(path)")
-        }
-        var req = URLRequest(url: url)
-        req.httpMethod = method
-        req.timeoutInterval = 30
-        if let json {
-            req.httpBody = try JSONSerialization.data(withJSONObject: json)
-            req.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        }
-        if let t = TokenStore.read() {
-            req.setValue("Bearer \(t)", forHTTPHeaderField: "Authorization")
-        }
-
-        let data: Data, response: URLResponse
-        do {
-            (data, response) = try await Net.session.data(for: req)
-        } catch {
-            throw WriteError(message: "Could not reach the server. \(error.localizedDescription)")
-        }
-        guard let http = response as? HTTPURLResponse else {
-            throw WriteError(message: "No HTTP response.")
-        }
-        // Through adopt, never a raw write. A panel that rotates on its
-        // own is a second door onto the token store, and the whole bug
-        // was a stale rotation getting through one.
-        if let fresh = http.value(forHTTPHeaderField: "X-New-Token") {
-            TokenStore.adopt(fresh)
-        }
-        if http.statusCode == 401 || http.statusCode == 403 {
-            throw WriteError(message: "Session expired. Sign in again.")
-        }
-        guard (200..<300).contains(http.statusCode) else {
-            let msg = (try? JSONSerialization.jsonObject(with: data) as? [String: Any])
-                .flatMap { $0?["error"] as? String } ?? "Server returned \(http.statusCode)."
-            throw WriteError(message: msg)
-        }
+        _ = try await API.shared.delete(path)
     }
 }
 

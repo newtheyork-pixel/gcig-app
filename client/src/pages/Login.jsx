@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
-import { Navigate, useNavigate, Link, useSearchParams } from 'react-router-dom';
+import { Navigate, Link, useSearchParams } from 'react-router-dom';
 import { GoogleLogin } from '@react-oauth/google';
 import { useAuth } from '../context/AuthContext.jsx';
 import AuthBrandMark from '../components/AuthBrandMark.jsx';
@@ -9,8 +9,7 @@ const ALLOWED_DOMAIN = '@gcschool.org';
 const GOOGLE_ENABLED = !!import.meta.env.VITE_GOOGLE_CLIENT_ID;
 
 export default function Login() {
-  const { user, login, signup, verify, resendCode, verifyTwoFactor, googleSignIn } = useAuth();
-  const navigate = useNavigate();
+  const { user, login, signup, verify, resendCode, verifyTwoFactor } = useAuth();
   const [searchParams] = useSearchParams();
   // Where to land after a successful sign-in. ProtectedRoute sets this
   // when it bounces someone off a page they asked for, so the Mac app's
@@ -51,7 +50,10 @@ export default function Login() {
   const [emailSent, setEmailSent] = useState(false);
   const codeRefs = useRef([]);
 
-  if (user) return <Navigate to="/dashboard" replace />;
+  // Honour ?next= so an already-signed-in member hitting the Mac
+  // handoff (/login?next=/native-auth) is not dumped on the dashboard
+  // with no idea why they were sent to login.
+  if (user) return <Navigate to={afterLogin} replace />;
 
   async function handleGoogleCredential(credential) {
     setError('');
@@ -101,13 +103,15 @@ export default function Login() {
         setMessage('');
         setEmailSent(false);
       } else {
-        // See handleGoogleCredential for the rationale on full reload.
+        // Full reload — see handleGoogleCredential. Leave submitting
+        // true so the form does not flash back on while the unload
+        // is in flight.
         window.location.replace(afterLogin);
         return;
       }
+      setSubmitting(false);
     } catch (err) {
       setError(err.response?.data?.error || 'Login failed');
-    } finally {
       setSubmitting(false);
     }
   }
@@ -118,12 +122,10 @@ export default function Login() {
     setSubmitting(true);
     try {
       await verifyTwoFactor(challengeToken, twoFactorCode.trim());
-      // Full reload — see handleGoogleCredential for rationale.
       window.location.replace(afterLogin);
       return;
     } catch (err) {
       setError(err.response?.data?.error || 'Verification failed');
-    } finally {
       setSubmitting(false);
     }
   }
@@ -172,10 +174,10 @@ export default function Login() {
     }
     try {
       await verify(pendingEmail, codeStr);
-      navigate('/dashboard');
+      window.location.replace(afterLogin);
+      return;
     } catch (err) {
       setError(err.response?.data?.error || 'Verification failed');
-    } finally {
       setSubmitting(false);
     }
   }
@@ -237,9 +239,6 @@ export default function Login() {
       <div className="relative w-full max-w-md">
         <div className="mb-8 flex flex-col items-center text-center">
           <AuthBrandMark />
-          <div className="mt-3 text-[10px] font-semibold uppercase tracking-[0.3em] text-gold">
-            Grace Church School Investment Group
-          </div>
         </div>
 
         <div className="rounded-xl bg-white p-8 shadow-2xl">
@@ -457,7 +456,7 @@ export default function Login() {
 
               <p className="mt-1 text-sm text-navy-400">
                 {mode === 'login'
-                  ? 'Club members can sign in below.'
+                  ? 'Members can sign in below.'
                   : `Self-signup is restricted to ${ALLOWED_DOMAIN} email addresses.`}
               </p>
 
