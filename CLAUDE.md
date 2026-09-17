@@ -79,7 +79,10 @@ Rules that keep it sane:
   FLD), so the server mnemonic parser cannot fall through to DES.
 - Panels fetch through `PanelState` (loading / failed / empty are three
   renders) and format through `Fmt` only. Decodables come from reading
-  the server handler, not the JSX.
+  the server handler, not the JSX. Writes (PUT / PATCH / DELETE) go
+  through `API.send` — a panel-local URLRequest is a second transport
+  with its own idea of when a session has ended, and Notes used to
+  treat every 401 or 403 as signed-out.
 - `LiveSmokeTests` decodes every panel endpoint against production
   using the app's session token (0600 file in Application Support —
   deliberately NOT the Keychain while builds are ad-hoc signed: each
@@ -345,12 +348,39 @@ so ANY failed `/auth/me` deleted a valid login: a 429, a 502 while
 Render woke the dyno, a request that died between two access points.
 The Mac's `Session.restore()` had the same shape (`catch { user = nil }`)
 and showed a sign-in screen to somebody holding a good token. Both now
-key off one predicate — `isSessionOver(err)` in `client.js`, which is
-true only for a 401 carrying `code: 'AUTH'` from verifyJwt. Everything
-else keeps the session: the web renders from the cached user and retries
-behind it (1.5/3/6/12s, sized to outlast a cold start), the Mac renders
-the terminal with an OFFLINE strip and a RETRY. `err.response` being
-absent is the case to get right — no response means we never asked.
+key off one predicate — `isSessionOver(err)` in `client/src/api/session.js`,
+which is true only for a 401 carrying `code: 'AUTH'` from verifyJwt.
+Everything else keeps the session: the web renders from the cached user
+and retries behind it (1.5/3/6/12s, sized to outlast a cold start), the
+Mac renders the terminal with an OFFLINE strip and a RETRY.
+`err.response` being absent is the case to get right — no response
+means we never asked.
+
+Two more ways the website still threw a good token away after that
+rule landed (Sep '26), both ports of bugs the Mac already knew:
+
+1. **A rotation header can be a replay.** Express used to answer with
+   an ETag and no Cache-Control, so a browser-cached 200 from breakfast
+   still carried that morning's `X-New-Token`. The web interceptor
+   adopted it unconditionally, the next call 401'd AUTH, and a member
+   who had just signed in was signed out. Mac/iOS `adopt` by `iat`;
+   the website now does the same (`adoptToken`). The API sends
+   `Cache-Control: private, no-store` and has etag off, so the browser
+   cannot replay the header in the first place.
+2. **A 401 AUTH on a request that sent no token is not a verdict on
+   the one we now hold.** The interceptor used to treat `!sent` as
+   session-over, so a late "Missing token" from a call that left
+   before login wiped the token login had just written.
+   `shouldEndSession` requires AUTH plus a credential we actually
+   presented that has not since been replaced.
+
+Password / 2FA / verify must `window.location.replace`, not SPA
+`navigate` and not `setUser` before the reload — Login.jsx's
+`if (user) return <Navigate>` would otherwise race the remounting
+AuthProvider, which is why Google sign-in already bypassed
+`googleSignIn()`. Panel-local HTTP on the Mac (Notes PUT, FLD
+PATCH/DELETE) must go through `API.send` as well: a 403 is not
+signed-out.
 
 **Rate limits are keyed per caller, NOT per IP (Aug '26)** — and this
 is what was TRIGGERING the above. The club is a school: in the building
@@ -1186,6 +1216,19 @@ path that can fail should carry a counter on both ends of itself.
   retrying and failing nightly until this is resolved.
 
 ## Recent fixes / playbook notes
+
+- **Logged in, then the whole app died (Sep '26)**: the website still
+  had two ways to throw away a valid token after "only the server may
+  end a session" landed. It adopted every `X-New-Token` it saw, so a
+  browser-cached 200 could write a stale credential over the live one;
+  and the interceptor treated a 401 on a request that sent no token as
+  logout, so a late "Missing token" from a call that left before login
+  wiped the new session. `adoptToken` now refuses an older `iat`,
+  `shouldEndSession` requires AUTH plus a credential we actually
+  presented, the API sends `Cache-Control: private, no-store`, and
+  password/2FA/verify hard-reload without `setUser`. Mac Notes PUT and
+  FLD writes go through `API.send` so a 403 is not signed-out. Pinned
+  by `client/src/api/session.test.js` and `TokenStoreTests`.
 
 - **Safari dropped the landing logo and the leadership photos, Chrome didn't (Sep '26)**:
   Cloudflare Polish in front of thegriffinfund.org rewrites PNG/JPEG

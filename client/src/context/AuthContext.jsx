@@ -118,21 +118,24 @@ export function AuthProvider({ children }) {
       };
     }
     saveSession(res.data.token, res.data.user);
-    setUser(res.data.user);
+    // Do not setUser here. Login.jsx hard-reloads after a successful
+    // sign-in, and `if (user) return <Navigate>` on that page would
+    // SPA-navigate to the dashboard while the reload is still pending
+    // — racing this provider's mount-time /auth/me, which is how a
+    // valid token got thrown away on the way in. The reload remounts
+    // us with the token already in localStorage.
     return { user: res.data.user };
   }
 
   async function verifyTwoFactor(challengeToken, code) {
     const res = await api.post('/2fa/login', { challengeToken, code });
     saveSession(res.data.token, res.data.user);
-    setUser(res.data.user);
     return res.data.user;
   }
 
   async function googleSignIn(credential) {
     const res = await api.post('/auth/google', { credential });
     saveSession(res.data.token, res.data.user);
-    setUser(res.data.user);
     return res.data.user;
   }
 
@@ -144,7 +147,6 @@ export function AuthProvider({ children }) {
   async function verify(email, code) {
     const res = await api.post('/auth/verify', { email, code });
     saveSession(res.data.token, res.data.user);
-    setUser(res.data.user);
     return res.data.user;
   }
 

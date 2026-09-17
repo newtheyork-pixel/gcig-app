@@ -1,4 +1,5 @@
 import { API_BASE } from './client.js';
+import { adoptFromResponseHeaders } from './session.js';
 
 // Read a chat answer as it is written.
 //
@@ -16,6 +17,7 @@ export async function streamReply(message, { sessionId, onOpen, onToken, onRetra
   try {
     res = await fetch(`${API_BASE}/ai-chat`, {
       method: 'POST',
+      cache: 'no-store',
       headers: {
         'Content-Type': 'application/json',
         ...(token ? { Authorization: `Bearer ${token}` } : {}),
@@ -25,6 +27,7 @@ export async function streamReply(message, { sessionId, onOpen, onToken, onRetra
   } catch {
     return null;
   }
+  adoptFromResponseHeaders(res.headers);
 
   // The server answers a stream request with ordinary JSON when it
   // cannot stream — a hosted fallback, tools switched on. That is a

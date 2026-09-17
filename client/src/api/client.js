@@ -1,4 +1,12 @@
 import axios from 'axios';
+import {
+  adoptToken,
+  isSessionOver,
+  shouldEndSession,
+  rotationTokenFromHeaders,
+} from './session.js';
+
+export { isSessionOver, adoptToken, shouldEndSession } from './session.js';
 
 // In dev, Vite proxies `/api` → http://localhost:4000. In prod, set
 // VITE_API_BASE_URL (e.g. https://gcig-api.onrender.com) at build time.
@@ -13,6 +21,10 @@ export const API_BASE = BASE;
 // `X-New-Token` off those responses (see maybeRotateToken). Without this,
 // dashboards that mostly hit ETag-cached endpoints could let a token age
 // past its 24h expiry without ever rotating, then 401 in a single click.
+//
+// The API now sends Cache-Control: private, no-store, so a 304 from the
+// BROWSER cache should not happen. Express can still 304 if a client
+// sends If-None-Match; keeping 304 as success remains correct.
 const api = axios.create({
   baseURL: BASE,
   validateStatus: (status) =>
@@ -55,67 +67,21 @@ api.interceptors.request.use((config) => {
 // while a /auth/me is still in flight on Safari) has already written
 // a fresh token, the X-New-Token here is for the previous session —
 // writing it would clobber the new login.
+//
+// And even then, only adopt a header whose `iat` is newer than what
+// we hold. A cached 200 can replay yesterday's rotation looking
+// exactly like one minted a second ago; iat is the second lock.
 function maybeRotateToken(res) {
   if (!res) return;
   const ok =
     (res.status >= 200 && res.status < 300) || res.status === 304;
   if (!ok) return;
-  const fresh =
-    res?.headers?.['x-new-token'] || res?.headers?.['X-New-Token'];
-  if (!fresh || typeof fresh !== 'string' || fresh.length < 20) return;
+  const fresh = rotationTokenFromHeaders(res.headers);
+  if (!fresh) return;
   const sent = res.config?._tokenAtSend;
   const current = localStorage.getItem('gcig_token');
   if (sent && current && sent !== current) return; // raced; discard
-  if (fresh !== current) {
-    localStorage.setItem('gcig_token', fresh);
-  }
-}
-
-// Stale-401 detection. When something rotates the user's token mid-
-// flight (server-side tokenVersion bump from /2fa/disable, password
-// change, etc.), already-in-flight requests carrying the OLD token
-// will 401 even though the SESSION is fine — localStorage already
-// holds the new token from the same response.
-//
-// The precise check: did the token in localStorage change between
-// when this request was sent and when its 401 came back? If yes,
-// it's a stale 401 — ignore it. If no, the session is genuinely
-// expired and we wipe + redirect.
-//
-// Unlike a time-window grace period, this can't be falsely warmed
-// by public/unauthed responses (they don't change the token), and
-// it can't accidentally suppress a real expired-session 401 (it
-// only fires when localStorage was actively updated mid-flight).
-
-// Endpoints whose 401 is authoritative — i.e. the response represents a
-// real verdict on the session. Everything else is treated as a per-route
-// permission/data bug, not proof the session is dead. The Calendar page
-// fanning out a dozen GETs in parallel made this matter: one stray 401
-// from a single data endpoint would wipe localStorage and bounce the
-// user mid-render, even though every other call on the page succeeded.
-/**
- * Did the SERVER say this session is over?
- *
- * This is the one question allowed to end a session, and it has exactly
- * one right answer: verifyJwt tags every verdict it reaches about the
- * token itself — absent, malformed, expired, revoked, user deleted —
- * with `code: 'AUTH'`. Nothing else qualifies.
- *
- * Everything else is us failing to ask. A 429 because fifteen members
- * share the school's public address, a 502 while Render wakes the API
- * up, a request that died in a stairwell between two access points: not
- * one of those is evidence about the token, and treating them as
- * evidence is how a valid login got thrown away. That is the whole of
- * the bug people described as "I sign in and then I can't see
- * anything" — the token was fine every time, and we deleted it.
- *
- * `err.response` being absent is the important case and the easiest to
- * get wrong: no response means the question never reached anybody.
- */
-export function isSessionOver(err) {
-  const res = err?.response;
-  if (!res || res.status !== 401) return false;
-  return res.data?.code === 'AUTH';
+  adoptToken(fresh);
 }
 
 api.interceptors.response.use(
@@ -124,28 +90,9 @@ api.interceptors.response.use(
     return res;
   },
   (err) => {
-    if (err.response?.status === 401) {
-      const sent = err.config?._tokenAtSend;
-      const now = localStorage.getItem('gcig_token');
-      if (sent && now && sent !== now) {
-        // Token rotated since this request was sent. The 401 is from
-        // the old version — ignore and let the caller see a regular
-        // promise rejection.
-        return Promise.reject(err);
-      }
-      // The server's tag, on ANY endpoint, or no token was sent at all.
-      //
-      // The path list is deliberately no longer part of this. It used to
-      // be, so that a 401 on /auth/me ended the session whatever the
-      // body said — but verifyJwt is the only thing that can 401 that
-      // route and it always tags, so the only 401s the path rule could
-      // still catch were the ones NOBODY of ours sent: a proxy's error
-      // page, a gateway between us and Render. Those are outages, and an
-      // outage must never be able to log the club out.
-      const sessionVerdict = isSessionOver(err) || !sent;
-      if (!sessionVerdict) {
-        return Promise.reject(err);
-      }
+    const sent = err.config?._tokenAtSend;
+    const now = localStorage.getItem('gcig_token');
+    if (shouldEndSession(err, { sent, current: now })) {
       localStorage.removeItem('gcig_token');
       localStorage.removeItem('gcig_user');
       const path = window.location.pathname;

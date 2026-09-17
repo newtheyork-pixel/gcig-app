@@ -1,4 +1,5 @@
 import api, { API_BASE } from './client.js';
+import { adoptFromResponseHeaders } from './session.js';
 
 // Helpers for working with file references stored in the app's
 // existing URL columns (Report.fileUrl, Pitch.slideshowUrl, etc.).
@@ -91,8 +92,10 @@ export async function downloadFile(url, filename) {
   const id = extractItemId(url);
   const token = localStorage.getItem('gcig_token');
   const res = await fetch(`${API_BASE}/files/${encodeURIComponent(id)}`, {
+    cache: 'no-store',
     headers: { Authorization: `Bearer ${token}` },
   });
+  adoptFromResponseHeaders(res.headers);
   if (!res.ok) {
     throw new Error(`Download failed (${res.status})`);
   }

@@ -146,6 +146,23 @@ actor API {
         return try await send("PATCH", path, query: [:], body: body)
     }
 
+    /// PATCH with a body already serialized off the calling actor.
+    /// `[String: Any]` is not Sendable; `Data` is, so a SwiftUI view
+    /// can JSON-encode on its side and hand us bytes without a sending
+    /// violation — which is why FLD used to grow a second HTTP stack.
+    func patch(_ path: String, body: Data) async throws -> Data {
+        try await send("PATCH", path, query: [:], body: body)
+    }
+
+    /// PUT, for the one route that replaces a whole row (ticker notes).
+    /// Same door as patch: a panel-local URLRequest was a second
+    /// transport with its own idea of when a session had ended, and it
+    /// treated every 401 or 403 as signed-out.
+    func put(_ path: String, json: [String: Any]) async throws -> Data {
+        let body = try JSONSerialization.data(withJSONObject: json)
+        return try await send("PUT", path, query: [:], body: body)
+    }
+
     /// DELETE, for the two routes that remove something rather than
     /// creating it. No body, because a delete that carries one is a delete
     /// somebody will eventually treat as an update.
@@ -499,25 +516,8 @@ enum TokenStore {
     /// only whether it is NEWER, and `iat` answers that.
     @discardableResult
     static func adopt(_ fresh: String) -> Bool {
-        let candidate = fresh.trimmingCharacters(in: .whitespacesAndNewlines)
-        // Empty or unparseable is not a rotation, it is noise on the
-        // wire, and writing it would sign the member out as surely as a
-        // stale one.
-        guard !candidate.isEmpty, let freshIat = issuedAt(candidate) else { return false }
-
-        // Rotation presumes a session. With nothing in the store there is
-        // nothing to rotate: either we never signed in, or we have just
-        // torn a dead session down on purpose. A response still in flight
-        // must not put the token back.
-        guard let current = read() else { return false }
-
-        // We hold something we cannot read — a truncated write, an older
-        // token format. A well-formed JWT is a strict improvement on
-        // that, so take it.
-        guard let currentIat = issuedAt(current) else { return true.then { write("jwt", candidate) } }
-
-        guard freshIat > currentIat else { return false }
-        write("jwt", candidate)
+        guard let next = TokenAdopt.take(fresh: fresh, current: read()) else { return false }
+        write("jwt", next)
         return true
     }
 
@@ -542,11 +542,33 @@ enum TokenStore {
     }
 }
 
-private extension Bool {
-    /// Sugar for the one place above that wants to do a thing and return
-    /// true in a single expression. Nothing clever, just keeps the guard
-    /// readable.
-    func then(_ body: () -> Void) -> Bool { body(); return self }
+/// Pure adopt rules, so the suite can pin them without touching the
+/// session file in Application Support (and without racing LiveSmokeTests
+/// on a process-wide override).
+enum TokenAdopt {
+    /// The token that should be stored, or nil to leave the current one
+    /// alone. Same contract as the web `adoptToken`.
+    static func take(fresh: String, current: String?) -> String? {
+        let candidate = fresh.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Empty or unparseable is not a rotation, it is noise on the
+        // wire, and writing it would sign the member out as surely as a
+        // stale one.
+        guard !candidate.isEmpty, let freshIat = TokenStore.issuedAt(candidate) else { return nil }
+
+        // Rotation presumes a session. With nothing in the store there is
+        // nothing to rotate: either we never signed in, or we have just
+        // torn a dead session down on purpose. A response still in flight
+        // must not put the token back.
+        guard let current, !current.isEmpty else { return nil }
+
+        // We hold something we cannot read — a truncated write, an older
+        // token format. A well-formed JWT is a strict improvement on
+        // that, so take it.
+        guard let currentIat = TokenStore.issuedAt(current) else { return candidate }
+
+        guard freshIat > currentIat else { return nil }
+        return candidate
+    }
 }
 
 extension API {
@@ -583,11 +605,25 @@ extension API {
         req.setValue("application/json", forHTTPHeaderField: "Content-Type")
         req.setValue("text/event-stream", forHTTPHeaderField: "Accept")
         req.cachePolicy = .reloadIgnoringLocalCacheData
-        if let token { req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
+        let credential = token
+        if let credential { req.setValue("Bearer \(credential)", forHTTPHeaderField: "Authorization") }
 
         let (bytes, response) = try await Net.session.bytes(for: req)
         guard let http = response as? HTTPURLResponse else {
             throw Failure.transport("No HTTP response.")
+        }
+        if let fresh = http.value(forHTTPHeaderField: "X-New-Token") {
+            TokenStore.adopt(fresh)
+        }
+        if http.statusCode == 401 {
+            // Members-only, so a 401 here is verifyJwt. Same third case
+            // as `send`: a stream we opened without a credential is not
+            // evidence the one we now hold is dead.
+            if credential != nil {
+                TokenStore.delete("jwt")
+                throw Failure.unauthorized
+            }
+            throw Failure.http(401, "Not permitted.")
         }
         let type = http.value(forHTTPHeaderField: "Content-Type") ?? ""
         guard http.statusCode == 200, type.contains("text/event-stream") else {
