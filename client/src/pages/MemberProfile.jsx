@@ -116,7 +116,9 @@ export default function MemberProfile() {
       out.splice(1, 0, {
         kicker: 'Attendance',
         value: '—',
-        sub: 'Exempt role (advisory / comms)',
+        sub: profile.memberStatusLabel
+          ? `Off the weekly roster · ${profile.memberStatusLabel}`
+          : 'Exempt role (advisory / comms)',
       });
     } else if (profile.attendance) {
       out.splice(1, 0, {

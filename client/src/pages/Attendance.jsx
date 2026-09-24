@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useState } from 'react';
 import { format } from 'date-fns';
-import { Download, ChevronDown, ChevronUp } from 'lucide-react';
+import { Download, ChevronDown, ChevronUp, UserMinus, RotateCcw } from 'lucide-react';
 import api, { API_BASE } from '../api/client.js';
 import { adoptFromResponseHeaders } from '../api/session.js';
 import { useAuth } from '../context/AuthContext.jsx';
 import PageHeader from '../components/PageHeader.jsx';
 import Card from '../components/Card.jsx';
 import Button from '../components/Button.jsx';
+import Modal from '../components/Modal.jsx';
 import RoleBadge from '../components/RoleBadge.jsx';
 import EditorialMasthead from '../components/EditorialMasthead.jsx';
 
@@ -41,6 +42,36 @@ function AdvisoryAttendance() {
   );
 }
 
+// A member whose attendance isn't tracked: taken off the weekly roster by
+// a president (the server sends the standing as `reason`), or in an
+// exempt role the advisory check above doesn't catch, like Chief of
+// Communication. Without this the page printed "null%".
+function NotTrackedAttendance({ reason }) {
+  return (
+    <>
+      <PageHeader
+        kicker="Meetings"
+        title="My Attendance"
+        subtitle="Attendance is tracked for members on the weekly roster."
+      />
+      <Card>
+        <div className="py-10 text-center text-navy-400">
+          {reason ? (
+            <>
+              You're listed as{' '}
+              <span className="font-semibold text-navy">{reason}</span>, so you're
+              not on the weekly attendance list. If that's out of date, ask a
+              president.
+            </>
+          ) : (
+            "Your role isn't counted in attendance. Nothing to show here."
+          )}
+        </div>
+      </Card>
+    </>
+  );
+}
+
 function MineAttendance() {
   const [data, setData] = useState(null);
   useEffect(() => {
@@ -48,6 +79,7 @@ function MineAttendance() {
   }, []);
 
   if (!data) return <div>Loading…</div>;
+  if (data.exempt) return <NotTrackedAttendance reason={data.reason} />;
 
   return (
     <>
@@ -107,9 +139,20 @@ function MineAttendance() {
 }
 
 function AdminAttendance() {
-  const [data, setData] = useState({ users: [], events: [], records: [] });
+  const [data, setData] = useState({
+    users: [],
+    events: [],
+    records: [],
+    offRoster: [],
+    memberStatuses: [],
+    noteMax: 200,
+    canManageRoster: false,
+  });
   const [loading, setLoading] = useState(true);
   const [showPast, setShowPast] = useState(false);
+  // The member the "take off the roster" dialog is open for, if any.
+  const [removing, setRemoving] = useState(null);
+  const [restoringId, setRestoringId] = useState(null);
 
   async function load() {
     setLoading(true);
@@ -190,6 +233,18 @@ function AdminAttendance() {
     }
   }
 
+  async function restore(member) {
+    setRestoringId(member.id);
+    try {
+      await api.put(`/attendance/roster/${member.id}`, { status: 'Active' });
+      await load();
+    } catch (err) {
+      alert(err.response?.data?.error || 'Could not restore this member');
+    } finally {
+      setRestoringId(null);
+    }
+  }
+
   async function downloadCsv() {
     const token = localStorage.getItem('gcig_token');
     const res = await fetch(`${API_BASE}/attendance/export.csv`, {
@@ -245,7 +300,10 @@ function AdminAttendance() {
                 {
                   kicker: 'Active Members',
                   value: data.users.length,
-                  sub: 'Counted in attendance',
+                  sub:
+                    data.offRoster.length > 0
+                      ? `Counted in attendance · ${data.offRoster.length} off the roster`
+                      : 'Counted in attendance',
                 },
               ];
             })()}
@@ -271,6 +329,7 @@ function AdminAttendance() {
               recordMap={recordMap}
               currentEventId={currentEventId}
               setStatus={setStatus}
+              onRemove={data.canManageRoster ? setRemoving : null}
             />
 
             <div className="hidden md:block overflow-x-auto">
@@ -313,9 +372,16 @@ function AdminAttendance() {
                   {data.users.map((u) => (
                     <tr key={u.id}>
                       <td className="sticky left-0 z-10 bg-white py-3 pr-4">
-                        <div className="font-semibold text-navy">{u.name}</div>
-                        <div className="mt-1">
-                          <RoleBadge role={u.role} />
+                        <div className="flex items-start justify-between gap-2">
+                          <div>
+                            <div className="font-semibold text-navy">{u.name}</div>
+                            <div className="mt-1">
+                              <RoleBadge role={u.role} />
+                            </div>
+                          </div>
+                          {data.canManageRoster && (
+                            <RemoveFromRosterButton member={u} onClick={setRemoving} />
+                          )}
                         </div>
                       </td>
                       {visibleEvents.map((e) => {
@@ -374,11 +440,212 @@ function AdminAttendance() {
           </>
         )}
       </Card>
+
+      {data.offRoster.length > 0 && (
+        <OffRosterList
+          members={data.offRoster}
+          canManage={data.canManageRoster}
+          restoringId={restoringId}
+          onRestore={restore}
+        />
+      )}
+
+      <RemoveFromRosterModal
+        member={removing}
+        options={data.memberStatuses}
+        noteMax={data.noteMax}
+        onClose={() => setRemoving(null)}
+        onDone={load}
+      />
     </>
   );
 }
 
-function MobileAttendance({ events, users, recordMap, currentEventId, setStatus }) {
+function RemoveFromRosterButton({ member, onClick }) {
+  return (
+    <button
+      type="button"
+      onClick={() => onClick(member)}
+      className="shrink-0 rounded-md p-1.5 text-navy-200 transition hover:bg-navy-50 hover:text-navy"
+      title="Take off the weekly roster"
+      aria-label={`Take ${member.name} off the weekly roster`}
+    >
+      <UserMinus className="h-4 w-4" />
+    </button>
+  );
+}
+
+// Taking someone off the weekly roster is a statement about their place
+// in the club, not a mark on one meeting, so it asks why. The reasons come
+// from the server, the same list it validates against.
+function RemoveFromRosterModal({ member, options, noteMax, onClose, onDone }) {
+  const [status, setStatus] = useState('');
+  const [note, setNote] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  // Start fresh each time the dialog opens for someone.
+  useEffect(() => {
+    setStatus('');
+    setNote('');
+    setError('');
+  }, [member?.id]);
+
+  const needsNote = status === 'Other';
+  const canSubmit = !!status && (!needsNote || note.trim()) && !saving;
+
+  async function submit(e) {
+    e.preventDefault();
+    if (!canSubmit) return;
+    setSaving(true);
+    setError('');
+    try {
+      await api.put(`/attendance/roster/${member.id}`, { status, note });
+      onClose();
+      await onDone();
+    } catch (err) {
+      setError(err.response?.data?.error || 'Could not update the roster');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <Modal
+      open={!!member}
+      onClose={onClose}
+      title={member ? `Take ${member.name} off the weekly roster` : ''}
+      size="sm"
+    >
+      {member && (
+        <form onSubmit={submit} className="space-y-4">
+          <p className="text-sm text-navy-400">
+            They stay a member, with the same role and access. They just won't
+            be on weekly attendance, and won't count toward the club's rate.
+            You can restore them any time, and their past record comes back
+            with them.
+          </p>
+
+          <fieldset className="space-y-2">
+            <legend className="mb-1 text-xs font-semibold uppercase tracking-wider text-navy-400">
+              Why
+            </legend>
+            {options.map((o) => (
+              <label
+                key={o.value}
+                className={`flex cursor-pointer items-center gap-3 rounded-lg border px-3 py-2 text-sm text-navy transition ${
+                  status === o.value
+                    ? 'border-navy bg-navy-50'
+                    : 'border-navy-100 hover:bg-navy-50/60'
+                }`}
+              >
+                <input
+                  type="radio"
+                  name="roster-status"
+                  value={o.value}
+                  checked={status === o.value}
+                  onChange={() => setStatus(o.value)}
+                  className="accent-navy"
+                />
+                {o.label}
+              </label>
+            ))}
+          </fieldset>
+
+          <label className="block">
+            <span className="mb-1 block text-xs font-semibold uppercase tracking-wider text-navy-400">
+              Note {needsNote ? '(required)' : '(optional)'}
+            </span>
+            <textarea
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              maxLength={noteMax}
+              rows={2}
+              placeholder={
+                needsNote
+                  ? 'What should the next president know?'
+                  : 'e.g. Class of 2026, still advises on energy'
+              }
+              className="w-full rounded-lg border border-navy-100 px-3 py-2 text-sm text-navy focus:border-navy focus:outline-none"
+            />
+            <span className="mt-1 block text-[11px] text-navy-400">
+              Visible to executives on this page, not to the member.
+            </span>
+          </label>
+
+          {error && (
+            <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
+              {error}
+            </div>
+          )}
+
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" onClick={onClose}>
+              Cancel
+            </Button>
+            <Button type="submit" disabled={!canSubmit}>
+              {saving ? 'Saving…' : 'Take off roster'}
+            </Button>
+          </div>
+        </form>
+      )}
+    </Modal>
+  );
+}
+
+// Everyone a president has taken off the weekly roster, and why. Kept on
+// the same page as the grid so a missing name is never a mystery: the
+// answer is right underneath, with a way back.
+function OffRosterList({ members, canManage, restoringId, onRestore }) {
+  return (
+    <div className="mt-6">
+      <Card title={`Not on the weekly roster (${members.length})`}>
+        <p className="mb-2 text-xs text-navy-400">
+          Still members of the club. They aren't expected at weekly meetings
+          and don't count toward the attendance rate.
+        </p>
+        <ul className="divide-y divide-navy-50">
+          {members.map((m) => (
+            <li
+              key={m.id}
+              className="flex flex-wrap items-center justify-between gap-3 py-3"
+            >
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="font-semibold text-navy">{m.name}</span>
+                  <RoleBadge role={m.role} />
+                  <span className="rounded-full bg-navy-50 px-2 py-0.5 text-[11px] font-semibold text-navy">
+                    {m.statusLabel}
+                  </span>
+                </div>
+                {m.note && <div className="mt-1 text-sm text-navy-400">{m.note}</div>}
+                {m.changedAt && (
+                  <div className="mt-1 text-[11px] text-navy-400">
+                    {m.changedBy ? `${m.changedBy} · ` : ''}
+                    {format(new Date(m.changedAt), 'MMM d, yyyy')}
+                  </div>
+                )}
+              </div>
+              {canManage && (
+                <button
+                  type="button"
+                  onClick={() => onRestore(m)}
+                  disabled={restoringId === m.id}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-navy-100 bg-white px-3 py-1.5 text-xs font-semibold text-navy transition hover:bg-navy-50 disabled:opacity-50"
+                >
+                  <RotateCcw className="h-3.5 w-3.5" />
+                  {restoringId === m.id ? 'Restoring…' : 'Restore'}
+                </button>
+              )}
+            </li>
+          ))}
+        </ul>
+      </Card>
+    </div>
+  );
+}
+
+function MobileAttendance({ events, users, recordMap, currentEventId, setStatus, onRemove }) {
   const [selectedEventId, setSelectedEventId] = useState(
     currentEventId || events[0]?.id || null
   );
@@ -434,6 +701,7 @@ function MobileAttendance({ events, users, recordMap, currentEventId, setStatus 
                 <div className="truncate font-semibold text-navy">{u.name}</div>
                 <div className="mt-0.5"><RoleBadge role={u.role} /></div>
               </div>
+              {onRemove && <RemoveFromRosterButton member={u} onClick={onRemove} />}
               <select
                 value={status}
                 onChange={(ev) => setStatus(u.id, selected.id, ev.target.value)}

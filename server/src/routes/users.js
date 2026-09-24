@@ -14,6 +14,7 @@ import { sendInviteEmail, primaryClientOrigin } from '../services/email.js';
 import { auditReq } from '../services/audit.js';
 import { nameProfile } from '../services/nameGender.js';
 import { computeParticipation } from '../services/participation.js';
+import { isActive, statusLabel } from '../services/memberStatus.js';
 import { getSheetPortfolio } from '../services/sheetPortfolio.js';
 
 const router = Router();
@@ -224,6 +225,7 @@ router.get('/:id/profile', async (req, res) => {
       name: true,
       role: true,
       extraRoles: true,
+      memberStatus: true,
       createdAt: true,
       industries: {
         include: { industry: { select: { id: true, name: true } } },
@@ -403,8 +405,11 @@ router.get('/:id/profile', async (req, res) => {
     })),
   ].sort((a, b) => new Date(b.date) - new Date(a.date));
 
-  // Attendance summary. Exempt roles skip the whole block.
-  const isExempt = ATTENDANCE_EXEMPT_ROLES.has(user.role);
+  // Attendance summary. Exempt roles skip the whole block, and so does a
+  // member a president took off the weekly roster: a rate frozen on the
+  // day they left would read as a current one.
+  const offRoster = !isActive(user.memberStatus);
+  const isExempt = ATTENDANCE_EXEMPT_ROLES.has(user.role) || offRoster;
   let attendance = null;
   if (!isExempt) {
     const records = await prisma.attendance.findMany({
@@ -459,6 +464,10 @@ router.get('/:id/profile', async (req, res) => {
     contributions,
     attendance,
     attendanceExempt: isExempt,
+    // Standing when the member is off the weekly roster, e.g. "Alumni";
+    // null for everyone on it. The president's note stays on the
+    // Attendance page: any member can open this profile.
+    memberStatusLabel: offRoster ? statusLabel(user.memberStatus) : null,
     votes: {
       total: totalVotes,
       recent: ballots.map((b) => ({

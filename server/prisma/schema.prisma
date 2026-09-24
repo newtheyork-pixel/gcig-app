@@ -83,6 +83,17 @@ model User {
   // Surfaced on the "Request a Pitch" form so the requester can see when
   // the President / target PM is free for a lunch meeting.
   lunchSchedule             Json?
+  // Standing in the club, independent of role (services/memberStatus.js).
+  // Anything but "Active" takes the member off the weekly meeting roster
+  // without changing their role or what they can open. The note, and who
+  // set the standing and when, are read by executives on the Attendance
+  // page, so the next president can see why someone isn't on the list.
+  memberStatus              String                @default("Active")
+  memberStatusNote          String?
+  memberStatusAt            DateTime?
+  memberStatusById          Int?
+  memberStatusBy            User?                 @relation("MemberStatusSetter", fields: [memberStatusById], references: [id], onDelete: SetNull)
+  memberStatusesSet         User[]                @relation("MemberStatusSetter")
   attendance                Attendance[]
   createdSessions           VotingSession[]       @relation("SessionCreator")
   ballots                   Ballot[]
