@@ -13,6 +13,7 @@
 // for the President to read. Advisory-tier roles (rank = 1) are excluded
 // from the ranking — they're observers, not active members.
 import { ROLE_RANK } from '../middleware/auth.js';
+import { isActive } from './memberStatus.js';
 
 const WEIGHT_ATTENDANCE = 50;
 const WEIGHT_PITCHES = 35;
@@ -39,6 +40,7 @@ export async function computeParticipation(prisma) {
       name: true,
       email: true,
       role: true,
+      memberStatus: true,
       createdAt: true,
     },
     orderBy: { name: 'asc' },
@@ -82,6 +84,10 @@ export async function computeParticipation(prisma) {
   for (const u of users) {
     const rank = ROLE_RANK[u.role] ?? 0;
     if (rank <= EXCLUDE_RANK_AT_OR_BELOW) continue;
+    // Off the weekly roster by standing (alumni, on leave …): half the
+    // score is attendance, and it would be marking them down for meetings
+    // nobody expects them at.
+    if (!isActive(u.memberStatus)) continue;
 
     const att = attByUser.get(u.id) || { present: 0, excused: 0, absent: 0, total: 0 };
     const counted = att.present + att.absent + 0.5 * att.excused;

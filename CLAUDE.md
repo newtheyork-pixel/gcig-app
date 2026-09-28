@@ -444,7 +444,9 @@ anyone who found the login page. Client and server gates must move
 together or an analyst opens the terminal and 403s on every panel.
 - **ChiefOfCommunication** — comms officer, attendance-exempt.
 - **Super admin** — defined by email match (`isSuperAdminEmail`),
-  not a role. Thomas's email. Bypasses every role gate.
+  not a role. Thomas's email. Bypasses every role gate. The list is
+  the `SUPER_ADMIN_EMAIL` env var on Render (comma-separated), so
+  granting it is a Render change, not a code or database one.
 
 `extraRoles` array on User lets one person carry multiple gates.
 
@@ -787,7 +789,16 @@ file, not `/field-visit.webp`.
   without depending on a viewer rendering the file.
 - `server/src/routes/attendance.js` — `EventRosterOverride` table
   persists the super-admin × removals and + additions so they
-  survive page reloads.
+  survive page reloads. That is per MEETING. The per-PERSON version
+  is standing (`User.memberStatus`, `services/memberStatus.js`): a
+  president takes a member off the weekly roster as Advisory
+  capacity / Alumni / On leave / Other without touching their role
+  or access. The weekly roster is a non-exempt role AND Active
+  standing, and the grid, the club rate, the CSV, `/mine`, the
+  member profile and the participation ranking all read it.
+  Advisory-board meetings ignore standing (an alum on the board still
+  belongs there). Nothing is deleted: past marks return on restore,
+  and every change is in the audit log.
 - `client/src/components/EventAttendance.jsx` — event roster modal.
 - `client/src/pages/Dashboard.jsx` — main page. MacroStrip + DIR
   card + portfolio chart + holdings + earnings.

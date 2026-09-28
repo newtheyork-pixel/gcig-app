@@ -5,7 +5,18 @@ import {
   verifyJwt,
   requireExecutive,
   requireSuperAdmin,
+  requirePresidentOrSuperAdmin,
+  isPresidentOrSuperAdmin,
 } from '../middleware/auth.js';
+import { auditReq } from '../services/audit.js';
+import {
+  ACTIVE,
+  MEMBER_STATUSES,
+  NOTE_MAX,
+  isActive,
+  statusLabel,
+  parseStatusUpdate,
+} from '../services/memberStatus.js';
 
 const router = Router();
 router.use(verifyJwt);
@@ -25,7 +36,57 @@ const ATTENDANCE_EXEMPT_ROLES = [...ADVISORY_ROLES, 'ChiefOfCommunication'];
 // Regular-event roster: exclude everyone whose PRIMARY role is attendance-
 // exempt. Leadership (Presidents/PMs) who happen to carry advisory as an
 // extraRole still attend regular meetings, so we only filter on primary.
-const ATTENDEE_WHERE = { role: { notIn: ATTENDANCE_EXEMPT_ROLES } };
+// A president can also take a member off the weekly roster by standing
+// (alumni, advisory capacity, on leave — services/memberStatus.js)
+// without touching their role, so standing is part of the rule too.
+// Advisory events keep their own roster and ignore standing: an alum on
+// the advisory board still belongs at those.
+const ATTENDEE_WHERE = {
+  role: { notIn: ATTENDANCE_EXEMPT_ROLES },
+  memberStatus: ACTIVE,
+};
+
+// Who is off the weekly roster by standing, and why. The note and the
+// who/when are for executives: a president reading the list next year
+// should be able to tell an alum from someone on a semester abroad.
+const OFF_ROSTER_SELECT = {
+  id: true,
+  name: true,
+  role: true,
+  memberStatus: true,
+  memberStatusNote: true,
+  memberStatusAt: true,
+  memberStatusBy: { select: { name: true } },
+};
+
+function serializeOffRoster(u) {
+  return {
+    id: u.id,
+    name: u.name,
+    role: u.role,
+    status: u.memberStatus,
+    statusLabel: statusLabel(u.memberStatus),
+    note: u.memberStatusNote,
+    changedAt: u.memberStatusAt,
+    changedBy: u.memberStatusBy?.name ?? null,
+  };
+}
+
+// The opt-out payload for a member whose attendance isn't tracked. The
+// web page and the iPhone app both key off `exempt`, so a member off the
+// roster by standing gets the same shape as the exempt roles; `reason`
+// lets the page say why.
+function exemptPayload(reason = null) {
+  return {
+    exempt: true,
+    reason,
+    records: [],
+    total: 0,
+    present: 0,
+    excused: 0,
+    percentage: null,
+  };
+}
 
 // For advisory events, the roster is "anyone with advisory in primary OR
 // extra roles". Prisma `hasSome` covers the extras side. Chief of
@@ -49,14 +110,14 @@ function isAdvisoryUser(target) {
 // no one needs to mark attendance for meetings months in the future.
 // Advisory-audience events are excluded: they have their own roster
 // (Advisory Board + Faculty) and shouldn't dilute the club-wide stat.
-router.get('/', requireExecutive, async (_req, res) => {
+router.get('/', requireExecutive, async (req, res) => {
   const now = new Date();
   const from = new Date(now);
   from.setMonth(from.getMonth() - 3);
   const to = new Date(now);
   to.setDate(to.getDate() + 14);
 
-  const [users, events] = await Promise.all([
+  const [users, events, offRoster] = await Promise.all([
     prisma.user.findMany({
       where: ATTENDEE_WHERE,
       select: { id: true, name: true, role: true },
@@ -67,13 +128,71 @@ router.get('/', requireExecutive, async (_req, res) => {
       select: { id: true, title: true, date: true },
       orderBy: { date: 'asc' },
     }),
+    prisma.user.findMany({
+      where: { memberStatus: { not: ACTIVE } },
+      select: OFF_ROSTER_SELECT,
+      orderBy: { name: 'asc' },
+    }),
   ]);
   // Scope attendance records to just the events in the matrix — keeps any
-  // advisory-event records out of the Club Attendance % calculation.
+  // advisory-event records out of the Club Attendance % calculation. A
+  // member taken off the roster drops out of the rate as well: their row
+  // is gone from the grid, and a percentage built partly from people
+  // nobody can see is one nobody can check. Their marks stay in the
+  // database and come back if they're restored.
   const records = await prisma.attendance.findMany({
-    where: { eventId: { in: events.map((e) => e.id) } },
+    where: {
+      eventId: { in: events.map((e) => e.id) },
+      userId: { notIn: offRoster.map((u) => u.id) },
+    },
   });
-  res.json({ users, events, records });
+  res.json({
+    users,
+    events,
+    records,
+    offRoster: offRoster.map(serializeOffRoster),
+    // The choices for taking someone off the roster, from the one list
+    // the PUT below validates against.
+    memberStatuses: MEMBER_STATUSES.filter((s) => s.value !== ACTIVE),
+    noteMax: NOTE_MAX,
+    canManageRoster: isPresidentOrSuperAdmin(req.user),
+  });
+});
+
+// Take a member off the weekly roster, or put them back. Presidents (and
+// the owner) only: this changes who the club counts, so it sits with the
+// people who run the meeting. Nothing is deleted. Past marks stay on the
+// record and reappear in the grid if the member is restored, and the
+// audit log keeps every change, not just the latest.
+router.put('/roster/:userId', requirePresidentOrSuperAdmin, async (req, res) => {
+  const userId = Number(req.params.userId);
+  if (!Number.isInteger(userId) || userId <= 0) {
+    return res.status(400).json({ error: 'Bad userId' });
+  }
+  const parsed = parseStatusUpdate(req.body);
+  if (parsed.error) return res.status(400).json({ error: parsed.error });
+
+  const target = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { memberStatus: true },
+  });
+  if (!target) return res.status(404).json({ error: 'Member not found' });
+
+  const updated = await prisma.user.update({
+    where: { id: userId },
+    data: {
+      memberStatus: parsed.status,
+      memberStatusNote: parsed.note,
+      memberStatusAt: new Date(),
+      memberStatusById: req.user.id,
+    },
+    select: OFF_ROSTER_SELECT,
+  });
+  await auditReq(req, 'member.roster_status', 'user', userId, {
+    from: target.memberStatus,
+    to: parsed.status,
+  });
+  res.json(serializeOffRoster(updated));
 });
 
 // Attendance for a single event — President only.
@@ -85,9 +204,11 @@ router.get('/', requireExecutive, async (_req, res) => {
 //                Regular members don't attend these meetings.
 //   'all' (default) — return every non-exempt operational member, same
 //                     as the club-wide attendance matrix.
-// Compose the visible roster for an event, applying role-based defaults
-// AND super-admin overrides. Returns Sets of user ids — caller hydrates
-// them into name/role objects.
+// Compose the visible roster for an event, applying the default audience
+// (role, and for regular events standing) AND super-admin overrides.
+// Returns Sets of user ids — caller hydrates them into name/role objects.
+// A member taken off the roster still appears on past meetings they have
+// a mark for, through `recorded` below, so history reads as it happened.
 //
 //   excludedIds = users super admin removed via × (overrides.included=false)
 //   includedIds = users super admin added via picker (overrides.included=true)
@@ -195,14 +316,17 @@ router.get('/mine', async (req, res) => {
   // Attendance-exempt roles aren't tracked — return a clear opt-out response
   // instead of an empty 0% card that looks like a bad attendance record.
   if (ATTENDANCE_EXEMPT_ROLES.includes(req.user.role)) {
-    return res.json({
-      exempt: true,
-      records: [],
-      total: 0,
-      present: 0,
-      excused: 0,
-      percentage: null,
-    });
+    return res.json(exemptPayload());
+  }
+  // Standing isn't on req.user (verifyJwt selects a fixed set), so read
+  // it. The president's note is deliberately not sent: it was written for
+  // the executives, and this is the member reading about themselves.
+  const me = await prisma.user.findUnique({
+    where: { id: req.user.id },
+    select: { memberStatus: true },
+  });
+  if (!isActive(me?.memberStatus)) {
+    return res.json(exemptPayload(statusLabel(me.memberStatus)));
   }
   const records = await prisma.attendance.findMany({
     where: { userId: req.user.id },
@@ -230,7 +354,7 @@ router.post('/', requireExecutive, async (req, res) => {
   const [target, event] = await Promise.all([
     prisma.user.findUnique({
       where: { id: Number(userId) },
-      select: { role: true, extraRoles: true },
+      select: { name: true, role: true, extraRoles: true, memberStatus: true },
     }),
     prisma.event.findUnique({
       where: { id: Number(eventId) },
@@ -254,6 +378,13 @@ router.post('/', requireExecutive, async (req, res) => {
       // regular meetings.
       return res.status(400).json({
         error: 'Attendance is not tracked for this role',
+      });
+    } else if (target && !isActive(target.memberStatus)) {
+      // Off the weekly roster by standing. Refuse rather than mark: a mark
+      // would put them back into the rate without anyone deciding they
+      // had returned. Restoring them is one click on the same page.
+      return res.status(400).json({
+        error: `${target.name} is off the weekly roster (${statusLabel(target.memberStatus)}). Restore them on the Attendance page to mark attendance.`,
       });
     }
   }

@@ -132,7 +132,13 @@ export default function Profile() {
         </Card>
 
         <Card title="Attendance Summary">
-          {stats ? (
+          {stats?.exempt ? (
+            <div className="text-sm text-navy-400">
+              {stats.reason
+                ? `You're listed as ${stats.reason}, so attendance isn't tracked for you.`
+                : "Attendance isn't tracked for your role."}
+            </div>
+          ) : stats ? (
             <div>
               <div className="text-xs uppercase text-navy-400">Attendance Rate</div>
               <div className="mt-2 text-5xl font-bold text-navy">

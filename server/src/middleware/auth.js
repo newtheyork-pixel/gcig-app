@@ -148,11 +148,15 @@ export function requireAdmin(req, res, next) {
 // A sitting President OR the owner/super-admin. Used for the presidential
 // step-down: the owner must be able to perform a handover even without
 // holding the President role themselves. (isSuperAdmin is set in verifyJwt
-// from an email match — see isSuperAdminEmail below.)
+// from an email match — see isSuperAdminEmail below.) The predicate is
+// exported so a payload can tell the client whether to offer a control,
+// from the same rule the route then enforces.
+export function isPresidentOrSuperAdmin(user) {
+  return !!user && (user.role === 'President' || !!user.isSuperAdmin);
+}
+
 export function requirePresidentOrSuperAdmin(req, res, next) {
-  if (req.user && (req.user.role === 'President' || req.user.isSuperAdmin)) {
-    return next();
-  }
+  if (isPresidentOrSuperAdmin(req.user)) return next();
   return res.status(403).json({ error: 'President or owner required' });
 }
 
