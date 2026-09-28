@@ -4,6 +4,7 @@ import {
   isSessionOver,
   shouldEndSession,
   rotationTokenFromHeaders,
+  clearActive,
 } from './session.js';
 
 export { isSessionOver, adoptToken, shouldEndSession } from './session.js';
@@ -95,6 +96,7 @@ api.interceptors.response.use(
     if (shouldEndSession(err, { sent, current: now })) {
       localStorage.removeItem('gcig_token');
       localStorage.removeItem('gcig_user');
+      clearActive();
       const path = window.location.pathname;
       const publicPaths = ['/login', '/accept-invite', '/forgot-password', '/reset-password'];
       if (!publicPaths.includes(path)) {

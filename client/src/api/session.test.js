@@ -6,6 +6,12 @@ import {
   isSessionOver,
   shouldEndSession,
   rotationTokenFromHeaders,
+  sessionUser,
+  IDLE_LIMIT_MS,
+  lastActiveAt,
+  markActive,
+  clearActive,
+  idleTooLong,
 } from './session.js';
 
 function jwtWithIat(iat) {
@@ -143,4 +149,77 @@ test('rotationTokenFromHeaders reads axios and Fetch header shapes', () => {
   const headers = new Headers({ 'X-New-Token': 'from-fetch' });
   assert.equal(rotationTokenFromHeaders(headers), 'from-fetch');
   assert.equal(rotationTokenFromHeaders(null), null);
+});
+
+// ── A user with no token is not a session ───────────────────────────
+
+test('sessionUser needs the token AND the user', () => {
+  const user = JSON.stringify({ id: 1, name: 'Maya Brooks' });
+  assert.deepEqual(sessionUser(jwtWithIat(1), user), { id: 1, name: 'Maya Brooks' });
+  // The dead end: user left in storage, token gone. Starting from it
+  // bounced /login to a dashboard on which every call failed.
+  assert.equal(sessionUser(null, user), null);
+  assert.equal(sessionUser(jwtWithIat(1), null), null);
+  assert.equal(sessionUser(jwtWithIat(1), '{not json'), null);
+  assert.equal(sessionUser(jwtWithIat(1), 'null'), null);
+  assert.equal(sessionUser(jwtWithIat(1), '5'), null);
+});
+
+// ── One idle clock for every tab ─────────────────────────────────────
+
+// Stands in for localStorage, which every tab shares.
+function sharedClock(initial = null) {
+  let value = initial;
+  return {
+    read: () => value,
+    write: (next) => {
+      value = next;
+    },
+    remove: () => {
+      value = null;
+    },
+  };
+}
+
+const T0 = 1_790_000_000_000;
+
+test('no record is never a reason to sign out', () => {
+  const store = sharedClock();
+  assert.equal(lastActiveAt(store), null);
+  assert.equal(idleTooLong(T0, { store }), false);
+  assert.equal(idleTooLong(T0, { store: sharedClock('garbage') }), false);
+});
+
+test('two hours is the line, not a moment before', () => {
+  const store = sharedClock(String(T0));
+  assert.equal(idleTooLong(T0 + IDLE_LIMIT_MS, { store }), false);
+  assert.equal(idleTooLong(T0 + IDLE_LIMIT_MS + 1, { store }), true);
+});
+
+test('activity in one tab keeps every other tab signed in', () => {
+  // Tab A was last touched at T0 and has been left alone since. The
+  // member has been working in tab B the whole time. This is the case
+  // that used to delete tab B's token when tab A's own clock ran out.
+  const store = sharedClock(String(T0));
+  const later = T0 + IDLE_LIMIT_MS - 60_000;
+  markActive(later, store); // tab B
+  assert.equal(idleTooLong(T0 + IDLE_LIMIT_MS + 1, { store }), false); // tab A checks
+  assert.equal(idleTooLong(later + IDLE_LIMIT_MS + 1, { store }), true);
+});
+
+test('a sign-in starts the clock again, so the last session cannot end this one', () => {
+  // Signed in and immediately signed out: the previous session's
+  // idleness, still on the clock, judged the new one.
+  const store = sharedClock(String(T0));
+  const signIn = T0 + 3 * 60 * 60 * 1000;
+  assert.equal(idleTooLong(signIn, { store }), true);
+  markActive(signIn, store);
+  assert.equal(idleTooLong(signIn + 1000, { store }), false);
+});
+
+test('signing out clears the clock for whoever signs in next', () => {
+  const store = sharedClock(String(T0));
+  clearActive(store);
+  assert.equal(lastActiveAt(store), null);
+  assert.equal(idleTooLong(T0 + 10 * IDLE_LIMIT_MS, { store }), false);
 });

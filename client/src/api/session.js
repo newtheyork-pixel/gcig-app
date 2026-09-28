@@ -143,3 +143,96 @@ export function shouldEndSession(err, { sent, current } = {}) {
   if (current && sent !== current) return false;
   return true;
 }
+
+/**
+ * The signed-in user a tab should start from, or null.
+ *
+ * A user record with no token beside it is not a session. Treating it
+ * as one is a dead end the member cannot get out of: the app renders
+ * their name, every call 401s "Missing token", the interceptor rightly
+ * will not act on a request that carried nothing, and /login bounces
+ * straight back to the dashboard because `user` is set. Only Sign out
+ * or clearing site data escapes it. It happens when one tab clears the
+ * session while another tab's /auth/me is still in flight and then
+ * writes the user back.
+ */
+export function sessionUser(rawToken, rawUser) {
+  if (!rawToken || !rawUser) return null;
+  try {
+    const user = JSON.parse(rawUser);
+    return user && typeof user === 'object' ? user : null;
+  } catch {
+    return null;
+  }
+}
+
+// ── The one sign-out the client makes on its own ─────────────────────
+//
+// Two hours with nobody at the keyboard signs the member out; it is
+// the defence against a stolen, unlocked laptop. It is the single
+// exception to "only the server may end a session", and it used to be
+// wrong in a way that looked exactly like tokens expiring early.
+//
+// The clock was per TAB while the session is shared by every tab. A
+// dashboard left open behind the terminal window ran its own two
+// hours, then deleted the token the member was using elsewhere, and a
+// member who signed in fresh was thrown out minutes later when some
+// older tab's clock ran out. So there is one clock for the whole
+// browser, kept here, and any tab's activity winds it back.
+
+export const IDLE_LIMIT_MS = 2 * 60 * 60 * 1000;
+export const ACTIVE_KEY = 'gcig_last_active';
+
+const activeStore = {
+  read: () => {
+    try {
+      return localStorage.getItem(ACTIVE_KEY);
+    } catch {
+      return null;
+    }
+  },
+  write: (value) => {
+    try {
+      localStorage.setItem(ACTIVE_KEY, value);
+    } catch {
+      /* private mode or full storage: the clock just is not shared */
+    }
+  },
+  remove: () => {
+    try {
+      localStorage.removeItem(ACTIVE_KEY);
+    } catch {
+      /* nothing to remove */
+    }
+  },
+};
+
+export function lastActiveAt(store = activeStore) {
+  const at = Number(store.read());
+  return Number.isFinite(at) && at > 0 ? at : null;
+}
+
+export function markActive(now = Date.now(), store = activeStore) {
+  store.write(String(now));
+}
+
+// Every sign-out clears the clock, so the next session starts without
+// the last one's idleness. A stale record surviving into a fresh
+// sign-in is precisely "signed in and immediately signed out".
+export function clearActive(store = activeStore) {
+  store.remove();
+}
+
+/**
+ * Has nobody touched ANY tab for longer than the limit?
+ *
+ * No record is never a reason to sign out: it means a session that has
+ * just begun, or one that predates the record. Wall-clock time, not a
+ * long setTimeout, because a timer counts the time the tab was awake
+ * rather than the time the member was away.
+ */
+export function idleTooLong(now = Date.now(), { limit = IDLE_LIMIT_MS, store = activeStore } = {}) {
+  const at = lastActiveAt(store);
+  if (at == null) return false;
+  return now - at > limit;
+}

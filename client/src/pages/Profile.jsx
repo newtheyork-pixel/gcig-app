@@ -86,7 +86,11 @@ export default function Profile() {
     setMessage('');
     setError('');
     try {
-      await api.post('/auth/change-password', form);
+      const { data } = await api.post('/auth/change-password', form);
+      // A new password bumps tokenVersion, which ends every session the
+      // member has, this one included. The server re-issues a token for
+      // this device; dropping it signed the member out on the next call.
+      if (data?.token) localStorage.setItem('gcig_token', data.token);
       setMessage(authInfo?.hasPassword === false ? 'Password set.' : 'Password updated.');
       setForm({ currentPassword: '', newPassword: '' });
       refreshAuthInfo();

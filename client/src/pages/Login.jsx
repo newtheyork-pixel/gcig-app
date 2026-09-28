@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from 'react';
 import { Navigate, Link, useSearchParams } from 'react-router-dom';
 import { GoogleLogin } from '@react-oauth/google';
 import { useAuth } from '../context/AuthContext.jsx';
+import { markActive } from '../api/session.js';
 import AuthBrandMark from '../components/AuthBrandMark.jsx';
 import Button from '../components/Button.jsx';
 
@@ -76,6 +77,7 @@ export default function Login() {
       }
       localStorage.setItem('gcig_token', token);
       localStorage.setItem('gcig_user', JSON.stringify(userData));
+      markActive();
       window.location.replace(afterLogin);
     } catch (err) {
       setError(err.response?.data?.error || err.message || 'Google sign-in failed');

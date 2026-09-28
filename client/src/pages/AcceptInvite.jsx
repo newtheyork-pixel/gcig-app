@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useSearchParams, useNavigate, Navigate } from 'react-router-dom';
 import api from '../api/client.js';
+import { markActive } from '../api/session.js';
 import { useAuth } from '../context/AuthContext.jsx';
 import AuthBrandMark from '../components/AuthBrandMark.jsx';
 import Button from '../components/Button.jsx';
@@ -64,6 +65,7 @@ export default function AcceptInvite() {
       const { data } = await api.post('/auth/accept-invite', { token, password });
       localStorage.setItem('gcig_token', data.token);
       localStorage.setItem('gcig_user', JSON.stringify(data.user));
+      markActive();
       window.location.replace('/dashboard');
     } catch (err) {
       setError(err.response?.data?.error || 'Failed to set up account');

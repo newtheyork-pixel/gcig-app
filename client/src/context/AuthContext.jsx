@@ -1,16 +1,22 @@
 import { createContext, useContext, useEffect, useState } from 'react';
 import api, { isSessionOver } from '../api/client.js';
+import { markActive, clearActive, sessionUser } from '../api/session.js';
 
 const AuthContext = createContext(null);
 
 function saveSession(token, user) {
   localStorage.setItem('gcig_token', token);
   localStorage.setItem('gcig_user', JSON.stringify(user));
+  // A sign-in is the member at the keyboard. Starting the shared idle
+  // clock here is what stops the last session's idleness from signing
+  // out the one just created.
+  markActive();
 }
 
 function clearSession() {
   localStorage.removeItem('gcig_token');
   localStorage.removeItem('gcig_user');
+  clearActive();
 }
 
 export function AuthProvider({ children }) {
@@ -19,14 +25,14 @@ export function AuthProvider({ children }) {
     // localStorage after a forced reload mid-write. Treat any parse
     // failure as "no user" instead of crashing the whole app — the
     // /auth/me call below will recover if a valid token is present.
+    //
+    // And a user with no token beside it is not signed in (see
+    // sessionUser): starting from one is the dead end where /login
+    // bounces to a dashboard on which every call fails.
     const raw = localStorage.getItem('gcig_user');
-    if (!raw) return null;
-    try {
-      return JSON.parse(raw);
-    } catch {
-      localStorage.removeItem('gcig_user');
-      return null;
-    }
+    const found = sessionUser(localStorage.getItem('gcig_token'), raw);
+    if (!found && raw) localStorage.removeItem('gcig_user');
+    return found;
   });
   const [loading, setLoading] = useState(!!localStorage.getItem('gcig_token'));
   // Whether the API answered us at all. Distinct from being signed out,
@@ -68,6 +74,16 @@ export function AuthProvider({ children }) {
           // sets Cache-Control: no-store so 304 shouldn't happen here,
           // but be defensive in case a proxy or older deploy serves one.
           if (res && res.data && typeof res.data === 'object') {
+            // Another tab may have signed out, or signed in as someone
+            // else, while this was in flight. The answer then describes
+            // a session that no longer exists here, and writing it back
+            // is what left a user in storage with no token beside it.
+            const current = localStorage.getItem('gcig_token');
+            const stored = sessionUser(current, localStorage.getItem('gcig_user'));
+            if (!current || (stored && stored.id !== res.data.id)) {
+              setLoading(false);
+              return;
+            }
             setUser(res.data);
             localStorage.setItem('gcig_user', JSON.stringify(res.data));
           }
@@ -103,6 +119,30 @@ export function AuthProvider({ children }) {
     return () => {
       cancelled = true;
     };
+  }, []);
+
+  // Every tab shares one session, so every tab follows it. When another
+  // tab signs out (or times out), this one used to go on showing the
+  // member as signed in while each call failed "Missing token", with
+  // nothing to send it to /login. When another tab signs in, a tab
+  // sitting on the login page can simply carry on. `storage` fires only
+  // in the OTHER tabs, never the one that wrote, so a tab's own login
+  // and its hard reload are untouched.
+  useEffect(() => {
+    const onStorage = (e) => {
+      if (e.key !== null && e.key !== 'gcig_token' && e.key !== 'gcig_user') return;
+      const next = sessionUser(
+        localStorage.getItem('gcig_token'),
+        localStorage.getItem('gcig_user')
+      );
+      setUser((prev) => {
+        if (!next) return null;
+        if (prev && JSON.stringify(prev) === JSON.stringify(next)) return prev;
+        return next;
+      });
+    };
+    window.addEventListener('storage', onStorage);
+    return () => window.removeEventListener('storage', onStorage);
   }, []);
 
   // Returns either { user } on full success, or { twoFactorRequired, challengeToken }

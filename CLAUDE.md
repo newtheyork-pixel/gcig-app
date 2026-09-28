@@ -374,6 +374,31 @@ rule landed (Sep '26), both ports of bugs the Mac already knew:
    `shouldEndSession` requires AUTH plus a credential we actually
    presented that has not since been replaced.
 
+**The one sign-out the client makes on its own ran per TAB (Sep '26).**
+`InactivityTimer` ends a session after two hours with nobody at the
+keyboard, the only exception to the rule above. It was a `setTimeout`
+in each tab, while the session lives in localStorage and every tab
+shares it. So a dashboard left open behind the terminal ran its own two
+hours and then deleted the token the member was using in another tab,
+and a member who signed in fresh was thrown out minutes later when an
+older tab's clock ran out. To the member that is a token expiring early,
+and the server logs show nothing because the server never refused
+anything. It also counted only clicks, keys and WINDOW scroll, and the
+app scrolls inside `<main>`, so two hours of reading counted as two
+hours idle. Now there is one clock per browser (`gcig_last_active`,
+kept in `session.js`):
+- activity in any tab winds it back;
+- reading counts: pointermove, wheel, and scroll caught in the capture
+  phase, because scroll does not bubble;
+- a sign-in starts the clock and every sign-out clears it;
+- the check reads wall-clock time, because a long timer counts the time
+  the tab was awake rather than the time the member was away.
+
+Tabs follow the shared session through `storage` events. A `gcig_user`
+with no `gcig_token` beside it is not a session: starting from one was a
+dead end, where /login bounced to a dashboard on which every call failed
+with "Missing token".
+
 Password / 2FA / verify must `window.location.replace`, not SPA
 `navigate` and not `setUser` before the reload — Login.jsx's
 `if (user) return <Navigate>` would otherwise race the remounting
