@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { NavLink } from 'react-router-dom';
+import { NavLink, useLocation } from 'react-router-dom';
 import {
   Mic,
   LayoutDashboard,
@@ -7,7 +7,6 @@ import {
   LineChart,
   BookOpen,
   ClipboardCheck,
-  UserCircle,
   LogOut,
   Vote,
   Building2,
@@ -17,70 +16,67 @@ import {
   Megaphone,
   Bot,
   Send,
-  Activity,
-  Ship,
-  ClipboardList,
-  Network,
-  Monitor,
-  ShieldCheck,
+  Terminal,
+  Download,
+  ChevronDown,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext.jsx';
+import { griffinLogo } from '../brand/logos.js';
 import RoleBadge from './RoleBadge.jsx';
 import api from '../api/client.js';
-import { graceLogo } from '../brand/logos.js';
 
-// Grouped sidebar nav. Sections with a header collapse the crowd of items
-// into 4 scannable clusters instead of a flat list of 12.
+// Everyday destinations stay on screen. Everything else lives in one
+// collapsed More group so the nav is a short list instead of a catalog.
+// The web terminal is a single gold row rather than a sticky banner.
 const NAV_SECTIONS = [
   {
-    items: [{ to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard, end: true }],
-  },
-  {
-    header: 'Day to day',
     items: [
-      { to: '/calendar', label: 'Calendar', icon: CalendarDays },
-      { to: '/pitch-requests', label: 'Pitch Requests', icon: Send, badgeKey: 'pitchRequests' },
-      { to: '/chat', label: 'Chat', icon: MessageSquare },
-      { to: '/broadcast', label: 'Broadcast', icon: Megaphone, executiveOnly: true },
-      { to: '/attendance', label: 'Attendance', icon: ClipboardCheck, hideForAdvisory: true },
-      { to: '/president-review', label: 'President Review', icon: ClipboardList },
-    ],
-  },
-  {
-    header: 'Investing',
-    items: [
+      { to: '/terminal', label: 'Terminal', icon: Terminal, terminalAccess: true, emphasis: true },
+      { to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard, end: true },
       { to: '/portfolio', label: 'Portfolio', icon: LineChart },
-      { to: '/download', label: 'Get the Terminal', icon: Monitor },
-      { to: '/outcomes', label: 'Coverage Outcomes', icon: Trophy },
       { to: '/votes', label: 'Voting', icon: Vote },
-      { to: '/industries', label: 'Industries', icon: Building2 },
-      { to: '/organization', label: 'Organization', icon: Network, pmOrAbove: true },
-      { to: '/cpi', label: 'CPI Forecast', icon: Activity },
-      { to: '/tankers', label: 'Tanker Tracker', icon: Ship },
+      { to: '/calendar', label: 'Calendar', icon: CalendarDays },
+      { to: '/chat', label: 'Chat', icon: MessageSquare },
+      { to: '/field-research', label: 'Fieldwork', icon: Mic },
+      { to: '/ai-chat', label: 'Assistant', icon: Bot },
     ],
   },
   {
+    header: 'More',
+    collapsible: true,
     items: [
       { to: '/library', label: 'Library', icon: BookOpen },
-      { to: '/field-research', label: 'Research', icon: Mic },
-      { to: '/outreach-labeling', label: 'Outreach Screen', icon: ShieldCheck, executiveOnly: true },
-    ],
-  },
-  {
-    items: [
+      { to: '/outcomes', label: 'Coverage', icon: Trophy },
+      { to: '/industries', label: 'Industries', icon: Building2 },
+      { to: '/pitch-requests', label: 'Pitch Requests', icon: Send, badgeKey: 'pitchRequests' },
+      { to: '/attendance', label: 'Attendance', icon: ClipboardCheck, hideForAdvisory: true },
+      { to: '/broadcast', label: 'Broadcast', icon: Megaphone, executiveOnly: true },
+      { to: '/download', label: 'Mac app', icon: Download },
       { to: '/admin', label: 'Admin', icon: ShieldAlert, pmOrAbove: true },
-      { to: '/ai-chat', label: 'AI Assistant', icon: Bot },
     ],
-  },
-  {
-    items: [{ to: '/profile', label: 'Profile', icon: UserCircle }],
   },
 ];
 
+const MORE_NAV_KEY = 'gcig_nav_more';
+
+function itemIsActive(pathname, item) {
+  return (
+    pathname === item.to ||
+    (item.to !== '/' && pathname.startsWith(item.to + '/'))
+  );
+}
+
 export default function Sidebar({ onNavigate }) {
-  const { user, logout, isAdmin, isExecutive, isPmOrAbove, isAdvisory, isSuperAdmin } = useAuth();
+  const { user, logout, isAdmin, isExecutive, isPmOrAbove, isAdvisory, isSuperAdmin, isAnalystOrAbove } = useAuth();
+  const location = useLocation();
   const [badges, setBadges] = useState({ pitchRequests: 0 });
-  const [logoFailed, setLogoFailed] = useState(false);
+  const [moreCollapsed, setMoreCollapsed] = useState(() => {
+    try {
+      return localStorage.getItem(MORE_NAV_KEY) !== 'open';
+    } catch {
+      return true;
+    }
+  });
 
   // Poll the pending-pitch-requests count so the sidebar chip stays fresh.
   // 60s cadence is plenty for an inbox-style notification — anything more
@@ -104,100 +100,144 @@ export default function Sidebar({ onNavigate }) {
     };
   }, []);
 
+  function toggleMore() {
+    setMoreCollapsed((c) => {
+      const next = !c;
+      try {
+        localStorage.setItem(MORE_NAV_KEY, next ? 'closed' : 'open');
+      } catch {
+        /* private mode */
+      }
+      return next;
+    });
+  }
+
+  function isVisible(item) {
+    return (
+      (!item.adminOnly || isAdmin) &&
+      (!item.executiveOnly || isExecutive) &&
+      (!item.executiveOrAdvisory || isExecutive || isAdvisory) &&
+      (!item.pmOrAbove || isPmOrAbove) &&
+      (!item.superAdminOnly || isSuperAdmin) &&
+      (!item.hideForAdvisory || !isAdvisory) &&
+      (!item.terminalAccess || isAnalystOrAbove || isAdvisory)
+    );
+  }
+
   return (
-    <aside className="flex h-full w-64 flex-col bg-navy text-white">
-      <div className="flex flex-col items-center gap-3 px-5 py-6 border-b border-navy-500/50">
-        {!logoFailed && (
-          <div className="rounded-lg bg-white px-3 py-2">
-            <img
-              src={graceLogo}
-              alt="Grace Church School"
-              width={250}
-              height={53}
-              className="h-10 w-auto"
-              // Hide the CHIP, not just the image: a failed load used to
-              // leave an empty white box. On error we drop the whole thing
-              // and the wordmark below carries the brand.
-              onError={() => setLogoFailed(true)}
-            />
-          </div>
-        )}
-        <div className="text-center leading-tight">
-          <div className="font-serif text-lg font-semibold text-white">
-            The Griffin Fund
-          </div>
-          <div className="mt-1 text-[10px] uppercase tracking-[0.2em] text-gold font-semibold">
-            Grace Church School
-          </div>
+    <aside className="flex h-full w-56 flex-col bg-navy text-white">
+      <div className="border-b border-navy-500/50 px-3 py-3">
+        <div className="inline-flex max-w-full items-center rounded-md bg-white px-2 py-1.5">
+          <img
+            src={griffinLogo}
+            alt="The Griffin Fund"
+            className="h-8 w-auto max-w-full"
+          />
         </div>
       </div>
 
-      <nav className="flex-1 overflow-y-auto px-3 py-4">
+      <nav className="flex-1 overflow-y-auto px-3 py-3">
         {NAV_SECTIONS.map((section, sectionIdx) => {
-          const visible = section.items.filter(
-            (i) =>
-              (!i.adminOnly || isAdmin) &&
-              (!i.executiveOnly || isExecutive) &&
-              (!i.executiveOrAdvisory || isExecutive || isAdvisory) &&
-              (!i.pmOrAbove || isPmOrAbove) &&
-              (!i.superAdminOnly || isSuperAdmin) &&
-              (!i.hideForAdvisory || !isAdvisory)
-          );
+          const visible = section.items.filter(isVisible);
           if (visible.length === 0) return null;
+
+          const onThisSection = visible.some((i) =>
+            itemIsActive(location.pathname, i)
+          );
+          const hideItems =
+            section.collapsible && moreCollapsed && !onThisSection;
+          const hiddenBadge = hideItems
+            ? visible.reduce((n, i) => n + (i.badgeKey ? badges[i.badgeKey] || 0 : 0), 0)
+            : 0;
+
           return (
-            <div key={sectionIdx} className={sectionIdx === 0 ? 'mb-2' : 'mt-5 mb-2'}>
-              {section.header && (
-                <div className="mb-2 flex items-center gap-2 px-3 text-[9px] font-semibold uppercase tracking-[0.25em] text-gold/70">
-                  <span className="h-px w-3 bg-gold/50" />
-                  {section.header}
+            <div key={sectionIdx} className={sectionIdx === 0 ? 'mb-1' : 'mt-3 mb-1'}>
+              {section.header &&
+                (section.collapsible ? (
+                  <button
+                    type="button"
+                    onClick={toggleMore}
+                    className="mb-1.5 flex w-full cursor-pointer items-center gap-2 px-3 text-[9px] font-semibold uppercase tracking-[0.25em] text-gold/70 hover:text-gold"
+                    aria-expanded={!hideItems}
+                  >
+                    <span className="h-px w-3 bg-gold/50" />
+                    <span className="flex-1 text-left">{section.header}</span>
+                    {hiddenBadge > 0 && (
+                      <span className="inline-flex min-w-[1.25rem] items-center justify-center rounded-full bg-gold px-1.5 text-[10px] font-bold tracking-normal text-navy">
+                        {hiddenBadge}
+                      </span>
+                    )}
+                    <ChevronDown
+                      className={`h-3 w-3 transition-transform ${hideItems ? '-rotate-90' : ''}`}
+                    />
+                  </button>
+                ) : (
+                  <div className="mb-1.5 flex w-full items-center gap-2 px-3 text-[9px] font-semibold uppercase tracking-[0.25em] text-gold/70">
+                    <span className="h-px w-3 bg-gold/50" />
+                    {section.header}
+                  </div>
+                ))}
+              {!hideItems && (
+                <div className="space-y-0.5">
+                  {visible.map((item) => {
+                    const Icon = item.icon;
+                    const badge = item.badgeKey ? badges[item.badgeKey] : 0;
+                    return (
+                      <NavLink
+                        key={item.to}
+                        to={item.to}
+                        end={item.end}
+                        onClick={onNavigate}
+                        className={({ isActive }) => {
+                          if (item.emphasis && !isActive) {
+                            return 'flex items-center gap-3 rounded-lg border border-gold/40 px-3 py-2 text-sm font-medium text-gold transition hover:bg-gold hover:text-navy';
+                          }
+                          return `flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition ${
+                            isActive
+                              ? 'bg-gold text-navy'
+                              : 'text-navy-100 hover:bg-navy-500 hover:text-white'
+                          }`;
+                        }}
+                      >
+                        <Icon className="h-4 w-4" />
+                        <span className="flex-1">{item.label}</span>
+                        {badge > 0 && (
+                          <span className="ml-2 inline-flex min-w-[1.25rem] items-center justify-center rounded-full bg-gold px-1.5 text-[10px] font-bold text-navy">
+                            {badge}
+                          </span>
+                        )}
+                      </NavLink>
+                    );
+                  })}
                 </div>
               )}
-              <div className="space-y-0.5">
-                {visible.map((item) => {
-                  const Icon = item.icon;
-                  const badge = item.badgeKey ? badges[item.badgeKey] : 0;
-                  return (
-                    <NavLink
-                      key={item.to}
-                      to={item.to}
-                      end={item.end}
-                      onClick={onNavigate}
-                      className={({ isActive }) =>
-                        `flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition ${
-                          isActive
-                            ? 'bg-gold text-navy'
-                            : 'text-navy-100 hover:bg-navy-500 hover:text-white'
-                        }`
-                      }
-                    >
-                      <Icon className="h-4 w-4" />
-                      <span className="flex-1">{item.label}</span>
-                      {badge > 0 && (
-                        <span className="ml-2 inline-flex min-w-[1.25rem] items-center justify-center rounded-full bg-gold px-1.5 text-[10px] font-bold text-navy">
-                          {badge}
-                        </span>
-                      )}
-                    </NavLink>
-                  );
-                })}
-              </div>
             </div>
           );
         })}
       </nav>
 
       <div className="border-t border-navy-500/50 p-4">
-        <div className="mb-3">
-          <div className="text-[9px] font-semibold uppercase tracking-[0.25em] text-gold/70">
-            Signed in
-          </div>
-          <div className="mt-1 font-serif text-base font-semibold text-white truncate">
+        <NavLink
+          to="/profile"
+          onClick={onNavigate}
+          aria-label="Profile"
+          className={({ isActive }) =>
+            `mb-3 block rounded-lg px-2 py-1.5 transition ${
+              isActive ? 'bg-gold' : 'hover:bg-navy-500'
+            }`
+          }
+        >
+          <div
+            className={`truncate font-serif text-sm font-semibold ${
+              location.pathname === '/profile' ? 'text-navy' : 'text-white'
+            }`}
+          >
             {user?.name}
           </div>
           <div className="mt-1">
             <RoleBadge role={user?.role} />
           </div>
-        </div>
+        </NavLink>
         <button
           onClick={logout}
           className="flex w-full items-center gap-2 rounded-lg border border-navy-400/40 px-3 py-2 text-sm font-medium text-navy-100 transition hover:border-gold hover:bg-gold hover:text-navy"
