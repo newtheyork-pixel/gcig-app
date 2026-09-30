@@ -2,6 +2,7 @@ import { Router } from 'express';
 import crypto from 'node:crypto';
 import rateLimit from 'express-rate-limit';
 import YahooFinance from 'yahoo-finance2';
+import { feedFailure, finnhubRefusal } from '../services/feedFailure.js';
 // yahoo-finance2 v2.14 ships the class as the default export; instantiate once.
 // Only `quote` / `autoc` are exposed — profile/sector data is fetched via a
 // direct HTTP call to Yahoo's quoteSummary endpoint below.
@@ -9,9 +10,16 @@ const yahooFinance = new YahooFinance();
 
 // Finnhub is our primary data source when FINNHUB_API_KEY is configured.
 // Free tier: 60 calls/min, real-time US quotes, company profile included.
-async function fetchFinnhub(ticker) {
+//
+// Returns the data or null, and fills `trace` with why it failed, so
+// the route can say which source let us down (see feedFailure.js). A
+// refusal used to vanish into a bare null with nothing logged.
+async function fetchFinnhub(ticker, trace = {}) {
   const key = process.env.FINNHUB_API_KEY;
-  if (!key) return null;
+  if (!key) {
+    trace.why = 'is not configured (FINNHUB_API_KEY is unset)';
+    return null;
+  }
   const base = 'https://finnhub.io/api/v1';
   try {
     const [quoteRes, profileRes, metricRes] = await Promise.all([
@@ -19,14 +27,21 @@ async function fetchFinnhub(ticker) {
       fetch(`${base}/stock/profile2?symbol=${encodeURIComponent(ticker)}&token=${key}`),
       fetch(`${base}/stock/metric?symbol=${encodeURIComponent(ticker)}&metric=all&token=${key}`),
     ]);
-    if (!quoteRes.ok) return null;
+    if (!quoteRes.ok) {
+      trace.why = finnhubRefusal(quoteRes.status);
+      console.warn(`finnhub(${ticker}) ${trace.why}`);
+      return null;
+    }
     const [q, profile, metric] = await Promise.all([
       quoteRes.json(),
       profileRes.ok ? profileRes.json() : {},
       metricRes.ok ? metricRes.json() : {},
     ]);
     // Finnhub returns c=0 for unknown tickers.
-    if (!q || !q.c) return null;
+    if (!q || !q.c) {
+      trace.unknown = true;
+      return null;
+    }
     const m = metric?.metric || {};
     return {
       ticker,
@@ -64,6 +79,7 @@ async function fetchFinnhub(ticker) {
       _source: 'finnhub',
     };
   } catch (err) {
+    trace.why = `could not be reached (${err.message})`;
     console.warn(`finnhub(${ticker}) failed:`, err.message);
     return null;
   }
@@ -361,10 +377,12 @@ router.get('/info/:ticker', tickerDataLimiter, async (req, res) => {
     return res.json(cached.data);
   }
 
+  const finnhub = {};
   try {
-    // Primary: Finnhub (reliable, real-time, no rate-limit issues).
+    // Primary: Finnhub (real-time; the free tier's 60 calls a minute are
+    // shared by every caller of our key).
     if (process.env.FINNHUB_API_KEY) {
-      const finnhubData = await fetchFinnhub(raw);
+      const finnhubData = await fetchFinnhub(raw, finnhub);
       if (finnhubData) {
         // Finnhub's free tier has no business summary, so DES would
         // render quote + brief with no prose. Yahoo's profile endpoint is
@@ -414,8 +432,11 @@ router.get('/info/:ticker', tickerDataLimiter, async (req, res) => {
     }
 
     if (!quote && !summary) {
-      const reason = quoteResult.reason?.message || 'Ticker not found';
-      return res.status(404).json({ error: reason });
+      if (!process.env.FINNHUB_API_KEY) {
+        finnhub.why = 'is not configured (FINNHUB_API_KEY is unset)';
+      }
+      const failed = feedFailure(raw, finnhub, quoteResult.reason?.message);
+      return res.status(failed.status).json({ error: failed.error });
     }
 
     const profile = summary?.summaryProfile || {};

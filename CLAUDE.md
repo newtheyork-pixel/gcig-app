@@ -524,6 +524,14 @@ file, not `/field-visit.webp`.
   behind 424B note prospectuses, so any windowed lookup is a guess. It
   also resolves share-class tickers across the dot/dash convention
   (vendors say `BRK.B`, EDGAR says `BRK-B`).
+- `server/src/services/feedFailure.js` — what `/holdings/info/:ticker`
+  (DES, the holding popup, Votes, Trade Requests, the Mac DES panel)
+  says when every price source fails: a 502 that names how Finnhub
+  failed (429 rate limit, refused key, unset key, unreachable) and what
+  the Yahoo fallback said. It used to be a 404 carrying Yahoo's error,
+  so AAPL read as "not found" whenever our feed was down. Only a symbol
+  Finnhub answered for and did not know is a 404. A member's screenshot
+  of this line is the fastest diagnosis of a feed outage.
 - `server/src/services/secBusinessSummary.js` — DES company
   description. Pulls the latest 10-K's "Item 1. Business" and
   strips it to prose. The extractor picks the start that stands at a
