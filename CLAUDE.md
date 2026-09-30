@@ -433,7 +433,12 @@ If something feels weird with auth on Safari, check that order in
   separate roster.
 
 **Terminal access** is `requireTerminalAccess` (server) /
-`isAnalystOrAbove` (client): Analyst and above, plus Advisory. It was
+`canOpenTerminal` (client): Analyst and above, plus Advisory. The website
+reads the server's own verdict, `terminalAccess` on `/auth/me`, and falls
+back to its role list only until that answer lands. Its private copy of
+the ladder missed the Director of Research for a month, so the one
+member who outranks the CIO was bounced from `/terminal` to the
+dashboard while the API would have served them. It was
 executive-only until the FLD field-research panel landed, which made the
 gate actively wrong — `/api/research` is `requireRole('Analyst')`, so the
 members most likely to be making the calls could do the fieldwork but

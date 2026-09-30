@@ -5,13 +5,13 @@ import { useAuth } from '../context/AuthContext.jsx';
 // Persistent Terminal launcher. Pinned to the top of the main scroll area
 // on every page (sticky), so the fund's research desk is one glance and one
 // click away no matter where a member is or how far they've scrolled — it
-// used to be a single nav row buried in the sidebar. Gated to the same
-// roles the /terminal route allows (execs + advisory board); everyone else
-// gets nothing and the strip collapses. The terminal page itself renders
+// used to be a single nav row buried in the sidebar. Gated on the same
+// server verdict the /terminal route reads (`canOpenTerminal`); everyone
+// else gets nothing and the strip collapses. The terminal page itself renders
 // outside this Layout, so the launcher never stacks on top of the terminal.
 export default function TerminalLauncher() {
-  const { isAnalystOrAbove, isAdvisory } = useAuth();
-  if (!isAnalystOrAbove && !isAdvisory) return null;
+  const { canOpenTerminal } = useAuth();
+  if (!canOpenTerminal) return null;
 
   return (
     <div className="sticky top-0 z-30 bg-[#F7F8FB]/90 px-4 pt-3 backdrop-blur md:px-8">

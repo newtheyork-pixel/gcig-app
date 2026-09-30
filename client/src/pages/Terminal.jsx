@@ -14,12 +14,14 @@ import '../terminal/theme.css';
 // mirrors that API rank exactly.
 //
 // JuniorAnalyst stays out on purpose — it ranks below Analyst on the
-// server and is the default role for every Google self-signup.
+// server and is the default role for every Google self-signup. The
+// verdict itself comes from the server (`canOpenTerminal`, see
+// AuthContext), so this page cannot turn away someone the API admits.
 // Renders full-bleed by hiding the standard app chrome via the
 // `data-theme="terminal"` wrapper.
 
 export default function Terminal() {
-  const { user, isAnalystOrAbove, isAdvisory } = useAuth();
+  const { user, canOpenTerminal } = useAuth();
   const navigate = useNavigate();
 
   // Hide page scroll while terminal is mounted (we own the whole viewport).
@@ -32,7 +34,7 @@ export default function Terminal() {
   }, []);
 
   if (!user) return <Navigate to="/login" replace />;
-  if (!isAnalystOrAbove && !isAdvisory) return <Navigate to="/dashboard" replace />;
+  if (!canOpenTerminal) return <Navigate to="/dashboard" replace />;
 
   return <TerminalShell onExit={() => navigate('/dashboard')} />;
 }
