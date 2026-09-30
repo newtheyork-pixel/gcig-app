@@ -1,8 +1,7 @@
 import { Router, raw } from 'express';
 import { PrismaClient } from '@prisma/client';
-import jwt from 'jsonwebtoken';
 import { uploadFile, streamDownload } from '../services/oneDriveStorage.js';
-import { isGuestEmail, GUEST_RESEARCH_TICKERS } from '../middleware/auth.js';
+import { isGuestEmail, GUEST_RESEARCH_TICKERS, verifySessionToken } from '../middleware/auth.js';
 
 const prisma = new PrismaClient();
 const router = Router();
@@ -67,13 +66,17 @@ async function davAuth(req, res, next) {
     return unauthorized(res);
   }
   try {
-    const payload = jwt.verify(token, process.env.JWT_SECRET);
+    const payload = verifySessionToken(token);
     // The token carries no email; look it up so guest scoping can apply.
     const u = await prisma.user.findUnique({
       where: { id: payload.id },
-      select: { email: true },
+      select: { email: true, tokenVersion: true },
     });
-    req.user = { ...payload, email: u?.email || null, isGuest: isGuestEmail(u?.email || '') };
+    // The same verdicts verifyJwt gives. A deleted member's token, and
+    // one revoked by logout-everywhere or a password change, used to
+    // keep a Finder mount working until it expired.
+    if (!u || payload.v !== (u.tokenVersion ?? 0)) return unauthorized(res);
+    req.user = { ...payload, email: u.email || null, isGuest: isGuestEmail(u.email || '') };
   } catch {
     return unauthorized(res);
   }

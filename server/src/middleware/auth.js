@@ -28,6 +28,30 @@ export function issueJwt(user) {
   );
 }
 
+// A session token is exactly what issueJwt mints: a user id and a
+// version. A valid signature is not enough, because the server signs
+// other tokens with the same secret — the 2FA challenge among them,
+// which says only that a password was right and is handed out BEFORE
+// the second factor is checked. Checking the signature alone accepted
+// that challenge as a full login, and the native handoff would trade it
+// for a 24-hour token, so a member's password was enough to skip their
+// second factor. Anything minted for one step of a flow carries a
+// `purpose`, and anything without the version claim was never a session.
+// Every reader of a session token goes through here.
+export function verifySessionToken(token) {
+  const payload = jwt.verify(token, process.env.JWT_SECRET);
+  if (
+    !payload ||
+    typeof payload !== 'object' ||
+    'purpose' in payload ||
+    !Number.isInteger(payload.id) ||
+    typeof payload.v !== 'number'
+  ) {
+    throw new Error('Not a session token');
+  }
+  return payload;
+}
+
 export async function verifyJwt(req, res, next) {
   const header = req.headers.authorization;
   if (!header || !header.startsWith('Bearer ')) {
@@ -42,7 +66,7 @@ export async function verifyJwt(req, res, next) {
   }
   const token = header.slice(7);
   try {
-    const payload = jwt.verify(token, process.env.JWT_SECRET);
+    const payload = verifySessionToken(token);
     // Always fetch the current role AND tokenVersion from the DB.
     // If the user rotated their tokenVersion (e.g. via logout-everywhere),
     // all old JWTs are immediately invalid.
@@ -104,7 +128,7 @@ export async function verifyJwt(req, res, next) {
 export async function authenticateToken(token) {
   if (!token) return null;
   try {
-    const payload = jwt.verify(token, process.env.JWT_SECRET);
+    const payload = verifySessionToken(token);
     const user = await prisma.user.findUnique({
       where: { id: payload.id },
       select: { id: true, name: true, email: true, role: true, extraRoles: true, tokenVersion: true },
@@ -230,7 +254,7 @@ export async function guestFirewall(req, res, next) {
   if (!header.startsWith('Bearer ')) return next();
   let id;
   try {
-    id = jwt.verify(header.slice(7), process.env.JWT_SECRET).id;
+    id = verifySessionToken(header.slice(7)).id;
   } catch {
     return next();
   }

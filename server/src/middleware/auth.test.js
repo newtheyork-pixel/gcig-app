@@ -1,5 +1,6 @@
 import { test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
+import jwt from 'jsonwebtoken';
 import {
   isSuperAdminEmail,
   ROLE_RANK,
@@ -7,7 +8,10 @@ import {
   requireExecutive,
   requireAdmin,
   requirePresidentOrSuperAdmin,
+  issueJwt,
+  verifySessionToken,
 } from './auth.js';
+import { signChallenge } from '../routes/twoFactor.js';
 
 // Minimal Express test doubles, matching the dependency-injection /
 // fake-req-res precedent in routes/terminal.execbios.test.js. No DB,
@@ -157,4 +161,58 @@ test('requireExecutive admits a DirectorOfResearch', () => {
     () => { passed = true; },
   );
   assert.equal(passed, true);
+});
+
+// ── What counts as a session ─────────────────────────────────────────
+
+function withSecret(fn) {
+  const prev = process.env.JWT_SECRET;
+  process.env.JWT_SECRET = 'test-session-secret';
+  try {
+    return fn();
+  } finally {
+    if (prev === undefined) delete process.env.JWT_SECRET;
+    else process.env.JWT_SECRET = prev;
+  }
+}
+
+test('verifySessionToken accepts what issueJwt mints', () => {
+  withSecret(() => {
+    const token = issueJwt({ id: 7, role: 'Analyst', tokenVersion: 3 });
+    const payload = verifySessionToken(token);
+    assert.equal(payload.id, 7);
+    assert.equal(payload.v, 3);
+  });
+});
+
+test('verifySessionToken refuses the 2FA challenge a correct password earns', () => {
+  // The challenge is signed with the same secret and handed out before
+  // the second factor is checked. Accepting it as a session let a
+  // password alone skip 2FA.
+  withSecret(() => {
+    const challenge = signChallenge(7);
+    assert.ok(jwt.verify(challenge, process.env.JWT_SECRET), 'challenge is validly signed');
+    assert.throws(() => verifySessionToken(challenge));
+  });
+});
+
+test('verifySessionToken refuses any token minted for a purpose, or without a version', () => {
+  withSecret(() => {
+    const secret = process.env.JWT_SECRET;
+    assert.throws(() => verifySessionToken(jwt.sign({ id: 7, v: 0, purpose: 'anything' }, secret)));
+    assert.throws(() => verifySessionToken(jwt.sign({ id: 7 }, secret)));
+    assert.throws(() => verifySessionToken(jwt.sign({ id: '7', v: 0 }, secret)));
+  });
+});
+
+test('verifySessionToken refuses a forged or expired session', () => {
+  withSecret(() => {
+    const forged = jwt.sign({ id: 7, role: 'President', v: 0 }, 'some-other-secret');
+    assert.throws(() => verifySessionToken(forged));
+    const expired = jwt.sign(
+      { id: 7, role: 'Analyst', v: 0, exp: Math.floor(Date.now() / 1000) - 60 },
+      process.env.JWT_SECRET
+    );
+    assert.throws(() => verifySessionToken(expired));
+  });
 });

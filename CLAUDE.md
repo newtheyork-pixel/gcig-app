@@ -325,6 +325,15 @@ back to price return.
 - `tokenVersion` claim → bump it on the user row to invalidate every
   outstanding JWT instantly (logout-everywhere, password change,
   /2fa/disable).
+- **Every reader of a session token calls `verifySessionToken`**
+  (verifyJwt, the WebSocket layer, guestFirewall, WebDAV). The 2FA
+  challenge is signed with the same `JWT_SECRET` and handed out before
+  the second factor is checked, so a signature check alone accepted it
+  as a full login. The native handoff then traded it for a 24h token,
+  which meant a password skipped 2FA (Sep '26). A session carries `v`
+  and no `purpose`; anything else is refused. WebDAV also checks
+  `tokenVersion` now, which it never did, so a revoked token used to
+  keep a Finder mount alive until it expired.
 - CORS `exposedHeaders: ['X-New-Token']` is required or the client
   won't see the rotation header.
 - `validateStatus` on axios accepts **2xx + 304** so token rotation
