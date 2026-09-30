@@ -229,7 +229,6 @@ export function AuthProvider({ children }) {
   const isPmOrAbove =
     user?.role === 'President' ||
     user?.role === 'DirectorOfResearch' ||
-    user?.role === 'DirectorOfResearch' ||
     user?.role === 'CIO' ||
     user?.role === 'SeniorPortfolioManager' ||
     user?.role === 'PortfolioManager';
@@ -243,6 +242,7 @@ export function AuthProvider({ children }) {
   // who found the login page.
   const isAnalystOrAbove =
     user?.role === 'President' ||
+    user?.role === 'DirectorOfResearch' ||
     user?.role === 'CIO' ||
     user?.role === 'SeniorPortfolioManager' ||
     user?.role === 'PortfolioManager' ||
@@ -250,6 +250,17 @@ export function AuthProvider({ children }) {
     user?.role === 'Analyst';
   const isAdvisory =
     user?.role === 'AdvisoryBoardMember' || user?.role === 'FacultyAdvisory';
+  // Whether this member may open the terminal is the server's call:
+  // /auth/me answers `terminalAccess` from the same predicate
+  // requireTerminalAccess runs. The role lists above are only the
+  // fallback for a user object that predates the field (the login
+  // payload, an old cache) until /auth/me lands. A second copy of the
+  // rank ladder is how the Director of Research, ranked above the CIO
+  // on the server, was turned away from the terminal here.
+  const canOpenTerminal =
+    typeof user?.terminalAccess === 'boolean'
+      ? user.terminalAccess
+      : isAnalystOrAbove || isAdvisory;
   // Owner-only tier above President. Identified by email via SUPER_ADMIN_EMAIL
   // on the server. Gates irreversible / sensitive operations.
   const isSuperAdmin = !!user?.isSuperAdmin;
@@ -275,6 +286,7 @@ export function AuthProvider({ children }) {
         isPmOrAbove,
         isAnalystOrAbove,
         isAdvisory,
+        canOpenTerminal,
         isSuperAdmin,
       }}
     >
