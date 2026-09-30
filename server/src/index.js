@@ -1,5 +1,8 @@
 import 'dotenv/config';
 import express from 'express';
+// Before any route runs: a rejected async handler becomes a 500 rather
+// than the end of the process. See the file for the outage it ended.
+import './middleware/asyncErrors.js';
 import cors from 'cors';
 import helmet from 'helmet';
 import http from 'node:http';
@@ -215,6 +218,14 @@ app.use((err, req, res, _next) => {
   }
   // 4xx errors with explicit messages (e.g. validation) stay as-is.
   res.status(status).json({ error: err.message || 'Bad request' });
+});
+
+// The last resort, for a rejection nothing awaited: a cron job, a
+// fire-and-forget warm-up. Node 22 would end the process over it, and on
+// one dyno that is every member's session and every panel at once. Log
+// it loudly and stay up; a crash is the most expensive way to find a bug.
+process.on('unhandledRejection', (reason) => {
+  console.error('[unhandledRejection] kept the API up:', reason);
 });
 
 // ── Scheduled jobs ────────────────────────────────────────────────────

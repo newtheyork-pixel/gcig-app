@@ -1094,6 +1094,17 @@ Hit-rate stats count `Approved` toward Voted Yes too.
   — the parse on next mount will throw.
 - Don't drop the `tokenVersion` check in verifyJwt. It's how
   logout-everywhere works.
+- Don't remove `server/src/middleware/asyncErrors.js` before moving to
+  Express 5. Express 4 lets a rejected async handler escape as an
+  unhandled rejection, and Node 22 ends the process over it, so one bad
+  request takes down every panel for every member until Render restarts
+  the API. From Aug 6 to Sep 30 an undeclared `failed` in
+  `getAnalystConsensus` did exactly that on every position click, and
+  members reported it as "tickers won't load" and "everything goes
+  blank". In an ES module even *reading* an undeclared name throws, and
+  ESLint's `no-undef` finds every such name. Its one open finding is
+  `inboundOnThread` in `routes/research.js`, which was never imported,
+  so the reply-to lookup there has never run (it sits inside a `try`).
 - Don't add features through a brand-new role gate without checking
   every existing route — easier to use `extraRoles`.
 - Don't reach for paid APIs. We've stayed on free tiers (Finnhub

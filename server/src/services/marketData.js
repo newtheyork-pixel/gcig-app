@@ -324,6 +324,11 @@ export async function getAnalystConsensus(ticker) {
     `&token=${encodeURIComponent(key)}`;
 
   let data = null;
+  // Declared like its siblings'. It was missing from Aug 6 to Sep 30,
+  // and reading an undeclared name throws in a module, so every uncached
+  // call here threw a ReferenceError that ended the API process: each
+  // click on a position blanked the whole site until Render restarted it.
+  let failed = false;
   try {
     const json = await finnhubFetch(url);
     if (Array.isArray(json) && json.length > 0) {
