@@ -9,11 +9,8 @@ import {
   CartesianGrid,
   Tooltip,
   ResponsiveContainer,
-  PieChart,
-  Pie,
-  Cell,
 } from 'recharts';
-import { TrendingUp, TrendingDown, RefreshCw, ExternalLink } from 'lucide-react';
+import { RefreshCw, ExternalLink } from 'lucide-react';
 import api from '../api/client.js';
 import PageHeader from '../components/PageHeader.jsx';
 import Card from '../components/Card.jsx';
@@ -28,6 +25,7 @@ import BulkTradeButton from '../components/BulkTradeButton.jsx';
 import ImportBookBanner from '../components/ImportBookBanner.jsx';
 import SnapshotReconcileButton from '../components/SnapshotReconcileButton.jsx';
 import { useAuth } from '../context/AuthContext.jsx';
+import { adjustedReturn as fullyInvestedReturn } from '../utils/portfolioReturns.js';
 import { ChevronDown, ChevronRight } from 'lucide-react';
 
 // Operational ranks for the client-side PM+ gate. Mirrors server ROLE_RANK;
@@ -134,6 +132,10 @@ function fmtPct(n) {
 export default function Portfolio() {
   const { user, isPmOrAbove, isSuperAdmin } = useAuth();
   const canSeeRisk = (CLIENT_ROLE_RANK[user?.role] || 0) >= 7;
+  // Two pages on one route. The book is what we own; Risk is the
+  // limits, beta, and flags. Junior analysts never see the switch.
+  const [view, setView] = useState('book');
+  const onRisk = canSeeRisk && view === 'risk';
   const [data, setData] = useState(null);
   const [history, setHistory] = useState([]);
   /// SPY's daily closes, for the benchmark line. Null while loading and
@@ -218,7 +220,7 @@ export default function Portfolio() {
   const estimatedCashInterest = Number(cashYield?.estimatedInterestEarned) || 0;
 
   // The displayed fund value: live sheet total + the cash-interest
-  // estimate. Used for the hero, the totals row, and the return tiles.
+  // estimate. Used for the hero and the risk-page return figures.
   const displayedTotal =
     totals.totalValue != null
       ? totals.totalValue + estimatedCashInterest
@@ -232,7 +234,6 @@ export default function Portfolio() {
   const lifetimeGainLoss = equityGainLoss;
   const lifetimeGainLossPct =
     lifetimeGainLoss != null ? (lifetimeGainLoss / TOTAL_INVESTED) * 100 : null;
-  const isUp = (lifetimeGainLoss ?? 0) >= 0;
 
   // Equity-only return: how the stock picks themselves are doing,
   // completely ignoring cash drag. Computed from per-holding shares ×
@@ -368,19 +369,23 @@ export default function Portfolio() {
     return count > 0 ? sum / count : null;
   }, [history]);
 
-  // Adjusted return: the real return with the cash drag added back. The
-  // assumption is that the idle cash sleeve, had it actually been deployed,
-  // would have earned at the equity sleeve's rate — so we credit
-  // avgCashRatio × equityReturn on top of what the book actually did.
-  // Answers "what would the headline look like if we hadn't been sitting
-  // on cash all year?" — and by construction it lands above the real
-  // return whenever the equity sleeve is up.
-  const adjustedReturn = useMemo(() => {
-    if (!equityReturn || avgCashRatio == null || lifetimeGainLossPct == null)
-      return null;
-    const pct = lifetimeGainLossPct + avgCashRatio * equityReturn.pct;
-    return { pct, cashRatio: avgCashRatio };
-  }, [equityReturn, avgCashRatio, lifetimeGainLossPct]);
+  // Adjusted return: the fully-invested counterfactual. If cash had
+  // earned the equity rate, the book earns the equity rate — so this
+  // is the equity sleeve, and it cannot sit above it.
+  //
+  // We used to add avgCashRatio × equityReturn on top of the book %.
+  // That only reconstructs the sleeve when cash returned nothing. The
+  // pile now yields, and Total Gain/Loss already credits estimated
+  // interest, so the mix printed above equity-only (15.92 vs 14.59)
+  // on a tile whose job was to remove cash drag.
+  const adjustedReturn = useMemo(
+    () =>
+      fullyInvestedReturn({
+        equityPct: equityReturn?.pct,
+        cashRatio: avgCashRatio,
+      }),
+    [equityReturn, avgCashRatio]
+  );
 
   // Filter by selected range.
   const chartData = useMemo(() => {
@@ -478,12 +483,12 @@ export default function Portfolio() {
     return null;
   }, [fullHistory]);
 
-  // Annualized Sharpe. Numerator comes from the Adjusted Return tile's
-  // lifetime % (annualized by trading days in the sample) so the headline
-  // return on the page matches what's in the Sharpe ratio. Volatility is
-  // measured off equity-base daily returns — drag-free, consistent with
-  // the adjusted framing. Cash flows are subtracted from the daily Δ so
-  // infusions don't masquerade as performance.
+  // Annualized Sharpe. Numerator comes from the adjusted return
+  // (the equity sleeve, annualized by trading days in the sample) so
+  // the headline return on the risk page matches what's in the Sharpe.
+  // Volatility is measured off equity-base daily returns. Cash flows
+  // are subtracted from the daily Δ so infusions don't masquerade as
+  // performance.
   const sharpe = useMemo(() => {
     if (fullHistory.length < 20 || !adjustedReturn) return null;
     const dailyReturns = [];
@@ -592,18 +597,46 @@ export default function Portfolio() {
   return (
     <>
       <PageHeader
-        kicker="The Live Book"
-        title="Portfolio"
+        kicker={onRisk ? 'Portfolio' : 'The Live Book'}
+        title={onRisk ? 'Risk' : 'Portfolio'}
         subtitle={
-          (data?.source === 'db'
-            ? 'Live · holdings from the database, prices from Google'
-            : 'Live from Google Sheets') +
-          (data?.fetchedAt
-            ? ` · fetched ${format(new Date(data.fetchedAt), 'h:mm:ss a')}`
-            : '')
+          onRisk
+            ? 'Position limits, beta, and what sits outside the targets.'
+            : (data?.source === 'db'
+                ? 'Live · holdings from the database, prices from Google'
+                : 'Live from Google Sheets') +
+              (data?.fetchedAt
+                ? ` · fetched ${format(new Date(data.fetchedAt), 'h:mm:ss a')}`
+                : '')
         }
         actions={
-          <div className="flex gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            {canSeeRisk && (
+              <div className="mr-2 flex items-center gap-0.5">
+                <button
+                  type="button"
+                  onClick={() => setView('book')}
+                  className={`px-2 py-1 text-sm font-medium transition ${
+                    !onRisk
+                      ? 'text-navy underline decoration-gold decoration-2 underline-offset-4'
+                      : 'text-navy-400 hover:text-navy'
+                  }`}
+                >
+                  Portfolio
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setView('risk')}
+                  className={`px-2 py-1 text-sm font-medium transition ${
+                    onRisk
+                      ? 'text-navy underline decoration-gold decoration-2 underline-offset-4'
+                      : 'text-navy-400 hover:text-navy'
+                  }`}
+                >
+                  Risk
+                </button>
+              </div>
+            )}
             <a
               href={`https://docs.google.com/spreadsheets/d/${import.meta.env.VITE_SHEET_ID || '10b43Ry4YBfY_Uk_8nIlJLjmfNgzzjAm6BjN7UewSdRQ'}/edit`}
               target="_blank"
@@ -634,8 +667,52 @@ export default function Portfolio() {
         </div>
       )}
 
-      {/* Full-width editorial hero — big AUM + since-inception in a navy
-          gradient card, same vibe as the Dashboard hero but page-scoped. */}
+      {onRisk ? (
+        <>
+          <RiskPanel
+            holdings={holdings}
+            totals={totals}
+            history={fullHistory}
+            cashFlows={CASH_FLOWS}
+            headline={[
+              {
+                label: 'Sharpe',
+                value: sharpe != null ? sharpe.toFixed(2) : '—',
+                sub:
+                  sharpe != null
+                    ? `Equity sleeve · Rf = ${(RISK_FREE_RATE * 100).toFixed(2)}%`
+                    : null,
+                tone: sharpe == null ? 'neutral' : sharpe >= 1 ? 'good' : sharpe >= 0 ? 'neutral' : 'bad',
+              },
+              {
+                label: 'Adjusted return',
+                value: adjustedReturn ? fmtPct(adjustedReturn.pct) : '—',
+                sub: adjustedReturn
+                  ? `${equityReturn ? fmtMoney(equityReturn.dollarChange) + ' · ' : ''}${(adjustedReturn.cashRatio * 100).toFixed(1)}% avg cash excluded`
+                  : 'Equity sleeve · cash excluded',
+                tone:
+                  adjustedReturn == null
+                    ? 'neutral'
+                    : adjustedReturn.pct >= 0
+                      ? 'good'
+                      : 'bad',
+              },
+              {
+                label: 'Real return',
+                value: lifetimeGainLossPct != null ? fmtPct(lifetimeGainLossPct) : '—',
+                sub: 'Cash included',
+                tone:
+                  lifetimeGainLoss == null
+                    ? 'neutral'
+                    : lifetimeGainLoss >= 0
+                      ? 'good'
+                      : 'bad',
+              },
+            ]}
+          />
+        </>
+      ) : (
+        <>
       <PortfolioHero
         totalValue={displayedTotal}
         lifetimeGainLoss={lifetimeGainLoss}
@@ -643,99 +720,28 @@ export default function Portfolio() {
         cashValue={totals.cashValue}
         holdingsCount={holdings.filter((h) => !h.isCash).length}
         history={fullHistory}
+        today={dailyChange}
       />
-
-      {/* Five supporting metrics below the hero. */}
-      <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-5">
-        <SummaryTile
-          kicker="Daily Change"
-          value={dailyChange ? fmtMoney(dailyChange.diff) : '—'}
-          sub={dailyChange ? fmtPct(dailyChange.pct) : null}
-          tone={dailyChange ? (dailyChange.diff >= 0 ? 'good' : 'bad') : 'neutral'}
-          icon={dailyChange ? (dailyChange.diff >= 0 ? TrendingUp : TrendingDown) : null}
-        />
-        <SummaryTile
-          kicker="Total Gain/Loss"
-          value={fmtMoney(lifetimeGainLoss)}
-          sub={fmtPct(lifetimeGainLossPct)}
-          footnote={`vs. ${fmtMoney(TOTAL_INVESTED)} invested`}
-          tone={isUp ? 'good' : 'bad'}
-          icon={isUp ? TrendingUp : TrendingDown}
-        />
-        <SummaryTile
-          kicker="Real Return"
-          value={lifetimeGainLossPct != null ? fmtPct(lifetimeGainLossPct) : '—'}
-          sub={lifetimeGainLoss != null ? fmtMoney(lifetimeGainLoss) : null}
-          footnote="Actual book return · cash drag included"
-          tone={
-            lifetimeGainLoss == null
-              ? 'neutral'
-              : lifetimeGainLoss >= 0
-                ? 'good'
-                : 'bad'
-          }
-          icon={
-            lifetimeGainLoss == null
-              ? null
-              : lifetimeGainLoss >= 0
-                ? TrendingUp
-                : TrendingDown
-          }
-        />
-        <SummaryTile
-          kicker="Adjusted Return"
-          value={adjustedReturn ? fmtPct(adjustedReturn.pct) : '—'}
-          sub={equityReturn ? `${fmtPct(equityReturn.pct)} equity-only` : null}
-          footnote={
-            adjustedReturn
-              ? `Adds back ${(adjustedReturn.cashRatio * 100).toFixed(1)}% avg cash drag at the equity rate`
-              : 'Adds back avg cash drag at the equity rate'
-          }
-          tone={
-            adjustedReturn == null
-              ? 'neutral'
-              : adjustedReturn.pct >= 0
-                ? 'good'
-                : 'bad'
-          }
-          icon={
-            adjustedReturn == null
-              ? null
-              : adjustedReturn.pct >= 0
-                ? TrendingUp
-                : TrendingDown
-          }
-        />
-        <SummaryTile
-          kicker="Sharpe Ratio"
-          value={sharpe != null ? sharpe.toFixed(2) : '—'}
-          footnote={
-            sharpe != null
-              ? `Equity sleeve · Rf = ${(RISK_FREE_RATE * 100).toFixed(2)}%`
-              : null
-          }
-          tone={sharpe == null ? 'neutral' : sharpe >= 1 ? 'good' : sharpe >= 0 ? 'neutral' : 'bad'}
-        />
-      </div>
 
       <div className="mt-6">
         <Card>
           {/* Header row: title + perf summary on left, range selector on right */}
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
-              <div className="text-sm font-semibold text-navy">Performance Over Time</div>
+              <div className="font-serif text-2xl font-medium tracking-tight text-navy">Performance</div>
               {rangeChange && (
                 <>
                   <div
-                    className={`mt-1 text-sm font-semibold ${
-                      rangeChange.diff >= 0 ? 'text-emerald-600' : 'text-red-600'
+                    className={`mt-1 font-serif text-xl tabular-nums ${
+                      rangeChange.diff >= 0 ? 'text-emerald-700' : 'text-red-700'
                     }`}
                   >
                     {rangeChange.diff >= 0 ? '+' : ''}
-                    {fmtMoney(rangeChange.diff)} ({rangeChange.diff >= 0 ? '+' : ''}
-                    {rangeChange.pct.toFixed(2)}%){' '}
-                    <span className="text-navy-400 font-normal">
-                      in {RANGES.find((r) => r.key === range)?.label}
+                    {fmtMoney(rangeChange.diff)}
+                    <span className="font-sans text-sm text-navy-400">
+                      {' '}
+                      {rangeChange.pct >= 0 ? '+' : ''}
+                      {rangeChange.pct.toFixed(2)}% in {RANGES.find((r) => r.key === range)?.label}
                     </span>
                   </div>
                   {range === 'ALL' ? (
@@ -755,14 +761,14 @@ export default function Portfolio() {
                 </>
               )}
             </div>
-            <div className="flex rounded-lg border border-navy-100 bg-white p-0.5">
+            <div className="flex items-center gap-0.5">
               {RANGES.map((r) => (
                 <button
                   key={r.key}
                   onClick={() => setRange(r.key)}
-                  className={`rounded-md px-3 py-1 text-xs font-semibold transition ${
+                  className={`px-2 py-1 text-[11px] font-medium tracking-wide transition ${
                     range === r.key
-                      ? 'bg-navy text-white'
+                      ? 'text-navy underline decoration-gold decoration-2 underline-offset-4'
                       : 'text-navy-400 hover:text-navy'
                   }`}
                 >
@@ -798,10 +804,8 @@ export default function Portfolio() {
                   </span>
                 </span>
                 <span
-                  className={`rounded-full px-2 py-0.5 font-semibold ${
-                    versusBenchmark.gap >= 0
-                      ? 'bg-emerald-50 text-emerald-700'
-                      : 'bg-rose-50 text-rose-700'
+                  className={`font-medium ${
+                    versusBenchmark.gap >= 0 ? 'text-emerald-700' : 'text-red-700'
                   }`}
                 >
                   {versusBenchmark.gap >= 0 ? 'Ahead by ' : 'Behind by '}
@@ -911,15 +915,6 @@ export default function Portfolio() {
         )}
       </div>
 
-      {canSeeRisk && (
-        <RiskPanel
-          holdings={holdings}
-          totals={totals}
-          history={fullHistory}
-          cashFlows={CASH_FLOWS}
-        />
-      )}
-
       <SectorAllocation holdings={holdings} totalValue={totals.totalValue} />
 
       {data?.source === 'db' && <CashLedgerCard onReset={load} />}
@@ -955,14 +950,14 @@ export default function Portfolio() {
                   {RETURN_RANGES.find((r) => r.key === returnRange)?.label}
                 </span>
               </div>
-              <div className="flex rounded-lg border border-navy-100 bg-white p-0.5">
+              <div className="flex items-center gap-0.5">
                 {RETURN_RANGES.map((r) => (
                   <button
                     key={r.key}
                     onClick={() => setReturnRange(r.key)}
-                    className={`rounded-md px-3 py-1 text-xs font-semibold transition ${
+                    className={`px-2 py-1 text-[11px] font-medium tracking-wide transition ${
                       returnRange === r.key
-                        ? 'bg-navy text-white'
+                        ? 'text-navy underline decoration-gold decoration-2 underline-offset-4'
                         : 'text-navy-400 hover:text-navy'
                     }`}
                   >
@@ -1114,7 +1109,7 @@ export default function Portfolio() {
             <div className="hidden md:block overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
-                  <tr className="border-b border-navy-100 text-left text-xs uppercase text-navy-400">
+                  <tr className="border-b border-navy/10 text-left text-[11px] uppercase tracking-[0.12em] text-navy-400">
                     <th className="py-2 pr-4">Ticker</th>
                     <th className="py-2 pr-4">Sector</th>
                     <th className="py-2 pr-4 text-right">Shares</th>
@@ -1157,7 +1152,7 @@ export default function Portfolio() {
                           }`}
                         >
                           <td className="py-3 pr-4">
-                            <div className="flex items-center gap-1 font-bold text-navy">
+                            <div className="flex items-center gap-1 font-medium text-navy">
                               {hasCashBreakdown && (
                                 cashExpanded ? (
                                   <ChevronDown className="h-3.5 w-3.5 text-navy-400" />
@@ -1292,7 +1287,7 @@ export default function Portfolio() {
               </>
             ) : (
               <>
-                Positions and prices are read live from the club's Google Sheet.
+                Positions and prices are read live from the fund's Google Sheet.
                 To add or remove a position, edit the sheet directly. Tap any
                 holding to see company details. The sheet's CASH line is the
                 leftover FGTXX money-market balance; BDA was drawn down to zero
@@ -1321,6 +1316,8 @@ export default function Portfolio() {
           />
         )}
       </div>
+        </>
+      )}
 
       <HoldingDetailModal
         holding={selectedHolding}
@@ -1385,22 +1382,6 @@ function CashSubCard({ ticker, name, balance, interest, rate }) {
   );
 }
 
-// Palette for sector slices — navy/gold anchors plus enough supporting hues
-// to cover typical S&P sectors without repeating.
-const SECTOR_COLORS = [
-  NAVY.DEFAULT, // navy
-  GOLD.DEFAULT, // gold
-  '#3B5998',
-  '#8C99BB',
-  '#B48A3C',
-  '#4A6AA8',
-  '#6E7FA8',
-  '#D4B76B',
-  '#2E4375',
-  '#A88C3C',
-  '#7C8FB8',
-];
-
 function SectorAllocation({ holdings, totalValue }) {
   // Aggregate market value by sector. Cash is counted as its own slice so the
   // chart sums to 100% of the portfolio.
@@ -1426,118 +1407,28 @@ function SectorAllocation({ holdings, totalValue }) {
 
   if (slices.length === 0) return null;
 
-  const topConcentration = slices[0];
-  const concentrationWarning = topConcentration.pct > 25;
-
   return (
-    <div className="mt-6">
-      <Card title="Sector Allocation">
-        <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-          <div style={{ width: '100%', height: 280 }}>
-            <ResponsiveContainer>
-              <PieChart>
-                <Pie
-                  data={slices}
-                  dataKey="value"
-                  nameKey="name"
-                  cx="50%"
-                  cy="50%"
-                  innerRadius={60}
-                  outerRadius={100}
-                  paddingAngle={1}
-                >
-                  {slices.map((_, i) => (
-                    <Cell key={i} fill={SECTOR_COLORS[i % SECTOR_COLORS.length]} />
-                  ))}
-                </Pie>
-                <Tooltip
-                  formatter={(v, name) => [
-                    `${v.toLocaleString('en-US', {
-                      style: 'currency',
-                      currency: 'USD',
-                      maximumFractionDigits: 0,
-                    })} (${((v / totalValue) * 100).toFixed(2)}%)`,
-                    name,
-                  ]}
-                  contentStyle={{
-                    borderRadius: 8,
-                    borderColor: GOLD.DEFAULT,
-                    fontSize: 12,
-                  }}
-                />
-              </PieChart>
-            </ResponsiveContainer>
+    <section className="mt-8">
+      <h2 className="font-serif text-2xl font-medium tracking-tight text-navy">
+        Allocation
+      </h2>
+      <div className="mt-4 flex flex-wrap gap-x-10 gap-y-4">
+        {slices.map((s) => (
+          <div key={s.name}>
+            <div className="text-[11px] text-navy-400">{s.name}</div>
+            <div className="mt-0.5 font-serif text-2xl font-medium tabular-nums text-navy">
+              {s.pct.toFixed(0)}%
+            </div>
           </div>
-          <div>
-            <ul className="space-y-2">
-              {slices.map((s, i) => (
-                <li key={s.name} className="flex items-center gap-3">
-                  <span
-                    className="h-3 w-3 rounded-sm"
-                    style={{ backgroundColor: SECTOR_COLORS[i % SECTOR_COLORS.length] }}
-                  />
-                  <span className="flex-1 text-sm font-semibold text-navy truncate">
-                    {s.name}
-                  </span>
-                  <span className="text-xs tabular-nums text-navy-400">
-                    {s.value.toLocaleString('en-US', {
-                      style: 'currency',
-                      currency: 'USD',
-                      maximumFractionDigits: 0,
-                    })}
-                  </span>
-                  <span className="w-14 text-right text-sm font-bold tabular-nums text-navy">
-                    {s.pct.toFixed(1)}%
-                  </span>
-                </li>
-              ))}
-            </ul>
-            {concentrationWarning && (
-              <div className="mt-4 rounded-lg border border-gold-300 bg-gold-100/40 px-3 py-2 text-xs text-navy">
-                <strong>Heads up:</strong> {topConcentration.name} is{' '}
-                {topConcentration.pct.toFixed(1)}% of the portfolio — watch
-                concentration risk.
-              </div>
-            )}
-          </div>
-        </div>
-      </Card>
-    </div>
-  );
-}
-
-// Editorial summary tile — small-caps kicker, serif number, optional sub-
-// value and footnote. Used for the wide metric row at the top of Portfolio.
-function SummaryTile({ kicker, value, sub, footnote, tone = 'neutral', icon: Icon }) {
-  const toneClass =
-    tone === 'good' ? 'text-emerald-600' : tone === 'bad' ? 'text-red-600' : 'text-navy';
-  return (
-    <div className="rounded-xl border border-navy-100 bg-white p-5 shadow-card">
-      <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.22em] text-gold-700">
-        <span className="h-px w-4 bg-gold" />
-        {kicker}
+        ))}
       </div>
-      <div className={`mt-3 flex items-center gap-2 font-serif text-3xl font-semibold tabular-nums ${toneClass}`}>
-        {Icon && <Icon className="h-5 w-5" />}
-        {value}
-      </div>
-      {sub && (
-        <div className={`mt-1 text-xs font-semibold tabular-nums ${toneClass}`}>
-          {sub}
-        </div>
-      )}
-      {footnote && (
-        <div className="mt-1 text-[10px] text-navy-400">{footnote}</div>
-      )}
-    </div>
+    </section>
   );
 }
 
 // ─── Portfolio hero ────────────────────────────────────────────────────
-// Full-width editorial banner at the top of the Portfolio page: big AUM in
-// serif, since-inception + WoW deltas as chips, 90-day sparkline, and a
-// bottom strip with cash / positions / invested. Same visual language as
-// the Dashboard hero so the two feel like siblings.
+// Fund value, since-inception and week-over-week deltas, a 90-day
+// sparkline, and cash / positions / invested. Matches the dashboard hero.
 function PortfolioHero({
   totalValue,
   lifetimeGainLoss,
@@ -1545,6 +1436,7 @@ function PortfolioHero({
   cashValue,
   holdingsCount,
   history,
+  today,
 }) {
   const isUp = (lifetimeGainLoss ?? 0) >= 0;
   const cashPct = totalValue > 0 ? (cashValue / totalValue) * 100 : null;
@@ -1574,73 +1466,56 @@ function PortfolioHero({
   if (totalValue == null) return null;
 
   return (
-    <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-navy via-navy-700 to-navy-800 text-white shadow-xl">
-      {/* faint gold grid */}
-      <div
-        aria-hidden
-        className="pointer-events-none absolute inset-0 opacity-[0.06]"
-        style={{
-          backgroundImage:
-            `linear-gradient(to right, ${GOLD.DEFAULT} 1px, transparent 1px), linear-gradient(to bottom, ${GOLD.DEFAULT} 1px, transparent 1px)`,
-          backgroundSize: '48px 48px',
-        }}
-      />
-
-      <div className="relative grid gap-6 p-6 md:grid-cols-[1.3fr_1fr] md:gap-10 md:p-8">
-        {/* Left */}
+    <div className="rounded-2xl bg-white px-6 py-7 md:px-8 md:py-8">
+      <div className="grid items-end gap-8 lg:grid-cols-[1.05fr_0.95fr] lg:gap-12">
         <div className="min-w-0">
-          <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.25em] text-gold">
-            <span className="h-px w-5 bg-gold" />
-            Fund Value
-          </div>
-          <div className="mt-3 font-serif text-4xl font-semibold leading-none tabular-nums md:text-6xl">
+          <div className="font-serif text-5xl font-medium leading-none tracking-tight tabular-nums text-navy md:text-6xl">
             {fmtMoney(totalValue)}
           </div>
-          <div className="mt-4 flex flex-wrap items-center gap-2">
-            <span
-              className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-bold ${
-                isUp
-                  ? 'bg-emerald-500/20 text-emerald-300'
-                  : 'bg-red-500/20 text-red-300'
-              }`}
-            >
-              {isUp ? (
-                <TrendingUp className="h-3.5 w-3.5" />
-              ) : (
-                <TrendingDown className="h-3.5 w-3.5" />
-              )}
-              {fmtPct(lifetimeGainLossPct)} since inception
-            </span>
+          <div className="mt-6 flex flex-wrap gap-x-8 gap-y-3">
+            <div>
+              <div className="text-[11px] text-navy-400">Since inception</div>
+              <div className={`mt-0.5 font-serif text-xl tabular-nums ${isUp ? 'text-emerald-700' : 'text-red-700'}`}>
+                {fmtPct(lifetimeGainLossPct)}
+              </div>
+            </div>
+            {today && (
+              <div>
+                <div className="text-[11px] text-navy-400">Today</div>
+                <div className={`mt-0.5 font-serif text-xl tabular-nums ${today.diff >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>
+                  {fmtPct(today.pct)}
+                </div>
+              </div>
+            )}
             {weekPct != null && (
-              <span className="text-xs text-navy-100">
-                {fmtPct(weekPct)} WoW
-              </span>
+              <div>
+                <div className="text-[11px] text-navy-400">This week</div>
+                <div className={`mt-0.5 font-serif text-xl tabular-nums ${weekPct >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>
+                  {fmtPct(weekPct)}
+                </div>
+              </div>
             )}
           </div>
-
-          <div className="mt-6 flex flex-wrap gap-6 border-t border-white/10 pt-4 text-sm">
-            <HeroStat
-              label="Cash"
-              value={cashPct != null ? `${cashPct.toFixed(0)}%` : '—'}
-            />
+          <div className="mt-8 flex flex-wrap gap-8 border-t border-navy/10 pt-5">
+            <HeroStat label="Cash" value={cashPct != null ? `${cashPct.toFixed(0)}%` : '—'} />
             <HeroStat label="Positions" value={holdingsCount} />
             <HeroStat label="Invested" value={fmtMoney(TOTAL_INVESTED)} />
           </div>
         </div>
 
-        {/* Right — sparkline */}
         <div className="flex flex-col justify-center">
+          <div className="mb-1 text-[11px] text-navy-400">Last 90 days</div>
           {sparkData.length > 1 ? (
-            <div className="h-28 md:h-36 -mx-1">
+            <div className="h-28 -mx-1 md:h-36">
               <ResponsiveContainer width="100%" height="100%">
                 <AreaChart
                   data={sparkData}
                   margin={{ top: 4, right: 4, bottom: 4, left: 4 }}
                 >
                   <defs>
-                    <linearGradient id="heroSparkGold" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor={GOLD.DEFAULT} stopOpacity={0.55} />
-                      <stop offset="100%" stopColor={GOLD.DEFAULT} stopOpacity={0} />
+                    <linearGradient id="heroSparkNavy" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor={NAVY.DEFAULT} stopOpacity={0.18} />
+                      <stop offset="100%" stopColor={NAVY.DEFAULT} stopOpacity={0} />
                     </linearGradient>
                   </defs>
                   <XAxis dataKey="ts" hide />
@@ -1648,10 +1523,11 @@ function PortfolioHero({
                   <Tooltip
                     contentStyle={{
                       borderRadius: 8,
-                      border: `1px solid ${GOLD.DEFAULT}`,
-                      background: 'rgba(27,42,74,0.92)',
-                      color: 'white',
-                      fontSize: 11,
+                      border: '1px solid rgba(13,22,38,0.08)',
+                      background: 'white',
+                      color: '#0D1626',
+                      fontSize: 12,
+                      boxShadow: '0 8px 24px rgba(13,22,38,0.08)',
                     }}
                     labelFormatter={(ts) => format(new Date(ts), 'MMM d')}
                     formatter={(v) => [fmtMoney(v), 'Value']}
@@ -1659,22 +1535,19 @@ function PortfolioHero({
                   <Area
                     type="monotone"
                     dataKey="value"
-                    stroke={GOLD.DEFAULT}
-                    strokeWidth={2}
-                    fill="url(#heroSparkGold)"
+                    stroke={NAVY.DEFAULT}
+                    strokeWidth={1.75}
+                    fill="url(#heroSparkNavy)"
                     dot={false}
                   />
                 </AreaChart>
               </ResponsiveContainer>
             </div>
           ) : (
-            <div className="flex h-28 items-center justify-center text-xs text-navy-200 md:h-36">
+            <div className="flex h-28 items-center justify-center text-xs text-navy-400 md:h-36">
               Collecting snapshots…
             </div>
           )}
-          <div className="mt-2 text-[10px] font-semibold uppercase tracking-[0.25em] text-gold/70">
-            Last 90 days · daily snapshots
-          </div>
         </div>
       </div>
     </div>
@@ -1684,10 +1557,8 @@ function PortfolioHero({
 function HeroStat({ label, value }) {
   return (
     <div>
-      <div className="text-[10px] font-semibold uppercase tracking-[0.2em] text-gold">
-        {label}
-      </div>
-      <div className="mt-1 font-serif text-xl font-semibold tabular-nums">
+      <div className="text-[11px] text-navy-400">{label}</div>
+      <div className="mt-1 font-serif text-2xl font-medium tabular-nums tracking-tight text-navy">
         {value}
       </div>
     </div>
