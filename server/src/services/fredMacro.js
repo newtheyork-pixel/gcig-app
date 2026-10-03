@@ -100,6 +100,19 @@ async function buildCpiYoY() {
   };
 }
 
+// Newest numeric prints, descending. "." is FRED's unpublished marker
+// and is not a number. Exported so the skip can be tested without
+// the network.
+export function numericPrints(obs) {
+  const out = [];
+  for (const o of obs || []) {
+    const value = parseFloat(o?.value);
+    if (!Number.isFinite(value)) continue;
+    out.push({ date: o.date, value });
+  }
+  return out;
+}
+
 // Returns { configured: bool, indicators: [...], fetchedAt }. Each
 // indicator has { id, label, unit, value, change, asOf } where
 // `change` is the raw numeric difference between the latest two
@@ -114,25 +127,26 @@ export async function getMacroSnapshot({ forceFresh = false } = {}) {
     return out;
   }
   const dailyResults = await Promise.all(
-    DAILY_SERIES.map((s) => fetchSeries(s.id, 2).then((obs) => ({ s, obs })))
+    DAILY_SERIES.map((s) => fetchSeries(s.id, 8).then((obs) => ({ s, obs })))
   );
   const indicators = [];
   for (const { s, obs } of dailyResults) {
-    const latest = obs[0];
-    const prior = obs[1];
+    // FRED writes "." for a day that has not printed yet. The newest
+    // row is often that placeholder, and treating it as "no series"
+    // hides the 10-year on a morning the prior close is sitting one
+    // row down.
+    const prints = numericPrints(obs);
+    const latest = prints[0];
+    const prior = prints[1];
     if (!latest) continue;
-    const latestVal = parseFloat(latest.value);
-    const priorVal = prior ? parseFloat(prior.value) : null;
-    if (!Number.isFinite(latestVal)) continue;
     indicators.push({
       id: s.id,
       label: s.label,
       unit: s.unit,
-      value: latestVal.toFixed(s.precision),
-      change:
-        priorVal != null && Number.isFinite(priorVal)
-          ? Number((latestVal - priorVal).toFixed(s.precision))
-          : null,
+      value: latest.value.toFixed(s.precision),
+      change: prior
+        ? Number((latest.value - prior.value).toFixed(s.precision))
+        : null,
       asOf: latest.date,
     });
   }

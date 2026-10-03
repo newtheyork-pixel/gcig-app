@@ -1428,7 +1428,7 @@ function SectorAllocation({ holdings, totalValue }) {
 
 // ─── Portfolio hero ────────────────────────────────────────────────────
 // Fund value, since-inception and week-over-week deltas, a 90-day
-// sparkline, and cash / positions / invested. Matches the dashboard hero.
+// sparkline, and cash / positions / capital. Matches the dashboard hero.
 function PortfolioHero({
   totalValue,
   lifetimeGainLoss,
@@ -1499,7 +1499,7 @@ function PortfolioHero({
           <div className="mt-8 flex flex-wrap gap-8 border-t border-navy/10 pt-5">
             <HeroStat label="Cash" value={cashPct != null ? `${cashPct.toFixed(0)}%` : '—'} />
             <HeroStat label="Positions" value={holdingsCount} />
-            <HeroStat label="Invested" value={fmtMoney(TOTAL_INVESTED)} />
+            <HeroStat label="Capital" value={fmtMoney(TOTAL_INVESTED)} />
           </div>
         </div>
 
