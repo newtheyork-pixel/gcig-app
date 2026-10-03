@@ -39,6 +39,16 @@ function fmtMoney(n, opts = {}) {
   });
 }
 
+function localDay(d) {
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${d.getFullYear()}-${m}-${day}`;
+}
+
+function utcDay(d) {
+  return d.toISOString().slice(0, 10);
+}
+
 function fmtPct(n, digits = 2) {
   if (n == null || !Number.isFinite(n)) return '—';
   return `${n >= 0 ? '+' : ''}${n.toFixed(digits)}%`;
@@ -277,7 +287,12 @@ function PortfolioHero({ totals, holdings, history, cashInterestEarned = 0 }) {
       : null;
 
   const { weekPct, ytdPct } = useMemo(() => {
-    if (!history || history.length < 2 || displayedValue == null)
+    // Period returns use the marked book, not the headline. The headline
+    // adds the whole cash-interest estimate, and the snapshots never
+    // carried it — the server took that overlay off because it
+    // double-counted. Diffing the estimate against last week's raw
+    // snapshot books every dollar of interest as if it arrived this week.
+    if (!history || history.length < 2 || totalValue == null)
       return { weekPct: null, ytdPct: null };
     const now = new Date();
     const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
@@ -291,24 +306,39 @@ function PortfolioHero({ totals, holdings, history, cashInterestEarned = 0 }) {
       const cfInWindow = CASH_FLOWS.filter(
         (cf) => cf.date > fromDate && cf.date <= now
       ).reduce((s, cf) => s + cf.amount, 0);
-      const adjustedDelta = displayedValue - cfInWindow - from.value;
+      const adjustedDelta = totalValue - cfInWindow - from.value;
       return (adjustedDelta / from.value) * 100;
     };
     return {
       weekPct: pct(findOnOrBefore(weekAgo), weekAgo),
       ytdPct: pct(findOnOrBefore(yearStart), yearStart),
     };
-  }, [history, displayedValue]);
+  }, [history, totalValue]);
 
   const cashPct = totalValue > 0 ? (cashValue / totalValue) * 100 : null;
 
   const sparkData = useMemo(() => {
-    // Last 90 days of history for the little curve. Lightweight.
+    // Last 90 days, then today. Snapshots stop at the last close, so a
+    // chart that ends there sits a session behind the figure beside it.
+    // Today's point is the marked total, not the headline: the interest
+    // estimate is not in any earlier point, and adding it here draws a
+    // cliff across the last segment.
     const cutoff = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
-    return (history || [])
+    const rows = (history || [])
       .filter((h) => h.date >= cutoff)
       .map((h) => ({ ts: h.date.getTime(), value: h.value }));
-  }, [history]);
+    if (totalValue == null) return rows;
+    const now = new Date();
+    const todayKey = localDay(now);
+    const last = rows[rows.length - 1];
+    const lastKey = last ? utcDay(new Date(last.ts)) : null;
+    if (lastKey === todayKey) {
+      rows[rows.length - 1] = { ts: now.getTime(), value: totalValue };
+    } else {
+      rows.push({ ts: now.getTime(), value: totalValue });
+    }
+    return rows;
+  }, [history, totalValue]);
 
   if (totalValue == null) {
     return (
@@ -376,7 +406,7 @@ function PortfolioHero({ totals, holdings, history, cashInterestEarned = 0 }) {
                   <Area
                     type="monotone"
                     dataKey="value"
-                    stroke="#A8893B"
+                    stroke="#1B2A4A"
                     strokeWidth={2.25}
                     fill="url(#sparkGold)"
                     dot={false}
@@ -391,7 +421,7 @@ function PortfolioHero({ totals, holdings, history, cashInterestEarned = 0 }) {
       <div className="mt-8 grid gap-6 border-t border-navy/10 pt-5 sm:grid-cols-3">
         <MiniStat label="Cash" value={cashPct != null ? `${cashPct.toFixed(0)}%` : '—'} />
         <MiniStat label="Positions" value={nonCashHoldings.length} />
-        <MiniStat label="Invested" value={fmtMoney(TOTAL_INVESTED)} />
+        <MiniStat label="Capital" value={fmtMoney(TOTAL_INVESTED)} />
       </div>
       <MoversRail holdings={nonCashHoldings} />
       </div>
@@ -427,30 +457,30 @@ function MiniStat({ label, value }) {
 }
 
 function MoversRail({ holdings }) {
-  // Top gainer + top loser — two little inline cards inside the hero.
+  // Best and worst since purchase. The figure is cost against the live
+  // price, so it is not this week's leader — the label has to say so,
+  // or a +56% name reads as the week's move.
   if (!holdings || holdings.length === 0) return null;
   const sorted = [...holdings]
     .filter((h) => Number.isFinite(h.percentReturn))
     .sort((a, b) => b.percentReturn - a.percentReturn);
   if (sorted.length === 0) return null;
   const gainer = sorted[0];
-  const loser = sorted[sorted.length - 1];
-  const showBoth = gainer !== loser && loser.percentReturn < 0;
-
+  const worst = sorted[sorted.length - 1];
   return (
-    <div className="mt-5 flex flex-wrap gap-x-8 gap-y-2 border-t border-navy/10 pt-4">
-      <Mover label="Leading" holding={gainer} />
-      <Mover label={showBoth ? 'Lagging' : 'Next'} holding={showBoth ? loser : sorted[1] || gainer} />
+    <div className="mt-5 flex flex-wrap items-baseline gap-x-8 gap-y-2 border-t border-navy/10 pt-4">
+      <span className="text-[11px] uppercase tracking-[0.14em] text-navy-400">Since purchase</span>
+      <Mover holding={gainer} />
+      {worst !== gainer && <Mover holding={worst} />}
     </div>
   );
 }
 
-function Mover({ label, holding }) {
+function Mover({ holding }) {
   if (!holding) return null;
   const up = (holding.percentReturn ?? 0) >= 0;
   return (
     <div className="flex items-baseline gap-3">
-      <span className="text-[11px] uppercase tracking-[0.14em] text-navy-400">{label}</span>
       <span className="text-sm font-semibold text-navy">{holding.ticker}</span>
       <span className={`font-serif text-lg tabular-nums ${up ? 'text-emerald-700' : 'text-red-700'}`}>
         {fmtPct(holding.percentReturn, 1)}
@@ -469,6 +499,15 @@ function Mover({ label, holding }) {
 // Tiny grid of macro indicators (10Y, VIX, USD, oil, CPI). Each tile
 // shows the latest reading with a colored day-over-day chip. Designed
 // to slot above the Day-in-Review without dominating the page.
+
+function formatAsOf(ind) {
+  const d = new Date(`${ind.asOf}T12:00:00Z`);
+  if (Number.isNaN(d.getTime())) return ind.asOf;
+  // CPI is a monthly index stamped on the first of its month. "Aug 2026"
+  // is the print. "2026-08-01" reads as a daily series that froze.
+  if (ind.id === 'CPIAUCNS') return format(d, 'MMM yyyy');
+  return format(d, 'MMM d');
+}
 
 function MacroStrip({ macro }) {
   const indicators = macro.indicators || [];
@@ -511,7 +550,7 @@ function MacroStrip({ macro }) {
             </div>
             <div className="mt-1">
               {change && <div className={`text-xs font-medium tabular-nums ${tone}`}>{change}</div>}
-              {ind.asOf && <div className="text-[11px] text-navy-300">{ind.asOf}</div>}
+              {ind.asOf && <div className="text-[11px] text-navy-300">{formatAsOf(ind)}</div>}
             </div>
           </div>
         );
