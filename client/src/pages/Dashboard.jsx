@@ -321,12 +321,16 @@ function PortfolioHero({ totals, holdings, history, cashInterestEarned = 0 }) {
   return (
     <Link
       to="/portfolio"
-      className="group block rounded-2xl bg-white px-6 py-7 transition hover:shadow-[0_12px_40px_rgba(27,42,74,0.06)] md:px-8 md:py-8"
+      className="group block overflow-hidden rounded-2xl bg-white transition hover:shadow-[0_12px_40px_rgba(27,42,74,0.06)]"
     >
+      {/* Gold is the fund's second color. The bar and the chart
+          field are where it shows, so the paper page has one warm note. */}
+      <div className="h-1 bg-gold" />
+      <div className="px-6 py-7 md:px-8 md:py-8">
       <div className="grid items-end gap-8 lg:grid-cols-[1.05fr_0.95fr] lg:gap-12">
         <div className="min-w-0">
           <div className="flex items-center justify-between gap-3">
-            <div className="text-[11px] font-medium uppercase tracking-[0.16em] text-navy-400">
+            <div className="text-[11px] font-medium uppercase tracking-[0.16em] text-gold-700">
               The book
             </div>
             <span className="text-[11px] font-medium text-navy-400 opacity-0 transition group-hover:opacity-100">
@@ -343,16 +347,16 @@ function PortfolioHero({ totals, holdings, history, cashInterestEarned = 0 }) {
           </div>
         </div>
 
-        <div className="min-w-0">
-          <div className="mb-1 text-[11px] text-navy-400">Last 90 days</div>
+        <div className="min-w-0 rounded-xl bg-gold-100 px-3 pb-2 pt-3">
+          <div className="mb-1 text-[11px] text-gold-800">Last 90 days</div>
           {sparkData.length > 1 && (
-            <div className="h-36 -mx-1 md:h-44">
+            <div className="h-36 md:h-44">
               <ResponsiveContainer width="100%" height="100%">
                 <AreaChart data={sparkData} margin={{ top: 8, right: 4, bottom: 0, left: 4 }}>
                   <defs>
-                    <linearGradient id="sparkNavy" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor="#1B2A4A" stopOpacity={0.16} />
-                      <stop offset="100%" stopColor="#1B2A4A" stopOpacity={0} />
+                    <linearGradient id="sparkGold" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="#C9A84C" stopOpacity={0.45} />
+                      <stop offset="100%" stopColor="#C9A84C" stopOpacity={0} />
                     </linearGradient>
                   </defs>
                   <XAxis dataKey="ts" hide />
@@ -372,9 +376,9 @@ function PortfolioHero({ totals, holdings, history, cashInterestEarned = 0 }) {
                   <Area
                     type="monotone"
                     dataKey="value"
-                    stroke="#1B2A4A"
-                    strokeWidth={2}
-                    fill="url(#sparkNavy)"
+                    stroke="#A8893B"
+                    strokeWidth={2.25}
+                    fill="url(#sparkGold)"
                     dot={false}
                   />
                 </AreaChart>
@@ -390,6 +394,7 @@ function PortfolioHero({ totals, holdings, history, cashInterestEarned = 0 }) {
         <MiniStat label="Invested" value={fmtMoney(TOTAL_INVESTED)} />
       </div>
       <MoversRail holdings={nonCashHoldings} />
+      </div>
     </Link>
   );
 }
@@ -487,7 +492,7 @@ function MacroStrip({ macro }) {
   };
 
   return (
-    <div className="grid grid-cols-2 gap-x-6 gap-y-5 border-y border-navy/10 py-5 sm:grid-cols-3 md:grid-cols-5">
+    <div className="grid grid-cols-2 gap-x-6 gap-y-5 border-y border-gold/40 py-5 sm:grid-cols-3 md:grid-cols-5">
       {indicators.map((ind) => {
         const change = formatChange(ind);
         const tone =
@@ -517,9 +522,9 @@ function MacroStrip({ macro }) {
 function DayInReviewPlaceholder() {
   return (
     <div>
-      <div className="text-[11px] font-medium uppercase tracking-[0.16em] text-navy-400">
+      <div className="text-[11px] font-medium uppercase tracking-[0.16em] text-gold-700">
         Day in Review
-        <span className="ml-2 normal-case tracking-normal">generating…</span>
+        <span className="ml-2 normal-case tracking-normal text-navy-400">generating…</span>
       </div>
       <div className="mt-4 max-w-3xl space-y-3">
         <div className="h-5 w-full animate-pulse rounded bg-navy/10" />
@@ -554,7 +559,7 @@ function DayInReview({ text, generatedAt }) {
   }
   return (
     <article className="max-w-3xl">
-      <div className="text-[11px] font-medium uppercase tracking-[0.16em] text-navy-400">
+      <div className="text-[11px] font-medium uppercase tracking-[0.16em] text-gold-700">
         Day in Review
       </div>
       <p className="mt-3 font-serif text-2xl font-medium leading-snug text-navy md:text-[1.75rem]">
@@ -668,7 +673,7 @@ function LatelyFeed({ activity }) {
 
 function SectionHeading({ title, href }) {
   return (
-    <div className="mb-1 flex items-baseline gap-3">
+    <div className="mb-1 flex items-baseline gap-3 border-b-2 border-gold pb-2">
       <h2 className="font-serif text-2xl font-medium tracking-tight text-navy">{title}</h2>
       {href && (
         <Link to={href} className="text-xs font-medium text-navy-400 hover:text-navy">
