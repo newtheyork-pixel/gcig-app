@@ -412,7 +412,7 @@ function ReaderView({
           .join(' · ')}
         {doc.outcome ? (
           <span style={{ marginLeft: 6, color: outcomeColor(doc.outcome) }}>
-            · {doc.outcome === 'NoBuy' ? 'Club passed' : 'Club bought'}
+            · {doc.outcome === 'NoBuy' ? 'Fund passed' : 'Fund bought'}
           </span>
         ) : null}
       </div>

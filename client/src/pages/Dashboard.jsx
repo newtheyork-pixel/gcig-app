@@ -9,37 +9,18 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
-import {
-  CalendarDays,
-  CalendarRange,
-  FileText,
-  BookOpen,
-  Sparkles,
-  ArrowUpRight,
-  TrendingUp,
-  TrendingDown,
-  Building2,
-  Newspaper,
-  X,
-} from 'lucide-react';
+import { ArrowUpRight, Newspaper, X } from 'lucide-react';
 import api from '../api/client.js';
 import { useAuth } from '../context/AuthContext.jsx';
-import RoleBadge from '../components/RoleBadge.jsx';
 
 // ---------------------------------------------------------------------------
-// Editorial-style Dashboard. Pulls from three existing endpoints:
+// Home. Pulls from three existing endpoints:
 //   /dashboard         next pitch, upcoming events (+ pitches), activity, DIR
 //   /holdings/quotes   live AUM, cash, holdings list → used for movers
 //   /holdings/history  sparkline + WoW / MoM / YTD deltas
 // All requests are cheap (server-cached). If any one fails the rest still
 // renders; the affected section simply hides.
 // ---------------------------------------------------------------------------
-
-const ACTIVITY_ICONS = {
-  pitch: CalendarDays,
-  event: CalendarRange,
-  report: BookOpen,
-};
 
 // Starting capital + cash infusions the club has added. Mirrors Portfolio.jsx.
 const INITIAL_CAPITAL = 100_000;
@@ -117,8 +98,6 @@ export default function Dashboard() {
     return upcoming[0] || null;
   }, [earnings]);
 
-  const firstName = user?.name?.split(' ')[0] || '';
-
   // History in JS dates. /holdings/history returns raw sheet snapshots,
   // which already carry the cash sleeves (leftover FGTXX cash is the
   // sheet's CASH line; the rest became stocks the sheet prices).
@@ -133,7 +112,7 @@ export default function Dashboard() {
   );
 
   return (
-    <div className="space-y-6 md:space-y-8">
+    <div className="space-y-10">
       <BreakingBanner />
 
       <Masthead user={user} />
@@ -149,7 +128,6 @@ export default function Dashboard() {
         <MacroStrip macro={macro} />
       )}
 
-
       {/* DIR text comes from its own endpoint; on the very first load
           of a new ET review-day it can take 10-30s for the LLM to
           finish. The placeholder keeps the slot reserved so the page
@@ -164,15 +142,11 @@ export default function Dashboard() {
         />
       ) : null}
 
-      <SpotlightRow
-        nextPitch={dashboard?.nextPitch}
-        holdingsCount={quotes?.holdings?.length ?? dashboard?.holdingsCount}
-        upcomingCount={dashboard?.upcomingEvents?.length ?? 0}
-        nextEarnings={nextEarnings}
-      />
-
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-[1.1fr_1fr]">
-        <OnTheCalendar events={dashboard?.upcomingEvents || []} />
+      <div className="grid grid-cols-1 gap-8 lg:grid-cols-2">
+        <OnTheCalendar
+          events={dashboard?.upcomingEvents || []}
+          nextEarnings={nextEarnings}
+        />
         <LatelyFeed activity={dashboard?.activity || []} />
       </div>
     </div>
@@ -224,8 +198,8 @@ function BreakingBanner() {
   }
 
   return (
-    <div className="flex items-start gap-3 rounded-2xl border border-gold-300 bg-gold-100 px-4 py-3 shadow-card md:px-5">
-      <span className="mt-0.5 flex items-center gap-1.5 rounded-md bg-navy px-2 py-1 text-[10px] font-bold uppercase tracking-[0.15em] text-gold">
+    <div className="flex items-start gap-3 rounded-xl border border-black/[0.08] bg-white px-4 py-3 md:px-5">
+      <span className="mt-0.5 flex items-center gap-1.5 rounded-md bg-navy px-2 py-1 text-[10px] font-semibold uppercase tracking-wider text-white">
         <Newspaper className="h-3.5 w-3.5" />
         Breaking
       </span>
@@ -234,7 +208,7 @@ function BreakingBanner() {
           href={headline.url}
           target="_blank"
           rel="noopener noreferrer"
-          className="group inline-flex items-start gap-1 font-serif text-sm font-semibold leading-snug text-navy hover:text-gold-700 md:text-base"
+          className="group inline-flex items-start gap-1 text-sm font-semibold leading-snug text-navy hover:text-navy-500 md:text-[15px]"
         >
           <span className="min-w-0">{headline.title}</span>
           <ArrowUpRight className="mt-0.5 h-4 w-4 flex-shrink-0 opacity-60 transition group-hover:opacity-100" />
@@ -266,18 +240,15 @@ function Masthead({ user }) {
   // on the vanishingly rare case neither field is present.
   const firstName = user?.firstName || user?.name?.split(' ')[0] || '';
   const greetName = user?.honorificName || firstName || 'friend';
+  const hour = today.getHours();
+  const hello = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
   return (
-    <div className="flex flex-wrap items-end justify-between gap-4 border-b border-navy-100 pb-4 md:pb-6">
+    <div className="flex flex-wrap items-end justify-between gap-4">
       <div>
-        <div className="text-[10px] font-semibold uppercase tracking-[0.25em] text-gold-700">
-          {format(today, 'EEEE · MMMM d, yyyy')}
-        </div>
-        <h1 className="mt-2 font-serif text-3xl font-semibold leading-tight text-navy md:text-5xl">
-          Welcome back, <span className="italic">{greetName}</span>.
+        <div className="text-[13px] text-navy-400">{format(today, 'EEEE, MMMM d')}</div>
+        <h1 className="mt-2 font-serif text-3xl font-medium leading-none tracking-tight text-navy md:text-[2.5rem]">
+          {hello}, {greetName}
         </h1>
-      </div>
-      <div className="flex items-center gap-3">
-        <RoleBadge role={user?.role} className="text-[11px]" />
       </div>
     </div>
   );
@@ -341,105 +312,59 @@ function PortfolioHero({ totals, holdings, history, cashInterestEarned = 0 }) {
 
   if (totalValue == null) {
     return (
-      <div className="rounded-2xl border border-navy-100 bg-white p-6 shadow-card">
+      <div className="rounded-2xl bg-white px-6 py-8">
         <div className="text-sm text-navy-400">Loading portfolio…</div>
       </div>
     );
   }
 
-  const isUp = (weekPct ?? 0) >= 0;
-
   return (
     <Link
       to="/portfolio"
-      className="group block overflow-hidden rounded-2xl bg-gradient-to-br from-navy via-navy-700 to-navy-800 text-white shadow-xl transition hover:shadow-2xl"
+      className="group block rounded-2xl bg-white px-6 py-7 transition hover:shadow-[0_12px_40px_rgba(27,42,74,0.06)] md:px-8 md:py-8"
     >
-      {/* Decorative gold grid in the background */}
-      <div
-        aria-hidden
-        className="pointer-events-none absolute inset-0 opacity-[0.06]"
-        style={{
-          backgroundImage:
-            'linear-gradient(to right, #C9A84C 1px, transparent 1px), linear-gradient(to bottom, #C9A84C 1px, transparent 1px)',
-          backgroundSize: '48px 48px',
-        }}
-      />
-
-      <div className="relative grid gap-6 p-6 md:grid-cols-[1.2fr_1fr] md:gap-10 md:p-8">
-        {/* Left — headline number + deltas */}
+      <div className="grid items-end gap-8 lg:grid-cols-[1.05fr_0.95fr] lg:gap-12">
         <div className="min-w-0">
-          <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.25em] text-gold">
-            <Sparkles className="h-3 w-3" />
-            Fund value
+          <div className="flex items-center justify-between gap-3">
+            <div className="text-[11px] font-medium uppercase tracking-[0.16em] text-navy-400">
+              The book
+            </div>
+            <span className="text-[11px] font-medium text-navy-400 opacity-0 transition group-hover:opacity-100">
+              Open portfolio
+            </span>
           </div>
-          <div className="mt-3 font-serif text-4xl font-semibold leading-none tabular-nums md:text-6xl">
+          <div className="mt-3 font-serif text-5xl font-medium leading-none tracking-tight tabular-nums text-navy md:text-6xl">
             {fmtMoney(displayedValue)}
           </div>
-          <div className="mt-4 flex flex-wrap items-center gap-2">
-            <span
-              className={`inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-bold ${
-                isUp
-                  ? 'bg-emerald-500/20 text-emerald-300'
-                  : 'bg-red-500/20 text-red-300'
-              }`}
-            >
-              {isUp ? (
-                <TrendingUp className="h-3.5 w-3.5" />
-              ) : (
-                <TrendingDown className="h-3.5 w-3.5" />
-              )}
-              {fmtPct(weekPct)} WoW
-            </span>
-            {ytdPct != null && (
-              <span className="text-xs text-navy-100">
-                {fmtPct(ytdPct)} YTD
-              </span>
-            )}
-            {lifetimePct != null && (
-              <span className="text-xs text-navy-100">
-                · {fmtPct(lifetimePct)} since inception
-              </span>
-            )}
-          </div>
-
-          <div className="mt-6 flex gap-6 border-t border-white/10 pt-4 text-sm">
-            <MiniStat
-              label="Cash"
-              value={
-                cashPct != null
-                  ? `${cashPct.toFixed(0)}%`
-                  : '—'
-              }
-            />
-            <MiniStat label="Positions" value={nonCashHoldings.length} />
-            <MiniStat label="Invested" value={fmtMoney(TOTAL_INVESTED)} />
+          <div className="mt-6 flex flex-wrap gap-x-8 gap-y-3">
+            <ReturnFigure label="This week" value={weekPct} />
+            <ReturnFigure label="Year to date" value={ytdPct} />
+            <ReturnFigure label="Since inception" value={lifetimePct} />
           </div>
         </div>
 
-        {/* Right — sparkline + movers */}
-        <div className="flex flex-col gap-4">
+        <div className="min-w-0">
+          <div className="mb-1 text-[11px] text-navy-400">Last 90 days</div>
           {sparkData.length > 1 && (
-            <div className="h-20 -mx-1">
+            <div className="h-36 -mx-1 md:h-44">
               <ResponsiveContainer width="100%" height="100%">
-                <AreaChart
-                  data={sparkData}
-                  margin={{ top: 4, right: 4, bottom: 4, left: 4 }}
-                >
+                <AreaChart data={sparkData} margin={{ top: 8, right: 4, bottom: 0, left: 4 }}>
                   <defs>
-                    <linearGradient id="sparkGold" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor="#C9A84C" stopOpacity={0.55} />
-                      <stop offset="100%" stopColor="#C9A84C" stopOpacity={0} />
+                    <linearGradient id="sparkNavy" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="#1B2A4A" stopOpacity={0.16} />
+                      <stop offset="100%" stopColor="#1B2A4A" stopOpacity={0} />
                     </linearGradient>
                   </defs>
                   <XAxis dataKey="ts" hide />
                   <YAxis hide domain={['auto', 'auto']} />
                   <Tooltip
                     contentStyle={{
-                      borderRadius: 8,
-                      border: '1px solid #C9A84C',
-                      background: 'rgba(27,42,74,0.92)',
-                      color: 'white',
-                      fontSize: 11,
+                      borderRadius: 10,
+                      border: '1px solid rgba(27,42,74,0.08)',
+                      background: 'white',
+                      color: '#0D1626',
+                      fontSize: 12,
+                      boxShadow: '0 8px 24px rgba(27,42,74,0.08)',
                     }}
                     labelFormatter={(ts) => format(new Date(ts), 'MMM d')}
                     formatter={(v) => [fmtMoney(v, { cents: true }), 'Value']}
@@ -447,34 +372,49 @@ function PortfolioHero({ totals, holdings, history, cashInterestEarned = 0 }) {
                   <Area
                     type="monotone"
                     dataKey="value"
-                    stroke="#C9A84C"
+                    stroke="#1B2A4A"
                     strokeWidth={2}
-                    fill="url(#sparkGold)"
+                    fill="url(#sparkNavy)"
                     dot={false}
                   />
                 </AreaChart>
               </ResponsiveContainer>
             </div>
           )}
-          <MoversRail holdings={nonCashHoldings} />
-        </div>
-
-        {/* Link affordance */}
-        <div className="absolute right-4 top-4 text-[10px] font-semibold uppercase tracking-[0.2em] text-gold opacity-0 transition group-hover:opacity-100">
-          Open portfolio →
         </div>
       </div>
+
+      <div className="mt-8 grid gap-6 border-t border-navy/10 pt-5 sm:grid-cols-3">
+        <MiniStat label="Cash" value={cashPct != null ? `${cashPct.toFixed(0)}%` : '—'} />
+        <MiniStat label="Positions" value={nonCashHoldings.length} />
+        <MiniStat label="Invested" value={fmtMoney(TOTAL_INVESTED)} />
+      </div>
+      <MoversRail holdings={nonCashHoldings} />
     </Link>
+  );
+}
+
+function ReturnFigure({ label, value }) {
+  const up = (value ?? 0) >= 0;
+  return (
+    <div>
+      <div className="text-[11px] text-navy-400">{label}</div>
+      <div
+        className={`mt-0.5 font-serif text-xl tabular-nums ${
+          value == null ? 'text-navy-200' : up ? 'text-emerald-700' : 'text-red-700'
+        }`}
+      >
+        {fmtPct(value)}
+      </div>
+    </div>
   );
 }
 
 function MiniStat({ label, value }) {
   return (
     <div>
-      <div className="text-[10px] font-semibold uppercase tracking-wider text-gold">
-        {label}
-      </div>
-      <div className="mt-1 font-serif text-xl font-semibold tabular-nums">
+      <div className="text-[11px] text-navy-400">{label}</div>
+      <div className="mt-1 font-serif text-2xl font-medium tabular-nums tracking-tight text-navy">
         {value}
       </div>
     </div>
@@ -493,31 +433,24 @@ function MoversRail({ holdings }) {
   const showBoth = gainer !== loser && loser.percentReturn < 0;
 
   return (
-    <div className="grid grid-cols-2 gap-2">
-      <Mover holding={gainer} />
-      {showBoth ? <Mover holding={loser} /> : <Mover holding={sorted[1] || gainer} />}
+    <div className="mt-5 flex flex-wrap gap-x-8 gap-y-2 border-t border-navy/10 pt-4">
+      <Mover label="Leading" holding={gainer} />
+      <Mover label={showBoth ? 'Lagging' : 'Next'} holding={showBoth ? loser : sorted[1] || gainer} />
     </div>
   );
 }
 
-function Mover({ holding }) {
+function Mover({ label, holding }) {
   if (!holding) return null;
   const up = (holding.percentReturn ?? 0) >= 0;
   return (
-    <div className="rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-left">
-      <div className="flex items-center justify-between gap-2">
-        <span className="font-bold text-gold">{holding.ticker}</span>
-        <span
-          className={`text-xs font-bold tabular-nums ${
-            up ? 'text-emerald-300' : 'text-red-300'
-          }`}
-        >
-          {fmtPct(holding.percentReturn, 1)}
-        </span>
-      </div>
-      <div className="mt-0.5 truncate text-[10px] uppercase tracking-wider text-navy-200">
-        {holding.sector || holding.name}
-      </div>
+    <div className="flex items-baseline gap-3">
+      <span className="text-[11px] uppercase tracking-[0.14em] text-navy-400">{label}</span>
+      <span className="text-sm font-semibold text-navy">{holding.ticker}</span>
+      <span className={`font-serif text-lg tabular-nums ${up ? 'text-emerald-700' : 'text-red-700'}`}>
+        {fmtPct(holding.percentReturn, 1)}
+      </span>
+      <span className="hidden text-xs text-navy-400 sm:inline">{holding.sector || holding.name}</span>
     </div>
   );
 }
@@ -554,64 +487,44 @@ function MacroStrip({ macro }) {
   };
 
   return (
-    <div className="rounded-xl border border-navy-100 bg-white px-4 py-3 shadow-card md:px-5 md:py-4">
-      <div className="mb-3 flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.22em] text-gold-700">
-        <span className="h-px w-5 bg-gold" />
-        Macro Snapshot
-        <span className="ml-auto text-[10px] normal-case tracking-normal text-navy-400">
-          via FRED
-        </span>
-      </div>
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-5 md:gap-4">
-        {indicators.map((ind) => {
-          const change = formatChange(ind);
-          const tone =
-            ind.change == null
-              ? 'text-navy-400'
-              : Number(ind.change) > 0
-                ? 'text-emerald-600'
-                : Number(ind.change) < 0
-                  ? 'text-red-600'
-                  : 'text-navy-400';
-          return (
-            <div key={ind.id} className="min-w-0">
-              <div className="text-[10px] font-semibold uppercase tracking-wider text-navy-400">
-                {ind.label}
-              </div>
-              <div className="mt-1 font-serif text-xl font-semibold tabular-nums text-navy md:text-2xl">
-                {formatValue(ind)}
-              </div>
-              {change && (
-                <div className={`mt-0.5 text-[11px] font-semibold tabular-nums ${tone}`}>
-                  {change}
-                </div>
-              )}
-              {ind.asOf && (
-                <div className="text-[9px] text-navy-300">
-                  as of {ind.asOf}
-                </div>
-              )}
+    <div className="grid grid-cols-2 gap-x-6 gap-y-5 border-y border-navy/10 py-5 sm:grid-cols-3 md:grid-cols-5">
+      {indicators.map((ind) => {
+        const change = formatChange(ind);
+        const tone =
+          ind.change == null
+            ? 'text-navy-400'
+            : Number(ind.change) > 0
+              ? 'text-emerald-700'
+              : Number(ind.change) < 0
+                ? 'text-red-700'
+                : 'text-navy-400';
+        return (
+          <div key={ind.id} className="min-w-0">
+            <div className="text-[11px] uppercase tracking-[0.14em] text-navy-400">{ind.label}</div>
+            <div className="mt-1 font-serif text-2xl font-medium tabular-nums tracking-tight text-navy">
+              {formatValue(ind)}
             </div>
-          );
-        })}
-      </div>
+            <div className="mt-1">
+              {change && <div className={`text-xs font-medium tabular-nums ${tone}`}>{change}</div>}
+              {ind.asOf && <div className="text-[11px] text-navy-300">{ind.asOf}</div>}
+            </div>
+          </div>
+        );
+      })}
     </div>
   );
 }
 function DayInReviewPlaceholder() {
   return (
-    <div className="rounded-2xl border border-gold-200 bg-[#FFFDF5] p-5 shadow-card md:p-7">
-      <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.25em] text-gold-700">
-        <span className="h-px w-6 bg-gold" />
-        The Day in Review
-        <span className="ml-2 text-[9px] normal-case tracking-normal text-navy-400">
-          generating…
-        </span>
+    <div>
+      <div className="text-[11px] font-medium uppercase tracking-[0.16em] text-navy-400">
+        Day in Review
+        <span className="ml-2 normal-case tracking-normal">generating…</span>
       </div>
-      <div className="mt-4 space-y-2">
-        <div className="h-4 w-11/12 animate-pulse rounded bg-navy-50" />
-        <div className="h-4 w-10/12 animate-pulse rounded bg-navy-50" />
-        <div className="h-4 w-7/12 animate-pulse rounded bg-navy-50" />
+      <div className="mt-4 max-w-3xl space-y-3">
+        <div className="h-5 w-full animate-pulse rounded bg-navy/10" />
+        <div className="h-5 w-11/12 animate-pulse rounded bg-navy/10" />
+        <div className="h-5 w-7/12 animate-pulse rounded bg-navy/10" />
       </div>
     </div>
   );
@@ -640,175 +553,87 @@ function DayInReview({ text, generatedAt }) {
     }
   }
   return (
-    <div className="rounded-2xl border border-gold-200 bg-[#FFFDF5] p-5 shadow-card md:p-7">
-      <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.25em] text-gold-700">
-        <span className="h-px w-6 bg-gold" />
-        The Day in Review
+    <article className="max-w-3xl">
+      <div className="text-[11px] font-medium uppercase tracking-[0.16em] text-navy-400">
+        Day in Review
       </div>
-      <p className="mt-4 font-serif text-lg leading-relaxed text-navy md:text-xl">
+      <p className="mt-3 font-serif text-2xl font-medium leading-snug text-navy md:text-[1.75rem]">
         {text}
       </p>
-      {stamp && (
-        <div className="mt-4 border-t border-gold-200/60 pt-3 text-[11px] uppercase tracking-[0.18em] text-navy-400">
-          {stamp}
-        </div>
-      )}
-    </div>
+      {stamp && <div className="mt-4 text-xs text-navy-400">{stamp}</div>}
+    </article>
   );
 }
 
-// ─── Spotlight row (three or four compact editorial cards) ─────────────
-// A fourth "Next Earnings" card slides in when any held ticker reports
-// in the next 30 days — keeps the dashboard lean on quiet weeks.
-
-function SpotlightRow({ nextPitch, holdingsCount, upcomingCount, nextEarnings }) {
-  const hasEarnings = !!nextEarnings;
-  // Static class names — Tailwind can't JIT dynamic interpolations.
-  const gridClass = hasEarnings
-    ? 'grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4'
-    : 'grid grid-cols-1 gap-4 md:grid-cols-3';
-  return (
-    <div className={gridClass}>
-      <SpotlightCard
-        to="/calendar"
-        label="Next Pitch"
-        icon={CalendarDays}
-        primary={nextPitch ? nextPitch.ticker : 'None scheduled'}
-        secondary={
-          nextPitch
-            ? `${nextPitch.pitcherName} · ${format(new Date(nextPitch.date), 'EEE, MMM d')}`
-            : 'Check the calendar for upcoming sessions'
-        }
-      />
-      {hasEarnings && (
-        <SpotlightCard
-          to="/portfolio"
-          label="Next Earnings"
-          icon={Sparkles}
-          primary={nextEarnings.ticker}
-          secondary={`${format(
-            new Date(`${nextEarnings.date}T12:00:00Z`),
-            'EEE, MMM d'
-          )}${
-            nextEarnings.hour === 'bmo'
-              ? ' · Before open'
-              : nextEarnings.hour === 'amc'
-                ? ' · After close'
-                : nextEarnings.hour === 'dmh'
-                  ? ' · Intraday'
-                  : ''
-          }`}
-        />
-      )}
-      <SpotlightCard
-        to="/portfolio"
-        label="Active Holdings"
-        icon={Building2}
-        primary={holdingsCount ?? '—'}
-        secondary="Positions in the book"
-        primaryBig
-      />
-      <SpotlightCard
-        to="/calendar"
-        label="Upcoming"
-        icon={CalendarRange}
-        primary={upcomingCount}
-        secondary="Events + pitches in the next 30 days"
-        primaryBig
-      />
-    </div>
-  );
-}
-
-function SpotlightCard({ to, label, icon: Icon, primary, secondary, primaryBig }) {
-  return (
-    <Link
-      to={to}
-      className="group relative block overflow-hidden rounded-xl border border-navy-100 bg-white p-5 shadow-card transition hover:-translate-y-0.5 hover:border-gold hover:shadow-md"
-    >
-      <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.25em] text-gold-700">
-        <span className="h-px w-4 bg-gold" />
-        {label}
-      </div>
-      <div
-        className={`mt-3 font-serif font-semibold text-navy ${
-          primaryBig ? 'text-5xl tabular-nums' : 'text-2xl'
-        }`}
-      >
-        {primary}
-      </div>
-      <div className="mt-2 text-xs text-navy-400">{secondary}</div>
-      <Icon
-        aria-hidden
-        className="pointer-events-none absolute -bottom-3 -right-3 h-20 w-20 text-gold/10 transition group-hover:text-gold/20"
-      />
-      <ArrowUpRight className="absolute right-4 top-4 h-4 w-4 text-navy-100 transition group-hover:text-gold" />
-    </Link>
-  );
+function earningsWhen(hour) {
+  if (hour === 'bmo') return 'Before the open';
+  if (hour === 'amc') return 'After the close';
+  if (hour === 'dmh') return 'During the session';
+  return 'Reports';
 }
 
 // ─── On the Calendar ────────────────────────────────────────────────────
 
-function OnTheCalendar({ events }) {
+function OnTheCalendar({ events, nextEarnings }) {
+  const rows = events.map((e) => ({
+    key: e.id,
+    date: new Date(e.date),
+    kicker: e.kind === 'pitch' ? 'Pitch' : 'Event',
+    title: e.title,
+    detail: `${format(new Date(e.date), 'EEEE, h:mm a')}${e.location ? ` · ${e.location}` : ''}`,
+    gold: e.kind === 'pitch',
+    to: '/calendar',
+  }));
+  if (nextEarnings) {
+    const date = new Date(`${nextEarnings.date}T12:00:00Z`);
+    rows.push({
+      key: `earn-${nextEarnings.ticker}`,
+      date,
+      kicker: 'Earnings',
+      title: nextEarnings.ticker,
+      detail: earningsWhen(nextEarnings.hour),
+      to: '/portfolio',
+    });
+  }
+  rows.sort((a, b) => a.date - b.date);
+
   return (
-    <section className="rounded-2xl border border-navy-100 bg-white p-5 shadow-card md:p-6">
-      <SectionHeading title="On the Calendar" href="/calendar" />
-      {events.length === 0 ? (
-        <div className="py-6 text-sm text-navy-400">
-          Nothing scheduled in the next 30 days.
-        </div>
+    <section>
+      <SectionHeading title="Coming up" href="/calendar" />
+      {rows.length === 0 ? (
+        <div className="py-6 text-sm text-navy-400">Nothing scheduled in the next 30 days.</div>
       ) : (
-        <ul className="divide-y divide-navy-50">
-          {events.map((e) => {
-            const isPitch = e.kind === 'pitch';
-            return (
-              <li key={e.id} className="py-3 first:pt-0 last:pb-0">
-                <Link
-                  to="/calendar"
-                  className="flex items-start gap-4 rounded-md -mx-2 px-2 py-1 transition hover:bg-navy-50/60"
-                >
-                  <DateTile date={new Date(e.date)} accent={isPitch} />
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2">
-                      {isPitch && (
-                        <span className="rounded-full bg-gold-100 px-2 py-0.5 text-[9px] font-bold uppercase tracking-wider text-gold-800">
-                          Pitch
-                        </span>
-                      )}
-                      <span className="truncate font-serif text-base font-semibold text-navy">
-                        {e.title}
-                      </span>
-                    </div>
-                    <div className="mt-1 text-xs text-navy-400">
-                      {format(new Date(e.date), 'EEEE, h:mm a')}
-                      {e.location ? ` · ${e.location}` : ''}
-                    </div>
-                  </div>
-                  <ArrowUpRight className="mt-2 h-3.5 w-3.5 shrink-0 text-navy-200" />
-                </Link>
-              </li>
-            );
-          })}
+        <ul>
+          {rows.map((row) => (
+            <li key={row.key} className="border-t border-navy/10 first:border-t-0">
+              <AgendaRow {...row} />
+            </li>
+          ))}
         </ul>
       )}
     </section>
   );
 }
 
-function DateTile({ date, accent }) {
+function AgendaRow({ date, kicker, title, detail, gold, to = '/calendar' }) {
   return (
-    <div
-      className={`flex h-12 w-12 shrink-0 flex-col items-center justify-center rounded-lg ${
-        accent ? 'bg-gold text-navy' : 'bg-navy text-gold'
-      }`}
-    >
-      <span className="text-[9px] font-bold uppercase tracking-[0.15em] opacity-80">
-        {format(date, 'MMM')}
-      </span>
-      <span className="font-serif text-lg font-semibold leading-none">
-        {format(date, 'd')}
-      </span>
-    </div>
+    <Link to={to} className="group flex items-start gap-4 py-4">
+      <div className="w-11 shrink-0 pt-0.5">
+        <div className="text-[10px] font-medium uppercase tracking-wider text-navy-400">
+          {format(date, 'MMM')}
+        </div>
+        <div className={`font-serif text-2xl font-medium leading-none ${gold ? 'text-gold-700' : 'text-navy'}`}>
+          {format(date, 'd')}
+        </div>
+      </div>
+      <div className="min-w-0 flex-1 pt-0.5">
+        <div className="text-[11px] uppercase tracking-[0.14em] text-navy-400">{kicker}</div>
+        <div className="mt-0.5 truncate text-[15px] font-medium text-navy group-hover:underline">
+          {title}
+        </div>
+        <div className="mt-0.5 text-xs text-navy-400">{detail}</div>
+      </div>
+    </Link>
   );
 }
 
@@ -816,29 +641,20 @@ function DateTile({ date, accent }) {
 
 function LatelyFeed({ activity }) {
   return (
-    <section className="rounded-2xl border border-navy-100 bg-white p-5 shadow-card md:p-6">
-      <SectionHeading title="Lately in the Fund" />
+    <section>
+      <SectionHeading title="Lately" />
       {activity.length === 0 ? (
         <div className="py-6 text-sm text-navy-400">No recent activity yet.</div>
       ) : (
-        <ul className="space-y-3">
+        <ul>
           {activity.map((a, i) => {
-            const Icon = ACTIVITY_ICONS[a.type] || FileText;
             const to = a.type === 'report' ? '/library' : '/calendar';
             return (
-              <li key={i}>
-                <Link
-                  to={to}
-                  className="flex items-start gap-3 rounded-md -mx-2 px-2 py-1 transition hover:bg-navy-50/60"
-                >
-                  <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-gold-200 bg-gold-100/40 text-gold-700">
-                    <Icon className="h-3.5 w-3.5" />
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <div className="text-sm text-navy">{a.label}</div>
-                    <div className="text-[11px] text-navy-400">
-                      {formatDistanceToNow(new Date(a.at), { addSuffix: true })}
-                    </div>
+              <li key={i} className="border-t border-navy/10 first:border-t-0">
+                <Link to={to} className="group block py-4">
+                  <div className="text-[15px] leading-snug text-navy group-hover:underline">{a.label}</div>
+                  <div className="mt-1 text-xs text-navy-400">
+                    {formatDistanceToNow(new Date(a.at), { addSuffix: true })}
                   </div>
                 </Link>
               </li>
@@ -850,23 +666,13 @@ function LatelyFeed({ activity }) {
   );
 }
 
-// ─── Reusable section heading (small caps w/ gold hairline) ─────────────
-
 function SectionHeading({ title, href }) {
   return (
-    <div className="mb-4 flex items-end justify-between border-b border-navy-50 pb-2">
-      <div className="flex items-center gap-2">
-        <span className="h-px w-6 bg-gold" />
-        <h2 className="text-[10px] font-semibold uppercase tracking-[0.25em] text-navy">
-          {title}
-        </h2>
-      </div>
+    <div className="mb-1 flex items-baseline gap-3">
+      <h2 className="font-serif text-2xl font-medium tracking-tight text-navy">{title}</h2>
       {href && (
-        <Link
-          to={href}
-          className="text-[10px] font-semibold uppercase tracking-[0.2em] text-gold-700 hover:text-navy"
-        >
-          View all →
+        <Link to={href} className="text-xs font-medium text-navy-400 hover:text-navy">
+          View all
         </Link>
       )}
     </div>

@@ -3,7 +3,7 @@ import { useSearchParams, useNavigate, Navigate } from 'react-router-dom';
 import api from '../api/client.js';
 import { markActive } from '../api/session.js';
 import { useAuth } from '../context/AuthContext.jsx';
-import AuthBrandMark from '../components/AuthBrandMark.jsx';
+import AuthShell, { authFieldClass } from '../components/AuthShell.jsx';
 import Button from '../components/Button.jsx';
 
 const ROLE_LABELS = {
@@ -75,22 +75,7 @@ export default function AcceptInvite() {
   }
 
   return (
-    <div className="relative flex min-h-full items-center justify-center overflow-hidden bg-gradient-to-br from-navy via-navy-700 to-navy-800 p-4">
-      <div
-        aria-hidden
-        className="pointer-events-none absolute inset-0 opacity-[0.06]"
-        style={{
-          backgroundImage:
-            'linear-gradient(to right, #C9A84C 1px, transparent 1px), linear-gradient(to bottom, #C9A84C 1px, transparent 1px)',
-          backgroundSize: '48px 48px',
-        }}
-      />
-      <div className="relative w-full max-w-md">
-        <div className="mb-8 flex flex-col items-center text-center">
-          <AuthBrandMark />
-        </div>
-
-        <div className="rounded-xl bg-white p-8 shadow-xl">
+    <AuthShell>
           {loading ? (
             <div className="text-center text-navy-400">Checking your invite…</div>
           ) : loadError ? (
@@ -107,7 +92,7 @@ export default function AcceptInvite() {
             </>
           ) : invite ? (
             <>
-              <h2 className="text-lg font-semibold text-navy">Set up your account</h2>
+              <h2 className="text-xl font-semibold tracking-tight text-navy">Set up your account</h2>
               <p className="mt-1 text-sm text-navy-400">
                 You've been invited as <strong>{ROLE_LABELS[invite.role] || invite.role}</strong>.
               </p>
@@ -128,7 +113,7 @@ export default function AcceptInvite() {
                     onChange={(e) => setPassword(e.target.value)}
                     required
                     minLength={8}
-                    className="mt-1 w-full rounded-lg border border-navy-100 px-3 py-2 text-sm focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold"
+                    className={authFieldClass}
                   />
                   <p className="mt-1 text-xs text-navy-400">Minimum 8 characters.</p>
                 </div>
@@ -140,7 +125,7 @@ export default function AcceptInvite() {
                     onChange={(e) => setConfirm(e.target.value)}
                     required
                     minLength={8}
-                    className="mt-1 w-full rounded-lg border border-navy-100 px-3 py-2 text-sm focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold"
+                    className={authFieldClass}
                   />
                 </div>
                 {error && (
@@ -154,8 +139,6 @@ export default function AcceptInvite() {
               </form>
             </>
           ) : null}
-        </div>
-      </div>
-    </div>
+    </AuthShell>
   );
 }

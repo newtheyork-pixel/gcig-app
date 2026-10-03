@@ -1,22 +1,30 @@
-import { griffinLogo } from '../brand/logos.js';
+import { useState } from 'react';
 
 // Combined mark for the auth pages (login, invite, password). The
-// bytes live in the JS bundle as a data URI: Cloudflare Polish never
-// sees them, which is the only bypass that actually works on this
-// zone. onError used to hide a fetched PNG after Polish served WebP
-// under image/png; a data URI cannot 404, so a failed mark now
-// means a corrupt bundle rather than a CDN rewrite.
+// file is .webp because Cloudflare Polish rewrites PNG/JPEG and
+// often leaves the old Content-Type; Safari then refuses to paint it
+// under nosniff. Polish does not rewrite WebP. Hide the image if it
+// fails and fall back to the wordmark.
 export default function AuthBrandMark() {
+  const [failed, setFailed] = useState(false);
   return (
-    <div className="rounded-xl bg-white px-8 py-5">
-      <img
-        src={griffinLogo}
-        alt="The Griffin Fund"
-        width={900}
-        height={396}
-        className="h-16 w-auto"
-        decoding="async"
-      />
-    </div>
+    <>
+      {failed ? (
+        <div className="text-2xl font-semibold tracking-tight text-navy">The Griffin Fund</div>
+      ) : (
+        <img
+          src="/griffin-logo.webp"
+          alt="The Griffin Fund"
+          width={1091}
+          height={458}
+          className="h-14 w-auto"
+          decoding="async"
+          onError={() => setFailed(true)}
+        />
+      )}
+      <div className="mt-3 text-[11px] font-medium uppercase tracking-[0.16em] text-navy-400">
+        Grace Church School
+      </div>
+    </>
   );
 }

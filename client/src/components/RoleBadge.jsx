@@ -35,7 +35,7 @@ export default function RoleBadge({ role, className = '' }) {
   const variant = VARIANTS[role] || 'bg-white text-navy border-navy-100';
   return (
     <span
-      className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-semibold ${variant} ${className}`}
+      className={`inline-flex items-center rounded-md border px-2 py-0.5 text-[11px] font-medium ${variant} ${className}`}
     >
       {label}
     </span>

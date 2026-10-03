@@ -76,7 +76,7 @@ export default function Broadcast() {
         <PageHeader title="Broadcast" />
         <Card>
           <p className="text-sm text-navy-400">
-            Sending club-wide emails is restricted to CIOs and the President.
+            Sending fund-wide emails is restricted to CIOs and the President.
           </p>
         </Card>
       </>
@@ -125,7 +125,7 @@ export default function Broadcast() {
       <PageHeader
         kicker="Communications"
         title="Broadcast"
-        subtitle="Send a single email to the whole club, a specific pod, or a specific rank."
+        subtitle="Send a single email to every member, a specific pod, or a specific rank."
       />
 
       <Card>

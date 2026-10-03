@@ -392,8 +392,8 @@ function Header() {
           <img
             src={griffinLogo}
             alt="The Griffin Fund"
-            width={900}
-            height={396}
+            width={1091}
+            height={458}
             decoding="async"
             fetchPriority="high"
             className="h-12 w-auto sm:h-14 md:h-16"
@@ -1114,8 +1114,8 @@ function Footer() {
           <img
             src={griffinLogo}
             alt="The Griffin Fund"
-            width={900}
-            height={396}
+            width={1091}
+            height={458}
             className="h-10 w-auto md:h-12"
           />
           <div className="text-[10px] uppercase tracking-[0.25em] text-navy-400">

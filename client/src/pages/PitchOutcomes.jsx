@@ -4,6 +4,7 @@ import { Trophy, TrendingUp, TrendingDown, Target, FileText, BookOpen } from 'lu
 import api from '../api/client.js';
 import PageHeader from '../components/PageHeader.jsx';
 import Card from '../components/Card.jsx';
+import EditorialMasthead from '../components/EditorialMasthead.jsx';
 
 function fmtMoney(n) {
   if (n == null || Number.isNaN(n)) return '—';
@@ -64,60 +65,26 @@ export default function PitchOutcomes() {
         subtitle="How pitches and research reports that became positions have performed."
       />
 
-      {/* Editorial masthead — three hero stats in navy gradient. */}
-      <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-navy via-navy-700 to-navy-800 text-white shadow-xl">
-        <div
-          aria-hidden
-          className="pointer-events-none absolute inset-0 opacity-[0.06]"
-          style={{
-            backgroundImage:
-              'linear-gradient(to right, #C9A84C 1px, transparent 1px), linear-gradient(to bottom, #C9A84C 1px, transparent 1px)',
-            backgroundSize: '48px 48px',
-          }}
-        />
-        <div className="relative grid gap-6 p-6 md:grid-cols-3 md:gap-10 md:p-8">
-          <div>
-            <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.25em] text-gold">
-              <span className="h-px w-5 bg-gold" />
-              Club Avg Return
-            </div>
-            <div
-              className={`mt-3 font-serif text-5xl font-semibold leading-none tabular-nums md:text-6xl ${
-                clubAvg >= 0 ? 'text-emerald-300' : 'text-red-300'
-              }`}
-            >
-              {fmtPct(clubAvg)}
-            </div>
-            <div className="mt-3 text-xs text-navy-100">
-              Weighted across tracked pitches & reports
-            </div>
-          </div>
-          <div>
-            <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.25em] text-gold">
-              <span className="h-px w-5 bg-gold" />
-              Hit Rate
-            </div>
-            <div className="mt-3 font-serif text-5xl font-semibold leading-none tabular-nums md:text-6xl">
-              {(clubHitRate * 100).toFixed(0)}%
-            </div>
-            <div className="mt-3 text-xs text-navy-100">
-              Pitches voted Buy (vs. voted No)
-            </div>
-          </div>
-          <div>
-            <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.25em] text-gold">
-              <span className="h-px w-5 bg-gold" />
-              Tracked
-            </div>
-            <div className="mt-3 font-serif text-5xl font-semibold leading-none tabular-nums md:text-6xl">
-              {trackedCount}
-            </div>
-            <div className="mt-3 text-xs text-navy-100">
-              Pitches + reports tied to current holdings
-            </div>
-          </div>
-        </div>
-      </div>
+      <EditorialMasthead
+        stats={[
+          {
+            kicker: 'Fund avg return',
+            value: fmtPct(clubAvg),
+            sub: 'Weighted across tracked pitches and reports',
+            tone: clubAvg >= 0 ? 'up' : 'down',
+          },
+          {
+            kicker: 'Hit rate',
+            value: `${(clubHitRate * 100).toFixed(0)}%`,
+            sub: 'Pitches voted Buy versus voted No',
+          },
+          {
+            kicker: 'Tracked',
+            value: trackedCount,
+            sub: 'Pitches and reports tied to current holdings',
+          },
+        ]}
+      />
 
       {/* Leaderboard */}
       <div className="mt-6">

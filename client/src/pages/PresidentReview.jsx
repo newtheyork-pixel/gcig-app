@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { Navigate } from 'react-router-dom';
 import {
   CheckCircle2,
   AlertCircle,
@@ -30,7 +31,9 @@ function firstName(full) {
 export default function PresidentReview() {
   const { user, isSuperAdmin } = useAuth();
 
-  const [view, setView] = useState('submit'); // 'submit' | 'results'
+  // Archive-only while the review is closed to the membership. Super-admin
+  // still opens this URL for results; everyone else is sent home.
+  const [view, setView] = useState('results'); // 'submit' | 'results'
   const [loading, setLoading] = useState(true);
   const [config, setConfig] = useState(null); // { cycle, questions, presidents }
   const [submissions, setSubmissions] = useState({}); // presidentId -> submission
@@ -74,9 +77,10 @@ export default function PresidentReview() {
   }
 
   useEffect(() => {
+    if (!isSuperAdmin) return;
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [isSuperAdmin]);
 
   async function loadResults() {
     setResultsLoading(true);
@@ -159,13 +163,15 @@ export default function PresidentReview() {
     return config.presidents.filter((p) => p.id !== user?.id);
   }, [config, user]);
 
+  if (!isSuperAdmin) return <Navigate to="/dashboard" replace />;
+
   if (loading) {
     return (
       <div>
         <PageHeader
-          kicker="End of year"
+          kicker="Archive"
           title="President Review"
-          subtitle="Rate each president 1-5 on the statements below."
+          subtitle="Results from the last cycle. The form is closed to the membership."
         />
         <div className="text-sm text-navy-400">Loading…</div>
       </div>
@@ -188,7 +194,7 @@ export default function PresidentReview() {
       <PageHeader
         kicker={`Cycle ${config?.cycle || ''}`}
         title="President Review"
-        subtitle="Honest, constructive feedback on each president's year."
+        subtitle="Archived results. The form is closed to the membership."
         actions={
           isSuperAdmin ? (
             <div className="inline-flex overflow-hidden rounded-lg border border-navy-100 bg-white">

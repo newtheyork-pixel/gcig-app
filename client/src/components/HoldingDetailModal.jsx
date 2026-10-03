@@ -53,6 +53,14 @@ function fmtPct(n) {
   return `${(n * 100).toFixed(2)}%`;
 }
 
+function tickerInfoError(err) {
+  const body = err.response?.data;
+  const fromBody = typeof body?.error === 'string' ? body.error.trim() : '';
+  if (fromBody) return fromBody;
+  if (!err.response) return 'Could not reach the server for ticker details.';
+  return `Could not load ticker details (${err.response.status}).`;
+}
+
 export default function HoldingDetailModal({ holding, onClose, onChanged }) {
   const ticker = holding?.ticker;
   const { isSuperAdmin } = useAuth();
@@ -132,10 +140,12 @@ export default function HoldingDetailModal({ holding, onClose, onChanged }) {
       });
     Promise.all([
       api
-        .get(`/holdings/info/${encodeURIComponent(ticker)}`)
+        .get(`/holdings/info/${encodeURIComponent(ticker)}`, { timeout: 15_000 })
         .then(({ data }) => data)
         .catch((err) => {
-          setError(err.response?.data?.error || 'Failed to load ticker info');
+          // The sheet row is already on the modal. A dead quote must not
+          // be why the member cannot see what we own — same rule as iOS.
+          setError(tickerInfoError(err));
           return null;
         }),
       api
@@ -254,6 +264,19 @@ export default function HoldingDetailModal({ holding, onClose, onChanged }) {
       : null);
   const ourReturnUp = (holding?.dollarReturn ?? 0) >= 0;
 
+  const view = {
+    ticker,
+    name: info?.name || holding?.name || ticker,
+    currency: info?.currency || 'USD',
+    sector: info?.sector || holding?.sector || null,
+    industry: info?.industry || null,
+    price: info?.price ?? holding?.price ?? null,
+    previousClose: info?.previousClose ?? null,
+    exchange: info?.exchange || null,
+    country: info?.country || null,
+    website: info?.website || null,
+  };
+
   const dayChange =
     info?.price != null && info?.previousClose != null
       ? info.price - info.previousClose
@@ -268,20 +291,21 @@ export default function HoldingDetailModal({ holding, onClose, onChanged }) {
     <Modal
       open={!!holding}
       onClose={onClose}
-      title={info ? `${info.ticker} — ${info.name}` : ticker || ''}
+      title={view.name && view.name !== view.ticker ? `${view.ticker} — ${view.name}` : ticker || ''}
       size="lg"
     >
       {loading ? (
         <div className="py-12 text-center text-sm text-navy-400">Loading ticker info…</div>
-      ) : error ? (
-        <div className="rounded-lg bg-red-50 p-4 text-sm text-red-700">{error}</div>
-      ) : info ? (
+      ) : (
         <div className="space-y-5">
+          {error && (
+            <div className="rounded-lg bg-red-50 p-4 text-sm text-red-700">{error}</div>
+          )}
           {/* Price block */}
           <div className="flex flex-wrap items-end justify-between gap-3 border-b border-navy-50 pb-4">
             <div>
               <div className="text-3xl font-bold text-navy">
-                {fmtMoney(info.price, info.currency)}
+                {fmtMoney(view.price, view.currency)}
               </div>
               {dayChange != null && (
                 <div
@@ -295,28 +319,28 @@ export default function HoldingDetailModal({ holding, onClose, onChanged }) {
                     <TrendingDown className="h-4 w-4" />
                   )}
                   {up ? '+' : ''}
-                  {fmtMoney(dayChange, info.currency)} ({up ? '+' : ''}
+                  {fmtMoney(dayChange, view.currency)} ({up ? '+' : ''}
                   {dayChangePct?.toFixed(2)}%) today
                 </div>
               )}
-              {(info.sector || info.industry) && (
+              {(view.sector || view.industry) && (
                 <div className="mt-2 flex flex-wrap gap-1">
-                  {info.sector && (
+                  {view.sector && (
                     <span className="rounded-full bg-navy-50 px-2 py-0.5 text-[11px] font-semibold text-navy">
-                      {info.sector}
+                      {view.sector}
                     </span>
                   )}
-                  {info.industry && info.industry !== info.sector && (
+                  {view.industry && view.industry !== view.sector && (
                     <span className="rounded-full bg-gold-100 px-2 py-0.5 text-[11px] font-semibold text-gold-800">
-                      {info.industry}
+                      {view.industry}
                     </span>
                   )}
                 </div>
               )}
             </div>
             <div className="text-right text-xs text-navy-400">
-              {info.exchange && <div>{info.exchange}</div>}
-              {info.country && <div>{info.country}</div>}
+              {view.exchange && <div>{view.exchange}</div>}
+              {view.country && <div>{view.country}</div>}
             </div>
           </div>
 
@@ -340,11 +364,11 @@ export default function HoldingDetailModal({ holding, onClose, onChanged }) {
                 />
                 <Stat
                   label="Avg Cost"
-                  value={fmtMoney(holding.costBasis, info.currency)}
+                  value={fmtMoney(holding.costBasis, view.currency)}
                 />
                 <Stat
                   label="Market Value"
-                  value={fmtMoney(ourMarketValue, info.currency)}
+                  value={fmtMoney(ourMarketValue, view.currency)}
                 />
                 <Stat
                   label="Return"
@@ -354,7 +378,7 @@ export default function HoldingDetailModal({ holding, onClose, onChanged }) {
                         ourReturnUp ? 'text-emerald-600' : 'text-red-600'
                       }
                     >
-                      {fmtMoney(holding.dollarReturn, info.currency)}
+                      {fmtMoney(holding.dollarReturn, view.currency)}
                       {holding.percentReturn != null && (
                         <span className="ml-1 text-xs">
                           ({ourReturnUp ? '+' : ''}
@@ -373,8 +397,8 @@ export default function HoldingDetailModal({ holding, onClose, onChanged }) {
             <LotSection
               ticker={ticker}
               lots={lots}
-              currentPrice={info.price}
-              currency={info.currency}
+              currentPrice={view.price}
+              currency={view.currency}
               canEdit={isSuperAdmin}
               onChange={() => {
                 refreshLots();
@@ -580,6 +604,7 @@ export default function HoldingDetailModal({ holding, onClose, onChanged }) {
           {filings && filings.length > 0 && <FilingsList filings={filings} />}
 
           {/* Stats grid */}
+          {info && (
           <div className="grid grid-cols-2 gap-x-6 gap-y-3 sm:grid-cols-3">
             <Stat label="Previous Close" value={fmtMoney(info.previousClose, info.currency)} />
             <Stat
@@ -609,9 +634,10 @@ export default function HoldingDetailModal({ holding, onClose, onChanged }) {
               <Stat label="Employees" value={fmtInt(info.employees)} />
             )}
           </div>
+          )}
 
           {/* Business summary */}
-          {info.summary && (
+          {info?.summary && (
             <div>
               <div className="mb-1 text-xs font-bold uppercase tracking-wider text-navy-400">
                 About
@@ -623,7 +649,7 @@ export default function HoldingDetailModal({ holding, onClose, onChanged }) {
           {/* Links */}
           <div className="flex flex-wrap gap-2 border-t border-navy-50 pt-4 text-xs">
             <a
-              href={`https://finance.yahoo.com/quote/${encodeURIComponent(info.ticker)}`}
+              href={`https://finance.yahoo.com/quote/${encodeURIComponent(view.ticker)}`}
               target="_blank"
               rel="noreferrer"
               className="inline-flex items-center gap-1 rounded-lg border border-navy-100 px-3 py-1.5 font-semibold text-navy hover:bg-navy-50"
@@ -632,7 +658,7 @@ export default function HoldingDetailModal({ holding, onClose, onChanged }) {
               Yahoo Finance
             </a>
             <a
-              href={`https://www.google.com/finance/quote/${encodeURIComponent(info.ticker)}:${encodeURIComponent(info.exchange || 'NASDAQ')}`}
+              href={`https://www.google.com/finance/quote/${encodeURIComponent(view.ticker)}:${encodeURIComponent(view.exchange || 'NASDAQ')}`}
               target="_blank"
               rel="noreferrer"
               className="inline-flex items-center gap-1 rounded-lg border border-navy-100 px-3 py-1.5 font-semibold text-navy hover:bg-navy-50"
@@ -640,9 +666,9 @@ export default function HoldingDetailModal({ holding, onClose, onChanged }) {
               <ExternalLink className="h-3 w-3" />
               Google Finance
             </a>
-            {info.website && (
+            {view.website && (
               <a
-                href={safeHref(info.website)}
+                href={safeHref(view.website)}
                 target="_blank"
                 rel="noreferrer"
                 className="inline-flex items-center gap-1 rounded-lg border border-navy-100 px-3 py-1.5 font-semibold text-navy hover:bg-navy-50"
@@ -653,11 +679,15 @@ export default function HoldingDetailModal({ holding, onClose, onChanged }) {
             )}
           </div>
           <div className="text-[10px] text-navy-400">
-            Market data from {info._source === 'finnhub' ? 'Finnhub' : 'Yahoo Finance'}.
-            Position data from the club's Google Sheet.
+            {info?._source === 'finnhub'
+              ? 'Market data from Finnhub. '
+              : info
+                ? 'Market data from Yahoo Finance. '
+                : 'Live quote did not load. '}
+            Position data from the fund's Google Sheet.
           </div>
         </div>
-      ) : null}
+      )}
     </Modal>
   );
 }

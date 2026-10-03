@@ -2,8 +2,8 @@ import { useState, useRef, useEffect } from 'react';
 import { Navigate, Link, useSearchParams } from 'react-router-dom';
 import { GoogleLogin } from '@react-oauth/google';
 import { useAuth } from '../context/AuthContext.jsx';
+import AuthShell, { authFieldClass, authLinkClass } from '../components/AuthShell.jsx';
 import { markActive } from '../api/session.js';
-import AuthBrandMark from '../components/AuthBrandMark.jsx';
 import Button from '../components/Button.jsx';
 
 const ALLOWED_DOMAIN = '@gcschool.org';
@@ -77,6 +77,9 @@ export default function Login() {
       }
       localStorage.setItem('gcig_token', token);
       localStorage.setItem('gcig_user', JSON.stringify(userData));
+      // Google sign-in writes the session itself, so it has to start
+      // the idle clock the same way saveSession does. Otherwise the
+      // previous tab's silence signs this one out immediately.
       markActive();
       window.location.replace(afterLogin);
     } catch (err) {
@@ -227,26 +230,16 @@ export default function Login() {
   }
 
   return (
-    <div className="relative flex min-h-full items-center justify-center overflow-hidden bg-gradient-to-br from-navy via-navy-700 to-navy-800 p-4">
-      {/* Subtle gold grid, same pattern the rest of the app uses */}
-      <div
-        aria-hidden
-        className="pointer-events-none absolute inset-0 opacity-[0.06]"
-        style={{
-          backgroundImage:
-            'linear-gradient(to right, #C9A84C 1px, transparent 1px), linear-gradient(to bottom, #C9A84C 1px, transparent 1px)',
-          backgroundSize: '48px 48px',
-        }}
-      />
-      <div className="relative w-full max-w-md">
-        <div className="mb-8 flex flex-col items-center text-center">
-          <AuthBrandMark />
-        </div>
-
-        <div className="rounded-xl bg-white p-8 shadow-2xl">
+    <AuthShell
+      footer={
+        mode === 'signup'
+          ? "We'll send a 6-digit code to verify your email before creating your account. New members join as Junior Analyst."
+          : null
+      }
+    >
           {mode === '2fa' ? (
             <>
-              <h2 className="text-lg font-semibold text-navy">Two-factor verification</h2>
+              <h2 className="text-xl font-semibold tracking-tight text-navy">Two-factor verification</h2>
               <p className="mt-1 text-sm text-navy-400">
                 {twoFactorMethod === 'email'
                   ? emailSent
@@ -257,7 +250,7 @@ export default function Login() {
 
               {/* Method toggle — only shown when the user has both options */}
               {availableMethods.totp && availableMethods.email && (
-                <div className="mt-4 flex rounded-lg border border-navy-100 bg-white p-0.5">
+                <div className="mt-4 flex rounded-lg bg-[#F4F5F7] p-1">
                   <button
                     type="button"
                     onClick={() => {
@@ -266,9 +259,9 @@ export default function Login() {
                       setError('');
                       setMessage('');
                     }}
-                    className={`flex-1 rounded-md px-3 py-1.5 text-xs font-semibold transition ${
+                    className={`flex-1 rounded-md px-3 py-1.5 text-xs font-medium transition ${
                       twoFactorMethod === 'totp'
-                        ? 'bg-navy text-white'
+                        ? 'bg-white text-navy shadow-sm'
                         : 'text-navy-400 hover:text-navy'
                     }`}
                   >
@@ -284,9 +277,9 @@ export default function Login() {
                       setError('');
                       setMessage('');
                     }}
-                    className={`flex-1 rounded-md px-3 py-1.5 text-xs font-semibold transition ${
+                    className={`flex-1 rounded-md px-3 py-1.5 text-xs font-medium transition ${
                       twoFactorMethod === 'email'
-                        ? 'bg-navy text-white'
+                        ? 'bg-white text-navy shadow-sm'
                         : 'text-navy-400 hover:text-navy'
                     }`}
                   >
@@ -319,7 +312,7 @@ export default function Login() {
                         setError('');
                         setMessage('');
                       }}
-                      className="text-xs font-semibold text-navy-400 underline"
+                      className={authLinkClass}
                     >
                       Cancel
                     </button>
@@ -334,7 +327,7 @@ export default function Login() {
                     value={twoFactorCode}
                     onChange={(e) => setTwoFactorCode(e.target.value)}
                     placeholder={twoFactorMethod === 'email' ? 'ABCD-EFGH' : '123 456'}
-                    className="w-full rounded-lg border border-navy-100 px-3 py-3 text-center text-xl font-bold tracking-widest text-navy focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold"
+                    className="w-full rounded-lg border border-black/10 px-3 py-3 text-center text-xl font-semibold tracking-[0.2em] text-navy outline-none focus:border-navy focus:ring-2 focus:ring-navy/10"
                   />
                   {error && (
                     <div className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700">
@@ -357,7 +350,7 @@ export default function Login() {
                         setError('');
                         setMessage('');
                       }}
-                      className="font-semibold text-navy-400 underline"
+                      className={authLinkClass}
                     >
                       Cancel
                     </button>
@@ -365,7 +358,7 @@ export default function Login() {
                       <button
                         type="button"
                         onClick={() => sendEmailCode({ force: true })}
-                        className="font-semibold text-gold-700 underline"
+                        className={authLinkClass}
                       >
                         Resend code
                       </button>
@@ -376,7 +369,7 @@ export default function Login() {
             </>
           ) : mode === 'verify' ? (
             <>
-              <h2 className="text-lg font-semibold text-navy">Verify your email</h2>
+              <h2 className="text-xl font-semibold tracking-tight text-navy">Verify your email</h2>
               <p className="mt-1 text-sm text-navy-400">
                 Enter the 6-digit code we sent to <strong>{pendingEmail}</strong>
               </p>
@@ -396,7 +389,7 @@ export default function Login() {
                       value={digit}
                       onChange={(e) => handleCodeChange(i, e.target.value)}
                       onKeyDown={(e) => handleCodeKeyDown(i, e)}
-                      className="h-14 w-12 rounded-lg border-2 border-navy-100 text-center text-2xl font-bold text-navy focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold"
+                      className="h-12 w-11 rounded-lg border border-black/10 text-center text-xl font-semibold text-navy outline-none focus:border-navy focus:ring-2 focus:ring-navy/10"
                     />
                   ))}
                 </div>
@@ -420,7 +413,7 @@ export default function Login() {
                   <button
                     type="button"
                     onClick={handleResend}
-                    className="font-semibold text-gold-700 underline"
+                    className={authLinkClass}
                   >
                     Resend code
                   </button>
@@ -431,7 +424,7 @@ export default function Login() {
                       setError('');
                       setMessage('');
                     }}
-                    className="font-semibold text-navy-400 underline"
+                    className={authLinkClass}
                   >
                     Start over
                   </button>
@@ -441,7 +434,7 @@ export default function Login() {
           ) : (
             <>
               <div className="flex items-center justify-between">
-                <h2 className="text-lg font-semibold text-navy">
+                <h2 className="text-xl font-semibold tracking-tight text-navy">
                   {mode === 'login' ? 'Sign in' : 'Create account'}
                 </h2>
                 <button
@@ -450,7 +443,7 @@ export default function Login() {
                     setMode(mode === 'login' ? 'signup' : 'login');
                     setError('');
                   }}
-                  className="text-xs font-semibold text-gold-700 underline"
+                  className={authLinkClass}
                 >
                   {mode === 'login' ? 'Need an account?' : 'Have an account? Sign in'}
                 </button>
@@ -476,10 +469,10 @@ export default function Login() {
                       width="320"
                     />
                   </div>
-                  <div className="mt-5 flex items-center gap-3 text-[11px] font-semibold uppercase tracking-wider text-navy-300">
-                    <div className="flex-1 border-t border-navy-100" />
-                    or use email
-                    <div className="flex-1 border-t border-navy-100" />
+                  <div className="mt-5 flex items-center gap-3 text-xs text-navy-400">
+                    <div className="flex-1 border-t border-black/10" />
+                    or
+                    <div className="flex-1 border-t border-black/10" />
                   </div>
                 </>
               )}
@@ -498,7 +491,7 @@ export default function Login() {
                       value={name}
                       onChange={(e) => setName(e.target.value)}
                       required
-                      className="mt-1 w-full rounded-lg border border-navy-100 px-3 py-2 text-sm focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold"
+                      className={authFieldClass}
                     />
                   </div>
                 )}
@@ -510,7 +503,7 @@ export default function Login() {
                     onChange={(e) => setEmail(e.target.value)}
                     required
                     placeholder={mode === 'signup' ? `you${ALLOWED_DOMAIN}` : ''}
-                    className="mt-1 w-full rounded-lg border border-navy-100 px-3 py-2 text-sm focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold"
+                    className={authFieldClass}
                   />
                 </div>
                 <div>
@@ -521,7 +514,7 @@ export default function Login() {
                     onChange={(e) => setPassword(e.target.value)}
                     required
                     minLength={mode === 'signup' ? 8 : undefined}
-                    className="mt-1 w-full rounded-lg border border-navy-100 px-3 py-2 text-sm focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold"
+                    className={authFieldClass}
                   />
                   {mode === 'signup' && (
                     <p className="mt-1 text-xs text-navy-400">Minimum 8 characters.</p>
@@ -545,7 +538,7 @@ export default function Login() {
                   <div className="text-center">
                     <Link
                       to="/forgot-password"
-                      className="text-xs font-semibold text-navy-400 underline"
+                      className={authLinkClass}
                     >
                       Forgot password?
                     </Link>
@@ -554,15 +547,6 @@ export default function Login() {
               </form>
             </>
           )}
-        </div>
-
-        {mode === 'signup' && (
-          <p className="mt-4 text-center text-xs text-navy-100">
-            We'll send a 6-digit code to verify your email before creating your account.
-            New members join as Junior Analyst.
-          </p>
-        )}
-      </div>
-    </div>
+    </AuthShell>
   );
 }

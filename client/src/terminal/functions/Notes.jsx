@@ -288,7 +288,7 @@ export default function Notes({ ticker }) {
 
       <div style={{ color: 'var(--term-fg-muted)', fontSize: 11 }}>
         Private to you and saved to your profile — not shared with the
-        club. One note per ticker; Clear removes it.
+        fund. One note per ticker; Clear removes it.
       </div>
     </div>
   );

@@ -281,7 +281,7 @@ export default function CPI() {
       {/* Headline cards */}
       <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
         <Card>
-          <div className="text-[10px] font-semibold uppercase tracking-[0.22em] text-gold-700">
+          <div className="text-[11px] font-medium uppercase tracking-[0.14em] text-navy-400">
             Last Released
           </div>
           <div className="mt-2 font-serif text-3xl font-semibold text-navy">
@@ -293,7 +293,7 @@ export default function CPI() {
         </Card>
         {forecast.forecasts.map((f, i) => (
           <Card key={f.month}>
-            <div className="text-[10px] font-semibold uppercase tracking-[0.22em] text-gold-700">
+            <div className="text-[11px] font-medium uppercase tracking-[0.14em] text-navy-400">
               Forecast +{i + 1} mo
             </div>
             <div className="mt-2 flex items-baseline gap-2">
@@ -401,7 +401,7 @@ export default function CPI() {
         )}
         <div className="mt-5 grid grid-cols-2 gap-4 sm:grid-cols-4">
           <div>
-            <div className="text-[10px] font-semibold uppercase tracking-[0.22em] text-gold-700">
+            <div className="text-[11px] font-medium uppercase tracking-[0.14em] text-navy-400">
               Backtest RMSE
             </div>
             <div className="mt-1 font-serif text-2xl font-semibold text-navy">
@@ -412,7 +412,7 @@ export default function CPI() {
             <div className="text-xs text-navy-400">YoY error, 24-mo window</div>
           </div>
           <div>
-            <div className="text-[10px] font-semibold uppercase tracking-[0.22em] text-gold-700">
+            <div className="text-[11px] font-medium uppercase tracking-[0.14em] text-navy-400">
               Prior ensemble
             </div>
             <div className="mt-1 font-serif text-2xl font-semibold text-navy-400">
@@ -423,7 +423,7 @@ export default function CPI() {
             <div className="text-xs text-navy-400">YoY error, same window</div>
           </div>
           <div>
-            <div className="text-[10px] font-semibold uppercase tracking-[0.22em] text-gold-700">
+            <div className="text-[11px] font-medium uppercase tracking-[0.14em] text-navy-400">
               Hit ±0.25pp
             </div>
             <div className="mt-1 font-serif text-2xl font-semibold text-navy">
@@ -434,7 +434,7 @@ export default function CPI() {
             <div className="text-xs text-navy-400">+1mo forecasts in band</div>
           </div>
           <div>
-            <div className="text-[10px] font-semibold uppercase tracking-[0.22em] text-gold-700">
+            <div className="text-[11px] font-medium uppercase tracking-[0.14em] text-navy-400">
               Window
             </div>
             <div className="mt-1 font-serif text-2xl font-semibold text-navy">

@@ -11,7 +11,7 @@ export default function Modal({ open, onClose, title, children, size = 'md' }) {
   };
   return (
     <div
-      className="fixed inset-0 z-50 flex items-stretch justify-center bg-navy/60 md:items-center md:p-4"
+      className="fixed inset-0 z-50 flex items-stretch justify-center bg-black/40 md:items-center md:p-4"
       onClick={onClose}
     >
       {/*
@@ -24,7 +24,7 @@ export default function Modal({ open, onClose, title, children, size = 'md' }) {
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between border-b border-navy-50 px-4 py-3 md:px-5 md:py-4">
-          <h2 className="text-base font-semibold text-navy md:text-lg">{title}</h2>
+          <h2 className="text-base font-semibold tracking-tight text-navy">{title}</h2>
           <button
             onClick={onClose}
             className="rounded-lg p-2 text-navy-400 hover:bg-navy-50 hover:text-navy"

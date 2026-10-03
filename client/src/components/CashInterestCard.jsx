@@ -70,14 +70,14 @@ export default function CashInterestCard({
     : null;
 
   return (
-    <div className="rounded-2xl border border-navy-100 bg-white p-5 shadow-card md:p-7">
+    <div className="rounded-xl border border-black/[0.08] bg-white p-5 md:p-6">
       <div className="mb-4 flex flex-wrap items-baseline justify-between gap-3">
         <div>
-          <div className="text-[10px] font-semibold uppercase tracking-[0.25em] text-gold-700">
+          <div className="text-[11px] font-medium uppercase tracking-[0.14em] text-navy-400">
             Cash sleeves
           </div>
-          <div className="mt-1 font-serif text-2xl font-semibold text-navy">
-            Interest earned · estimated
+          <div className="mt-1 text-xl font-semibold tracking-tight text-navy">
+            Interest earned, estimated
           </div>
           <div className="mt-1 text-[11px] text-navy-300">
             $40k seeded FGTXX, $60k seeded BDA in Oct 2025. BDA was drawn

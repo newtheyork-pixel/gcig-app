@@ -1,26 +1,12 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { Mic, ShieldAlert, Check, Loader2, Users, FileText } from 'lucide-react';
+import { useCallback, useEffect, useState } from 'react';
 import api from '../api/client.js';
 import PageHeader from '../components/PageHeader.jsx';
+import { useAuth } from '../context/AuthContext.jsx';
 
-// Field research — the evidence chain behind primary reporting.
-//
-// The workflow this page exists to serve, in order: register a source,
-// open an interview, record consent, upload the audio, let the model pull
-// claims out of the transcript, then read the claim ledger grouped by
-// what the sources actually agree on.
-//
-// Two things are deliberately not possible here, because making them
-// possible would quietly destroy the value of everything else:
-//
-//   You cannot type a claim. Every claim on this page was located in a
-//   transcript by matching the speaker's own words, which is what makes
-//   a citation walk back to real audio. A hand-typed claim with a
-//   hand-typed timestamp looks identical and means nothing.
-//
-//   You cannot upload audio before recording consent. The server refuses
-//   it, and the form refuses it here too so the failure is understood
-//   before someone has waited out an upload.
+// Fieldwork is a project for one company, and the project is a list of
+// questions. A conversation is how a question gets evidence. A claim
+// still cannot be typed: it has to be found in a transcript. Closing a
+// question is a person's decision, not a count of how much was said.
 
 const RELATIONSHIPS = [
   ['FormerEmployee', 'Former employee'],
@@ -33,602 +19,626 @@ const RELATIONSHIPS = [
   ['Other', 'Other'],
 ];
 
-// How much independent backing a topic has. Wording matters here — the
-// difference between "two people said it" and "two independent people
-// said it" is the difference between evidence and an echo.
-const SUPPORT_STYLE = {
-  corroborated: { label: 'Corroborated', cls: 'bg-emerald-50 text-emerald-800 border-emerald-200' },
-  clustered: { label: 'Same employer', cls: 'bg-amber-50 text-amber-800 border-amber-200' },
-  'single-source': { label: 'Single source', cls: 'bg-navy-50 text-navy-500 border-navy-200' },
-  contested: { label: 'Contested', cls: 'bg-red-50 text-red-800 border-red-200' },
+const COVERAGE_WORD = {
+  unaddressed: 'Nothing yet',
+  thin: 'One voice',
+  supported: 'Corroborated',
+  contested: 'Contested',
 };
 
-const KIND_STYLE = {
-  fact: 'text-navy',
-  opinion: 'text-navy-400 italic',
-  forecast: 'text-navy-400',
-};
+const input = 'w-full rounded-lg border border-navy/10 bg-white px-3 py-1.5 text-sm text-navy';
+const textBtn =
+  'text-sm font-medium text-navy underline decoration-gold decoration-2 underline-offset-4 disabled:opacity-40';
+
+function errText(e, fallback) {
+  return e.response?.data?.error || e.message || fallback;
+}
 
 export default function FieldResearch() {
-  const [ticker, setTicker] = useState('');
-  const [sources, setSources] = useState([]);
-  const [interviews, setInterviews] = useState([]);
-  const [ledger, setLedger] = useState({ claims: [], topics: [] });
-  const [projects, setProjects] = useState([]);
-  const [loading, setLoading] = useState(true);
+  const { isAnalystOrAbove, user } = useAuth();
+  const canWrite =
+    isAnalystOrAbove || user?.role === 'DirectorOfResearch';
+  const [projects, setProjects] = useState(null);
+  const [openId, setOpenId] = useState(null);
   const [err, setErr] = useState('');
-  const [busy, setBusy] = useState('');
-  const [flash, setFlash] = useState(null);
 
   const load = useCallback(async () => {
-    setLoading(true);
     setErr('');
-    const qs = ticker ? `?ticker=${encodeURIComponent(ticker)}` : '';
     try {
-      const [s, i, c, pr] = await Promise.all([
-        api.get(`/research/sources${qs}`).then((r) => r.data),
-        api.get(`/research/interviews${qs}`).then((r) => r.data),
-        api.get(`/research/claims${qs}`).then((r) => r.data),
-        api.get(`/research/projects${qs}`).then((r) => r.data).catch(() => []),
-      ]);
-      setSources(s || []);
-      setInterviews(i || []);
-      setLedger(c || { claims: [], topics: [] });
-      setProjects(pr || []);
+      const { data } = await api.get('/research/projects');
+      setProjects(data || []);
     } catch (e) {
-      setErr(e.response?.data?.error || e.message || 'Failed to load');
-    } finally {
-      setLoading(false);
+      setErr(errText(e, 'Could not load projects'));
+      setProjects([]);
     }
-  }, [ticker]);
+  }, []);
 
   useEffect(() => {
     load();
   }, [load]);
 
-  async function runExtract(id) {
-    setBusy(`extract-${id}`);
-    setFlash(null);
-    try {
-      const { data } = await api.post(`/research/interviews/${id}/extract`);
-      setFlash({
-        kind: data.droppedUnlocatable > 0 ? 'warn' : 'ok',
-        // The dropped count is surfaced, not buried. A run that discards
-        // several claims means the model was paraphrasing rather than
-        // quoting, and that output deserves a second look.
-        text:
-          `Extracted ${data.extracted} claim${data.extracted === 1 ? '' : 's'}.` +
-          (data.droppedUnlocatable > 0
-            ? ` ${data.droppedUnlocatable} discarded — the quoted words were not found in the transcript.`
-            : ''),
-      });
-      await load();
-    } catch (e) {
-      setFlash({ kind: 'err', text: e.response?.data?.error || 'Extraction failed' });
-    } finally {
-      setBusy('');
-    }
+  if (openId) {
+    return (
+      <Project
+        id={openId}
+        canWrite={canWrite}
+        onBack={() => {
+          setOpenId(null);
+          load();
+        }}
+      />
+    );
   }
+
+  const list = projects || [];
+  const open = list.filter((p) => p.status !== 'Closed');
+  const closed = list.filter((p) => p.status === 'Closed');
 
   return (
     <>
       <PageHeader
-        kicker="Primary Research"
-        title="Research"
-        subtitle="Interviews with people who touch the business — and the claim ledger built from them."
+        kicker="Fieldwork"
+        title="Projects"
+        subtitle="A project is one company. The work is the questions that still have nothing behind them."
       />
-
-      <div className="mb-6 flex flex-wrap items-center gap-3">
-        <input
-          value={ticker}
-          onChange={(e) => setTicker(e.target.value.toUpperCase())}
-          placeholder="Filter by ticker"
-          className="w-40 rounded-lg border border-navy-100 px-3 py-1.5 text-sm"
-        />
-        <span className="text-xs text-navy-400">
-          {sources.length} source{sources.length === 1 ? '' : 's'} ·{' '}
-          {interviews.length} interview{interviews.length === 1 ? '' : 's'} ·{' '}
-          {ledger.claims.length} claim{ledger.claims.length === 1 ? '' : 's'}
-        </span>
-      </div>
-
-      {flash ? (
-        <div
-          className={`mb-4 rounded-lg border px-3 py-2 text-sm ${
-            flash.kind === 'err'
-              ? 'border-red-200 bg-red-50 text-red-800'
-              : flash.kind === 'warn'
-              ? 'border-amber-200 bg-amber-50 text-amber-900'
-              : 'border-emerald-200 bg-emerald-50 text-emerald-800'
-          }`}
-        >
-          {flash.text}
-        </div>
-      ) : null}
-      {err ? (
-        <div className="mb-4 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
-          {err}
-        </div>
-      ) : null}
-
-      {loading ? (
-        <div className="flex items-center gap-2 py-10 text-sm text-navy-400">
-          <Loader2 className="h-4 w-4 animate-spin" /> Loading field research…
-        </div>
+      {err ? <p className="mb-4 text-sm text-red-700">{err}</p> : null}
+      {canWrite ? <NewProject onDone={load} /> : null}
+      {projects == null ? (
+        <p className="py-10 text-sm text-navy-400">Loading projects…</p>
+      ) : open.length === 0 && closed.length === 0 ? (
+        <p className="py-10 text-sm text-navy-400">No projects yet.</p>
       ) : (
-        <div className="grid gap-6 lg:grid-cols-2">
-          <div className="space-y-6">
-            <ProjectList projects={projects} />
-            <NewSource onDone={load} />
-            <NewInterview sources={sources} onDone={load} />
-            <InterviewList
-              interviews={interviews}
-              busy={busy}
-              onExtract={runExtract}
-              onUploaded={load}
-              setFlash={setFlash}
-            />
-          </div>
-          <Ledger ledger={ledger} onChanged={load} />
-        </div>
+        <>
+          <ProjectRows projects={open} onOpen={setOpenId} />
+          {closed.length > 0 ? (
+            <div className="mt-10">
+              <h2 className="font-serif text-2xl font-medium tracking-tight text-navy">Closed</h2>
+              <ProjectRows projects={closed} onOpen={setOpenId} />
+            </div>
+          ) : null}
+        </>
       )}
     </>
   );
 }
 
-function Card({ title, icon: Icon, children }) {
+function ProjectRows({ projects, onOpen }) {
   return (
-    <section className="rounded-xl border border-navy-100 bg-white p-4">
-      <h2 className="mb-3 flex items-center gap-2 font-serif text-lg font-semibold text-navy">
-        {Icon ? <Icon className="h-4 w-4 text-navy-400" /> : null}
-        {title}
-      </h2>
-      {children}
+    <ul className="mt-4">
+      {projects.map((p) => (
+        <li key={p.id} className="border-t border-navy/10 first:border-t-0">
+          <button
+            type="button"
+            onClick={() => onOpen(p.id)}
+            className="flex w-full items-baseline gap-4 py-3 text-left"
+          >
+            <span className="w-16 shrink-0 font-serif text-2xl font-medium text-navy">
+              {p.ticker || '—'}
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className="block truncate text-sm font-medium text-navy">{p.name}</span>
+              <span className="mt-0.5 block text-[11px] text-navy-400">
+                {p._count?.questions ?? 0} {p._count?.questions === 1 ? 'question' : 'questions'} ·{' '}
+                {p._count?.interviews ?? 0} {p._count?.interviews === 1 ? 'conversation' : 'conversations'}
+              </span>
+            </span>
+          </button>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function NewProject({ onDone }) {
+  const [ticker, setTicker] = useState('');
+  const [name, setName] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState('');
+
+  async function submit(ev) {
+    ev.preventDefault();
+    setSaving(true);
+    setErr('');
+    try {
+      await api.post('/research/projects', {
+        ticker: ticker.trim(),
+        name: name.trim(),
+      });
+      setTicker('');
+      setName('');
+      onDone();
+    } catch (e) {
+      setErr(errText(e, 'Could not start the project'));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <form onSubmit={submit} className="mb-8 flex flex-wrap items-end gap-3">
+      <label className="block">
+        <span className="text-[11px] text-navy-400">Ticker</span>
+        <input
+          className={`${input} mt-1 w-24`}
+          value={ticker}
+          onChange={(e) => setTicker(e.target.value.toUpperCase())}
+        />
+      </label>
+      <label className="block min-w-[16rem] flex-1">
+        <span className="text-[11px] text-navy-400">What we're checking</span>
+        <input
+          className={`${input} mt-1`}
+          value={name}
+          onChange={(e) => setName(e.target.value)}
+          placeholder="Costco membership fee"
+        />
+      </label>
+      <button className={textBtn} disabled={saving || !name.trim()}>
+        {saving ? 'Starting…' : 'Start a project'}
+      </button>
+      {err ? <p className="w-full text-sm text-red-700">{err}</p> : null}
+    </form>
+  );
+}
+
+function Project({ id, canWrite, onBack }) {
+  const [project, setProject] = useState(null);
+  const [err, setErr] = useState('');
+  const [flash, setFlash] = useState('');
+
+  const load = useCallback(async () => {
+    setErr('');
+    try {
+      const { data } = await api.get(`/research/projects/${id}`);
+      setProject(data);
+    } catch (e) {
+      setErr(errText(e, 'Could not open the project'));
+    }
+  }, [id]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  if (!project) {
+    return (
+      <>
+        <button type="button" onClick={onBack} className={textBtn}>
+          All projects
+        </button>
+        <p className="mt-6 text-sm text-navy-400">{err || 'Opening…'}</p>
+      </>
+    );
+  }
+
+  const rows = questionRows(project);
+  const openGaps = rows.filter((r) => r.status === 'Open' && r.coverage === 'unaddressed').length;
+  const loose = (project.claims || []).filter((c) => c.questionId == null);
+
+  return (
+    <>
+      <button type="button" onClick={onBack} className={textBtn}>
+        All projects
+      </button>
+      <PageHeader
+        kicker={project.ticker || 'Fieldwork'}
+        title={project.name}
+        subtitle={
+          openGaps === 0
+            ? 'Every open question has something behind it. Closing one is still a person’s call.'
+            : `${openGaps} open ${openGaps === 1 ? 'question has' : 'questions have'} nothing behind ${openGaps === 1 ? 'it' : 'them'}.`
+        }
+      />
+      {err ? <p className="mb-4 text-sm text-red-700">{err}</p> : null}
+      {flash ? <p className="mb-4 text-sm text-navy-400">{flash}</p> : null}
+
+      <section>
+        <h2 className="font-serif text-2xl font-medium tracking-tight text-navy">Questions</h2>
+        {canWrite ? <NewQuestion projectId={project.id} onDone={load} /> : null}
+        {rows.length === 0 ? (
+          <p className="mt-4 text-sm text-navy-400">
+            Write the questions before anyone is called. A conversation with nothing to learn is just a chat.
+          </p>
+        ) : (
+          <ul className="mt-2">
+            {rows.map((row) => (
+              <Question
+                key={row.questionId}
+                project={project}
+                row={row}
+                canWrite={canWrite}
+                onDone={load}
+                setFlash={setFlash}
+                setErr={setErr}
+              />
+            ))}
+          </ul>
+        )}
+      </section>
+
+      {loose.length > 0 ? (
+        <section className="mt-10">
+          <h2 className="font-serif text-2xl font-medium tracking-tight text-navy">
+            Said, not yet a question
+          </h2>
+          <p className="mt-1 text-[11px] text-navy-400">
+            These came out of a transcript and answer something nobody wrote down.
+          </p>
+          <ul className="mt-3">
+            {loose.map((c) => (
+              <li key={c.id} className="border-t border-navy/10 py-3 first:border-t-0">
+                <p className="text-sm text-navy">{c.text}</p>
+                {c.quote ? <p className="mt-1 text-sm text-navy-400">“{c.quote}”</p> : null}
+                {canWrite ? (
+                  <LinkClaim claim={c} questions={project.questions || []} onDone={load} setErr={setErr} />
+                ) : null}
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
+
+      <Conversations
+        project={project}
+        canWrite={canWrite}
+        onDone={load}
+        setFlash={setFlash}
+        setErr={setErr}
+      />
+    </>
+  );
+}
+
+function questionRows(project) {
+  const covered = project.coverage?.questions;
+  const claims = project.claims || [];
+  if (covered?.length) {
+    return covered.map((row) => ({
+      ...row,
+      claims: claims.filter((c) => c.questionId === row.questionId),
+    }));
+  }
+  return (project.questions || []).map((q) => ({
+    questionId: q.id,
+    text: q.text,
+    status: q.status || 'Open',
+    coverage: 'unaddressed',
+    claims: claims.filter((c) => c.questionId === q.id),
+  }));
+}
+
+function NewQuestion({ projectId, onDone }) {
+  const [text, setText] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState('');
+
+  async function submit(ev) {
+    ev.preventDefault();
+    setSaving(true);
+    setErr('');
+    try {
+      await api.post(`/research/projects/${projectId}/questions`, { text: text.trim() });
+      setText('');
+      onDone();
+    } catch (e) {
+      setErr(errText(e, 'Could not add the question'));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <form onSubmit={submit} className="mt-4 flex flex-wrap items-center gap-3">
+      <input
+        className={`${input} min-w-[16rem] flex-1`}
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        placeholder="What do we need to learn?"
+      />
+      <button className={textBtn} disabled={saving || !text.trim()}>
+        {saving ? 'Adding…' : 'Add question'}
+      </button>
+      {err ? <p className="w-full text-sm text-red-700">{err}</p> : null}
+    </form>
+  );
+}
+
+function Question({ project, row, canWrite, onDone, setFlash, setErr }) {
+  const [hearing, setHearing] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const word = row.status === 'Answered' ? 'Answered' : COVERAGE_WORD[row.coverage] || row.coverage;
+  const tone =
+    row.status === 'Answered' || row.coverage === 'supported'
+      ? 'text-emerald-700'
+      : row.coverage === 'contested'
+        ? 'text-red-700'
+        : 'text-navy-400';
+
+  async function setStatus(status) {
+    setBusy(true);
+    setErr('');
+    try {
+      await api.patch(`/questions/${row.questionId}`, { status });
+      onDone();
+    } catch (e) {
+      setErr(errText(e, 'Could not update the question'));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function remove() {
+    setBusy(true);
+    setErr('');
+    try {
+      await api.delete(`/questions/${row.questionId}`);
+      onDone();
+    } catch (e) {
+      setErr(errText(e, 'Could not remove the question'));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <li className="border-t border-navy/10 py-4 first:border-t-0">
+      <div className="flex flex-wrap items-baseline justify-between gap-3">
+        <p className="min-w-0 flex-1 text-sm text-navy">{row.text}</p>
+        <span className={`text-[11px] ${tone}`}>{word}</span>
+      </div>
+      {row.claims?.length > 0 ? (
+        <ul className="mt-2 space-y-2">
+          {row.claims.map((c) => (
+            <li key={c.id} className="text-sm text-navy-400">
+              {c.text}
+              {c.interview?.source?.alias ? ` — ${c.interview.source.alias}` : ''}
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      {canWrite ? (
+        <div className="mt-2 flex flex-wrap items-center gap-4">
+          {row.status === 'Open' ? (
+            <button type="button" className={textBtn} disabled={busy} onClick={() => setHearing((v) => !v)}>
+              {hearing ? 'Cancel' : 'We heard from someone'}
+            </button>
+          ) : null}
+          {row.status === 'Open' ? (
+            <button type="button" className={textBtn} disabled={busy} onClick={() => setStatus('Answered')}>
+              Mark answered
+            </button>
+          ) : (
+            <button type="button" className={textBtn} disabled={busy} onClick={() => setStatus('Open')}>
+              Reopen
+            </button>
+          )}
+          {row.claims?.length ? null : (
+            <button type="button" className="text-sm text-navy-400" disabled={busy} onClick={remove}>
+              Remove
+            </button>
+          )}
+        </div>
+      ) : null}
+      {hearing ? (
+        <HeardFrom
+          project={project}
+          question={row.text}
+          onDone={() => {
+            setHearing(false);
+            setFlash('Filed. A claim appears only after the conversation is transcribed.');
+            onDone();
+          }}
+          setErr={setErr}
+        />
+      ) : null}
+    </li>
+  );
+}
+
+function HeardFrom({ project, question, onDone, setErr }) {
+  const [alias, setAlias] = useState('');
+  const [relationship, setRelationship] = useState('FormerEmployee');
+  const [employer, setEmployer] = useState('');
+  const [consent, setConsent] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  async function submit(ev) {
+    ev.preventDefault();
+    setSaving(true);
+    setErr('');
+    try {
+      const { data: source } = await api.post('/research/sources', {
+        alias: alias.trim(),
+        relationship,
+        employer: employer.trim(),
+        tickers: project.ticker ? [project.ticker] : [],
+      });
+      await api.post('/research/interviews', {
+        sourceId: source.id,
+        title: question.slice(0, 300),
+        ticker: project.ticker || '',
+        projectId: project.id,
+        consentObtained: consent,
+        consentNote: consent ? 'Recorded when the conversation was filed.' : '',
+      });
+      onDone();
+    } catch (e) {
+      setErr(errText(e, 'Could not file the conversation'));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <form onSubmit={submit} className="mt-3 grid gap-2 sm:grid-cols-2">
+      <input
+        className={input}
+        value={alias}
+        onChange={(e) => setAlias(e.target.value)}
+        placeholder="How they're cited"
+      />
+      <select className={input} value={relationship} onChange={(e) => setRelationship(e.target.value)}>
+        {RELATIONSHIPS.map(([v, l]) => (
+          <option key={v} value={v}>{l}</option>
+        ))}
+      </select>
+      <input
+        className={input}
+        value={employer}
+        onChange={(e) => setEmployer(e.target.value)}
+        placeholder="Employer — what makes two voices independent"
+      />
+      <label className="flex items-center gap-2 text-sm text-navy">
+        <input type="checkbox" checked={consent} onChange={(e) => setConsent(e.target.checked)} />
+        They agreed to be recorded
+      </label>
+      {relationship === 'CurrentEmployee' ? (
+        <p className="sm:col-span-2 text-[11px] text-navy-400">
+          A current employee starts at elevated MNPI risk. Stay off unreleased numbers, guidance, and anything under NDA.
+        </p>
+      ) : null}
+      <div>
+        <button className={textBtn} disabled={saving || !alias.trim()}>
+          {saving ? 'Filing…' : 'File the conversation'}
+        </button>
+      </div>
+    </form>
+  );
+}
+
+function LinkClaim({ claim, questions, onDone, setErr }) {
+  const [questionId, setQuestionId] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  async function submit(ev) {
+    ev.preventDefault();
+    if (!questionId) return;
+    setSaving(true);
+    setErr('');
+    try {
+      await api.post(`/research/claims/${claim.id}/link`, { questionId: Number(questionId) });
+      onDone();
+    } catch (e) {
+      setErr(errText(e, 'Could not attach the claim'));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (!questions.length) return null;
+  return (
+    <form onSubmit={submit} className="mt-2 flex flex-wrap items-center gap-2">
+      <select className={`${input} w-auto`} value={questionId} onChange={(e) => setQuestionId(e.target.value)}>
+        <option value="">This answers…</option>
+        {questions.map((q) => (
+          <option key={q.id} value={q.id}>{q.text}</option>
+        ))}
+      </select>
+      <button className={textBtn} disabled={saving || !questionId}>Attach</button>
+    </form>
+  );
+}
+
+function Conversations({ project, canWrite, onDone, setFlash, setErr }) {
+  const interviews = project.interviews || [];
+  if (!interviews.length) return null;
+  return (
+    <section className="mt-10">
+      <h2 className="font-serif text-2xl font-medium tracking-tight text-navy">Conversations</h2>
+      <ul className="mt-2">
+        {interviews.map((i) => (
+          <Conversation
+            key={i.id}
+            interview={i}
+            canWrite={canWrite}
+            onDone={onDone}
+            setFlash={setFlash}
+            setErr={setErr}
+          />
+        ))}
+      </ul>
     </section>
   );
 }
 
-const input = 'w-full rounded-lg border border-navy-100 px-3 py-1.5 text-sm';
-const btn =
-  'inline-flex items-center gap-1.5 rounded-lg bg-navy px-3 py-1.5 text-sm font-semibold text-white disabled:opacity-40';
-
-function NewSource({ onDone }) {
-  const [f, setF] = useState({ alias: '', relationship: 'FormerEmployee', employer: '', role: '', tickers: '' });
-  const [saving, setSaving] = useState(false);
-  const [e, setE] = useState('');
-
-  async function submit(ev) {
-    ev.preventDefault();
-    setSaving(true);
-    setE('');
-    try {
-      await api.post('/research/sources', {
-        ...f,
-        tickers: f.tickers.split(',').map((t) => t.trim()).filter(Boolean),
-      });
-      setF({ alias: '', relationship: 'FormerEmployee', employer: '', role: '', tickers: '' });
-      onDone();
-    } catch (err) {
-      setE(err.response?.data?.error || 'Could not save');
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  return (
-    <Card title="Add a source" icon={Users}>
-      <form onSubmit={submit} className="space-y-2">
-        <input
-          className={input}
-          placeholder="Alias — how they're cited (e.g. Former regional distributor)"
-          value={f.alias}
-          onChange={(ev) => setF({ ...f, alias: ev.target.value })}
-        />
-        <div className="grid grid-cols-2 gap-2">
-          <select
-            className={input}
-            value={f.relationship}
-            onChange={(ev) => setF({ ...f, relationship: ev.target.value })}
-          >
-            {RELATIONSHIPS.map(([v, l]) => (
-              <option key={v} value={v}>{l}</option>
-            ))}
-          </select>
-          <input
-            className={input}
-            placeholder="Employer"
-            value={f.employer}
-            onChange={(ev) => setF({ ...f, employer: ev.target.value })}
-          />
-        </div>
-        <div className="grid grid-cols-2 gap-2">
-          <input
-            className={input}
-            placeholder="Role"
-            value={f.role}
-            onChange={(ev) => setF({ ...f, role: ev.target.value })}
-          />
-          <input
-            className={input}
-            placeholder="Tickers (comma separated)"
-            value={f.tickers}
-            onChange={(ev) => setF({ ...f, tickers: ev.target.value })}
-          />
-        </div>
-        {/* Employer is what makes two voices independent rather than one
-            echo, so it is worth nagging for. */}
-        {!f.employer ? (
-          <p className="text-[11px] text-navy-400">
-            Employer is used to tell independent corroboration from two
-            colleagues repeating each other — worth filling in.
-          </p>
-        ) : null}
-        {f.relationship === 'CurrentEmployee' ? (
-          <p className="flex items-start gap-1.5 text-[11px] text-amber-800">
-            <ShieldAlert className="mt-px h-3.5 w-3.5 shrink-0" />
-            Current employees carry material non-public information risk.
-            Interviews with them open at elevated risk and should avoid
-            unreleased financials, guidance, and anything under NDA.
-          </p>
-        ) : null}
-        {e ? <p className="text-xs text-red-700">{e}</p> : null}
-        <button className={btn} disabled={saving || !f.alias}>
-          {saving ? 'Saving…' : 'Add source'}
-        </button>
-      </form>
-    </Card>
-  );
-}
-
-function NewInterview({ sources, onDone }) {
-  const [f, setF] = useState({ sourceId: '', title: '', ticker: '', consentObtained: false, consentNote: '' });
-  const [saving, setSaving] = useState(false);
-  const [e, setE] = useState('');
-
-  async function submit(ev) {
-    ev.preventDefault();
-    setSaving(true);
-    setE('');
-    try {
-      await api.post('/research/interviews', f);
-      setF({ sourceId: '', title: '', ticker: '', consentObtained: false, consentNote: '' });
-      onDone();
-    } catch (err) {
-      setE(err.response?.data?.error || 'Could not save');
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  return (
-    <Card title="Log an interview" icon={FileText}>
-      <form onSubmit={submit} className="space-y-2">
-        <select
-          className={input}
-          value={f.sourceId}
-          onChange={(ev) => setF({ ...f, sourceId: ev.target.value })}
-        >
-          <option value="">Select a source…</option>
-          {sources.map((s) => (
-            <option key={s.id} value={s.id}>
-              {s.alias}{s.employer ? ` — ${s.employer}` : ''}
-            </option>
-          ))}
-        </select>
-        <div className="grid grid-cols-[1fr_7rem] gap-2">
-          <input
-            className={input}
-            placeholder="Title"
-            value={f.title}
-            onChange={(ev) => setF({ ...f, title: ev.target.value })}
-          />
-          <input
-            className={input}
-            placeholder="Ticker"
-            value={f.ticker}
-            onChange={(ev) => setF({ ...f, ticker: ev.target.value.toUpperCase() })}
-          />
-        </div>
-        <label className="flex items-start gap-2 text-xs text-navy">
-          <input
-            type="checkbox"
-            checked={f.consentObtained}
-            onChange={(ev) => setF({ ...f, consentObtained: ev.target.checked })}
-            className="mt-0.5"
-          />
-          <span>
-            The source consented to being recorded.{' '}
-            <span className="text-navy-400">
-              Required before any audio can be uploaded — recording without
-              consent is unlawful in two-party-consent states.
-            </span>
-          </span>
-        </label>
-        {f.consentObtained ? (
-          <input
-            className={input}
-            placeholder="How consent was given (e.g. verbal, on tape, 00:12)"
-            value={f.consentNote}
-            onChange={(ev) => setF({ ...f, consentNote: ev.target.value })}
-          />
-        ) : null}
-        {e ? <p className="text-xs text-red-700">{e}</p> : null}
-        <button className={btn} disabled={saving || !f.sourceId || !f.title}>
-          {saving ? 'Saving…' : 'Log interview'}
-        </button>
-      </form>
-    </Card>
-  );
-}
-
-function InterviewList({ interviews, busy, onExtract, onUploaded, setFlash }) {
-  return (
-    <Card title="Interviews" icon={Mic}>
-      {interviews.length === 0 ? (
-        <p className="text-sm text-navy-400">No interviews yet.</p>
-      ) : (
-        <ul className="divide-y divide-navy-50">
-          {interviews.map((i) => (
-            <InterviewRow
-              key={i.id}
-              interview={i}
-              busy={busy}
-              onExtract={onExtract}
-              onUploaded={onUploaded}
-              setFlash={setFlash}
-            />
-          ))}
-        </ul>
-      )}
-    </Card>
-  );
-}
-
-function InterviewRow({ interview: i, busy, onExtract, onUploaded, setFlash }) {
-  const fileRef = useRef(null);
+function Conversation({ interview: i, canWrite, onDone, setFlash, setErr }) {
   const [uploading, setUploading] = useState(false);
+  const [extracting, setExtracting] = useState(false);
+  const canExtract = i.status === 'Transcribed' || i.status === 'Extracted' || !!i.transcript;
 
   async function upload(file) {
     if (!file) return;
     setUploading(true);
-    setFlash(null);
+    setErr('');
     const form = new FormData();
     form.append('file', file);
     try {
       const { data } = await api.post(`/research/interviews/${i.id}/recording`, form, {
         headers: { 'Content-Type': 'multipart/form-data' },
       });
-      setFlash({
-        kind: data.diarizationWarning ? 'warn' : 'ok',
-        text: data.diarizationWarning
-          ? `Transcribed ${data.wordCount} words. ${data.diarizationWarning}`
-          : `Transcribed ${data.wordCount} words across ${data.speakerCount} speakers.`,
-      });
-      onUploaded();
-    } catch (err) {
-      setFlash({ kind: 'err', text: err.response?.data?.error || 'Upload failed' });
+      setFlash(
+        data?.wordCount
+          ? `Transcribed ${data.wordCount} words.`
+          : 'Recording received.'
+      );
+      onDone();
+    } catch (e) {
+      setErr(errText(e, 'Upload failed'));
     } finally {
       setUploading(false);
-      if (fileRef.current) fileRef.current.value = '';
     }
   }
 
-  const canExtract = i.status === 'Transcribed' || i.status === 'Extracted';
-
-  return (
-    <li className="py-2.5">
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <p className="truncate text-sm font-semibold text-navy">
-            {i.ticker ? <span className="text-navy-400">{i.ticker} · </span> : null}
-            {i.title}
-          </p>
-          <p className="truncate text-xs text-navy-400">
-            {i.source?.alias}
-            {i.source?.employer ? ` · ${i.source.employer}` : ''} ·{' '}
-            {new Date(i.conductedAt).toLocaleDateString()} · {i._count?.claims ?? 0} claims
-          </p>
-          <div className="mt-1 flex flex-wrap items-center gap-1.5">
-            <Chip>{i.status}</Chip>
-            {!i.consentObtained ? <Chip tone="warn">No consent recorded</Chip> : null}
-            {i.mnpiRisk !== 'low' ? <Chip tone="warn">MNPI {i.mnpiRisk}</Chip> : null}
-            {i.quarantined ? <Chip tone="err">Quarantined — not citable</Chip> : null}
-          </div>
-        </div>
-        <div className="flex shrink-0 flex-col items-end gap-1.5">
-          <input
-            ref={fileRef}
-            type="file"
-            accept="audio/*,video/*"
-            className="hidden"
-            onChange={(e) => upload(e.target.files?.[0])}
-          />
-          <button
-            className="rounded-lg border border-navy-100 px-2.5 py-1 text-xs font-semibold text-navy disabled:opacity-40"
-            disabled={uploading || !i.consentObtained}
-            title={
-              i.consentObtained
-                ? 'Upload the recording and transcribe it'
-                : 'Consent must be recorded before uploading audio'
-            }
-            onClick={() => fileRef.current?.click()}
-          >
-            {uploading ? 'Transcribing…' : i.recordingRef ? 'Re-upload' : 'Upload audio'}
-          </button>
-          <button
-            className="rounded-lg border border-navy-100 px-2.5 py-1 text-xs font-semibold text-navy disabled:opacity-40"
-            disabled={!canExtract || busy === `extract-${i.id}` || i.quarantined}
-            onClick={() => onExtract(i.id)}
-          >
-            {busy === `extract-${i.id}` ? 'Extracting…' : 'Extract claims'}
-          </button>
-        </div>
-      </div>
-    </li>
-  );
-}
-
-function Chip({ children, tone }) {
-  const cls =
-    tone === 'err'
-      ? 'border-red-200 bg-red-50 text-red-800'
-      : tone === 'warn'
-      ? 'border-amber-200 bg-amber-50 text-amber-900'
-      : 'border-navy-100 bg-navy-50 text-navy-500';
-  return (
-    <span className={`rounded border px-1.5 py-0.5 text-[10px] font-semibold ${cls}`}>
-      {children}
-    </span>
-  );
-}
-
-function Ledger({ ledger, onChanged }) {
-  const byTopic = new Map();
-  for (const c of ledger.claims) {
-    const k = c.topic || '(untopiced)';
-    if (!byTopic.has(k)) byTopic.set(k, []);
-    byTopic.get(k).push(c);
-  }
-
-  return (
-    <Card title="Claim ledger">
-      {ledger.claims.length === 0 ? (
-        <p className="text-sm text-navy-400">
-          No claims yet. Upload a recording and extract to build the ledger.
-        </p>
-      ) : (
-        <div className="space-y-5">
-          {ledger.topics.map((t) => (
-            <div key={t.topic}>
-              <div className="mb-1.5 flex flex-wrap items-center gap-2">
-                <h3 className="font-semibold text-navy">{t.topic}</h3>
-                <span
-                  className={`rounded border px-1.5 py-0.5 text-[10px] font-semibold ${
-                    (SUPPORT_STYLE[t.support] || SUPPORT_STYLE['single-source']).cls
-                  }`}
-                >
-                  {(SUPPORT_STYLE[t.support] || {}).label || t.support}
-                </span>
-                <span className="text-[11px] text-navy-400">
-                  {t.distinctSources} source{t.distinctSources === 1 ? '' : 's'} ·{' '}
-                  {t.independentLines} independent · {t.factCount} fact
-                  {t.opinionCount ? ` · ${t.opinionCount} opinion` : ''}
-                  {t.forecastCount ? ` · ${t.forecastCount} forecast` : ''}
-                </span>
-              </div>
-              <ul className="space-y-2">
-                {(byTopic.get(t.topic) || []).map((c) => (
-                  <ClaimRow key={c.id} claim={c} onChanged={onChanged} />
-                ))}
-              </ul>
-            </div>
-          ))}
-        </div>
-      )}
-    </Card>
-  );
-}
-
-function ClaimRow({ claim: c, onChanged }) {
-  const [working, setWorking] = useState(false);
-
-  async function toggleVerify() {
-    setWorking(true);
+  async function extract() {
+    setExtracting(true);
+    setErr('');
     try {
-      await api.post(`/research/claims/${c.id}/verify`, { unverify: !!c.verifiedById });
-      onChanged();
-    } catch {
-      /* the row simply stays as it was */
+      const { data } = await api.post(`/research/interviews/${i.id}/extract`);
+      const dropped = data?.droppedUnlocatable || 0;
+      setFlash(
+        `Extracted ${data?.extracted ?? 0} claim${data?.extracted === 1 ? '' : 's'}.` +
+          (dropped ? ` ${dropped} discarded — the quoted words were not in the transcript.` : '')
+      );
+      onDone();
+    } catch (e) {
+      setErr(errText(e, 'Extraction failed'));
     } finally {
-      setWorking(false);
+      setExtracting(false);
     }
   }
 
   return (
-    <li className="rounded-lg border border-navy-50 bg-navy-50/40 p-2.5">
-      <p className={`text-sm ${KIND_STYLE[c.kind] || ''}`}>{c.text}</p>
-      {c.quote ? (
-        // The verbatim words are shown, not just the tidy summary. The
-        // summary is the model's; the quote is the source's, and a reader
-        // deciding whether to lean on a claim should see both.
-        <blockquote className="mt-1 border-l-2 border-navy-200 pl-2 text-xs italic text-navy-500">
-          “{c.quote}”
-        </blockquote>
-      ) : null}
-      <div className="mt-1.5 flex flex-wrap items-center gap-2 text-[11px] text-navy-400">
-        <span className="font-mono">{c.citation}</span>
-        <Chip>{c.kind}</Chip>
-        {c.extractionConfidence != null ? (
-          <span>pin {Math.round(c.extractionConfidence * 100)}%</span>
-        ) : null}
-        <button
-          onClick={toggleVerify}
-          disabled={working}
-          className={`ml-auto inline-flex items-center gap-1 rounded border px-1.5 py-0.5 font-semibold ${
-            c.verifiedById
-              ? 'border-emerald-200 bg-emerald-50 text-emerald-800'
-              : 'border-navy-100 text-navy-500'
-          }`}
-          title={
-            c.verifiedById
-              ? 'Verified by a person who listened back'
-              : 'Mark verified once you have listened back and agree the pin is right'
-          }
-        >
-          <Check className="h-3 w-3" />
-          {c.verifiedById ? 'Verified' : 'Verify'}
-        </button>
-      </div>
-    </li>
-  );
-}
-
-// Projects, on the page that predates them.
-//
-// This page was built before ResearchProject existed and only ever
-// listed sources, interviews and the claim ledger — so it and the
-// terminal's FLD panel described different worlds. Someone working here
-// could see seventeen interviews and have no idea which project they
-// belonged to, or that questions, site visits and an outreach funnel
-// existed at all.
-//
-// Deliberately read-only. Running a project — writing the brief, setting
-// questions, working the funnel — belongs in FLD where the whole process
-// is in one pane. This is the signpost, not a second implementation of
-// the same thing.
-function ProjectList({ projects }) {
-  if (!projects || projects.length === 0) return null;
-  return (
-    <Card title="Research projects" icon={FileText}>
-      <ul className="divide-y divide-navy-50">
-        {projects.map((p) => (
-          <li key={p.id} className="flex items-baseline justify-between gap-3 py-2">
-            <div className="min-w-0">
-              <p className="truncate text-sm font-semibold text-navy">
-                {p.ticker ? <span className="text-navy-400">{p.ticker} · </span> : null}
-                {p.name}
-              </p>
-              <p className="text-xs text-navy-400">
-                {p._count?.interviews ?? 0} interview
-                {(p._count?.interviews ?? 0) === 1 ? '' : 's'} ·{' '}
-                {p._count?.artifacts ?? 0} file
-                {(p._count?.artifacts ?? 0) === 1 ? '' : 's'} · {p.status}
-              </p>
-            </div>
-            <span className="shrink-0 text-[11px] text-navy-400">
-              open with{' '}
-              <span className="font-mono text-navy">
-                {p.ticker ? `${p.ticker} RSCH` : 'RSCH'}
-              </span>
-            </span>
-          </li>
-        ))}
-      </ul>
-      <p className="mt-3 text-[11px] text-navy-400">
-        Questions, coverage, the outreach funnel and site visits live in the
-        terminal's FLD panel, where the whole project is in one place. This
-        page covers sources, interviews and the claim ledger.
+    <li className="border-t border-navy/10 py-3 first:border-t-0">
+      <p className="text-sm font-medium text-navy">{i.title}</p>
+      <p className="mt-0.5 text-[11px] text-navy-400">
+        {i.source?.alias || 'Unknown source'}
+        {i.source?.employer ? ` · ${i.source.employer}` : ''} · {i.status}
+        {i.consentObtained ? '' : ' · no consent'}
+        {i.mnpiRisk && i.mnpiRisk !== 'low' ? ` · MNPI ${i.mnpiRisk}` : ''}
       </p>
-    </Card>
+      {canWrite ? (
+        <div className="mt-2 flex flex-wrap items-center gap-4">
+          {i.consentObtained ? (
+            <label className="text-sm text-navy-400">
+              {uploading ? 'Uploading…' : 'Upload recording'}
+              <input
+                type="file"
+                accept="audio/*,video/*"
+                className="sr-only"
+                disabled={uploading}
+                onChange={(e) => upload(e.target.files?.[0])}
+              />
+            </label>
+          ) : (
+            <span className="text-[11px] text-navy-400">No recording until they have agreed.</span>
+          )}
+          {canExtract ? (
+            <button type="button" className={textBtn} disabled={extracting} onClick={extract}>
+              {extracting ? 'Reading…' : 'Pull claims'}
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+    </li>
   );
 }

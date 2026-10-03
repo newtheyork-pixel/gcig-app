@@ -326,12 +326,9 @@ export default function AiChat() {
             <button
               type="button"
               onClick={() => setInfoOpen((v) => !v)}
-              className="flex w-full items-center justify-between text-left text-[10px] font-semibold uppercase tracking-[0.25em] text-gold-700 hover:text-gold"
+              className="flex w-full items-center justify-between text-left text-[13px] font-medium text-navy hover:text-navy-500"
             >
-              <span className="flex items-center gap-2">
-                <span className="h-px w-6 bg-gold" />
-                What the AI knows
-              </span>
+              <span>What the AI knows</span>
               <ChevronDown
                 className={`h-3.5 w-3.5 text-navy-300 transition ${
                   infoOpen ? 'rotate-180' : ''
@@ -347,7 +344,7 @@ export default function AiChat() {
                       IPS &amp; Internal Policies
                     </div>
                     <div>
-                      Full text of both club documents — roles, voting rules,
+                      Full text of both fund documents — roles, voting rules,
                       attendance, permitted / prohibited assets.
                     </div>
                   </div>
@@ -467,7 +464,7 @@ function SessionsList({ sessions, activeId, onOpen, onDelete }) {
     <div className="overflow-hidden rounded-xl border border-navy-100 bg-white">
       <div className="flex items-center gap-2 border-b border-navy-100 px-3 py-2.5">
         <MessageSquare className="h-3.5 w-3.5 text-navy-400" />
-        <span className="text-[10px] font-semibold uppercase tracking-[0.2em] text-navy-400">
+        <span className="text-xs font-medium text-navy-400">
           Conversations
         </span>
         <span className="ml-auto text-[10px] text-navy-300">

@@ -356,7 +356,7 @@ export default function OutreachLabeling() {
           ) : (
             <Card className="p-5">
               <div className="mb-3 flex items-center justify-between gap-3">
-                <div className="text-[10px] font-semibold uppercase tracking-[0.22em] text-gold-700">
+                <div className="text-[11px] font-medium uppercase tracking-[0.14em] text-navy-400">
                   {selected.target?.name || 'unknown'} · {selected.target?.relationship || 'unknown'}
                 </div>
                 <Button variant="outline" onClick={copyForGrok} className="!px-3 !py-1.5">
