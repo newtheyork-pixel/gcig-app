@@ -92,11 +92,11 @@ export default function Organization() {
 
   return (
     <div className="mx-auto max-w-5xl space-y-8">
-      <div className="border-b border-navy-100 pb-4">
-        <p className="text-[11px] font-bold uppercase tracking-[0.2em] text-gold-700">
+      <div>
+        <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-navy-400">
           The Griffin Fund
         </p>
-        <h1 className="mt-2 font-serif text-3xl font-semibold leading-tight text-navy md:text-4xl">
+        <h1 className="mt-1 text-3xl font-semibold leading-tight tracking-tight text-navy md:text-[2rem]">
           Organization
         </h1>
         <p className="mt-1 text-sm text-navy-400">

@@ -376,7 +376,7 @@ export default function Calendar() {
       <PageHeader
         kicker="Schedule"
         title="Calendar"
-        subtitle="Pitches and club events on one view."
+        subtitle="Pitches and events on one view."
         actions={
           <div className="flex flex-wrap gap-2">
             <Button

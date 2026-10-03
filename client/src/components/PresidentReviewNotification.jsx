@@ -8,6 +8,11 @@ import Button from './Button.jsx';
 // page reload but the user can choose to silence it for the rest of the
 // cycle. The key bakes in the cycle string so a fresh academic year
 // re-opens the prompt automatically.
+//
+// Unmounted from Layout while the review is closed to the membership
+// (Sep '26). Super-admin still reaches the archive at /president-review.
+// Leave this file in place so flipping the review back on is a one-line
+// import, not a rewrite.
 const DISMISS_KEY_PREFIX = 'gcig_president_review_dismissed_';
 
 // Login is a full reload to /dashboard (see CLAUDE.md > Auth model). We
@@ -56,24 +61,25 @@ export default function PresidentReviewNotification() {
   const cycleLabel = status.cycle;
 
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-navy/70 p-4">
-      <div className="relative w-full max-w-md overflow-hidden rounded-2xl bg-white shadow-2xl">
-        <div className="bg-gradient-to-r from-navy to-navy-700 p-6 text-white">
-          <div className="flex items-start justify-between">
+    <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 p-4">
+      <div className="relative w-full max-w-md overflow-hidden rounded-2xl border border-black/[0.08] bg-white shadow-xl">
+        <div className="h-0.5 bg-gold" />
+        <div className="px-6 pt-5">
+          <div className="flex items-start justify-between gap-3">
             <div>
-              <div className="text-[10px] font-semibold uppercase tracking-[0.25em] text-gold">
+              <div className="text-[11px] font-medium uppercase tracking-[0.14em] text-navy-400">
                 End of year · {cycleLabel}
               </div>
-              <div className="mt-2 flex items-center gap-3">
-                <ClipboardList className="h-7 w-7 text-gold" />
-                <div className="font-serif text-2xl font-semibold leading-tight">
+              <div className="mt-1.5 flex items-center gap-2.5">
+                <ClipboardList className="h-5 w-5 text-navy" />
+                <div className="text-xl font-semibold tracking-tight text-navy">
                   President Review
                 </div>
               </div>
             </div>
             <button
               onClick={dismiss}
-              className="rounded-lg p-1 text-white/80 hover:bg-white/20 hover:text-white"
+              className="rounded-lg p-1 text-navy-400 hover:bg-black/[0.04] hover:text-navy"
               aria-label="Dismiss"
             >
               <X className="h-5 w-5" />
@@ -96,7 +102,7 @@ export default function PresidentReviewNotification() {
             <Button variant="outline" onClick={dismiss}>
               Later
             </Button>
-            <Button variant="gold" onClick={goReview}>
+            <Button onClick={goReview}>
               Review now
             </Button>
           </div>

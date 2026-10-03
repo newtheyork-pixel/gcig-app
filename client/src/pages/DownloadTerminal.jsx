@@ -60,7 +60,7 @@ export default function DownloadTerminal() {
         <div>
           <h1 className="text-2xl font-semibold text-navy-900">Griffin Terminal</h1>
           <p className="text-sm text-navy-500">
-            The club's research terminal, native for Mac. Free to every member.
+            The fund's research terminal, native for Mac. Free to every member.
           </p>
         </div>
       </div>

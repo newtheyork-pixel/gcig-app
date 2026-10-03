@@ -284,7 +284,7 @@ function PitchRow({ item: p }) {
   const label = outcome === 'Approved' ? 'Voted Yes' : outcome;
   const tooltip =
     outcome === 'Approved'
-      ? 'Club voted yes — awaiting execution by the trading team.'
+      ? 'The fund voted yes — awaiting execution by the trading team.'
       : p.outcomeInferred
         ? 'Inferred from current portfolio — ticker is held so the pitch clearly passed. Raw votedOutcome hasn\'t been set on this row.'
         : outcome === 'Scheduled'

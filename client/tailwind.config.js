@@ -28,13 +28,13 @@ export default {
         },
       },
       fontFamily: {
-        sans: ['Inter', 'system-ui', '-apple-system', 'sans-serif'],
-        // Institutional serif used on the public landing page. Source Serif 4
-        // is free-to-host and reads cleanly at both display and body sizes.
+        sans: ['Geist', 'system-ui', '-apple-system', 'sans-serif'],
+        // Serif stays on the public landing page and on long-form
+        // prose (the Day in Review). App chrome is sans.
         serif: ['"Source Serif 4"', 'Georgia', 'serif'],
       },
       boxShadow: {
-        card: '0 1px 3px rgba(27, 42, 74, 0.08), 0 1px 2px rgba(27, 42, 74, 0.04)',
+        card: '0 1px 2px rgba(13, 22, 38, 0.04)',
       },
     },
   },

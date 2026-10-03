@@ -60,7 +60,7 @@ export default function Alerts({ onOpen }) {
       <div className="term-panel-header">
         <span className="name">Policy alerts</span>
         <span style={{ color: 'var(--term-fg-muted)', fontSize: 10, marginLeft: 8 }}>
-          against the club&apos;s own IPS
+          against the fund&apos;s own IPS
         </span>
         <button className="term-btn" style={{ marginLeft: 'auto' }} onClick={load}>RECHECK</button>
       </div>

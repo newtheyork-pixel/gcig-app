@@ -282,7 +282,7 @@ export default function Profile() {
                               </span>
                             ) : isApproved ? (
                               <span
-                                title="Club voted yes — awaiting execution by the trading team."
+                                title="The fund voted yes — awaiting execution by the trading team."
                                 className="inline-flex items-center rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-bold uppercase text-emerald-900"
                               >
                                 Voted Yes
@@ -611,13 +611,10 @@ function LunchScheduleCard() {
   );
 }
 
-// Small-caps section label with a gold hairline, used inside the Security
-// card to separate sign-in method / password / 2FA / sessions.
 function SecuritySubsection({ label, children }) {
   return (
     <section>
-      <div className="mb-4 flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.25em] text-gold-700">
-        <span className="h-px w-6 bg-gold" />
+      <div className="mb-4 text-[11px] font-medium uppercase tracking-[0.14em] text-navy-400">
         {label}
       </div>
       {children}

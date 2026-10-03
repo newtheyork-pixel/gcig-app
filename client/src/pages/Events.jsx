@@ -104,7 +104,7 @@ export default function Events() {
     <>
       <PageHeader
         title="Events"
-        subtitle="Speaker series, field trips, and other club events."
+        subtitle="Speaker series, field trips, and other events."
         actions={
           <AdminOnly>
             <Button onClick={openCreate} variant="gold">

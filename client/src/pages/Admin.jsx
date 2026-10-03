@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Navigate, useSearchParams } from 'react-router-dom';
+import { Link, Navigate, useSearchParams } from 'react-router-dom';
 import { RefreshCw, Sparkles, Cloud, Upload, Unplug } from 'lucide-react';
 import api, { API_BASE } from '../api/client.js';
 import PageHeader from '../components/PageHeader.jsx';
@@ -146,9 +146,19 @@ export default function Admin() {
   return (
     <>
       <PageHeader
-        kicker="Club Management"
+        kicker="Administration"
         title="Admin"
-        subtitle="Manage members and review security events."
+        subtitle="Members, roles, and the audit trail."
+        actions={
+          isSuperAdmin ? (
+            <Link
+              to="/president-review"
+              className="text-xs font-semibold text-navy-400 underline decoration-navy-100 underline-offset-4 hover:text-navy"
+            >
+              President review archive
+            </Link>
+          ) : null
+        }
       />
       {showStatusStrip && (
         <div className="mb-4 grid gap-4 md:grid-cols-2">

@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext.jsx';
-import AuthBrandMark from '../components/AuthBrandMark.jsx';
+import AuthShell, { authFieldClass, authLinkClass } from '../components/AuthShell.jsx';
 import Button from '../components/Button.jsx';
 
 export default function ForgotPassword() {
@@ -22,26 +22,8 @@ export default function ForgotPassword() {
   }
 
   return (
-    <div className="relative flex min-h-full items-center justify-center overflow-hidden bg-gradient-to-br from-navy via-navy-700 to-navy-800 p-4">
-      <div
-        aria-hidden
-        className="pointer-events-none absolute inset-0 opacity-[0.06]"
-        style={{
-          backgroundImage:
-            'linear-gradient(to right, #C9A84C 1px, transparent 1px), linear-gradient(to bottom, #C9A84C 1px, transparent 1px)',
-          backgroundSize: '48px 48px',
-        }}
-      />
-      <div className="relative w-full max-w-md">
-        <div className="mb-8 flex flex-col items-center text-center">
-          <AuthBrandMark />
-          <div className="mt-3 text-[10px] font-semibold uppercase tracking-[0.3em] text-gold">
-            Grace Church School Investment Group
-          </div>
-        </div>
-
-        <div className="rounded-xl bg-white p-8 shadow-xl">
-          <h2 className="text-lg font-semibold text-navy">Reset your password</h2>
+    <AuthShell>
+          <h2 className="text-xl font-semibold tracking-tight text-navy">Reset your password</h2>
           {sent ? (
             <>
               <p className="mt-2 text-sm text-navy-400">
@@ -50,7 +32,7 @@ export default function ForgotPassword() {
               </p>
               <Link
                 to="/login"
-                className="mt-6 inline-block text-sm font-semibold text-gold-700 underline"
+                className={`mt-6 inline-block ${authLinkClass}`}
               >
                 Back to sign in
               </Link>
@@ -68,22 +50,20 @@ export default function ForgotPassword() {
                     required
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
-                    className="mt-1 w-full rounded-lg border border-navy-100 px-3 py-2 text-sm focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold"
+                    className={authFieldClass}
                   />
                 </div>
                 <Button type="submit" disabled={submitting} className="w-full">
                   {submitting ? 'Sending…' : 'Send reset link'}
                 </Button>
                 <div className="text-center">
-                  <Link to="/login" className="text-xs font-semibold text-navy-400 underline">
+                  <Link to="/login" className={authLinkClass}>
                     Back to sign in
                   </Link>
                 </div>
               </form>
             </>
           )}
-        </div>
-      </div>
-    </div>
+    </AuthShell>
   );
 }

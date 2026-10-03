@@ -118,7 +118,7 @@ export default function Members({ embedded = false } = {}) {
         <PageHeader
           kicker="Membership"
           title="Members"
-          subtitle="Manage club member accounts and roles."
+          subtitle="Manage member accounts and roles."
           actions={
             <Button onClick={() => setModalOpen(true)} variant="gold">
               <Plus className="h-4 w-4" />

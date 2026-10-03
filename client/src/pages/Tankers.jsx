@@ -56,13 +56,10 @@ export default function Tankers() {
     <div className="space-y-4">
       <div className="flex items-end justify-between">
         <div>
-          {/* Matches the kicker-over-serif-title rhythm every other page
-              uses; this one had its own sans h1. */}
-          <div className="mb-2 flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.25em] text-gold-700">
-            <span className="h-px w-6 bg-gold" />
+          <div className="mb-1.5 text-[11px] font-medium uppercase tracking-[0.14em] text-navy-400">
             Persian Gulf
           </div>
-          <h1 className="font-serif text-2xl font-semibold leading-tight text-navy md:text-3xl">
+          <h1 className="text-2xl font-semibold leading-tight tracking-tight text-navy md:text-[1.75rem]">
             Tanker Tracker
           </h1>
           <p className="text-sm text-navy/60">

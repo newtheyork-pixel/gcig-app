@@ -122,8 +122,8 @@ export default function FileSummary({ fileRef, filename, compact = false }) {
         })
       : '';
     return (
-      <div className="rounded-xl border border-gold-200 bg-[#FFFDF5] px-3 py-3 md:px-4 md:py-4">
-        <div className="mb-2 flex flex-wrap items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.2em] text-gold-700">
+      <div className="rounded-xl border border-black/[0.08] bg-[#F7F8FA] px-3 py-3 md:px-4 md:py-4">
+        <div className="mb-2 flex flex-wrap items-center gap-2 text-[11px] font-medium uppercase tracking-[0.14em] text-navy-400">
           <Sparkles className="h-3.5 w-3.5" />
           AI Summary
           {summary.truncated && (

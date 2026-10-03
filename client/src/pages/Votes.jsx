@@ -7,7 +7,6 @@ import {
   TrendingDown,
   Clock,
   CheckCircle2,
-  ChevronRight,
   ArrowLeft,
   Trash2,
 } from 'lucide-react';
@@ -16,6 +15,7 @@ import { etInputValueToUtcIso } from '../utils/etDateTime.js';
 import PDFModal from '../components/PDFModal.jsx';
 import { useAuth } from '../context/AuthContext.jsx';
 import PageHeader from '../components/PageHeader.jsx';
+import EditorialMasthead from '../components/EditorialMasthead.jsx';
 import Card from '../components/Card.jsx';
 import Button from '../components/Button.jsx';
 import Modal from '../components/Modal.jsx';
@@ -205,7 +205,7 @@ export default function Votes() {
             count={openSessions.length}
             accent="emerald"
           />
-          <div className="mt-3 space-y-3">
+          <div className="mt-2">
             {openSessions.map((s) => (
               <SessionCard
                 key={s.id}
@@ -226,7 +226,7 @@ export default function Votes() {
             </div>
           </Card>
         ) : (
-          <div className="mt-3 space-y-3">
+          <div className="mt-2">
             {closedSessions.map((s) => (
               <SessionCard
                 key={s.id}
@@ -404,37 +404,33 @@ function SessionCard({ session: s, onClick }) {
   return (
     <button
       onClick={onClick}
-      className={`flex w-full items-center gap-4 rounded-xl border bg-white p-4 text-left shadow-card transition hover:shadow-md ${
-        isOpen ? 'border-emerald-200 ring-1 ring-emerald-100' : 'border-navy-100'
-      }`}
+      className="flex w-full items-start gap-5 border-t border-navy/10 py-4 text-left transition hover:bg-white/70"
     >
-      <div className="flex-1 min-w-0">
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="text-lg font-bold text-navy">{s.ticker}</span>
-          {isOpen ? (
-            <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-bold text-emerald-800">
-              LIVE
-            </span>
-          ) : (
-            <span className="rounded-full bg-navy-50 px-2 py-0.5 text-xs font-bold text-navy-400">
-              CLOSED
-            </span>
-          )}
+      <span className="w-16 shrink-0 pt-0.5 font-serif text-2xl font-medium leading-none text-navy">
+        {s.ticker}
+      </span>
+      <div className="min-w-0 flex-1">
+        <div className="flex flex-wrap items-baseline gap-x-3 gap-y-0.5">
+          <span className={`text-[11px] uppercase tracking-[0.14em] ${isOpen ? 'text-emerald-700' : 'text-navy-400'}`}>
+            {isOpen ? 'Live' : 'Closed'}
+          </span>
           {s._count && (
-            <span className="text-xs text-navy-400">{s._count.ballots} ballot(s)</span>
+            <span className="text-xs text-navy-400">
+              {s._count.ballots} {s._count.ballots === 1 ? 'ballot' : 'ballots'}
+            </span>
           )}
         </div>
-        {s.title && <div className="mt-1 text-sm text-navy">{s.title}</div>}
-        <div className="mt-1 text-xs text-navy-400">
-          by {s.creator?.name} • {format(new Date(s.createdAt), 'MMM d, yyyy')}
+        {s.title && <div className="mt-1 text-[15px] text-navy">{s.title}</div>}
+        <div className="mt-0.5 text-xs text-navy-400">
+          {s.creator?.name} · {format(new Date(s.createdAt), 'MMM d, yyyy')}
           {isOpen && (
-            <span className="ml-2 font-semibold text-emerald-700">
-              Closes {formatDistanceToNow(new Date(s.deadline), { addSuffix: true })}
+            <span className="text-emerald-700">
+              {' '}
+              · closes {formatDistanceToNow(new Date(s.deadline), { addSuffix: true })}
             </span>
           )}
         </div>
       </div>
-      <ChevronRight className="h-5 w-5 text-navy-400" />
     </button>
   );
 }
@@ -529,15 +525,15 @@ function SessionDetail({ session, onBack, onRefresh, onClose, onDelete }) {
       <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
         <div>
           <div className="flex items-center gap-3">
-            <h1 className="text-2xl font-bold text-navy md:text-3xl">{session.ticker}</h1>
+            <h1 className="font-serif text-4xl font-medium tracking-tight text-navy md:text-5xl">
+              {session.ticker}
+            </h1>
             {isOpen ? (
-              <span className="rounded-full bg-emerald-100 px-3 py-1 text-xs font-bold text-emerald-800">
-                LIVE — closes {formatDistanceToNow(new Date(session.deadline), { addSuffix: true })}
+              <span className="text-sm text-emerald-700">
+                Live · closes {formatDistanceToNow(new Date(session.deadline), { addSuffix: true })}
               </span>
             ) : (
-              <span className="rounded-full bg-navy-50 px-3 py-1 text-xs font-bold text-navy-400">
-                CLOSED
-              </span>
+              <span className="text-sm text-navy-400">Closed</span>
             )}
           </div>
           {session.title && <p className="mt-1 text-sm text-navy-400">{session.title}</p>}
@@ -682,7 +678,7 @@ function SessionDetail({ session, onBack, onRefresh, onClose, onDelete }) {
                     />
                   </div>
                   <p className="mt-1 text-xs text-navy-400">
-                    How much should the club allocate? Enter a whole dollar
+                    How much should the fund allocate? Enter a whole dollar
                     amount between ${BUY_MIN.toLocaleString()} and ${BUY_MAX.toLocaleString()}.
                   </p>
                 </div>
@@ -1206,81 +1202,40 @@ function VotesMasthead({ openSessions, closedSessions }) {
     : null;
 
   return (
-    <div className="relative overflow-hidden rounded-2xl bg-gradient-to-br from-navy via-navy-700 to-navy-800 text-white shadow-xl">
-      <div
-        aria-hidden
-        className="pointer-events-none absolute inset-0 opacity-[0.06]"
-        style={{
-          backgroundImage:
-            'linear-gradient(to right, #C9A84C 1px, transparent 1px), linear-gradient(to bottom, #C9A84C 1px, transparent 1px)',
-          backgroundSize: '48px 48px',
-        }}
-      />
-      <div className="relative grid gap-4 p-6 md:grid-cols-3 md:gap-8 md:p-8">
-        <div>
-          <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.25em] text-gold">
-            <span className="h-px w-5 bg-gold" />
-            Open Now
-          </div>
-          <div className="mt-3 font-serif text-5xl font-semibold tabular-nums md:text-6xl">
-            {openSessions.length}
-          </div>
-          <div className="mt-2 text-xs text-navy-100">
-            {openSessions.length === 0
+    <EditorialMasthead
+      stats={[
+        {
+          kicker: 'Open now',
+          value: openSessions.length,
+          sub:
+            openSessions.length === 0
               ? 'No votes in progress'
-              : `Active voting session${openSessions.length === 1 ? '' : 's'}`}
-          </div>
-        </div>
-        <div>
-          <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.25em] text-gold">
-            <span className="h-px w-5 bg-gold" />
-            This Month
-          </div>
-          <div className="mt-3 font-serif text-5xl font-semibold tabular-nums md:text-6xl">
-            {totalThisMonth}
-          </div>
-          <div className="mt-2 text-xs text-navy-100">
-            Decisions recorded in {format(new Date(), 'MMMM')}
-          </div>
-        </div>
-        <div>
-          <div className="flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.25em] text-gold">
-            <span className="h-px w-5 bg-gold" />
-            Next Deadline
-          </div>
-          <div className="mt-3 font-serif text-2xl font-semibold leading-tight md:text-3xl">
-            {nextDeadline
-              ? formatDistanceToNow(nextDeadline, { addSuffix: true })
-              : '—'}
-          </div>
-          <div className="mt-2 text-xs text-navy-100">
-            {nextDeadline
-              ? `${openSessions[0].ticker} · ${format(nextDeadline, 'MMM d, h:mm a')}`
-              : 'Nothing scheduled'}
-          </div>
-        </div>
-      </div>
-    </div>
+              : `Active voting session${openSessions.length === 1 ? '' : 's'}`,
+        },
+        {
+          kicker: 'This month',
+          value: totalThisMonth,
+          sub: `Decisions recorded in ${format(new Date(), 'MMMM')}`,
+        },
+        {
+          kicker: 'Next deadline',
+          value: nextDeadline ? formatDistanceToNow(nextDeadline, { addSuffix: true }) : '—',
+          sub: nextDeadline
+            ? `${openSessions[0].ticker} · ${format(nextDeadline, 'MMM d, h:mm a')}`
+            : 'Nothing scheduled',
+          big: false,
+        },
+      ]}
+    />
   );
 }
 
-function SectionKicker({ label, count, accent }) {
-  const toneClass =
-    accent === 'emerald' ? 'text-emerald-700' : 'text-gold-700';
-  const ruleClass =
-    accent === 'emerald' ? 'bg-emerald-500' : 'bg-gold';
+function SectionKicker({ label, count }) {
   return (
-    <div className="flex items-end justify-between border-b border-navy-100 pb-2">
-      <div className="flex items-center gap-2">
-        <span className={`h-px w-6 ${ruleClass}`} />
-        <h2 className={`text-[10px] font-semibold uppercase tracking-[0.25em] ${toneClass}`}>
-          {label}
-        </h2>
-      </div>
+    <div className="flex items-baseline gap-3">
+      <h2 className="font-serif text-2xl font-medium tracking-tight text-navy">{label}</h2>
       {count != null && count > 0 && (
-        <span className="font-serif text-sm font-semibold text-navy tabular-nums">
-          {count}
-        </span>
+        <span className="text-sm tabular-nums text-navy-400">{count}</span>
       )}
     </div>
   );
