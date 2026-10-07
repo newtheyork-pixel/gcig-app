@@ -5,11 +5,13 @@ import prisma from '../db.js';
 // `recurring: true`, so they show up in the calendar AND are markable
 // for attendance just like any other event.
 //
-// `ensureRecurringMeetings` is BOTH additive and destructive:
+// `ensureRecurringMeetings` is additive, and destructive only forward:
 //   - missing expected instances are created
-//   - existing recurring rows that no longer match the schedule (because
-//     we moved startDate forward, added a skipDate, or retired a title)
-//     are deleted, taking their Attendance rows with them via cascade.
+//   - FUTURE recurring rows that no longer match the schedule (because
+//     we added a skipDate or retired a title) are deleted, taking any
+//     Attendance rows with them via cascade.
+//   - a meeting that has already happened is never deleted here, whatever
+//     the schedule now says. See staleInstanceIds for what that cost.
 // Recurring meetings aren't editable through the UI (events.js refuses
 // both PUT and DELETE on recurring=true rows), so there are no manual
 // tweaks to preserve — the code is the source of truth.
@@ -86,6 +88,22 @@ function buildInstances() {
 }
 
 /**
+ * The recurring rows to delete: only FUTURE instances that have fallen
+ * off the schedule. This used to be every row outside the expected set,
+ * and the expected set only reaches MONTHS_BACK into the past, so every
+ * restart (every deploy) deleted each meeting older than three months
+ * and, by cascade, all of its attendance. The spring's record went that
+ * way, a week at a time. A meeting that has happened is history; nothing
+ * here may remove it.
+ */
+export function staleInstanceIds(existing, expectedKeys, now = new Date()) {
+  return existing
+    .filter((e) => new Date(e.date) > now)
+    .filter((e) => !expectedKeys.has(`${e.title}::${new Date(e.date).toISOString()}`))
+    .map((e) => e.id);
+}
+
+/**
  * Ensures every expected recurring meeting exists in the DB, and prunes
  * any recurring rows that are no longer in the expected set (e.g. past
  * phantom instances from before startDate, or cancelled skipDates).
@@ -111,11 +129,9 @@ export async function ensureRecurringMeetings() {
     existing.map((e) => `${e.title}::${new Date(e.date).toISOString()}`)
   );
 
-  // Prune: recurring rows whose (title, date) no longer matches the
-  // expected schedule. Cascades to Attendance.
-  const toDeleteIds = existing
-    .filter((e) => !expectedKey.has(`${e.title}::${new Date(e.date).toISOString()}`))
-    .map((e) => e.id);
+  // Prune: future recurring rows whose (title, date) no longer matches
+  // the expected schedule. Cascades to Attendance.
+  const toDeleteIds = staleInstanceIds(existing, expectedKey);
   if (toDeleteIds.length > 0) {
     await prisma.event.deleteMany({ where: { id: { in: toDeleteIds } } });
     console.log(`Pruned ${toDeleteIds.length} stale recurring meeting instance(s).`);
