@@ -2,21 +2,29 @@ import { Router } from 'express';
 import prisma from '../db.js';
 import { verifyJwt, requireRole } from '../middleware/auth.js';
 import { assertSafeHttpUrl } from '../services/validateUrl.js';
+import { mentionsSegLabel } from '../services/segLabel.js';
 
 const canEditReports = requireRole('PortfolioManager');
 
 const router = Router();
 router.use(verifyJwt);
 
+function shownReport(report) {
+  return report && !mentionsSegLabel(report.title) && !mentionsSegLabel(report.description);
+}
+
 router.get('/', async (_req, res) => {
   const reports = await prisma.report.findMany({ orderBy: { date: 'desc' } });
-  res.json(reports);
+  res.json(reports.filter(shownReport));
 });
 
 router.post('/', canEditReports, async (req, res) => {
   const { title, author, ticker, date, description, fileUrl } = req.body || {};
   if (!title || !author || !date || !fileUrl) {
     return res.status(400).json({ error: 'title, author, date, and link required' });
+  }
+  if (mentionsSegLabel(title) || mentionsSegLabel(description)) {
+    return res.status(400).json({ error: 'That name cannot be shown on the site.' });
   }
   try {
     assertSafeHttpUrl(fileUrl, 'Report link');
@@ -58,6 +66,7 @@ router.put('/:id', canEditReports, async (req, res) => {
   if (fileUrl !== undefined) data.fileUrl = fileUrl;
 
   const report = await prisma.report.update({ where: { id }, data });
+  if (!shownReport(report)) return res.status(404).json({ error: 'Not found' });
   res.json(report);
 });
 

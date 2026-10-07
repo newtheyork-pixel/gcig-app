@@ -21,6 +21,13 @@ import { screenOutreach } from '../services/outreachScreen.js';
 import { uploadFile } from '../services/oneDriveStorage.js';
 import { ingestRecording } from '../services/recordingIngest.js';
 import { parsePhone } from '../services/phone.js';
+import {
+  mentionsSegLabel,
+  projectCarriesSegLabel,
+  withoutSegProjects,
+  stripSegLabels,
+  claimCarriesSegLabel,
+} from '../services/segLabel.js';
 
 // Field research — sources, interviews, and the claim ledger.
 //
@@ -171,7 +178,10 @@ router.get('/projects', async (req, res) => {
         },
       },
     });
-    res.json(projects);
+    // Labeled archive rows stay in the database and leave this payload
+    // for every caller, including the super admin. ownerOnly would
+    // still hand them back to that account.
+    res.json(withoutSegProjects(projects));
   } catch (err) {
     console.error('research/projects failed:', err.message);
     res.status(500).json({ error: 'Could not load projects' });
@@ -231,6 +241,9 @@ router.get('/follow-ups', async (req, res) => {
         id: true,
         name: true,
         ticker: true,
+        brief: true,
+        aims: true,
+        folder: true,
         targets: {
           select: {
             id: true,
@@ -250,7 +263,7 @@ router.get('/follow-ups', async (req, res) => {
     const rows = [];
     const counts = {};
     let nextDueAt = null;
-    for (const p of projects) {
+    for (const p of withoutSegProjects(projects)) {
       const chase = assessOutreach(p.targets);
       for (const [state, n] of Object.entries(chase.counts || {})) {
         counts[state] = (counts[state] || 0) + n;
@@ -323,7 +336,7 @@ router.get('/inbox', async (req, res) => {
         target: {
           select: {
             id: true, name: true, employer: true, role: true, email: true, status: true,
-            project: { select: { id: true, name: true, ticker: true } },
+            project: { select: { id: true, name: true, ticker: true, brief: true, aims: true, folder: true } },
           },
         },
       },
@@ -332,7 +345,12 @@ router.get('/inbox', async (req, res) => {
     // Which of these are still owed an answer. Computed from the same
     // service the desk uses rather than inferred from the row, so the
     // inbox and the chase list cannot disagree about who is waiting.
-    const targetIds = [...new Set(rows.map((r) => r.target?.id).filter(Boolean))];
+    const visibleRows = rows.filter((m) =>
+      !projectCarriesSegLabel(m.target?.project)
+      && !mentionsSegLabel(m.subject)
+      && !mentionsSegLabel(m.body)
+      && !mentionsSegLabel(m.draft?.subject));
+    const targetIds = [...new Set(visibleRows.map((r) => r.target?.id).filter(Boolean))];
     const targets = targetIds.length
       ? await prisma.researchTarget.findMany({
           where: { id: { in: targetIds } },
@@ -349,14 +367,22 @@ router.get('/inbox', async (req, res) => {
     const state = new Map(targets.map((t) => [t.id, assessTarget(t)]));
 
     res.json({
-      messages: rows.map((m) => ({
+      messages: visibleRows.map((m) => ({
         ...m,
         subject: m.subject || m.draft?.subject || null,
         followUp: state.get(m.target?.id) || null,
+        // brief / aims / folder were loaded only so the label check
+        // could see them. They are not part of this payload.
+        target: m.target ? {
+          ...m.target,
+          project: m.target.project
+            ? { id: m.target.project.id, name: m.target.project.name, ticker: m.target.project.ticker }
+            : null,
+        } : m.target,
       })),
       counts: {
-        total: rows.length,
-        owed: rows.filter((m) => state.get(m.target?.id)?.state === 'owed').length,
+        total: visibleRows.length,
+        owed: visibleRows.filter((m) => state.get(m.target?.id)?.state === 'owed').length,
       },
     });
   } catch (err) {
@@ -694,7 +720,7 @@ router.get('/projects/manifest', async (req, res) => {
         where: req.user?.isGuest
           ? { ownerOnly: false, ticker: { in: GUEST_RESEARCH_TICKERS } }
           : undefined,
-        select: { id: true, name: true, ticker: true, updatedAt: true },
+        select: { id: true, name: true, ticker: true, brief: true, aims: true, folder: true, updatedAt: true },
       }),
       prisma.researchArtifact.groupBy({
         by: ['projectId'],
@@ -705,7 +731,7 @@ router.get('/projects/manifest', async (req, res) => {
     ]);
 
     const byProject = new Map(agg.map((a) => [a.projectId, a]));
-    res.json(projects.map((p) => {
+    res.json(withoutSegProjects(projects).map((p) => {
       const a = byProject.get(p.id);
       const artifactStamp = a?._max?.updatedAt ?? null;
       return {
@@ -843,9 +869,12 @@ router.get('/projects/:id', async (req, res) => {
     if (project?.ownerOnly && !isSuperAdminEmail(req.user?.email)) {
       return res.status(404).json({ error: 'Not found' });
     }
-    if (!project) return res.status(404).json({ error: 'Not found' });
+    // A labeled project and a missing one answer the same way. Hiding
+    // it from the list while a direct link still opens it is not hiding
+    // it, and that includes the super admin.
+    if (!stripSegLabels(project)) return res.status(404).json({ error: 'Not found' });
 
-    const claims = await prisma.researchClaim.findMany({
+    const claims = (await prisma.researchClaim.findMany({
       where: { interview: { projectId: id, ...CITABLE } },
       orderBy: [{ topic: 'asc' }, { startMs: 'asc' }],
       include: {
@@ -856,7 +885,7 @@ router.get('/projects/:id', async (req, res) => {
           },
         },
       },
-    });
+    })).filter((c) => !claimCarriesSegLabel(c));
 
     // Observations live under visits; flatten them so coverage can see
     // both kinds of evidence against a question in one pass.
@@ -983,6 +1012,9 @@ router.get('/projects/:id', async (req, res) => {
 router.post('/projects', canResearch, async (req, res) => {
   const { ticker, name, brief } = req.body || {};
   if (!name) return res.status(400).json({ error: 'name is required' });
+  if (mentionsSegLabel(name) || mentionsSegLabel(brief)) {
+    return res.status(400).json({ error: 'That name cannot be shown on the site.' });
+  }
   const ownerOnly = req.body?.ownerOnly === true || req.body?.ownerOnly === 'true';
   try {
     const project = await prisma.researchProject.create({
@@ -1053,8 +1085,13 @@ router.patch('/projects/:id', canResearch, async (req, res) => {
     }
     data.status = req.body.status;
   }
+  if (['name', 'brief', 'aims', 'folder'].some((k) => mentionsSegLabel(data[k]))) {
+    return res.status(400).json({ error: 'That name cannot be shown on the site.' });
+  }
   try {
-    res.json(await prisma.researchProject.update({ where: { id }, data }));
+    const updated = await prisma.researchProject.update({ where: { id }, data });
+    if (projectCarriesSegLabel(updated)) return res.status(404).json({ error: 'Not found' });
+    res.json(updated);
   } catch (err) {
     console.error('research/project update failed:', err.message);
     res.status(500).json({ error: 'Could not update project' });
@@ -1075,13 +1112,16 @@ router.post(
     if (!Number.isInteger(id)) return res.status(400).json({ error: 'Bad id' });
     const title = req.body?.title || req.file?.originalname;
     if (!title) return res.status(400).json({ error: 'title or a file is required' });
+    if (mentionsSegLabel(title)) {
+      return res.status(400).json({ error: 'That name cannot be shown on the site.' });
+    }
     if (!req.file && !req.body?.body && !req.body?.fileRef) {
       return res.status(400).json({ error: 'Attach a file, reference one, or write some text.' });
     }
     const kind = ARTIFACT_KINDS.has(req.body?.kind) ? req.body.kind : 'document';
     try {
       const project = await prisma.researchProject.findUnique({ where: { id } });
-      if (!project) return res.status(404).json({ error: 'No such project' });
+      if (!project || projectCarriesSegLabel(project)) return res.status(404).json({ error: 'No such project' });
 
       let fileRef = null;
       // An item already in OneDrive: imported by reference rather than
@@ -1305,10 +1345,19 @@ router.get('/artifacts/trashed', canResearch, async (req, res) => {
         id: true, title: true, filename: true, kind: true, projectId: true,
         trashedAt: true,
         trashedBy: { select: { id: true, name: true } },
-        project: { select: { id: true, name: true, ticker: true } },
+        project: { select: { id: true, name: true, ticker: true, brief: true, aims: true, folder: true } },
       },
     });
-    res.json(rows);
+    res.json(rows
+      .filter((r) => !projectCarriesSegLabel(r.project)
+        && !mentionsSegLabel(r.title)
+        && !mentionsSegLabel(r.filename))
+      .map((r) => ({
+        ...r,
+        project: r.project
+          ? { id: r.project.id, name: r.project.name, ticker: r.project.ticker }
+          : r.project,
+      })));
   } catch (err) {
     console.error('research/artifacts trashed failed:', err.message);
     res.status(500).json({ error: 'Could not load the bin' });
@@ -1371,7 +1420,7 @@ router.post('/projects/:id/synthesize', canResearch, heavyLimiter, async (req, r
         visits: { include: { siteObservations: true } },
       },
     });
-    if (!project) return res.status(404).json({ error: 'Not found' });
+    if (!project || projectCarriesSegLabel(project)) return res.status(404).json({ error: 'Not found' });
 
     const claims = await prisma.researchClaim.findMany({
       where: { interview: { projectId: id, ...CITABLE } },
@@ -1435,6 +1484,9 @@ router.post('/projects/:id/questions', canResearch, async (req, res) => {
   const { text, rationale, rank } = req.body || {};
   if (!Number.isInteger(projectId)) return res.status(400).json({ error: 'Bad id' });
   if (!text) return res.status(400).json({ error: 'text is required' });
+  if (mentionsSegLabel(text)) {
+    return res.status(400).json({ error: 'That name cannot be shown on the site.' });
+  }
   try {
     const q = await prisma.researchQuestion.create({
       data: {
@@ -1624,7 +1676,7 @@ router.get('/targets/:id', canResearch, async (req, res) => {
     const target = await prisma.researchTarget.findFirst({
       where: { id, project },
       include: {
-        project: { select: { id: true, name: true, ticker: true } },
+        project: { select: { id: true, name: true, ticker: true, brief: true, aims: true, folder: true } },
         drafts: { orderBy: { createdAt: 'desc' }, include: DRAFT_VIEW },
         // Oldest first: this is a correspondence, and a thread that reads
         // newest-down is a thread nobody can follow.
@@ -1637,12 +1689,22 @@ router.get('/targets/:id', canResearch, async (req, res) => {
     // A target the caller may not see and a target that does not exist are
     // answered identically on purpose: the other way, a 403 confirms that
     // an owner-only project has a person by that id.
-    if (!target) return res.status(404).json({ error: 'No such target' });
+    if (!target || projectCarriesSegLabel(target.project) || mentionsSegLabel(target.name)) {
+      return res.status(404).json({ error: 'No such target' });
+    }
 
+    const drafts = (target.drafts || [])
+      .filter((d) => !mentionsSegLabel(d.subject) && !mentionsSegLabel(d.body) && !mentionsSegLabel(d.sentBody));
+    const messages = (target.messages || [])
+      .filter((m) => !mentionsSegLabel(m.subject) && !mentionsSegLabel(m.body));
     res.json({
       ...target,
-      drafts: (target.drafts || []).map((d) => decorate(d, req.user)),
-      followUp: assessTarget(target),
+      project: target.project
+        ? { id: target.project.id, name: target.project.name, ticker: target.project.ticker }
+        : null,
+      drafts: drafts.map((d) => decorate(d, req.user)),
+      messages,
+      followUp: assessTarget({ ...target, drafts, messages }),
     });
   } catch (err) {
     console.error('research/target read failed:', err.message);
@@ -3837,16 +3899,24 @@ router.get('/compliance', async (_req, res) => {
       orderBy: [{ quarantined: 'desc' }, { conductedAt: 'desc' }],
       include: {
         source: { select: SOURCE_PUBLIC },
-        project: { select: { id: true, name: true, ticker: true } },
+        project: { select: { id: true, name: true, ticker: true, brief: true, aims: true, folder: true } },
         reviewedBy: { select: { id: true, name: true } },
       },
     });
     const total = await prisma.interview.count();
+    const shown = interviews.filter((i) =>
+      !projectCarriesSegLabel(i.project)
+      && !mentionsSegLabel(i.title)
+      && !mentionsSegLabel(i.reviewNote)
+      && !mentionsSegLabel(i.quarantineNote));
     res.json({
       total,
-      needsAttention: interviews.map((i) => ({
+      needsAttention: shown.map((i) => ({
         id: i.id, title: i.title, ticker: i.ticker,
-        project: i.project, source: i.source,
+        project: i.project
+          ? { id: i.project.id, name: i.project.name, ticker: i.project.ticker }
+          : i.project,
+        source: i.source,
         conductedAt: i.conductedAt,
         mnpiRisk: i.mnpiRisk, quarantined: i.quarantined,
         consentObtained: i.consentObtained,

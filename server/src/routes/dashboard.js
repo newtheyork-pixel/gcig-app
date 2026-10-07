@@ -7,6 +7,7 @@ import { eventAudienceWhere } from './events.js';
 import { getCached, regenerate } from '../services/dayInReview.js';
 import { getMacroSnapshot } from '../services/fredMacro.js';
 import { getDailyCriticalHeadline } from '../services/breakingNews.js';
+import { mentionsSegLabel } from '../services/segLabel.js';
 
 const router = Router();
 
@@ -110,6 +111,7 @@ router.get('/', async (req, res) => {
     }),
   ]
     .sort((a, b) => new Date(a.date) - new Date(b.date))
+    .filter((e) => !mentionsSegLabel(e.title) && !mentionsSegLabel(e.location))
     .slice(0, 5);
 
   // Count holdings from the sheet (source of truth). Fail soft.
@@ -140,6 +142,7 @@ router.get('/', async (req, res) => {
     })),
   ]
     .sort((a, b) => new Date(b.at) - new Date(a.at))
+    .filter((a) => !mentionsSegLabel(a.label))
     .slice(0, 5);
 
   // Day in Review: instant cache lookup. The /day-in-review endpoint

@@ -119,6 +119,26 @@ test('search is case-insensitive', async () => {
   assert.equal((await listResearch({ q: 'APPLIED' }, deps)).length, 1);
 });
 
+test('a document whose title carries the SEG label is left out of the archive', async () => {
+  const items = await listResearch({}, {
+    loadReports: async () => [
+      ...REPORTS,
+      {
+        id: 99,
+        title: 'Align Technology — SEG historical file',
+        author: 'Archive',
+        ticker: 'ALGN',
+        date: new Date('2019-01-01'),
+        description: null,
+        fileUrl: null,
+      },
+    ],
+    loadPitches: async () => PITCHES,
+  });
+  assert.equal(items.length, 4);
+  assert.ok(items.every((item) => !/SEG/.test(item.title)));
+});
+
 test('parseRef accepts well-formed references and rejects everything else', () => {
   assert.deepEqual(parseRef('report:12'), { kind: 'report', id: 12 });
   assert.deepEqual(parseRef('pitch:3'), { kind: 'pitch', id: 3 });

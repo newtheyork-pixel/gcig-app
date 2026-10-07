@@ -4,6 +4,7 @@ import { verifyJwt, requireRole } from '../middleware/auth.js';
 import { sendPitchAssignmentEmail, primaryClientOrigin } from '../services/email.js';
 import { assertSafeHttpUrl } from '../services/validateUrl.js';
 import { getSheetPortfolio } from '../services/sheetPortfolio.js';
+import { mentionsSegLabel } from '../services/segLabel.js';
 
 const canEditPitches = requireRole('PortfolioManager');
 
@@ -47,18 +48,22 @@ function shapePitch(p) {
   };
 }
 
+function pitchShowsLabel(p) {
+  return mentionsSegLabel(p?.location) || mentionsSegLabel(p?.industry?.name);
+}
+
 router.get('/', async (_req, res) => {
   const pitches = await prisma.pitch.findMany({
     orderBy: { date: 'desc' },
     include: pitchInclude(),
   });
-  res.json(pitches.map(shapePitch));
+  res.json(pitches.filter((p) => !pitchShowsLabel(p)).map(shapePitch));
 });
 
 router.get('/:id', async (req, res) => {
   const id = Number(req.params.id);
   const pitch = await prisma.pitch.findUnique({ where: { id }, include: pitchInclude() });
-  if (!pitch) return res.status(404).json({ error: 'Not found' });
+  if (!pitch || pitchShowsLabel(pitch)) return res.status(404).json({ error: 'Not found' });
   res.json(shapePitch(pitch));
 });
 

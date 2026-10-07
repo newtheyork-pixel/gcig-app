@@ -3,6 +3,7 @@ import prisma from '../db.js';
 import { ROLE_RANK, isSuperAdminEmail } from '../middleware/auth.js';
 import { formatStamp } from '../services/transcription.js';
 import { retrieve } from './retrieve.js';
+import { withoutSegProjects } from '../services/segLabel.js';
 
 // What our own fieldwork found, for the assistant.
 //
@@ -138,7 +139,9 @@ export async function buildResearchContext(user, topic = '') {
       take: Math.max(0, 6 - named.length),
       include: PROJECT_INCLUDE,
     });
-    const projects = [...named, ...recent];
+    // Closed archive rows never reach this query. A labeled project that
+    // is still open would, and the assistant would then say the name.
+    const projects = withoutSegProjects([...named, ...recent]);
     if (projects.length === 0) return '';
 
     // Everything we could say, as addressable pieces. What actually

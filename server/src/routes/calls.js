@@ -8,6 +8,7 @@ import { ingestRecording } from '../services/recordingIngest.js';
 import { regimeFor } from '../services/recordingConsent.js';
 import { inferOutcome } from '../services/callOutcome.js';
 import { isConfigured as transcriptionConfigured } from '../services/transcription.js';
+import { projectCarriesSegLabel } from '../services/segLabel.js';
 
 // Store channel checks, placed from the terminal.
 //
@@ -137,9 +138,13 @@ function visibilityFor(req) {
 }
 
 async function loadProject(db, projectId, req) {
-  return db.researchProject.findFirst({
+  const project = await db.researchProject.findFirst({
     where: { id: projectId, ...visibilityFor(req) },
   });
+  // Same answer as a project that is not there. The call queue would
+  // otherwise open a labeled archive by id.
+  if (!project || projectCarriesSegLabel(project)) return null;
+  return project;
 }
 
 /**

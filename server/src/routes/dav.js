@@ -2,6 +2,7 @@ import { Router, raw } from 'express';
 import { PrismaClient } from '@prisma/client';
 import { uploadFile, streamDownload } from '../services/oneDriveStorage.js';
 import { isGuestEmail, GUEST_RESEARCH_TICKERS, verifySessionToken } from '../middleware/auth.js';
+import { mentionsSegLabel, projectCarriesSegLabel, withoutSegProjects } from '../services/segLabel.js';
 
 const prisma = new PrismaClient();
 const router = Router();
@@ -132,9 +133,9 @@ async function projects(guestOnly = false) {
     where: guestOnly
       ? { ownerOnly: false, ticker: { in: GUEST_RESEARCH_TICKERS } }
       : undefined,
-    select: { id: true, ticker: true, name: true, updatedAt: true },
+    select: { id: true, ticker: true, name: true, brief: true, aims: true, folder: true, updatedAt: true },
     orderBy: { updatedAt: 'desc' },
-  });
+  }).then((rows) => withoutSegProjects(rows));
 }
 
 /**
@@ -162,14 +163,15 @@ async function artifactsFor(ticker, { guest = false } = {}) {
       ticker: { equals: ticker, mode: 'insensitive' },
       ...(guest ? { ownerOnly: false } : {}),
     },
-    select: { id: true, ownerOnly: true },
+    select: { id: true, ownerOnly: true, name: true, brief: true, aims: true, folder: true },
   });
-  if (matches.length === 0) return null;
+  const visible = matches.filter((m) => !projectCarriesSegLabel(m));
+  if (visible.length === 0) return null;
   // Refused rather than guessed. Two projects on one ticker is a data
   // problem someone has to resolve; picking one is how the wrong project
   // got written to twice.
-  if (matches.length > 1) return { ambiguous: matches.map((m) => m.id) };
-  const p = matches[0];
+  if (visible.length > 1) return { ambiguous: visible.map((m) => m.id) };
+  const p = visible[0];
   const rows = await prisma.researchArtifact.findMany({
     // Trashed files leave the volume too, or the next pull downloads
     // straight back the thing somebody just dragged to the Trash.
@@ -184,7 +186,10 @@ async function artifactsFor(ticker, { guest = false } = {}) {
     },
     select: { id: true, title: true, filename: true, fileRef: true, updatedAt: true },
   });
-  return { projectId: p.id, rows };
+  return {
+    projectId: p.id,
+    rows: rows.filter((r) => !mentionsSegLabel(r.title) && !mentionsSegLabel(r.filename)),
+  };
 }
 
 router.options('*', (_req, res) => res.set(DAV_HEADERS).status(200).end());
