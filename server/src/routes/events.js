@@ -2,6 +2,7 @@ import { Router } from 'express';
 import prisma from '../db.js';
 import { verifyJwt, requireExecutive } from '../middleware/auth.js';
 import { mentionsSegLabel } from '../services/segLabel.js';
+import { auditReq } from '../services/audit.js';
 
 const router = Router();
 router.use(verifyJwt);
@@ -39,9 +40,17 @@ function eventShowsLabel(event) {
 }
 
 router.get('/', async (req, res) => {
+  // Cancelled meetings are left out unless asked for. The website's
+  // calendar asks, so it can mark them; the iPhone app's Club tab does
+  // not, and would otherwise list a cancelled meeting as a real one.
+  const includeCancelled = req.query.includeCancelled === '1';
   const events = await prisma.event.findMany({
-    where: eventAudienceWhere(req.user),
+    where: {
+      ...eventAudienceWhere(req.user),
+      ...(includeCancelled ? {} : { cancelledAt: null }),
+    },
     orderBy: { date: 'desc' },
+    ...(includeCancelled ? { include: { cancelledBy: { select: { name: true } } } } : {}),
   });
   res.json(events.filter((event) => !eventShowsLabel(event)));
 });
@@ -65,10 +74,17 @@ function normalizeAudience(raw) {
 }
 
 router.post('/', requireExecutive, async (req, res) => {
-  const { title, date, location, description, audience, slideshowUrl } =
+  const { title, date, location, description, audience, slideshowUrl, durationMinutes } =
     req.body || {};
   if (!title || !date) {
     return res.status(400).json({ error: 'title and date required' });
+  }
+  if (Number.isNaN(new Date(date).getTime())) {
+    return res.status(400).json({ error: 'That date could not be read.' });
+  }
+  const minutes = durationMinutes === undefined ? undefined : Number(durationMinutes);
+  if (minutes !== undefined && (!Number.isInteger(minutes) || minutes < 5 || minutes > 480)) {
+    return res.status(400).json({ error: 'A meeting runs between 5 minutes and 8 hours.' });
   }
   if (mentionsSegLabel(title) || mentionsSegLabel(location) || mentionsSegLabel(description)) {
     return res.status(400).json({ error: 'That name cannot be shown on the site.' });
@@ -81,6 +97,7 @@ router.post('/', requireExecutive, async (req, res) => {
       description: description || null,
       audience: normalizeAudience(audience),
       slideshowUrl: slideshowUrl || null,
+      ...(minutes !== undefined ? { durationMinutes: minutes } : {}),
     },
   });
   res.status(201).json(event);
@@ -92,9 +109,10 @@ router.put('/:id', requireExecutive, async (req, res) => {
   if (!existing) return res.status(404).json({ error: 'Not found' });
   const { title, date, location, description, audience, slideshowUrl } =
     req.body || {};
-  // Recurring meetings are managed in code (title, date, location). The only
-  // field execs may update on a recurring row is the attached slideshow —
-  // it's a per-occurrence asset, not part of the schedule.
+  // A weekly meeting follows its series (title, date, location), which is
+  // edited as a whole on the Attendance page. The only field execs may
+  // update on one occurrence is the attached slideshow — it's a
+  // per-occurrence asset, not part of the schedule.
   if (
     existing.recurring &&
     (title !== undefined ||
@@ -103,9 +121,10 @@ router.put('/:id', requireExecutive, async (req, res) => {
       description !== undefined ||
       audience !== undefined)
   ) {
-    return res
-      .status(400)
-      .json({ error: 'Recurring meetings are managed in code (slideshow only)' });
+    return res.status(400).json({
+      error:
+        'This is a weekly meeting. Change the weekly schedule on the Attendance page; only its slideshow is edited here.',
+    });
   }
   const data = {};
   if (title !== undefined) data.title = title;
@@ -127,10 +146,53 @@ router.delete('/:id', requireExecutive, async (req, res) => {
   const existing = await prisma.event.findUnique({ where: { id } });
   if (!existing) return res.status(404).json({ error: 'Not found' });
   if (existing.recurring) {
-    return res.status(400).json({ error: 'Recurring meetings are managed in code' });
+    return res.status(400).json({
+      error: 'This is a weekly meeting. Cancel this week instead, so attendance stays right.',
+    });
   }
   await prisma.event.delete({ where: { id } });
   res.json({ ok: true });
+});
+
+// Cancel one meeting, weekly or one-off. It stays on the calendar saying
+// so, nobody can be marked at it, and it counts toward nobody's rate.
+// Marks already taken are kept rather than deleted, so a restore puts
+// the meeting back exactly as it was.
+export const CANCEL_REASON_MAX = 200;
+
+router.post('/:id/cancel', requireExecutive, async (req, res) => {
+  const id = Number(req.params.id);
+  const reason = String(req.body?.reason ?? '').trim();
+  if (reason.length > CANCEL_REASON_MAX) {
+    return res.status(400).json({ error: `Keep the reason under ${CANCEL_REASON_MAX} characters.` });
+  }
+  if (mentionsSegLabel(reason)) {
+    return res.status(400).json({ error: 'That name cannot be shown on the site.' });
+  }
+  const existing = await prisma.event.findUnique({ where: { id } });
+  if (!existing || eventShowsLabel(existing)) return res.status(404).json({ error: 'Not found' });
+  const event = await prisma.event.update({
+    where: { id },
+    data: { cancelledAt: new Date(), cancelReason: reason || null, cancelledById: req.user.id },
+  });
+  await auditReq(req, 'event.cancelled', 'event', id, {
+    title: existing.title,
+    date: existing.date,
+    reason: reason || null,
+  });
+  res.json(event);
+});
+
+router.post('/:id/restore', requireExecutive, async (req, res) => {
+  const id = Number(req.params.id);
+  const existing = await prisma.event.findUnique({ where: { id } });
+  if (!existing || eventShowsLabel(existing)) return res.status(404).json({ error: 'Not found' });
+  const event = await prisma.event.update({
+    where: { id },
+    data: { cancelledAt: null, cancelReason: null, cancelledById: null },
+  });
+  await auditReq(req, 'event.restored', 'event', id, { title: existing.title, date: existing.date });
+  res.json(event);
 });
 
 export default router;

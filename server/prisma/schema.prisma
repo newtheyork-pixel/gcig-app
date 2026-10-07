@@ -94,6 +94,7 @@ model User {
   memberStatusById          Int?
   memberStatusBy            User?                 @relation("MemberStatusSetter", fields: [memberStatusById], references: [id], onDelete: SetNull)
   memberStatusesSet         User[]                @relation("MemberStatusSetter")
+  eventsCancelled           Event[]               @relation("EventCanceller")
   attendance                Attendance[]
   createdSessions           VotingSession[]       @relation("SessionCreator")
   ballots                   Ballot[]
@@ -433,7 +434,40 @@ model Event {
   attendance      Attendance[]
   rosterOverrides EventRosterOverride[]
   meetings        Meeting[]
+  // The weekly series this occurrence was generated from, or null for a
+  // one-off. Occurrences follow their series and are never edited one by
+  // one; a single week is cancelled instead.
+  seriesId        Int?
+  series          EventSeries?          @relation(fields: [seriesId], references: [id], onDelete: SetNull)
+  // A cancelled meeting stays on the calendar, says so, and counts toward
+  // nobody's attendance. Marks already taken are kept, so a restore puts
+  // the meeting back exactly as it was.
+  cancelledAt     DateTime?
+  cancelReason    String?
+  cancelledById   Int?
+  cancelledBy     User?                 @relation("EventCanceller", fields: [cancelledById], references: [id], onDelete: SetNull)
   createdAt       DateTime              @default(now())
+}
+
+// A weekly meeting, as the club schedules it. It used to be a constant in
+// services/recurringMeetings.js, so moving the meeting or skipping a week
+// took a code change and a deploy. Day and time are wall-clock in New
+// York, whatever timezone the server runs in. Dates are YYYY-MM-DD.
+model EventSeries {
+  id              Int      @id @default(autoincrement())
+  title           String
+  dayOfWeek       Int // 0 = Sunday
+  startHour       Int
+  startMinute     Int
+  durationMinutes Int      @default(30)
+  location        String?
+  description     String?
+  // First and last days an occurrence may fall on; endsOn null runs on.
+  startsOn        String
+  endsOn          String?
+  events          Event[]
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
 }
 
 // Per-event roster overrides set by the super admin. Two cases:

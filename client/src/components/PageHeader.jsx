@@ -9,7 +9,9 @@ export default function PageHeader({ title, subtitle, actions, kicker }) {
   return (
     <div className="mb-6 md:mb-8">
       <div className="flex flex-wrap items-end justify-between gap-4">
-        <div className="min-w-0 flex-1">
+        {/* A floor on the title's width, so on a phone the actions wrap
+            below it instead of squeezing it to a few letters. */}
+        <div className="min-w-[12rem] flex-1">
           {kicker && (
             <div className="mb-1.5 text-[11px] font-medium uppercase tracking-[0.14em] text-navy-400">
               {kicker}

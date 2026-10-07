@@ -52,8 +52,11 @@ export async function computeParticipation(prisma) {
   // reward people who show up, while still acknowledging that a
   // documented conflict isn't the same as a no-show.
   // Rate = Present / (Present + Absent + 0.5 × Excused).
+  // Marks at a cancelled meeting stay in the table (a restore brings
+  // them back) but count for nobody.
   const attendanceRows = await prisma.attendance.groupBy({
     by: ['userId', 'status'],
+    where: { event: { cancelledAt: null } },
     _count: { _all: true },
   });
   const attByUser = new Map();

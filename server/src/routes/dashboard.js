@@ -54,7 +54,9 @@ router.get('/', async (req, res) => {
   // Advisory Board events are hidden from members without visibility
   // (applied to upcoming + recent events queries below). Helper checks
   // primary role, extraRoles, and leadership exemptions.
-  const audienceFilter = eventAudienceWhere(req.user);
+  // A cancelled meeting is not coming up; the calendar is where it shows
+  // as cancelled. Without this the dashboard would send people to it.
+  const audienceFilter = { ...eventAudienceWhere(req.user), cancelledAt: null };
   const [
     nextPitch,
     upcomingEventsRaw,
