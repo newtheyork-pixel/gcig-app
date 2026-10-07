@@ -83,3 +83,41 @@ test('a second upcoming occurrence on the same day is removed', () => {
   const plan = planSeries(WEDNESDAY, [a, b], NOW);
   assert.deepEqual(plan.remove, [11]);
 });
+
+// The June rebrand left every Wednesday under its old title as well, at
+// the same instant as the new row. The migration links both to the series.
+const OLD_TITLE = { title: 'GCIG Weekly Meeting' };
+
+test('of a renamed pair, the older row is kept and takes the series title', () => {
+  const old = row(12, '2026-10-21T13:50:00Z', OLD_TITLE);
+  const copy = row(40, '2026-10-21T13:50:00Z');
+  const plan = planSeries(WEDNESDAY, [copy, old], NOW);
+  assert.deepEqual(plan.remove, [40]);
+  const u = plan.update.find((x) => x.id === 12);
+  assert.equal(u.data.title, 'Griffin Fund Weekly Meeting');
+  assert.equal(u.data.date.toISOString(), '2026-10-21T17:50:00.000Z');
+});
+
+test('the row somebody was marked at is the one kept', () => {
+  const old = row(12, '2026-10-21T13:50:00Z', OLD_TITLE);
+  const marked = row(40, '2026-10-21T13:50:00Z', { records: 1 });
+  const plan = planSeries(WEDNESDAY, [old, marked], NOW);
+  assert.deepEqual(plan.remove, [12]);
+  assert.ok(plan.update.some((x) => x.id === 40));
+});
+
+test('a duplicate carrying a record is never removed', () => {
+  const a = row(12, '2026-10-21T13:50:00Z', { ...OLD_TITLE, records: 1 });
+  const b = row(40, '2026-10-21T13:50:00Z', { records: 2 });
+  const plan = planSeries(WEDNESDAY, [a, b], NOW);
+  assert.deepEqual(plan.remove, []);
+});
+
+test('a pair that has already met is left as it is', () => {
+  const old = row(13, '2026-10-07T13:50:00Z', OLD_TITLE);
+  const copy = row(41, '2026-10-07T13:50:00Z');
+  const plan = planSeries(WEDNESDAY, [old, copy], NOW);
+  assert.deepEqual(plan.remove, []);
+  assert.equal(plan.update.some((u) => u.id === 13 || u.id === 41), false);
+  assert.equal(plan.create.some((c) => c.date.toISOString().startsWith('2026-10-07')), false);
+});

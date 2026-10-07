@@ -841,8 +841,15 @@ file, not `/field-visit.webp`.
   upcoming rows are updated in place so their ids survive (`planSeries`
   is pure and tested). The first version deleted every recurring meeting
   older than three months, with its attendance (cascade), on every
-  server start, so each deploy since mid-July erased another week. That
-  history is very likely gone in production; #123 stopped it.
+  server start, so each deploy since mid-July erased another week; #123
+  stopped it. It only ever looked up the CURRENT title, though, and the
+  meeting was "GCIG Weekly Meeting" until the June 1 rebrand. Rows made
+  under the old name were never pruned, so spring marks likely survive
+  on them, and every Wednesday since gained a second row beside its old
+  twin. The migration links both titles to the series. `planSeries` folds
+  an upcoming pair into one row, keeping the one people attached records
+  to (marks, roster changes, a video room). A pair that has already met
+  keeps both rows; a president cancels the bare one.
   **A week off is a cancellation (`Event.cancelledAt`), never a
   deletion.** It stays on the calendar, marked; it refuses new marks
   (409); and every attendance number skips it: the grid, `/mine`, the

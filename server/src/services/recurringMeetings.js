@@ -62,18 +62,27 @@ function differs(row, fields) {
  * A future row keeps its id when only its time, title or place changes,
  * so attendance marked ahead of time and a cancellation both survive an
  * edit. Rows that have already started are never in any list returned.
+ *
+ * `records` on a row counts what people have attached to it: marks,
+ * roster changes, a video room. Where one day holds two rows, the one
+ * carrying the most records is the meeting, then the older. A second
+ * row is removed only while it is upcoming and bare; one that carries a
+ * record stays for a person to cancel, since deleting it takes the
+ * record too.
  */
 export function planSeries(series, existing, now = new Date()) {
   const todayKey = easternDateKey(now);
   const wanted = seriesOccurrences(series, todayKey, addDaysToKey(todayKey, DAYS_FORWARD));
   const isFuture = (row) => new Date(row.date) > now;
+  const records = (row) => row.records ?? 0;
 
   const byKey = new Map();
   const remove = [];
-  for (const row of [...existing].sort((a, b) => a.id - b.id)) {
+  const ranked = [...existing].sort((a, b) => records(b) - records(a) || a.id - b.id);
+  for (const row of ranked) {
     const key = easternDateKey(row.date);
     if (!byKey.has(key)) byKey.set(key, row);
-    else if (isFuture(row)) remove.push(row.id); // a second occurrence on one day
+    else if (isFuture(row) && !records(row)) remove.push(row.id); // a second occurrence on one day
   }
 
   const create = [];
@@ -107,10 +116,22 @@ export async function ensureRecurringMeetings({ seriesId } = {}) {
   const totals = { created: 0, updated: 0, removed: 0 };
 
   for (const series of list) {
-    const existing = await prisma.event.findMany({
+    const rows = await prisma.event.findMany({
       where: { seriesId: series.id, date: { gte: startOfToday } },
-      select: { id: true, date: true, title: true, location: true, description: true, durationMinutes: true },
+      select: {
+        id: true,
+        date: true,
+        title: true,
+        location: true,
+        description: true,
+        durationMinutes: true,
+        _count: { select: { attendance: true, rosterOverrides: true, meetings: true } },
+      },
     });
+    const existing = rows.map(({ _count, ...row }) => ({
+      ...row,
+      records: _count.attendance + _count.rosterOverrides + _count.meetings,
+    }));
     const plan = planSeries(series, existing, now);
     const ops = [];
     if (plan.remove.length) ops.push(prisma.event.deleteMany({ where: { id: { in: plan.remove } } }));
