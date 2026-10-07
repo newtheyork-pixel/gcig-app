@@ -416,7 +416,8 @@ router.get('/:id/profile', async (req, res) => {
   let attendance = null;
   if (!isExempt) {
     const records = await prisma.attendance.findMany({
-      where: { userId: id },
+      // A cancelled meeting is nobody's absence.
+      where: { userId: id, event: { cancelledAt: null } },
       select: { status: true },
     });
     const present = records.filter((r) => r.status === 'Present').length;

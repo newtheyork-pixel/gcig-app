@@ -125,7 +125,15 @@ router.get('/', requireExecutive, async (req, res) => {
     }),
     prisma.event.findMany({
       where: { date: { gte: from, lte: to }, audience: 'all' },
-      select: { id: true, title: true, date: true },
+      select: {
+        id: true,
+        title: true,
+        date: true,
+        recurring: true,
+        cancelledAt: true,
+        cancelReason: true,
+        cancelledBy: { select: { name: true } },
+      },
       orderBy: { date: 'asc' },
     }),
     prisma.user.findMany({
@@ -134,6 +142,10 @@ router.get('/', requireExecutive, async (req, res) => {
       orderBy: { name: 'asc' },
     }),
   ]);
+  // A cancelled meeting is shown, so it can be restored, but its marks
+  // are left out of what the page counts: nobody can be absent from a
+  // meeting that did not happen. They stay in the database for a restore.
+  const heldIds = events.filter((e) => !e.cancelledAt).map((e) => e.id);
   // Scope attendance records to just the events in the matrix — keeps any
   // advisory-event records out of the Club Attendance % calculation. A
   // member taken off the roster drops out of the rate as well: their row
@@ -142,13 +154,13 @@ router.get('/', requireExecutive, async (req, res) => {
   // database and come back if they're restored.
   const records = await prisma.attendance.findMany({
     where: {
-      eventId: { in: events.map((e) => e.id) },
+      eventId: { in: heldIds },
       userId: { notIn: offRoster.map((u) => u.id) },
     },
   });
   res.json({
     users,
-    events,
+    events: events.map(({ cancelledBy, ...e }) => ({ ...e, cancelledBy: cancelledBy?.name || null })),
     records,
     offRoster: offRoster.map(serializeOffRoster),
     // The choices for taking someone off the roster, from the one list
@@ -328,8 +340,9 @@ router.get('/mine', async (req, res) => {
   if (!isActive(me?.memberStatus)) {
     return res.json(exemptPayload(statusLabel(me.memberStatus)));
   }
+  // A cancelled meeting is nobody's absence, whatever was marked first.
   const records = await prisma.attendance.findMany({
-    where: { userId: req.user.id },
+    where: { userId: req.user.id, event: { cancelledAt: null } },
     include: { event: { select: { id: true, title: true, date: true } } },
     orderBy: { event: { date: 'desc' } },
   });
@@ -358,10 +371,15 @@ router.post('/', requireExecutive, async (req, res) => {
     }),
     prisma.event.findUnique({
       where: { id: Number(eventId) },
-      select: { audience: true },
+      select: { audience: true, cancelledAt: true },
     }),
   ]);
   if (!event) return res.status(404).json({ error: 'Event not found' });
+  if (event.cancelledAt) {
+    return res.status(409).json({
+      error: 'This meeting was cancelled. Restore it on the Attendance page to take attendance.',
+    });
+  }
   // Super admin bypasses role gating entirely — they can mark anyone on
   // any event (the "add Bob to the advisory meeting" override).
   if (!req.user?.isSuperAdmin) {
@@ -460,8 +478,10 @@ router.get('/export.csv', requireExecutive, async (_req, res) => {
       select: { id: true, name: true, role: true },
       orderBy: { name: 'asc' },
     }),
+    // A cancelled meeting is not a column: the export is the record of
+    // meetings that happened.
     prisma.event.findMany({
-      where: { date: { gte: from, lte: to }, audience: 'all' },
+      where: { date: { gte: from, lte: to }, audience: 'all', cancelledAt: null },
       select: { id: true, title: true, date: true },
       orderBy: { date: 'asc' },
     }),

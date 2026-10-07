@@ -828,6 +828,37 @@ file, not `/field-visit.webp`.
   belongs there). Nothing is deleted: past marks return on restore,
   and every change is in the audit log.
 - `client/src/components/EventAttendance.jsx` — event roster modal.
+- **Meetings and the weekly schedule** (`EventSeries`,
+  `services/recurringMeetings.js`, `routes/eventSeries.js`, the
+  Attendance page). Weekly meetings are generated from series rows that
+  presidents edit on the Attendance page; they used to be a constant in
+  code, so moving the meeting took a deploy. Times are New York
+  wall-clock via `services/easternTime.js`, never the server's own TZ:
+  nothing sets TZ, and the old `setHours(13, 50)` put the Wednesday
+  meeting at 13:50 UTC, which is 9:50 AM in New York.
+  **The schedule shapes the future only.** A meeting that has started is
+  never moved, removed or given a second meeting on its day, and
+  upcoming rows are updated in place so their ids survive (`planSeries`
+  is pure and tested). The first version deleted every recurring meeting
+  older than three months, with its attendance (cascade), on every
+  server start, so each deploy since mid-July erased another week; #123
+  stopped it. It only ever looked up the CURRENT title, though, and the
+  meeting was "GCIG Weekly Meeting" until the June 1 rebrand. Rows made
+  under the old name were never pruned, so spring marks likely survive
+  on them, and every Wednesday since gained a second row beside its old
+  twin. The migration links both titles to the series. `planSeries` folds
+  an upcoming pair into one row, keeping the one people attached records
+  to (marks, roster changes, a video room). A pair that has already met
+  keeps both rows; a president cancels the bare one.
+  **A week off is a cancellation (`Event.cancelledAt`), never a
+  deletion.** It stays on the calendar, marked; it refuses new marks
+  (409); and every attendance number skips it: the grid, `/mine`, the
+  profile, the participation ranking, the CSV, the dashboard's upcoming
+  list and the club brief. Marks already taken are kept, so a restore
+  puts the meeting back exactly as it was. `GET /events` leaves cancelled
+  meetings out unless asked (`?includeCancelled=1`, which the website
+  calendar sends), so the iPhone app's Club tab can never list one as
+  happening.
 - `client/src/pages/Dashboard.jsx` — main page. MacroStrip + DIR
   card + portfolio chart + holdings + earnings.
 - `client/src/pages/MemberProfile.jsx` — `PitchRow` renders pitch

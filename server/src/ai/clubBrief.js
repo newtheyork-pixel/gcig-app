@@ -191,7 +191,7 @@ async function buildLiveContext() {
       select: { ticker: true, pitcherName: true, date: true },
     }),
     prisma.event.findMany({
-      where: { date: { gte: now, lte: in14 }, audience: 'all' },
+      where: { date: { gte: now, lte: in14 }, audience: 'all', cancelledAt: null },
       orderBy: { date: 'asc' },
       take: 8,
       select: { title: true, date: true, location: true },

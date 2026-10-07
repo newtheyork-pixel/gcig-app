@@ -133,6 +133,14 @@ body {
   color: #1B2A4A !important;
   font-weight: 600 !important;
 }
+/* A cancelled meeting: pale and struck through, so it reads as off. */
+.rbc-event.rbc-event-cancelled {
+  background-color: #E8EBF2 !important;
+  color: #3A4D78 !important;
+  border: 1px dashed #8C99BB !important;
+  text-decoration: line-through;
+  box-shadow: none;
+}
 .rbc-show-more {
   color: #3A4D78 !important;
   font-weight: 500;

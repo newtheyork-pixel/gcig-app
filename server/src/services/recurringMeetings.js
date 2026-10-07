@@ -1,148 +1,153 @@
 import prisma from '../db.js';
+import { easternDateKey, easternInstant, addDaysToKey, weekdayOfKey } from './easternTime.js';
 
-// Hard-coded recurring club meetings. On server startup, we ensure that
-// every expected instance exists as a real row in the `Event` table with
-// `recurring: true`, so they show up in the calendar AND are markable
-// for attendance just like any other event.
+// Weekly club meetings, generated from the schedule presidents keep on
+// the Attendance page (EventSeries). Each occurrence is a real Event row
+// with `recurring: true`, so it is on the calendar and markable for
+// attendance like any other meeting.
 //
-// `ensureRecurringMeetings` is additive, and destructive only forward:
-//   - missing expected instances are created
-//   - FUTURE recurring rows that no longer match the schedule (because
-//     we added a skipDate or retired a title) are deleted, taking any
-//     Attendance rows with them via cascade.
-//   - a meeting that has already happened is never deleted here, whatever
-//     the schedule now says. See staleInstanceIds for what that cost.
-// Recurring meetings aren't editable through the UI (events.js refuses
-// both PUT and DELETE on recurring=true rows), so there are no manual
-// tweaks to preserve — the code is the source of truth.
+// The schedule shapes the future only. A meeting that has started is
+// history, whatever the schedule now says: it is never moved, never
+// removed, and its day never gets a second meeting. That rule is paid
+// for. The first version of this file deleted every recurring row
+// outside a window reaching three months back, on every server start,
+// and the cascade on Attendance took the marks with them; a deploy
+// erased another week of the record each time, until #123.
+//
+// A week the club does not meet is CANCELLED (Event.cancelledAt), not
+// removed from the schedule, so the calendar can say so and a restore
+// puts the meeting back as it was.
 
-const RECURRING_MEETINGS = [
-  {
-    title: 'Griffin Fund Weekly Meeting',
-    dayOfWeek: 3, // Wednesday (0 = Sun)
-    startHour: 13, // 1 PM
-    startMinute: 50,
-    durationMinutes: 30, // 1:50 – 2:20 PM
-    location: null,
-    description: 'Weekly club meeting (1:50 – 2:20 PM)',
-    // First real club meeting (Apr 15, 2026). Anything earlier in the
-    // DB is a leftover from the initial 3-month backfill and gets
-    // pruned on startup. The Apr 15 row itself stays — it matches the
-    // generated schedule — so its attendance records survive.
-    startDate: new Date('2026-04-15T00:00:00'),
-    // One-off cancellations as YYYY-MM-DD (local). Instances on these
-    // dates are neither created nor kept.
-    //   2026-04-22 — no meeting that week.
-    skipDates: ['2026-04-22'],
-  },
-];
+// How far ahead occurrences exist, so the calendar and the attendance
+// grid can show what is coming.
+const DAYS_FORWARD = 366;
 
-// How far back / forward to keep recurring instances in the DB.
-const MONTHS_BACK = 3;
-const MONTHS_FORWARD = 12;
-
-function localDateKey(d) {
-  // YYYY-MM-DD in the server's local timezone — matches how skipDates
-  // are written by humans (no TZ math required).
-  const year = d.getFullYear();
-  const month = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
+/** The occurrences of a series between two date keys, inclusive. */
+export function seriesOccurrences(series, fromKey, untilKey) {
+  const first = series.startsOn > fromKey ? series.startsOn : fromKey;
+  const last = series.endsOn && series.endsOn < untilKey ? series.endsOn : untilKey;
+  const out = [];
+  let key = addDaysToKey(first, (series.dayOfWeek - weekdayOfKey(first) + 7) % 7);
+  for (; key <= last; key = addDaysToKey(key, 7)) {
+    out.push({ key, date: easternInstant(key, series.startHour, series.startMinute) });
+  }
+  return out;
 }
 
-function buildInstances() {
-  const now = new Date();
-  const windowStart = new Date(now);
-  windowStart.setMonth(windowStart.getMonth() - MONTHS_BACK);
-  windowStart.setHours(0, 0, 0, 0);
-  const windowEnd = new Date(now);
-  windowEnd.setMonth(windowEnd.getMonth() + MONTHS_FORWARD);
+function occurrenceFields(series, date) {
+  return {
+    title: series.title,
+    date,
+    location: series.location ?? null,
+    description: series.description ?? null,
+    durationMinutes: series.durationMinutes,
+  };
+}
 
-  const instances = [];
-  for (const m of RECURRING_MEETINGS) {
-    // Cursor begins at whichever is later: the schedule's startDate or
-    // the rolling window's back edge.
-    const lowerBound =
-      m.startDate && m.startDate > windowStart ? new Date(m.startDate) : new Date(windowStart);
-    const cursor = new Date(lowerBound);
-    cursor.setHours(m.startHour, m.startMinute, 0, 0);
-    const offset = (m.dayOfWeek - cursor.getDay() + 7) % 7;
-    cursor.setDate(cursor.getDate() + offset);
+function differs(row, fields) {
+  return (
+    new Date(row.date).getTime() !== fields.date.getTime() ||
+    row.title !== fields.title ||
+    (row.location ?? null) !== fields.location ||
+    (row.description ?? null) !== fields.description ||
+    row.durationMinutes !== fields.durationMinutes
+  );
+}
 
-    const skipSet = new Set(m.skipDates || []);
-    while (cursor <= windowEnd) {
-      if (!skipSet.has(localDateKey(cursor))) {
-        instances.push({
-          title: m.title,
-          date: new Date(cursor),
-          location: m.location,
-          description: m.description,
-          durationMinutes: m.durationMinutes,
-          recurring: true,
-        });
-      }
-      cursor.setDate(cursor.getDate() + 7);
+/**
+ * The writes that bring a series' occurrences, from today on, into line
+ * with the series. `existing` holds its rows from the start of today in
+ * New York. Pure, so the rules above are tested rather than trusted.
+ *
+ * A future row keeps its id when only its time, title or place changes,
+ * so attendance marked ahead of time and a cancellation both survive an
+ * edit. Rows that have already started are never in any list returned.
+ *
+ * `records` on a row counts what people have attached to it: marks,
+ * roster changes, a video room. Where one day holds two rows, the one
+ * carrying the most records is the meeting, then the older. A second
+ * row is removed only while it is upcoming and bare; one that carries a
+ * record stays for a person to cancel, since deleting it takes the
+ * record too.
+ */
+export function planSeries(series, existing, now = new Date()) {
+  const todayKey = easternDateKey(now);
+  const wanted = seriesOccurrences(series, todayKey, addDaysToKey(todayKey, DAYS_FORWARD));
+  const isFuture = (row) => new Date(row.date) > now;
+  const records = (row) => row.records ?? 0;
+
+  const byKey = new Map();
+  const remove = [];
+  const ranked = [...existing].sort((a, b) => records(b) - records(a) || a.id - b.id);
+  for (const row of ranked) {
+    const key = easternDateKey(row.date);
+    if (!byKey.has(key)) byKey.set(key, row);
+    else if (isFuture(row) && !records(row)) remove.push(row.id); // a second occurrence on one day
+  }
+
+  const create = [];
+  const update = [];
+  const kept = new Set();
+  for (const o of wanted) {
+    const row = byKey.get(o.key);
+    const fields = occurrenceFields(series, o.date);
+    if (row) {
+      kept.add(o.key);
+      if (isFuture(row) && differs(row, fields)) update.push({ id: row.id, data: fields });
+    } else if (o.date > now) {
+      create.push({ ...fields, seriesId: series.id, recurring: true, audience: 'all' });
     }
   }
-  return instances;
+  for (const [key, row] of byKey) {
+    if (!kept.has(key) && isFuture(row)) remove.push(row.id);
+  }
+  return { create, update, remove };
 }
 
 /**
- * The recurring rows to delete: only FUTURE instances that have fallen
- * off the schedule. This used to be every row outside the expected set,
- * and the expected set only reaches MONTHS_BACK into the past, so every
- * restart (every deploy) deleted each meeting older than three months
- * and, by cascade, all of its attendance. The spring's record went that
- * way, a week at a time. A meeting that has happened is history; nothing
- * here may remove it.
+ * Brings every series (or one) into line. Runs at server start and after
+ * any change to the schedule. Removing a future occurrence cascades to
+ * attendance marked ahead for it, which is right: that meeting is gone.
  */
-export function staleInstanceIds(existing, expectedKeys, now = new Date()) {
-  return existing
-    .filter((e) => new Date(e.date) > now)
-    .filter((e) => !expectedKeys.has(`${e.title}::${new Date(e.date).toISOString()}`))
-    .map((e) => e.id);
-}
+export async function ensureRecurringMeetings({ seriesId } = {}) {
+  const now = new Date();
+  const startOfToday = easternInstant(easternDateKey(now), 0, 0);
+  const list = await prisma.eventSeries.findMany(seriesId ? { where: { id: seriesId } } : {});
+  const totals = { created: 0, updated: 0, removed: 0 };
 
-/**
- * Ensures every expected recurring meeting exists in the DB, and prunes
- * any recurring rows that are no longer in the expected set (e.g. past
- * phantom instances from before startDate, or cancelled skipDates).
- * Attendance rows cascade-delete with their event per the Prisma schema.
- */
-export async function ensureRecurringMeetings() {
-  const expected = buildInstances();
-  const managedTitles = Array.from(new Set(RECURRING_MEETINGS.map((m) => m.title)));
-  if (managedTitles.length === 0) return;
-
-  const existing = await prisma.event.findMany({
-    where: {
-      recurring: true,
-      title: { in: managedTitles },
-    },
-    select: { id: true, title: true, date: true },
-  });
-
-  const expectedKey = new Set(
-    expected.map((e) => `${e.title}::${e.date.toISOString()}`)
-  );
-  const existingKey = new Set(
-    existing.map((e) => `${e.title}::${new Date(e.date).toISOString()}`)
-  );
-
-  // Prune: future recurring rows whose (title, date) no longer matches
-  // the expected schedule. Cascades to Attendance.
-  const toDeleteIds = staleInstanceIds(existing, expectedKey);
-  if (toDeleteIds.length > 0) {
-    await prisma.event.deleteMany({ where: { id: { in: toDeleteIds } } });
-    console.log(`Pruned ${toDeleteIds.length} stale recurring meeting instance(s).`);
+  for (const series of list) {
+    const rows = await prisma.event.findMany({
+      where: { seriesId: series.id, date: { gte: startOfToday } },
+      select: {
+        id: true,
+        date: true,
+        title: true,
+        location: true,
+        description: true,
+        durationMinutes: true,
+        _count: { select: { attendance: true, rosterOverrides: true, meetings: true } },
+      },
+    });
+    const existing = rows.map(({ _count, ...row }) => ({
+      ...row,
+      records: _count.attendance + _count.rosterOverrides + _count.meetings,
+    }));
+    const plan = planSeries(series, existing, now);
+    const ops = [];
+    if (plan.remove.length) ops.push(prisma.event.deleteMany({ where: { id: { in: plan.remove } } }));
+    for (const u of plan.update) ops.push(prisma.event.update({ where: { id: u.id }, data: u.data }));
+    if (plan.create.length) ops.push(prisma.event.createMany({ data: plan.create }));
+    if (ops.length) await prisma.$transaction(ops);
+    totals.created += plan.create.length;
+    totals.updated += plan.update.length;
+    totals.removed += plan.remove.length;
   }
 
-  // Create: expected instances not yet in the DB.
-  const toCreate = expected.filter(
-    (e) => !existingKey.has(`${e.title}::${e.date.toISOString()}`)
-  );
-  if (toCreate.length > 0) {
-    await prisma.event.createMany({ data: toCreate });
-    console.log(`Ensured ${toCreate.length} new recurring meeting instance(s).`);
+  if (totals.created || totals.updated || totals.removed) {
+    console.log(
+      `Weekly meetings: ${totals.created} added, ${totals.updated} updated, ` +
+        `${totals.removed} removed (upcoming only).`
+    );
   }
+  return totals;
 }

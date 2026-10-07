@@ -124,7 +124,8 @@ export default function Calendar() {
   }
   async function loadEvents() {
     try {
-      const { data } = await api.get('/events');
+      // Cancelled meetings too, so the calendar can say they're off.
+      const { data } = await api.get('/events', { params: { includeCancelled: 1 } });
       setEvents(data);
     } catch (e) {
       setLoadError(e.response?.data?.error || e.message || 'Could not load events');
@@ -172,7 +173,9 @@ export default function Calendar() {
       const durationMs = (e.durationMinutes ?? 60) * 60 * 1000;
       return {
         id: `event-${e.id}`,
-        title: e.title,
+        // Said in words as well as struck through, so nobody walks to a
+        // meeting that is not happening.
+        title: e.cancelledAt ? `Cancelled: ${e.title}` : e.title,
         start,
         end: new Date(start.getTime() + durationMs),
         resource: { type: 'event', data: e, audience: e.audience || 'all' },
@@ -236,6 +239,11 @@ export default function Calendar() {
           fontWeight: 600,
         },
       };
+    }
+    // A class, not an inline style: index.css paints every .rbc-event
+    // navy with !important, which no inline style can beat.
+    if (calEvent.resource?.data?.cancelledAt) {
+      return { className: 'rbc-event-cancelled' };
     }
     return {
       style: {
@@ -712,9 +720,19 @@ export default function Calendar() {
                 View slideshow →
               </button>
             )}
+            {selected.cancelledAt && (
+              <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
+                <span className="font-semibold">Cancelled</span>
+                {selected.cancelReason ? `: ${selected.cancelReason}` : ''}
+                {selected.cancelledBy?.name && (
+                  <span className="text-red-700/80"> · {selected.cancelledBy.name}</span>
+                )}
+              </div>
+            )}
             {selected.recurring && (
               <div className="rounded-lg bg-gold-100 px-3 py-2 text-xs font-semibold text-gold-700">
-                Recurring weekly event — schedule managed in code (slideshow can still be attached)
+                Weekly meeting. Change the schedule, or cancel a single week, on
+                the Attendance page. A slideshow can still be attached here.
               </div>
             )}
             <AdminOnly>
@@ -847,9 +865,9 @@ export default function Calendar() {
         <form onSubmit={handleEventSubmit} className="space-y-3">
           {eventForm.recurring && (
             <div className="rounded-lg border border-gold-200 bg-gold-100/40 px-3 py-2 text-xs text-navy">
-              <span className="font-semibold">Recurring meeting.</span> Title,
-              date, location, and audience are managed in code — only the
-              slideshow attachment is editable here.
+              <span className="font-semibold">Weekly meeting.</span> Its title,
+              time and place follow the weekly schedule on the Attendance
+              page — only the slideshow attachment is editable here.
             </div>
           )}
           <div>
