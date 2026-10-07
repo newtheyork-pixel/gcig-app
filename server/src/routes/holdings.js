@@ -133,6 +133,7 @@ import { getSheetPortfolio, withResolvedDayChange } from '../services/sheetPortf
 import { getNewsForTicker, extractArticle } from '../services/news.js';
 import { getBusinessProfile } from '../services/secBusinessSummary.js';
 import { tickerWhere, groupByTicker, tickerKey } from '../services/tickerKey.js';
+import { projectCarriesSegLabel } from '../services/segLabel.js';
 // BENCHMARK is shared with the decision scoreboard on purpose: the club
 // is measured against one index, and two files each naming their own
 // would eventually name different ones.
@@ -765,7 +766,10 @@ router.get('/coverage/:ticker', async (req, res) => {
       // The privacy rule protects owner-only work from OTHER members —
       // hiding it from its own owner made DES deny coverage the owner
       // could open two keystrokes away in RSCH. Same visibility the
-      // projects list applies.
+      // projects list applies. The SEG label is a separate hide and
+      // applies to the owner and the super admin too: the name is what
+      // the club block prints.
+      .filter((p) => !projectCarriesSegLabel(p))
       .filter((p) => !p.ownerOnly || req.user?.isSuperAdmin || p.createdById === req.user?.id)
       .map((p) => {
         const v = p.valuations?.[0] || null;

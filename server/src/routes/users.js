@@ -16,6 +16,7 @@ import { nameProfile } from '../services/nameGender.js';
 import { computeParticipation } from '../services/participation.js';
 import { isActive, statusLabel } from '../services/memberStatus.js';
 import { getSheetPortfolio } from '../services/sheetPortfolio.js';
+import { mentionsSegLabel } from '../services/segLabel.js';
 
 const router = Router();
 
@@ -379,7 +380,9 @@ router.get('/:id/profile', async (req, res) => {
       }
     }
     return { ...p, effectiveOutcome, outcomeInferred };
-  });
+  }).filter((p) => !mentionsSegLabel(p.industry?.name));
+  const visibleReports = reportRows.filter((r) =>
+    !mentionsSegLabel(r.title) && !mentionsSegLabel(r.description));
 
   // Merged contributions feed: pitches + reports, sorted newest first.
   // Each entry has a `kind` so the client can render the right pill
@@ -394,7 +397,7 @@ router.get('/:id/profile', async (req, res) => {
       effectiveOutcome: p.effectiveOutcome,
       outcomeInferred: p.outcomeInferred,
     })),
-    ...reportRows.map((r) => ({
+    ...visibleReports.map((r) => ({
       kind: 'report',
       id: `report-${r.id}`,
       ticker: r.ticker || null,
@@ -456,9 +459,11 @@ router.get('/:id/profile', async (req, res) => {
     createdAt: user.createdAt,
     firstName: profile.firstName,
     honorificName: profile.honorificName,
-    industries: user.industries.map((ui) => ui.industry),
+    industries: user.industries
+      .map((ui) => ui.industry)
+      .filter((industry) => !mentionsSegLabel(industry?.name)),
     pitches,
-    reports: reportRows,
+    reports: visibleReports,
     // Unified pitches + reports feed — clients should prefer this over
     // reading `pitches` + `reports` separately.
     contributions,

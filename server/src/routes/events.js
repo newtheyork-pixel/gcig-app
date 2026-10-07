@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import prisma from '../db.js';
 import { verifyJwt, requireExecutive } from '../middleware/auth.js';
+import { mentionsSegLabel } from '../services/segLabel.js';
 
 const router = Router();
 router.use(verifyJwt);
@@ -31,18 +32,24 @@ export function eventAudienceWhere(user) {
   return canSeeAdvisoryEvents(user) ? {} : { audience: 'all' };
 }
 
+function eventShowsLabel(event) {
+  return mentionsSegLabel(event?.title)
+    || mentionsSegLabel(event?.location)
+    || mentionsSegLabel(event?.description);
+}
+
 router.get('/', async (req, res) => {
   const events = await prisma.event.findMany({
     where: eventAudienceWhere(req.user),
     orderBy: { date: 'desc' },
   });
-  res.json(events);
+  res.json(events.filter((event) => !eventShowsLabel(event)));
 });
 
 router.get('/:id', async (req, res) => {
   const id = Number(req.params.id);
   const event = await prisma.event.findUnique({ where: { id } });
-  if (!event) return res.status(404).json({ error: 'Not found' });
+  if (!event || eventShowsLabel(event)) return res.status(404).json({ error: 'Not found' });
   // Advisory events are invisible to members who don't have visibility.
   // Return 404 (not 403) so we don't leak the existence of the event.
   if (event.audience === 'advisory' && !canSeeAdvisoryEvents(req.user)) {
@@ -62,6 +69,9 @@ router.post('/', requireExecutive, async (req, res) => {
     req.body || {};
   if (!title || !date) {
     return res.status(400).json({ error: 'title and date required' });
+  }
+  if (mentionsSegLabel(title) || mentionsSegLabel(location) || mentionsSegLabel(description)) {
+    return res.status(400).json({ error: 'That name cannot be shown on the site.' });
   }
   const event = await prisma.event.create({
     data: {
@@ -104,7 +114,11 @@ router.put('/:id', requireExecutive, async (req, res) => {
   if (description !== undefined) data.description = description || null;
   if (audience !== undefined) data.audience = normalizeAudience(audience);
   if (slideshowUrl !== undefined) data.slideshowUrl = slideshowUrl || null;
+  if (['title', 'location', 'description'].some((k) => mentionsSegLabel(data[k]))) {
+    return res.status(400).json({ error: 'That name cannot be shown on the site.' });
+  }
   const event = await prisma.event.update({ where: { id }, data });
+  if (eventShowsLabel(event)) return res.status(404).json({ error: 'Not found' });
   res.json(event);
 });
 

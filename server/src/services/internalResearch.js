@@ -1,4 +1,5 @@
 import prisma from '../db.js';
+import { mentionsSegLabel } from './segLabel.js';
 
 // The club's own research, as one list.
 //
@@ -114,7 +115,8 @@ export async function listResearch(
     loadPitches(symbol),
   ]);
 
-  let items = [...reports.map(normalizeReport), ...pitches.map(normalizePitch)];
+  let items = [...reports.map(normalizeReport), ...pitches.map(normalizePitch)]
+    .filter((it) => !mentionsSegLabel(it.title) && !mentionsSegLabel(it.description));
 
   if (q && String(q).trim()) {
     const needle = String(q).trim().toLowerCase();
@@ -141,13 +143,15 @@ export async function getResearchItem(ref) {
   if (!parsed) return null;
   if (parsed.kind === 'report') {
     const row = await prisma.report.findUnique({ where: { id: parsed.id } });
-    return row ? normalizeReport(row) : null;
+    const item = row ? normalizeReport(row) : null;
+    return item && !mentionsSegLabel(item.title) && !mentionsSegLabel(item.description) ? item : null;
   }
   const row = await prisma.pitch.findUnique({
     where: { id: parsed.id },
     include: PITCH_INCLUDE,
   });
-  return row ? normalizePitch(row) : null;
+  const item = row ? normalizePitch(row) : null;
+  return item && !mentionsSegLabel(item.title) && !mentionsSegLabel(item.description) ? item : null;
 }
 
 /**

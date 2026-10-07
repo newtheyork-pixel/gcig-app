@@ -604,6 +604,12 @@ file, not `/field-visit.webp`.
   nullable (a one-off call is still real) and SetNull on delete —
   deleting a project must never delete the evidence gathered under it.
   FLD is what we went and found; RSCH is what we already wrote up.
+  Projects whose name, brief, aims or folder carry the acronym SEG as
+  its own word are omitted from every member-facing read, including the
+  super admin's (`services/segLabel.js`). The rows stay. `ownerOnly` is
+  the wrong flag for this: it still renders for the super admin, which
+  is the account that asked for the list to be empty of that label.
+  The watchlist chip for a 13F source says "13F".
 - **CHK — store channel checks by phone** (`server/src/routes/calls.js`,
   `services/phone.js`, `services/recordingIngest.js`,
   `mac/.../ChannelCheckPanel.swift`, `client/.../ChannelCheck.jsx`). Ring

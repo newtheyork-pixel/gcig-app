@@ -1,4 +1,5 @@
 import prisma from '../db.js';
+import { projectCarriesSegLabel } from './segLabel.js';
 import { resolveQuotes } from './portfolioQuotes.js';
 import { sendBuyLevelEmail } from './email.js';
 
@@ -35,7 +36,7 @@ export async function checkBuyLevels(deps = {}) {
 
   const watched = await prisma.researchValuation.findMany({
     where: { buyBelow: { not: null }, ticker: { not: null } },
-    include: { project: { select: { id: true, name: true, status: true } } },
+    include: { project: { select: { id: true, name: true, brief: true, aims: true, folder: true, status: true } } },
   });
   if (watched.length === 0) {
     return { checked: 0, crossed: 0, cleared: 0, unpriced: 0, alerts: [] };
@@ -55,6 +56,8 @@ export async function checkBuyLevels(deps = {}) {
   let unpriced = 0;
 
   for (const v of watched) {
+    // An email is a read. The project name is the subject of it.
+    if (projectCarriesSegLabel(v.project)) continue;
     const q = quotes[v.ticker.toUpperCase()];
     if (!q || q.price == null) {
       // A name we cannot price is not a name that failed to cross. It is
@@ -145,10 +148,11 @@ export async function checkStaleValuations() {
       reviewAlertedAt: null,
       project: { status: { not: 'Closed' } },
     },
-    include: { project: { select: { id: true, name: true, status: true } } },
+    include: { project: { select: { id: true, name: true, brief: true, aims: true, folder: true, status: true } } },
   });
   let notified = 0;
   for (const v of stale) {
+    if (projectCarriesSegLabel(v.project)) continue;
     const to = (v.watchers || []).filter((e) => /@/.test(e));
     let sent = false;
     if (to.length) {

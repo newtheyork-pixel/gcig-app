@@ -53,7 +53,8 @@ struct WatchlistPanel: View {
         var display: (String, Color) {
             switch source {
             case "holding": return ("HELD", Term.positive)
-            case "seg13f":  return ("SEG 13F", Term.blue)
+            // The form, not the filer. The source key stays internal.
+            case "seg13f":  return ("13F", Term.blue)
             default:        return ("MANUAL", Term.fgMuted)
             }
         }
