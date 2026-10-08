@@ -55,7 +55,7 @@ function fmtPct(n, digits = 2) {
 }
 
 export default function Dashboard() {
-  const { user } = useAuth();
+  const { user, isPmOrAbove } = useAuth();
   const [dashboard, setDashboard] = useState(null);
   const [quotes, setQuotes] = useState(null);
   const [history, setHistory] = useState([]);
@@ -78,10 +78,15 @@ export default function Dashboard() {
     api.get('/holdings/history').then((r) => setHistory(r.data || [])).catch(() => setHistory([]));
     api.get('/holdings/earnings').then((r) => setEarnings(r.data)).catch(() => setEarnings(null));
     api.get('/dashboard/macro').then((r) => setMacro(r.data)).catch(() => setMacro(null));
-    api
-      .get('/holdings/cash-yield')
-      .then((r) => setCashYield(r.data))
-      .catch(() => setCashYield(null));
+    // Treasury overlay on the headline. Same officer gate as the
+    // portfolio ledger; analysts and the communications / public-relations
+    // offices see the marked total, which already includes cash.
+    if (isPmOrAbove) {
+      api
+        .get('/holdings/cash-yield')
+        .then((r) => setCashYield(r.data))
+        .catch(() => setCashYield(null));
+    }
     // DIR runs in parallel with the dashboard request. On cache miss
     // it can take 10-30s; on cache hit it's instant. The page
     // renders without waiting either way.
@@ -91,7 +96,7 @@ export default function Dashboard() {
       .then((r) => setDirData(r.data))
       .catch(() => setDirData(null))
       .finally(() => setDirLoading(false));
-  }, []);
+  }, [isPmOrAbove]);
 
   // Soonest upcoming earnings within the next 30 days — surfaces as a
   // spotlight card when relevant so pitchers don't walk into a pitch

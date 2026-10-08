@@ -29,7 +29,7 @@ import Modal from '../components/Modal.jsx';
 import AdminOnly from '../components/AdminOnly.jsx';
 
 export default function TradeRequests({ embedded = false } = {}) {
-  const { isExecutive } = useAuth();
+  const { isExecutive, isSuperAdmin } = useAuth();
   const [requests, setRequests] = useState([]);
   const [composerOpen, setComposerOpen] = useState(false);
   const [refreshing, setRefreshing] = useState(null);
@@ -53,6 +53,16 @@ export default function TradeRequests({ embedded = false } = {}) {
     } finally {
       setRefreshing(null);
     }
+  }
+
+  async function resolveOne(tr, resolution) {
+    const verb = resolution === 'superseded' ? 'superseded' : 'cancelled';
+    const warning =
+      `Mark Approval #${tr.id} as ${verb}? It will no longer offer Mark filled. ` +
+      `This does not change holdings or cash, and it does not void the DocuSign envelope.`;
+    if (!window.confirm(warning)) return;
+    await api.post(`/trade-requests/${tr.id}/resolve`, { resolution });
+    await loadRequests();
   }
 
   async function deleteOne(tr) {
@@ -117,7 +127,13 @@ export default function TradeRequests({ embedded = false } = {}) {
         </div>
       )}
 
-      <div className={embedded ? 'space-y-3' : 'mt-6 space-y-3'}>
+      <p className={`text-xs leading-relaxed text-navy-400 ${embedded ? 'mb-3' : 'mt-4'}`}>
+        Sent and Awaiting signature are where the envelope is in DocuSign.
+        Signed means the signers have finished. Filled means the broker
+        trade is recorded here. Superseded and Cancelled close an approval
+        that did not execute, and they stop offering Mark filled.
+      </p>
+      <div className={embedded ? 'space-y-3' : 'mt-3 space-y-3'}>
         {requests.length === 0 ? (
           <Card>
             <div className="py-8 text-center text-navy-400">
@@ -130,10 +146,12 @@ export default function TradeRequests({ embedded = false } = {}) {
             <RequestRow
               key={tr.id}
               tr={tr}
+              isSuperAdmin={isSuperAdmin}
               refreshing={refreshing === tr.id}
               onRefresh={() => refreshOne(tr.id)}
               onDelete={() => deleteOne(tr)}
               onMarkFilled={() => setFillTarget(tr)}
+              onResolve={(resolution) => resolveOne(tr, resolution)}
             />
           ))
         )}
@@ -162,35 +180,77 @@ export default function TradeRequests({ embedded = false } = {}) {
 
 // ── List row ──────────────────────────────────────────────────────────
 
-function RequestRow({ tr, refreshing, onRefresh, onDelete, onMarkFilled }) {
-  const status = tr.docusignStatus || 'draft';
-  // Settled into the book — the terminal state past "Signed".
-  const executed = !!tr.executedAt;
-  const tone = executed
-    ? 'bg-emerald-600 text-white border-emerald-700'
-    : status === 'completed'
-    ? 'bg-emerald-100 text-emerald-800 border-emerald-200'
-    : status === 'declined' || status === 'voided'
-    ? 'bg-red-100 text-red-800 border-red-200'
-    : 'bg-gold-100 text-gold-800 border-gold-300';
-  const label = executed
-    ? 'Filled'
-    : status === 'completed'
-    ? 'Signed'
-    : status === 'declined'
-    ? 'Declined'
-    : status === 'voided'
-    ? 'Voided'
-    : status === 'delivered'
-    ? 'Awaiting signature'
-    : status === 'sent'
-    ? 'Sent'
-    : 'Draft';
+const PHASE_LABEL = {
+  filled: 'Filled',
+  signed: 'Signed',
+  awaiting: 'Awaiting signature',
+  sent: 'Sent',
+  declined: 'Declined',
+  voided: 'Voided',
+  superseded: 'Superseded',
+  cancelled: 'Cancelled',
+  draft: 'Draft',
+};
 
-  const buyTotal = tr.items
+function phaseHint(tr, phase) {
+  if (phase === 'filled' && tr.settlementMode === 'record-only') {
+    return 'Recorded as filled. Holdings and cash were left as they were.';
+  }
+  if (phase === 'filled') return 'In the book.';
+  if (phase === 'superseded') return 'Did not execute. A later approval replaced it.';
+  if (phase === 'cancelled') return 'Did not execute.';
+  if (phase === 'signed') return 'Signed, not yet in the book.';
+  if (phase === 'sent' || phase === 'awaiting') {
+    return 'DocuSign has not completed. Mark filled only if the broker already traded this.';
+  }
+  if (phase === 'declined') return 'A signer declined the envelope.';
+  if (phase === 'voided') return 'The envelope was voided.';
+  return '';
+}
+
+function phaseTone(phase) {
+  if (phase === 'filled') return 'bg-emerald-600 text-white border-emerald-700';
+  if (phase === 'signed') return 'bg-emerald-100 text-emerald-800 border-emerald-200';
+  if (phase === 'declined' || phase === 'voided' || phase === 'cancelled') {
+    return 'bg-red-100 text-red-800 border-red-200';
+  }
+  if (phase === 'superseded') return 'bg-navy-100 text-navy-500 border-navy-100';
+  return 'bg-gold-100 text-gold-800 border-gold-300';
+}
+
+function fmtPx(n) {
+  const v = Number(n);
+  if (!Number.isFinite(v)) return '—';
+  const cents = Math.abs(v * 100 - Math.round(v * 100)) < 1e-6;
+  return v.toFixed(cents ? 2 : 4);
+}
+
+// After a fill is recorded, show the broker numbers. Until then the row
+// is the envelope that was sent. tradeContext keeps that snapshot either way.
+function displayLines(tr) {
+  if (Array.isArray(tr.fillRecord) && tr.fillRecord.length) {
+    return tr.fillRecord.map((f) => ({
+      id: f.itemId,
+      kind: f.kind,
+      ticker: f.ticker,
+      shares: f.shares,
+      pricePerShare: f.pricePerShare,
+      totalCost: f.shares * f.pricePerShare,
+    }));
+  }
+  return tr.items;
+}
+
+function RequestRow({ tr, isSuperAdmin, refreshing, onRefresh, onDelete, onMarkFilled, onResolve }) {
+  const phase = tr.approval?.phase || 'draft';
+  const label = PHASE_LABEL[phase] || 'Draft';
+  const tone = phaseTone(phase);
+  const lines = displayLines(tr);
+
+  const buyTotal = lines
     .filter((i) => i.kind === 'Buy')
     .reduce((s, i) => s + i.totalCost, 0);
-  const sellTotal = tr.items
+  const sellTotal = lines
     .filter((i) => i.kind === 'Sell')
     .reduce((s, i) => s + i.totalCost, 0);
 
@@ -223,12 +283,23 @@ function RequestRow({ tr, refreshing, onRefresh, onDelete, onMarkFilled }) {
                 {' '}
                 · filled {format(new Date(tr.executedAt), 'MMM d, h:mm a')}
                 {tr.executedByName ? ` by ${tr.executedByName}` : ''}
+                {tr.settlementMode === 'record-only' ? ' · book unchanged' : ''}
+              </>
+            )}
+            {tr.resolvedAt && !tr.executedAt && (
+              <>
+                {' '}
+                · {format(new Date(tr.resolvedAt), 'MMM d, h:mm a')}
+                {tr.resolvedByName ? ` by ${tr.resolvedByName}` : ''}
               </>
             )}
           </div>
+          {phaseHint(tr, phase) && (
+            <p className="mt-1 text-xs text-navy-400">{phaseHint(tr, phase)}</p>
+          )}
 
           <ul className="mt-3 divide-y divide-navy-50 rounded-lg border border-navy-100">
-            {tr.items.map((i) => (
+            {lines.map((i) => (
               <li
                 key={i.id}
                 className="flex items-center justify-between gap-3 px-3 py-2"
@@ -243,7 +314,7 @@ function RequestRow({ tr, refreshing, onRefresh, onDelete, onMarkFilled }) {
                     {i.kind} {i.shares} {i.ticker}
                   </span>
                   <span className="text-xs text-navy-400">
-                    @ ${i.pricePerShare.toFixed(2)}
+                    @ ${fmtPx(i.pricePerShare)}
                   </span>
                 </div>
                 <span className="text-sm font-semibold tabular-nums text-navy">
@@ -282,13 +353,13 @@ function RequestRow({ tr, refreshing, onRefresh, onDelete, onMarkFilled }) {
           </div>
         </div>
         <div className="flex shrink-0 flex-col items-end gap-2">
-          {executed ? (
+          {phase === 'filled' ? (
             <span className="flex items-center gap-1 text-xs font-semibold text-emerald-700">
               <CheckCircle2 className="h-3.5 w-3.5" />
               Filled
             </span>
           ) : (
-            status === 'completed' && (
+            isSuperAdmin && tr.approval?.canFill && (
               <button
                 type="button"
                 onClick={onMarkFilled}
@@ -298,6 +369,24 @@ function RequestRow({ tr, refreshing, onRefresh, onDelete, onMarkFilled }) {
                 Mark filled
               </button>
             )
+          )}
+          {isSuperAdmin && tr.approval?.canClose && (
+            <>
+              <button
+                type="button"
+                onClick={() => onResolve('superseded')}
+                className="text-xs font-semibold text-navy-400 underline hover:text-navy"
+              >
+                Mark superseded
+              </button>
+              <button
+                type="button"
+                onClick={() => onResolve('cancelled')}
+                className="text-xs font-semibold text-navy-400 underline hover:text-navy"
+              >
+                Mark cancelled
+              </button>
+            </>
           )}
           {tr.docusignEnvelopeId && (
             <button
@@ -365,11 +454,18 @@ function MarkFilledModal({ tr, onClose, onFilled }) {
     .reduce((s, r) => s + (r.total || 0), 0);
   const netCash = sellTotal - buyTotal;
 
-  async function submit() {
+  async function submit(recordOnly) {
+    if (!recordOnly) {
+      const ok = window.confirm(
+        'This will post these shares and cash into the book. If the trade is already in holdings and cash, cancel and choose Record as filled only.'
+      );
+      if (!ok) return;
+    }
     setSubmitting(true);
     setError('');
     try {
       await api.post(`/trade-requests/${tr.id}/execute`, {
+        recordOnly: recordOnly === true,
         fills: tr.items.map((it) => ({
           itemId: it.id,
           // Already constrained to a positive integer by `valid` above, so send
@@ -390,10 +486,21 @@ function MarkFilledModal({ tr, onClose, onFilled }) {
     <Modal open={!!tr} onClose={onClose} title={`Record fills — Approval #${tr.id}`} size="lg">
       <div className="space-y-4">
         <p className="text-xs text-navy-400">
-          Enter the actual broker fills. Confirming writes these positions and
-          cash movements into the book — defaults are the quote captured when
+          Enter the actual broker fills. Defaults are the quote captured when
           the envelope was sent.
         </p>
+        <div className="rounded-lg border border-gold-300 bg-gold-50 px-3 py-2 text-xs text-navy">
+          <span className="font-semibold">Writing fills into the book posts positions and cash.</span>{' '}
+          If this trade is already reflected in holdings and cash, record it as
+          filled only. That stamps the approval and does not post the shares
+          or the cash a second time.
+        </div>
+        {tr.approval?.fillWhileUnsigned && (
+          <p className="text-xs text-navy-400">
+            DocuSign still shows this envelope as {PHASE_LABEL[tr.approval.phase] || tr.docusignStatus}.
+            The broker fill can be recorded anyway.
+          </p>
+        )}
         <ul className="divide-y divide-navy-50 rounded-lg border border-navy-100">
           {rows.map(({ it, total }) => (
             <li key={it.id} className="flex flex-wrap items-center gap-3 px-3 py-2">
@@ -456,12 +563,15 @@ function MarkFilledModal({ tr, onClose, onFilled }) {
         {error && (
           <div className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700">{error}</div>
         )}
-        <div className="flex justify-end gap-2 border-t border-navy-50 pt-3">
+        <div className="flex flex-wrap justify-end gap-2 border-t border-navy-50 pt-3">
           <Button variant="outline" onClick={onClose}>
             Cancel
           </Button>
-          <Button onClick={submit} disabled={!allValid || submitting}>
-            {submitting ? 'Recording…' : 'Confirm fills'}
+          <Button variant="outline" onClick={() => submit(false)} disabled={!allValid || submitting}>
+            {submitting ? 'Recording…' : 'Write fills into the book'}
+          </Button>
+          <Button onClick={() => submit(true)} disabled={!allValid || submitting}>
+            {submitting ? 'Recording…' : 'Record as filled only'}
           </Button>
         </div>
       </div>

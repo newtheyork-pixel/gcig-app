@@ -374,11 +374,27 @@ model TradeRequest {
   docusignStatus      String?
   docusignSentAt      DateTime?
   docusignCompletedAt DateTime?
-  // Settlement. Set when an exec marks the signed envelope as filled, which
-  // writes the position + cash movements into the ledger. Null until then, and
-  // the marker that makes execution idempotent (a request can't fill twice).
+  // Club-side close, independent of DocuSign. 'superseded' means a later
+  // approval replaced this one and it never executed; 'cancelled' means
+  // it will not execute. Either one stops "Mark filled". Null while the
+  // envelope is still a live approval.
+  resolution          String?
+  resolutionNote      String?
+  resolvedAt          DateTime?
+  resolvedByName      String?
+  // Settlement timestamp. Set when the approval is marked filled — either
+  // because the book was written, or because it was stamped record-only
+  // (the positions were already there and must not be posted again).
+  // Null until then, and the marker that makes filling idempotent.
   executedAt          DateTime?
   executedByName      String?
+  // 'applied' wrote lots and cash. 'record-only' stamped the approval
+  // filled and left the book alone. Null until filled.
+  settlementMode      String?
+  // Broker fills captured at the stamp, when they differ from the quote
+  // frozen on the line items. The line items and tradeContext stay the
+  // envelope that was sent.
+  fillRecord          Json?
   items               TradeRequestItem[]
 
   @@index([createdAt])

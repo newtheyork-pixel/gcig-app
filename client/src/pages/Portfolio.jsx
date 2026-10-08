@@ -132,7 +132,12 @@ function fmtPct(n) {
 
 export default function Portfolio() {
   const { user, isPmOrAbove, isSuperAdmin } = useAuth();
-  const canSeeRisk = (CLIENT_ROLE_RANK[user?.role] || 0) >= 7;
+  // Ledger, treasury sleeves, and the risk tab are the investment-officer
+  // book: Portfolio Manager and above. Chief of Communication and
+  // Director of Public Relations share rank 2, under every analyst, so
+  // both get the simple book. isPmOrAbove is that same set.
+  const canSeeTreasury = (CLIENT_ROLE_RANK[user?.role] || 0) >= CLIENT_ROLE_RANK.PortfolioManager;
+  const canSeeRisk = canSeeTreasury;
   // Two pages on one route. The book is what we own; Risk is the
   // limits, beta, and flags. Junior analysts never see the switch.
   const [view, setView] = useState('book');
@@ -203,9 +208,14 @@ export default function Portfolio() {
 
   useEffect(() => {
     load();
-    reloadCashYield();
-    reloadPeriodReturns();
-  }, []);
+    // Sleeve interest and the multi-window return column are the
+    // officer book. The simple book reads the quote payload only.
+    if (canSeeTreasury) {
+      reloadCashYield();
+      reloadPeriodReturns();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canSeeTreasury]);
 
   const totals = data?.totals || {};
   const holdings = data?.holdings || [];
@@ -594,6 +604,17 @@ export default function Portfolio() {
     if (!last || last.benchmark == null) return null;
     return { ours: last.percent, theirs: last.benchmark, gap: last.percent - last.benchmark };
   }, [benchSeries, displayData]);
+
+  if (!canSeeTreasury) {
+    return (
+      <SimplePortfolio
+        data={data}
+        loading={loading}
+        error={error}
+        onRefresh={load}
+      />
+    );
+  }
 
   return (
     <>
@@ -1329,6 +1350,138 @@ export default function Portfolio() {
         onChanged={load}
       />
     </>
+  );
+}
+
+// The book an analyst sees. Officers keep the chart, the ledger, and
+// the treasury sleeves; this is holdings, one cash figure, and the total.
+function SimplePortfolio({ data, loading, error, onRefresh }) {
+  const [selected, setSelected] = useState(null);
+  const holdings = data?.holdings || [];
+  const equities = holdings.filter((h) => !h.isCash);
+  const cashRow = holdings.find((h) => h.isCash);
+  const total = data?.totals?.totalValue ?? null;
+  const cash = data?.totals?.cashValue ?? cashRow?.marketValue ?? null;
+
+  return (
+    <>
+      <PageHeader
+        kicker="The Live Book"
+        title="Portfolio"
+        subtitle="Holdings, weight, and return."
+        actions={
+          <Button onClick={onRefresh} variant="gold" disabled={loading}>
+            <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+            Refresh
+          </Button>
+        }
+      />
+      {error && (
+        <div className="mb-4 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-800">
+          {error}
+        </div>
+      )}
+      <div className="grid gap-4 sm:grid-cols-2">
+        <Card>
+          <div className="text-[11px] font-medium uppercase tracking-[0.14em] text-navy-400">
+            Total value
+          </div>
+          <div className="mt-2 font-serif text-4xl font-medium tabular-nums text-navy">
+            {total != null ? fmtMoney(total) : '—'}
+          </div>
+        </Card>
+        <Card>
+          <div className="text-[11px] font-medium uppercase tracking-[0.14em] text-navy-400">
+            Cash
+          </div>
+          <div className="mt-2 font-serif text-4xl font-medium tabular-nums text-navy">
+            {cash != null ? fmtMoney(cash) : '—'}
+          </div>
+        </Card>
+      </div>
+      <div className="mt-6">
+        <Card title="Holdings">
+          {loading && equities.length === 0 ? (
+            <div className="py-8 text-center text-navy-400">Loading the book…</div>
+          ) : equities.length === 0 ? (
+            <div className="py-8 text-center text-navy-400">No positions found.</div>
+          ) : (
+            <>
+              <div className="space-y-2 md:hidden">
+                {equities.map((h) => (
+                  <button
+                    key={h.ticker}
+                    type="button"
+                    onClick={() => setSelected(h)}
+                    className="w-full rounded-lg border border-navy-100 bg-white px-3 py-3 text-left"
+                  >
+                    <div className="flex items-baseline justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="font-bold text-navy">{h.ticker}</div>
+                        <div className="truncate text-xs text-navy-400">{h.name}</div>
+                      </div>
+                      <div className="text-right">
+                        <div className="text-xs tabular-nums text-navy-400">
+                          {h.portfolioPct != null ? `${h.portfolioPct.toFixed(1)}%` : '—'}
+                        </div>
+                        <ReturnText value={h.percentReturn} />
+                      </div>
+                    </div>
+                  </button>
+                ))}
+              </div>
+              <div className="hidden overflow-x-auto md:block">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-navy/10 text-left text-[11px] uppercase tracking-[0.12em] text-navy-400">
+                      <th className="py-2 pr-4">Ticker</th>
+                      <th className="py-2 pr-4">Name</th>
+                      <th className="py-2 pr-4 text-right">Weight</th>
+                      <th className="py-2 pr-4 text-right">Return</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-navy-50">
+                    {equities.map((h) => (
+                      <tr
+                        key={h.ticker}
+                        onClick={() => setSelected(h)}
+                        className="cursor-pointer hover:bg-navy-50/60"
+                      >
+                        <td className="py-3 pr-4 font-medium text-navy">{h.ticker}</td>
+                        <td className="py-3 pr-4 text-navy-400">{h.name}</td>
+                        <td className="py-3 pr-4 text-right tabular-nums text-navy-400">
+                          {h.portfolioPct != null ? `${h.portfolioPct.toFixed(1)}%` : '—'}
+                        </td>
+                        <td className="py-3 text-right">
+                          <ReturnText value={h.percentReturn} />
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
+        </Card>
+      </div>
+      <HoldingDetailModal
+        holding={selected}
+        onClose={() => setSelected(null)}
+        onChanged={onRefresh}
+      />
+    </>
+  );
+}
+
+function ReturnText({ value }) {
+  if (value == null || !Number.isFinite(Number(value))) {
+    return <span className="tabular-nums text-navy-400">—</span>;
+  }
+  const n = Number(value);
+  return (
+    <span className={`font-semibold tabular-nums ${n >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+      {fmtPct(n)}
+    </span>
   );
 }
 
