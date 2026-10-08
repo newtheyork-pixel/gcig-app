@@ -25,6 +25,7 @@ const ROLES = [
   'DirectorOfResearch',
   'CIO',
   'ChiefOfCommunication',
+  'DirectorOfPublicRelations',
   'SeniorPortfolioManager',
   'PortfolioManager',
   'SeniorAnalyst',
@@ -210,6 +211,9 @@ router.get('/name-inference', requireSuperAdmin, async (_req, res) => {
 // every pitch they've given, their attendance record, and a sample
 // of recent votes. Advisory-tier + Chief-of-Comms members are
 // flagged as attendance-exempt so the UI can hide the attendance tile.
+// Director of Public Relations is not in this set: assigning the office
+// must not take an existing member off the weekly roster. Keep this
+// list in step with ATTENDANCE_EXEMPT_ROLES in routes/attendance.js.
 const ATTENDANCE_EXEMPT_ROLES = new Set([
   'AdvisoryBoardMember',
   'FacultyAdvisory',
@@ -528,6 +532,7 @@ router.post('/', requireExecutive, async (req, res) => {
     President: 'President',
     CIO: 'CIO',
     ChiefOfCommunication: 'Chief of Communication',
+    DirectorOfPublicRelations: 'Director of Public Relations',
     SeniorPortfolioManager: 'Senior Portfolio Manager',
     PortfolioManager: 'Portfolio Manager',
     SeniorAnalyst: 'Senior Analyst',

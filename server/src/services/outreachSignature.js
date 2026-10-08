@@ -33,6 +33,7 @@ export const OUTREACH_TITLE = {
   FacultyAdvisory: 'Faculty Advisor',
   AdvisoryBoardMember: 'Advisory Board',
   ChiefOfCommunication: 'Communications',
+  DirectorOfPublicRelations: 'Director of Public Relations',
 };
 
 export function signatureFor(user) {

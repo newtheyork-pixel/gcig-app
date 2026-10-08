@@ -11,6 +11,7 @@ const ROLE_LABELS = {
   DirectorOfResearch: 'Director of Research',
   CIO: 'CIO',
   ChiefOfCommunication: 'Chief of Communication',
+  DirectorOfPublicRelations: 'Director of Public Relations',
   SeniorPortfolioManager: 'Senior Portfolio Manager',
   PortfolioManager: 'Portfolio Manager',
   SeniorAnalyst: 'Senior Analyst',

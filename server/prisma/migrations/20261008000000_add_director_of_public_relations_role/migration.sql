@@ -1,0 +1,12 @@
+-- Director of Public Relations. A non-investment officer, ranked with
+-- Chief of Communication (ROLE_RANK 2 in middleware/auth.js): below
+-- JuniorAnalyst, outside EXECUTIVE_ROLES, and outside the terminal
+-- gate. Attendance is still tracked; the communications office is
+-- exempt because that person does not attend in a counted capacity,
+-- and this office is not that one.
+--
+-- Appended rather than inserted in hierarchy order: Postgres enum
+-- values carry ordinals, and reordering them would rewrite every
+-- existing row's stored value. Display order lives in the org chart
+-- and in ROLE_RANK, not in the enum.
+ALTER TYPE "Role" ADD VALUE IF NOT EXISTS 'DirectorOfPublicRelations';

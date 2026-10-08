@@ -384,10 +384,12 @@ export function requireTerminalAccess(req, res, next) {
 
 // Operational permission hierarchy (higher number = more power).
 // Advisory Board Members and Faculty Advisors sit OUTSIDE the operational chain
-// — they are observers with no edit rights. Chief of Communication is a
-// non-investment officer role (comms/PR) that also sits outside the analyst
-// chain. All three get low ranks so permission gates treat them as view-only
-// for investment-tier actions.
+// — they are observers with no edit rights. Chief of Communication and
+// Director of Public Relations are non-investment officer roles that also
+// sit outside the analyst chain. They share a rank so permission gates
+// treat them as view-only for investment-tier actions. Sitting this
+// office in EXECUTIVE_ROLES, beside Director of Research, would let it
+// open votes and send trade confirmations.
 export const ROLE_RANK = {
   President: 11,
   DirectorOfResearch: 10,
@@ -398,6 +400,7 @@ export const ROLE_RANK = {
   Analyst: 5,
   JuniorAnalyst: 4,
   ChiefOfCommunication: 2,
+  DirectorOfPublicRelations: 2,
   AdvisoryBoardMember: 1,
   FacultyAdvisory: 1,
   // Honorific badge only — confers no power. A former president's primary

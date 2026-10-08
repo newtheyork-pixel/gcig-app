@@ -163,6 +163,32 @@ test('requireExecutive admits a DirectorOfResearch', () => {
   assert.equal(passed, true);
 });
 
+// Director of Public Relations is an officer title, and the other
+// director in this enum is an investment executive. Sharing that rank
+// would let a PR office send trade confirmations. The analog is Chief
+// of Communication: same non-investment rank, outside the executive
+// set, below the analyst chain.
+test('DirectorOfPublicRelations shares the non-trading officer rank', () => {
+  assert.equal(ROLE_RANK.DirectorOfPublicRelations, ROLE_RANK.ChiefOfCommunication);
+  assert.equal(ROLE_RANK.DirectorOfPublicRelations, 2);
+  assert.ok(ROLE_RANK.DirectorOfPublicRelations < ROLE_RANK.JuniorAnalyst);
+});
+
+test('requireExecutive denies a Director of Public Relations', () => {
+  const { res, nextCalled } = runGate(requireExecutive, {
+    role: 'DirectorOfPublicRelations',
+  });
+  assert.equal(nextCalled, false);
+  assert.equal(res.statusCode, 403);
+});
+
+test('requireRole denies a Director of Public Relations the JuniorAnalyst tier', () => {
+  const gate = requireRole('JuniorAnalyst');
+  const { res, nextCalled } = runGate(gate, { role: 'DirectorOfPublicRelations' });
+  assert.equal(nextCalled, false);
+  assert.equal(res.statusCode, 403);
+});
+
 // ── What counts as a session ─────────────────────────────────────────
 
 function withSecret(fn) {

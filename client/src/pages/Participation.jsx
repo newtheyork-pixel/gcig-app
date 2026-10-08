@@ -145,8 +145,9 @@ export default function Participation({ embedded = false }) {
             absences are half-weighted — two excuses count as one missed
             meeting. Pitches come from the presenter table
             (assignments), capped at {weights.pitchCap} for score
-            purposes. Advisory, Faculty, and Chief of Communication
-            roles are excluded from the ranking.
+            purposes. Advisory, Faculty, and the non-investment
+            officer roles (Chief of Communication, Director of Public
+            Relations) are excluded from the ranking.
           </div>
         </div>
       </Card>

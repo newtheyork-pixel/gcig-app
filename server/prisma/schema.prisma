@@ -33,6 +33,13 @@ enum Role {
   // role (see ASSIGNABLE_ROLES in routes/users.js). Appended last so
   // existing enum value ordinals are unchanged.
   FormerPresident
+  // Public-relations officer. Same non-investment rank as Chief of
+  // Communication (ROLE_RANK 2): view-only on investment gates, not an
+  // executive. Attendance stays tracked. Exemption belongs to the
+  // communications office, which does not attend in a counted capacity,
+  // and does not travel with every officer outside the analyst chain.
+  // Appended last so existing enum ordinals are unchanged.
+  DirectorOfPublicRelations
 }
 
 enum AttendanceStatus {

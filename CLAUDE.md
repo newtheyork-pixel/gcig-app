@@ -457,6 +457,11 @@ every Google self-signup, so including it would hand the whole book to
 anyone who found the login page. Client and server gates must move
 together or an analyst opens the terminal and 403s on every panel.
 - **ChiefOfCommunication** — comms officer, attendance-exempt.
+- **DirectorOfPublicRelations** — public-relations officer. Same
+  non-investment rank as Chief of Communication (view-only on
+  investment gates, not executive, not terminal). Attendance is
+  still tracked; exemption stays specific to the communications
+  office.
 - **Super admin** — defined by email match (`isSuperAdminEmail`),
   not a role. Thomas's email. Bypasses every role gate. The list is
   the `SUPER_ADMIN_EMAIL` env var on Render (comma-separated), so
