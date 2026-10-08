@@ -3,6 +3,7 @@ const ROLE_LABELS = {
   DirectorOfResearch: 'Director of Research',
   CIO: 'CIO',
   ChiefOfCommunication: 'Chief of Communication',
+  DirectorOfPublicRelations: 'Director of Public Relations',
   SeniorPortfolioManager: 'Sr. Portfolio Manager',
   PortfolioManager: 'Portfolio Manager',
   SeniorAnalyst: 'Senior Analyst',
@@ -18,6 +19,9 @@ const VARIANTS = {
   DirectorOfResearch: 'bg-gold text-navy border-gold',
   CIO: 'bg-gold text-navy border-gold',
   ChiefOfCommunication: 'bg-sky-50 text-sky-800 border-sky-200',
+  // Same communications family as Chief of Communication, a step
+  // cooler, so the two officer badges stay distinguishable side by side.
+  DirectorOfPublicRelations: 'bg-teal-50 text-teal-800 border-teal-200',
   SeniorPortfolioManager: 'bg-gold-300 text-navy border-gold-300',
   PortfolioManager: 'bg-navy-50 text-navy border-navy-100',
   SeniorAnalyst: 'bg-white text-navy border-navy-100',

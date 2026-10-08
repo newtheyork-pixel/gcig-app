@@ -30,7 +30,7 @@ test('the research section is Analyst and above, matching the API', () => {
 test('everyone below Analyst gets nothing', () => {
   // JuniorAnalyst matters most: it is the default role for every Google
   // self-signup, so anyone who finds the login page lands there.
-  for (const role of ['JuniorAnalyst', 'ChiefOfCommunication', 'AdvisoryBoardMember', 'FacultyAdvisory', 'FormerPresident']) {
+  for (const role of ['JuniorAnalyst', 'ChiefOfCommunication', 'DirectorOfPublicRelations', 'AdvisoryBoardMember', 'FacultyAdvisory', 'FormerPresident']) {
     assert.equal(entitled({ role }), false, role);
   }
   assert.equal(entitled(null), false);

@@ -19,10 +19,12 @@ const WEIGHT_ATTENDANCE = 50;
 const WEIGHT_PITCHES = 35;
 const WEIGHT_ROLE = 15;
 const PITCH_CAP = 5; // pitches beyond this don't add more to the score
-// Excludes Advisory/Faculty (rank 1) and Chief of Communication (rank 2) —
-// the first are observers, the second isn't tracked for attendance and
-// doesn't pitch, so a participation score computed from these inputs would
-// be misleading for them.
+// Excludes Advisory/Faculty (rank 1) and the non-investment officers at
+// rank 2 (Chief of Communication, Director of Public Relations). The
+// first are observers. The second sit outside the analyst chain and
+// don't pitch, so a score built from attendance plus pitches would
+// misread the office. Rank is the switch: a new officer who should be
+// ranked needs a rank above this line, not a name added here.
 const EXCLUDE_RANK_AT_OR_BELOW = 2;
 
 function roundTo(n, digits = 1) {

@@ -31,6 +31,13 @@ const ADVISORY_ROLES = ['AdvisoryBoardMember', 'FacultyAdvisory'];
 // attend meetings in a counted capacity at all. Anyone whose PRIMARY role is
 // in this set is invisible to the attendance UI and their /mine endpoint
 // returns an opt-out payload instead of a 0% card.
+//
+// Director of Public Relations is the same rank and is deliberately not
+// here. Exemption is a fact about the communications office, not a
+// property of every non-investment officer. A member assigned the PR
+// office stays on the weekly roster. The profile route
+// (routes/users.js) keeps its own copy of this list; the two move
+// together.
 const ATTENDANCE_EXEMPT_ROLES = [...ADVISORY_ROLES, 'ChiefOfCommunication'];
 
 // Regular-event roster: exclude everyone whose PRIMARY role is attendance-

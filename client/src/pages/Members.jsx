@@ -16,6 +16,7 @@ const ROLES = [
   'DirectorOfResearch',
   'CIO',
   'ChiefOfCommunication',
+  'DirectorOfPublicRelations',
   'SeniorPortfolioManager',
   'PortfolioManager',
   'SeniorAnalyst',

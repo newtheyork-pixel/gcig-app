@@ -832,6 +832,7 @@ async function buildLiveContext() {
       DirectorOfResearch: 'Director of Research',
       CIO: 'CIO',
       ChiefOfCommunication: 'Chief of Communication',
+      DirectorOfPublicRelations: 'Director of Public Relations',
       SeniorPortfolioManager: 'Senior Portfolio Manager',
       PortfolioManager: 'Portfolio Manager',
       SeniorAnalyst: 'Senior Analyst',
@@ -848,6 +849,10 @@ async function buildLiveContext() {
       {
         heading: 'Chief of Communication',
         roles: new Set(['ChiefOfCommunication']),
+      },
+      {
+        heading: 'Director of Public Relations',
+        roles: new Set(['DirectorOfPublicRelations']),
       },
       {
         heading: 'Portfolio Managers',

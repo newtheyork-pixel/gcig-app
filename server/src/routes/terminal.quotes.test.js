@@ -194,6 +194,7 @@ test('terminal gate: Analyst and above get in, JuniorAnalyst does not', async ()
   // it in would hand the portfolio to anyone who found the login page.
   assert.equal(check('JuniorAnalyst'), false, 'JuniorAnalyst must stay out');
   assert.equal(check('ChiefOfCommunication'), false);
+  assert.equal(check('DirectorOfPublicRelations'), false, 'PR office is not an analyst seat');
   assert.equal(check('FormerPresident'), false, 'honorific confers no access');
   assert.equal(check(null), false, 'no user, no terminal');
 });
