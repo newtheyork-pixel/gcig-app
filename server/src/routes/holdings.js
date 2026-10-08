@@ -926,11 +926,14 @@ router.delete('/lots/:id', requireSuperAdmin, async (req, res, next) => {
 });
 
 // ── Positions + cash ledger (DB-backed book) ─────────────────────────
-// The positions list and the running cash balance, plus the manual cash
-// movements that aren't trades. Reads are open to any member (cash isn't
-// sensitive — same posture as cash-yield); writes are super-admin only.
-// Trade-driven Buy/Sell rows are written by settlement (tradeExecution.js),
-// never here, and can't be deleted here either.
+// The positions list is the book every member sees. The cash ledger
+// (the movement list and the bare balance) is the treasurer's view:
+// Portfolio Manager and above. Analysts, and the non-investment offices
+// (Chief of Communication, Director of Public Relations — both rank 2),
+// get a single cash figure on the portfolio payload instead.
+// Writes stay super-admin only. Trade-driven Buy/Sell rows are written
+// by settlement (tradeExecution.js), never here, and can't be deleted
+// here either.
 
 const MANUAL_TX_KINDS = new Set(['Deposit', 'Withdraw', 'Dividend', 'Fee']);
 
@@ -1056,7 +1059,7 @@ router.delete('/positions/:ticker', requireSuperAdmin, async (req, res, next) =>
   }
 });
 
-router.get('/cash', async (_req, res, next) => {
+router.get('/cash', requireRole('PortfolioManager'), async (_req, res, next) => {
   try {
     res.json({ cash: await getCashBalance() });
   } catch (err) {
@@ -1064,7 +1067,7 @@ router.get('/cash', async (_req, res, next) => {
   }
 });
 
-router.get('/transactions', async (req, res, next) => {
+router.get('/transactions', requireRole('PortfolioManager'), async (req, res, next) => {
   try {
     const take = Math.min(Number(req.query.limit) || 100, 500);
     const rows = await prisma.transaction.findMany({
@@ -1872,10 +1875,11 @@ router.get('/thesis-drift', requireRole('PortfolioManager'), async (_req, res) =
 });
 
 // YTD interest earned on the club's cash position, split between the
-// FGTXX money-market sleeve and the Bank USA deposit sleeve. Open to
-// every logged-in member — the cash sleeve isn't sensitive and the
-// numbers are useful context for the dashboard.
-router.get('/cash-yield', async (_req, res) => {
+// FGTXX money-market sleeve and the Bank USA deposit sleeve. Treasury
+// detail: Portfolio Manager and above. The same rank gate as the cash
+// ledger, so communications and public relations stay out with the
+// analysts. The marked portfolio total does not depend on this.
+router.get('/cash-yield', requireRole('PortfolioManager'), async (_req, res) => {
   try {
     const data = await computeCashInterest();
     // Strip the verbose per-day series for the default response; clients

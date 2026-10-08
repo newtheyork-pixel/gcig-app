@@ -189,6 +189,40 @@ test('requireRole denies a Director of Public Relations the JuniorAnalyst tier',
   assert.equal(res.statusCode, 403);
 });
 
+// Cash ledger and treasury are the investment-officer book. Portfolio
+// Manager and above. Director of Public Relations shares rank 2 with
+// Chief of Communication, so the gate that keeps one out keeps the
+// other out. Analysts, including senior, are on the simple book too.
+test('treasury gate admits portfolio managers and excludes both non-investment offices', () => {
+  const gate = requireRole('PortfolioManager');
+  for (const role of [
+    'JuniorAnalyst',
+    'Analyst',
+    'SeniorAnalyst',
+    'ChiefOfCommunication',
+    'DirectorOfPublicRelations',
+    'AdvisoryBoardMember',
+    'FacultyAdvisory',
+    'FormerPresident',
+  ]) {
+    const { res, nextCalled } = runGate(gate, { role });
+    assert.equal(nextCalled, false, role);
+    assert.equal(res.statusCode, 403, role);
+  }
+  for (const role of [
+    'PortfolioManager',
+    'SeniorPortfolioManager',
+    'CIO',
+    'DirectorOfResearch',
+    'President',
+  ]) {
+    const { nextCalled } = runGate(gate, { role });
+    assert.equal(nextCalled, true, role);
+  }
+  assert.equal(ROLE_RANK.DirectorOfPublicRelations, ROLE_RANK.ChiefOfCommunication);
+  assert.ok(ROLE_RANK.DirectorOfPublicRelations < ROLE_RANK.PortfolioManager);
+});
+
 // ── What counts as a session ─────────────────────────────────────────
 
 function withSecret(fn) {

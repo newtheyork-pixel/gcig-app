@@ -19,6 +19,12 @@
 //                                           Server pulls fresh quotes — never
 //                                           trust client-supplied prices.
 //   GET    /api/trade-requests/:id/refresh  Pull envelope status from DocuSign
+//   POST   /api/trade-requests/:id/execute  Mark filled. Writes the book,
+//                                           unless recordOnly, which stamps
+//                                           the approval and leaves holdings
+//                                           and cash alone.
+//   POST   /api/trade-requests/:id/resolve  Close an approval that did not
+//                                           execute: superseded or cancelled.
 //   DELETE /api/trade-requests/:id          Drop a request (only if not sent)
 
 import { Router } from 'express';
@@ -31,7 +37,11 @@ import {
   sendBundledTradeEnvelope,
   getEnvelope,
 } from '../services/docusign.js';
-import { executeTradeRequest, TradeExecutionError } from '../services/tradeExecution.js';
+import {
+  executeTradeRequest,
+  recordTradeRequestFilled,
+  TradeExecutionError,
+} from '../services/tradeExecution.js';
 
 const router = Router();
 router.use(verifyJwt);
@@ -62,6 +72,45 @@ function normalizeEnvelopeStatus(raw) {
     return s;
   }
   return s || null;
+}
+
+// DocuSign statuses on which a super-admin may record a fill. "Sent" is
+// included because the broker can fill before DocuSign reports the
+// envelope complete. Declined and voided are not fills.
+const FILLABLE_STATUSES = new Set(['sent', 'delivered', 'completed']);
+export const CLOSURE_RESOLUTIONS = new Set(['superseded', 'cancelled']);
+
+// What the Trade Approvals list should say, and which actions are still
+// honest. A superseded or cancelled row is closed even if DocuSign says
+// signed; a filled row is closed even if DocuSign still says sent.
+// Pure so the labels and the buttons cannot drift apart.
+export function tradeApprovalState(tr) {
+  const status = String(tr?.docusignStatus || '').toLowerCase();
+  const executed = Boolean(tr?.executedAt);
+  const resolution = CLOSURE_RESOLUTIONS.has(tr?.resolution) ? tr.resolution : null;
+
+  let phase = 'draft';
+  if (resolution) phase = resolution;
+  else if (executed) phase = 'filled';
+  else if (status === 'completed') phase = 'signed';
+  else if (status === 'delivered') phase = 'awaiting';
+  else if (status === 'sent') phase = 'sent';
+  else if (status === 'declined') phase = 'declined';
+  else if (status === 'voided') phase = 'voided';
+
+  const open = !executed && !resolution;
+  return {
+    phase,
+    canFill: open && FILLABLE_STATUSES.has(status),
+    canClose: open && phase !== 'declined' && phase !== 'voided',
+    // The broker may already have traded an envelope DocuSign has not
+    // marked complete. The fill is still allowed; the screen says so.
+    fillWhileUnsigned: open && (status === 'sent' || status === 'delivered'),
+  };
+}
+
+function withApproval(row) {
+  return { ...row, approval: tradeApprovalState(row) };
 }
 
 // Maximum line items per envelope. The PDF template needs anchor rows for
@@ -160,7 +209,7 @@ router.get('/', requireExecutive, async (_req, res, next) => {
         },
       },
     });
-    res.json(rows);
+    res.json(rows.map(withApproval));
   } catch (err) {
     next(err);
   }
@@ -624,14 +673,19 @@ router.get('/:id/refresh', requireExecutive, async (req, res, next) => {
   }
 });
 
-// POST /api/trade-requests/:id/execute — mark a signed envelope as FILLED.
+// POST /api/trade-requests/:id/execute — mark an envelope as FILLED.
 //
-// This is the settlement step: it writes the real position + cash movements
-// into the ledger. Defaults each line to what was sent, but the exec can pass
-// the actual broker fills (price/qty differ from the quote-at-send) via
-//   { fills: [{ itemId, shares?, pricePerShare? }], force? }
-// The envelope must be signed (DocuSign "completed") first; a super-admin may
-// override with force:true for trades settled outside the normal flow.
+// Two settlements, and they are not interchangeable:
+//   { fills, recordOnly: false }  writes positions and cash (the default)
+//   { fills, recordOnly: true }   stamps the approval filled and does not
+//                                 touch holdings or the cash ledger
+// recordOnly is the path when the book already reflects the trade.
+// Posting again would double the shares and the cash.
+//
+// Sent, awaiting-signature, and signed envelopes can be filled. The
+// broker does not wait on DocuSign. force:true remains for a super-admin
+// recording a fill against any other DocuSign status. A superseded or
+// cancelled approval cannot be filled.
 router.post('/:id/execute', requireSuperAdmin, async (req, res, next) => {
   try {
     const id = Number(req.params.id);
@@ -639,25 +693,79 @@ router.post('/:id/execute', requireSuperAdmin, async (req, res, next) => {
 
     const tr = await prisma.tradeRequest.findUnique({ where: { id } });
     if (!tr) return res.status(404).json({ error: 'Not found' });
-
-    const completed = tr.docusignStatus === 'completed';
-    const force = req.body?.force === true && req.user?.isSuperAdmin;
-    if (!completed && !force) {
-      return res.status(400).json({
-        error: `Envelope isn't signed yet (status: ${tr.docusignStatus || 'none'}). Refresh status, or a super-admin can force.`,
+    if (tr.resolution) {
+      return res.status(409).json({
+        error: `This approval was marked ${tr.resolution} and cannot be filled.`,
       });
     }
 
-    const result = await executeTradeRequest({
+    const status = String(tr.docusignStatus || '').toLowerCase();
+    const force = req.body?.force === true && req.user?.isSuperAdmin;
+    if (!FILLABLE_STATUSES.has(status) && !force) {
+      return res.status(400).json({
+        error:
+          `This envelope can't be marked filled (DocuSign status: ${status || 'none'}). ` +
+          `Sent, awaiting signature, and signed envelopes can. Pass force to override.`,
+      });
+    }
+
+    const args = {
       tradeRequestId: id,
       fills: req.body?.fills,
       actorName: req.user?.name || null,
-    });
+    };
+    // Boolean only. A string "true" must not skip the book write.
+    const result =
+      req.body?.recordOnly === true
+        ? await recordTradeRequestFilled(args)
+        : await executeTradeRequest(args);
     res.json(result);
   } catch (err) {
     if (err instanceof TradeExecutionError) {
       return res.status(err.status).json({ error: err.message });
     }
+    next(err);
+  }
+});
+
+// POST /api/trade-requests/:id/resolve — close an approval that did not
+// execute. Body: { resolution: "superseded" | "cancelled", note? }.
+// Does not void the DocuSign envelope and does not move the book.
+// A filled approval stays filled.
+router.post('/:id/resolve', requireSuperAdmin, async (req, res, next) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) return res.status(400).json({ error: 'Invalid id' });
+    const resolution = String(req.body?.resolution || '').toLowerCase();
+    if (!CLOSURE_RESOLUTIONS.has(resolution)) {
+      return res.status(400).json({ error: 'resolution must be superseded or cancelled' });
+    }
+    const note = req.body?.note != null ? String(req.body.note).trim() : '';
+    if (note.length > 500) return res.status(400).json({ error: 'note is too long' });
+
+    const tr = await prisma.tradeRequest.findUnique({ where: { id } });
+    if (!tr) return res.status(404).json({ error: 'Not found' });
+    if (tr.executedAt) {
+      return res.status(409).json({
+        error: 'This approval is already filled. A filled trade is not superseded or cancelled.',
+      });
+    }
+
+    const updated = await prisma.tradeRequest.update({
+      where: { id },
+      data: {
+        resolution,
+        resolutionNote: note || null,
+        resolvedAt: new Date(),
+        resolvedByName: req.user?.name || null,
+      },
+      include: {
+        creator: { select: { id: true, name: true, role: true } },
+        items: { orderBy: { id: 'asc' } },
+      },
+    });
+    res.json(withApproval(updated));
+  } catch (err) {
     next(err);
   }
 });

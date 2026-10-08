@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
 import {
-  Mic,
   LayoutDashboard,
   CalendarDays,
   LineChart,
@@ -37,7 +36,6 @@ const NAV_SECTIONS = [
       { to: '/votes', label: 'Voting', icon: Vote },
       { to: '/calendar', label: 'Calendar', icon: CalendarDays },
       { to: '/chat', label: 'Chat', icon: MessageSquare },
-      { to: '/field-research', label: 'Fieldwork', icon: Mic },
       { to: '/ai-chat', label: 'Assistant', icon: Bot },
     ],
   },

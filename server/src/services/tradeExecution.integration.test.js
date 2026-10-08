@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   executeTradeRequest,
+  recordTradeRequestFilled,
   executeDirectTrade,
   executeBulkTrades,
   TradeExecutionError,
@@ -278,6 +279,80 @@ test('bulk trades run sells before buys so proceeds fund the buys', async () => 
   assert.equal(db.holding('BBB').shares, 4);
   assert.ok(db.holding('AAA').closedAt);
   assert.equal(db.cash(), 200); // 100 + 500 sell − 400 buy
+});
+
+test('record-only fill stamps the approval and does not touch the book', async () => {
+  const db = makeFakeDb({
+    holdings: [{ ticker: 'AIT', name: 'AIT', shares: 16, costBasis: 300, isCash: false, closedAt: null }],
+    lots: [{ id: 1, ticker: 'AIT', shares: 16, pricePerShare: 300, buyDate: olderDate }],
+    transactions: [{ id: 1, kind: 'Opening', cashDelta: 5000, tradeRequestId: null }],
+    tradeRequests: [
+      tr(9, [
+        { id: 21, kind: 'Sell', ticker: 'AIT', shares: 16, pricePerShare: 310 },
+        { id: 22, kind: 'Buy', ticker: 'VOO', shares: 14, pricePerShare: 690 },
+      ], { docusignStatus: 'sent' }),
+    ],
+  });
+  const beforeCash = db.cash();
+  const beforeLots = db.lotsFor('AIT').length;
+  const res = await recordTradeRequestFilled({
+    tradeRequestId: 9,
+    actorName: 'Exec',
+    fills: [
+      { itemId: 21, shares: 16, pricePerShare: 318.22 },
+      { itemId: 22, shares: 14, pricePerShare: 700.94 },
+    ],
+    db,
+  });
+  assert.equal(res.bookApplied, false);
+  assert.equal(res.settlementMode, 'record-only');
+  assert.ok(res.tradeRequest.executedAt);
+  assert.equal(res.tradeRequest.settlementMode, 'record-only');
+  assert.equal(res.tradeRequest.fillRecord[0].pricePerShare, 318.22);
+  assert.equal(db.cash(), beforeCash);
+  assert.equal(db.txns().length, 1);
+  assert.equal(db.holding('AIT').shares, 16);
+  assert.equal(db.lotsFor('AIT').length, beforeLots);
+  assert.equal(db.holding('VOO'), undefined);
+});
+
+test('record-only fill refuses an approval that was already closed or filled', async () => {
+  const closed = makeFakeDb({
+    tradeRequests: [tr(8, [{ id: 11, kind: 'Buy', ticker: 'NEW', shares: 1, pricePerShare: 10 }], { resolution: 'superseded' })],
+  });
+  await assert.rejects(
+    () => recordTradeRequestFilled({ tradeRequestId: 8, db: closed }),
+    (e) => e instanceof TradeExecutionError && /superseded/.test(e.message) && e.status === 409
+  );
+
+  const filled = makeFakeDb({
+    tradeRequests: [tr(9, [{ id: 11, kind: 'Buy', ticker: 'NEW', shares: 1, pricePerShare: 10 }], { executedAt: new Date() })],
+  });
+  await assert.rejects(
+    () => recordTradeRequestFilled({ tradeRequestId: 9, db: filled }),
+    (e) => e instanceof TradeExecutionError && e.status === 409
+  );
+});
+
+test('applying a fill refuses a superseded approval and stamps settlementMode', async () => {
+  const closed = makeFakeDb({
+    transactions: [{ id: 1, kind: 'Opening', cashDelta: 10000 }],
+    tradeRequests: [tr(8, [{ id: 11, kind: 'Buy', ticker: 'NEW', shares: 1, pricePerShare: 10 }], { resolution: 'superseded' })],
+  });
+  await assert.rejects(
+    () => executeTradeRequest({ tradeRequestId: 8, db: closed }),
+    (e) => e instanceof TradeExecutionError && /superseded/.test(e.message)
+  );
+  assert.equal(closed.holding('NEW'), undefined);
+  assert.equal(closed.cash(), 10000);
+
+  const db = makeFakeDb({
+    transactions: [{ id: 1, kind: 'Opening', cashDelta: 10000 }],
+    tradeRequests: [tr(1, [{ id: 11, kind: 'Buy', ticker: 'NEW', shares: 1, pricePerShare: 10 }])],
+  });
+  const res = await executeTradeRequest({ tradeRequestId: 1, db });
+  assert.equal(res.tradeRequest.settlementMode, 'applied');
+  assert.equal(db.holding('NEW').shares, 1);
 });
 
 test('editable fills override the recorded quote-at-send', async () => {

@@ -190,6 +190,12 @@ export async function executeTradeRequest({ tradeRequestId, fills = [], actorNam
     if (tr.executedAt) {
       throw new TradeExecutionError('This trade request was already marked filled', 409);
     }
+    if (tr.resolution) {
+      throw new TradeExecutionError(
+        `This approval was marked ${tr.resolution} and cannot be filled`,
+        409
+      );
+    }
     const already = await tx.transaction.count({ where: { tradeRequestId: id } });
     if (already > 0) {
       throw new TradeExecutionError('This trade request already has ledger entries', 409);
@@ -269,7 +275,7 @@ export async function executeTradeRequest({ tradeRequestId, fills = [], actorNam
 
     const updated = await tx.tradeRequest.update({
       where: { id },
-      data: { executedAt, executedByName: actorName },
+      data: { executedAt, executedByName: actorName, settlementMode: 'applied' },
       include: {
         creator: { select: { id: true, name: true, role: true } },
         items: { orderBy: { id: 'asc' } },
@@ -278,6 +284,81 @@ export async function executeTradeRequest({ tradeRequestId, fills = [], actorNam
 
     const cashAfter = await getCashBalance(tx);
     return { tradeRequest: updated, transactions, cashBefore, cashAfter };
+  });
+}
+
+// Stamp an approval filled without posting shares or cash.
+//
+// The apply path above is the settlement. This one is for the approval
+// whose fills are already in the book — booked by hand, or by an earlier
+// path — where running settlement again would buy and sell the same
+// shares a second time. It records the broker fills and sets executedAt
+// so the row leaves the "mark filled" queue. Holdings, lots, and the
+// cash ledger are not touched.
+export async function recordTradeRequestFilled({
+  tradeRequestId,
+  fills = [],
+  actorName = null,
+  db = prisma,
+}) {
+  const id = Number(tradeRequestId);
+  if (!Number.isFinite(id)) throw new TradeExecutionError('Invalid trade request id', 400);
+
+  const fillById = new Map();
+  for (const f of Array.isArray(fills) ? fills : []) {
+    if (f && f.itemId != null) fillById.set(Number(f.itemId), f);
+  }
+
+  return db.$transaction(async (tx) => {
+    await lockBook(tx);
+    await tx.$queryRaw`SELECT id FROM "TradeRequest" WHERE id = ${id} FOR UPDATE`;
+    const tr = await tx.tradeRequest.findUnique({ where: { id }, include: { items: true } });
+    if (!tr) throw new TradeExecutionError('Trade request not found', 404);
+    if (tr.executedAt) {
+      throw new TradeExecutionError('This trade request was already marked filled', 409);
+    }
+    if (tr.resolution) {
+      throw new TradeExecutionError(
+        `This approval was marked ${tr.resolution} and cannot be filled`,
+        409
+      );
+    }
+    if (!tr.items.length) throw new TradeExecutionError('Trade request has no line items', 400);
+
+    const fillRecord = tr.items.map((it) => {
+      const f = fillById.get(it.id) || {};
+      const shares = f.shares != null ? Number(f.shares) : it.shares;
+      const price = f.pricePerShare != null ? Number(f.pricePerShare) : it.pricePerShare;
+      if (!Number.isInteger(shares) || shares <= 0) {
+        throw new TradeExecutionError(`Fill shares for ${it.ticker} must be a whole number`, 400);
+      }
+      if (!Number.isFinite(price) || price <= 0) {
+        throw new TradeExecutionError(`Invalid fill price for ${it.ticker}`, 400);
+      }
+      return {
+        itemId: it.id,
+        kind: it.kind,
+        ticker: String(it.ticker).toUpperCase(),
+        shares,
+        pricePerShare: price,
+      };
+    });
+
+    const executedAt = new Date();
+    const updated = await tx.tradeRequest.update({
+      where: { id },
+      data: {
+        executedAt,
+        executedByName: actorName,
+        settlementMode: 'record-only',
+        fillRecord,
+      },
+      include: {
+        creator: { select: { id: true, name: true, role: true } },
+        items: { orderBy: { id: 'asc' } },
+      },
+    });
+    return { tradeRequest: updated, settlementMode: 'record-only', bookApplied: false };
   });
 }
 

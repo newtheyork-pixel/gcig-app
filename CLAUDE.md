@@ -461,7 +461,11 @@ together or an analyst opens the terminal and 403s on every panel.
   non-investment rank as Chief of Communication (view-only on
   investment gates, not executive, not terminal). Attendance is
   still tracked; exemption stays specific to the communications
-  office.
+  office. The cash ledger and the treasury sleeves
+  (`GET /holdings/cash`, `/transactions`, `/cash-yield`) are
+  `requireRole('PortfolioManager')`. Both offices sit at rank 2, so
+  they see the same simple portfolio as an analyst: holdings, weight,
+  return, total value, and one cash line.
 - **Super admin** — defined by email match (`isSuperAdminEmail`),
   not a role. Thomas's email. Bypasses every role gate. The list is
   the `SUPER_ADMIN_EMAIL` env var on Render (comma-separated), so
@@ -947,6 +951,18 @@ snapshot of what was sent lives on
 `VotingSession.docusignTradeContext` (legacy) or
 `TradeRequest.tradeContext` (bundled) so audits don't drift with
 later quote changes.
+
+DocuSign status is not whether the broker traded. The club-side
+close is separate: `resolution` of `superseded` or `cancelled`
+(`POST /trade-requests/:id/resolve`) means the approval did not
+execute, and Mark filled stops offering itself. Filling
+(`POST /trade-requests/:id/execute`) is allowed from Sent onward,
+because the broker does not wait on the envelope. `recordOnly: true`
+stamps `executedAt` and stores the broker fills without writing
+holdings or cash — the path when the book already reflects the
+trade. The default write posts lots and cash and sets
+`settlementMode` to `applied`. A filled approval cannot then be
+superseded.
 
 **Auth shape:** JWT Grant. The integration key + impersonated user
 must have one-time consent granted in a browser before the server can
