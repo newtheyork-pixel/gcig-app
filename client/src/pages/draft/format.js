@@ -4,6 +4,9 @@ export const ROLE_SHORT = {
   Analyst: 'Analyst',
   SeniorAnalyst: 'Senior Analyst',
   JuniorAnalyst: 'Junior Analyst',
+  CIO: 'CIO',
+  DirectorOfResearch: 'Director of Research',
+  President: 'President',
 };
 
 export function recordLine(person) {

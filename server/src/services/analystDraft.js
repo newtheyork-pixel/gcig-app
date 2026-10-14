@@ -6,6 +6,29 @@ import { mentionsSegLabel } from './segLabel.js';
 
 export const PM_ROLES = new Set(['PortfolioManager', 'SeniorPortfolioManager']);
 export const DRAFTABLE_ROLES = new Set(['Analyst', 'SeniorAnalyst', 'JuniorAnalyst']);
+
+function holds(ids, id) {
+  return !!ids && typeof ids.has === 'function' && ids.has(id);
+}
+
+// The draft order is the people who run a sector pod, not the role
+// string. AI and Technology are led by CIOs, Industrials by the
+// Director of Research. A Portfolio Manager title still counts,
+// including one carried as an extra role, so a manager who is not
+// the leader of a pod can sit too. A pod leader is never also in
+// the pool.
+export function draftsAsPm(user, leaderIds) {
+  if (!user) return false;
+  const roles = [user.role, ...(user.extraRoles || [])];
+  if (roles.some((role) => PM_ROLES.has(role))) return true;
+  return holds(leaderIds, user.id);
+}
+
+export function isDraftableAnalyst(user, leaderIds) {
+  if (!user || !DRAFTABLE_ROLES.has(user.role)) return false;
+  if ((user.extraRoles || []).some((role) => PM_ROLES.has(role))) return false;
+  return !holds(leaderIds, user.id);
+}
 // The people who run a meeting. Super admin is checked separately,
 // because that flag is an email match and not a role.
 export const DRAFT_ADMIN_ROLES = new Set(['President', 'DirectorOfResearch', 'CIO']);
@@ -268,7 +291,9 @@ export function canMakePick({ user, status, onClockUserId }) {
   if (!user || onClockUserId == null) return false;
   if (status !== 'live' && status !== 'paused') return false;
   if (isDraftAdmin(user)) return true;
-  return status === 'live' && user.id === onClockUserId && PM_ROLES.has(user.role);
+  // The seat is the grant. Setup already decided this person drafts,
+  // including a pod leader whose role is CIO rather than PM.
+  return status === 'live' && user.id === onClockUserId;
 }
 
 export function pickDecision({
@@ -304,7 +329,7 @@ export function canEditQueue({ user, status, seatUserId }) {
   if (!user || seatUserId == null) return false;
   if (status !== 'setup' && status !== 'live' && status !== 'paused') return false;
   if (isDraftAdmin(user)) return true;
-  return user.id === seatUserId && PM_ROLES.has(user.role);
+  return user.id === seatUserId;
 }
 
 export function queueDecision({ user, status, seatUserId, analystIds, poolIds }) {

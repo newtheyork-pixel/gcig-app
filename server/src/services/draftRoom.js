@@ -9,6 +9,8 @@ import { mentionsSegLabel } from './segLabel.js';
 import {
   PM_ROLES,
   DRAFTABLE_ROLES,
+  draftsAsPm,
+  isDraftableAnalyst,
   summarizeTrack,
   collectTracks,
   toExpiryState,
@@ -23,7 +25,7 @@ import {
   selectPodRosters,
 } from './analystDraft.js';
 
-const CARD = { id: true, name: true, role: true, classYear: true };
+const CARD = { id: true, name: true, role: true, extraRoles: true, classYear: true };
 
 function httpError(status, message) {
   const err = new Error(message);
@@ -169,21 +171,31 @@ async function recomputePods(tx, pmIds) {
   if (data.length) await tx.pmPodMember.createMany({ data });
 }
 
+async function podLeaderIds() {
+  const rows = await prisma.industry.findMany({
+    select: { name: true, leaderId: true },
+  });
+  return new Set(
+    rows.filter((row) => row.leaderId && !mentionsSegLabel(row.name)).map((row) => row.leaderId)
+  );
+}
+
 async function assertRosterRoles(pmIds, analystIds) {
+  const leaders = await podLeaderIds();
   const users = await prisma.user.findMany({
     where: { id: { in: [...pmIds, ...analystIds] } },
-    select: { id: true, role: true },
+    select: { id: true, role: true, extraRoles: true },
   });
   const byId = new Map(users.map((u) => [u.id, u]));
   for (const id of pmIds) {
     const user = byId.get(id);
-    if (!user || !PM_ROLES.has(user.role)) {
-      throw httpError(400, 'Only portfolio managers sit in the draft order');
+    if (!draftsAsPm(user, leaders)) {
+      throw httpError(400, 'Only a pod leader or a portfolio manager sits in the draft order');
     }
   }
   for (const id of analystIds) {
     const user = byId.get(id);
-    if (!user || !DRAFTABLE_ROLES.has(user.role)) {
+    if (!isDraftableAnalyst(user, leaders)) {
       throw httpError(400, 'Only analysts can be drafted');
     }
   }
@@ -538,32 +550,47 @@ function decorate(user, track) {
 }
 
 export async function candidates() {
-  const [users, industries] = await Promise.all([
-    prisma.user.findMany({
-      where: { role: { in: [...PM_ROLES, ...DRAFTABLE_ROLES] } },
-      select: {
-        ...CARD,
-        industries: { include: { industry: { select: { id: true, name: true } } } },
-      },
-      orderBy: { name: 'asc' },
-    }),
-    prisma.industry.findMany({
-      orderBy: { name: 'asc' },
-      select: { id: true, name: true },
-    }),
-  ]);
-  const analystIds = users.filter((u) => DRAFTABLE_ROLES.has(u.role)).map((u) => u.id);
+  const industries = await prisma.industry.findMany({
+    orderBy: { name: 'asc' },
+    select: { id: true, name: true, leaderId: true },
+  });
+  const visible = industries.filter((row) => !mentionsSegLabel(row.name));
+  const leaderIds = new Set(visible.map((row) => row.leaderId).filter(Boolean));
+  const podsByLeader = new Map();
+  for (const row of visible) {
+    if (!row.leaderId) continue;
+    if (!podsByLeader.has(row.leaderId)) podsByLeader.set(row.leaderId, []);
+    podsByLeader.get(row.leaderId).push(row.name);
+  }
+  const users = await prisma.user.findMany({
+    where: {
+      OR: [
+        { role: { in: [...PM_ROLES, ...DRAFTABLE_ROLES] } },
+        { extraRoles: { hasSome: [...PM_ROLES] } },
+        ...(leaderIds.size ? [{ id: { in: [...leaderIds] } }] : []),
+      ],
+    },
+    select: {
+      ...CARD,
+      industries: { include: { industry: { select: { id: true, name: true } } } },
+    },
+    orderBy: { name: 'asc' },
+  });
+  const analystIds = users.filter((u) => isDraftableAnalyst(u, leaderIds)).map((u) => u.id);
   const track = await trackFor(prisma, analystIds);
   return {
     pms: users
-      .filter((u) => PM_ROLES.has(u.role))
-      .map((u) => ({ id: u.id, name: u.name, role: u.role })),
+      .filter((u) => draftsAsPm(u, leaderIds))
+      .map((u) => ({
+        id: u.id,
+        name: u.name,
+        role: u.role,
+        pods: podsByLeader.get(u.id) || [],
+      })),
     analysts: users
-      .filter((u) => DRAFTABLE_ROLES.has(u.role))
+      .filter((u) => isDraftableAnalyst(u, leaderIds))
       .map((u) => decorate(u, track)),
-    coverageGroups: industries
-      .filter((i) => !mentionsSegLabel(i.name))
-      .map((i) => i.name),
+    coverageGroups: visible.map((row) => row.name),
   };
 }
 
