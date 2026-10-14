@@ -66,6 +66,8 @@ import researchRoutes from './routes/research.js';
 import callRoutes from './routes/calls.js';
 import outreachLabelingRoutes from './routes/outreachLabeling.js';
 import meetRoutes from './routes/meet.js';
+import draftRoutes from './routes/drafts.js';
+import { startDraftClock } from './services/draftRoom.js';
 import { attachHoot } from './realtime/hoot.js';
 import { ensureRecurringMeetings } from './services/recurringMeetings.js';
 import cron from 'node-cron';
@@ -206,6 +208,7 @@ app.use('/api/research', researchRoutes);
 app.use('/api/research', callRoutes);
 app.use('/api/outreach-labeling', outreachLabelingRoutes);
 app.use('/api/meet', meetRoutes);
+app.use('/api/drafts', draftRoutes);
 
 // Generic error handler. Logs the full error server-side for debugging but
 // never leaks internal details (stack traces, Prisma error bodies, etc.) to
@@ -455,6 +458,11 @@ cron.schedule(
   },
   { timezone: 'America/New_York' }
 );
+
+// The draft clock is a timestamp. This only notices when one has
+// passed with nobody watching the room, and makes that pick. A poll
+// of the room does the same work, so a quiet second is a no-op.
+startDraftClock();
 
 const port = process.env.PORT || 4000;
 // A bare http.Server around Express so the desk squawk box can accept

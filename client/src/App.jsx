@@ -37,6 +37,7 @@ import Tankers from './pages/Tankers.jsx';
 import PresidentReview from './pages/PresidentReview.jsx';
 import OutreachLabeling from './pages/OutreachLabeling.jsx';
 import Terminal from './pages/Terminal.jsx';
+import Draft from './pages/Draft.jsx';
 
 export default function App() {
   const { loading } = useAuth();
@@ -96,6 +97,8 @@ export default function App() {
         <Route path="/portfolio" element={<Portfolio />} />
         <Route path="/votes" element={<Votes />} />
         <Route path="/industries" element={<Industries />} />
+        <Route path="/draft" element={<Draft />} />
+        <Route path="/draft/:id" element={<Draft />} />
         <Route path="/cpi" element={<CPI />} />
         <Route path="/tankers" element={<Tankers />} />
         <Route path="/attendance" element={<Attendance />} />

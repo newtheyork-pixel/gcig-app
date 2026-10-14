@@ -47,19 +47,22 @@ export default function Organization() {
   const { isPmOrAbove, loading: authLoading } = useAuth();
   const [users, setUsers] = useState(null);
   const [industries, setIndustries] = useState([]);
+  const [pods, setPods] = useState([]);
   const [error, setError] = useState('');
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
-        const [u, i] = await Promise.all([
+        const [u, i, pods] = await Promise.all([
           api.get('/users'),
           api.get('/industries').catch(() => ({ data: [] })),
+          api.get('/drafts/pods').catch(() => ({ data: { pods: [] } })),
         ]);
         if (cancelled) return;
         setUsers(u.data);
         setIndustries(i.data || []);
+        setPods(pods.data?.pods || []);
       } catch (e) {
         if (!cancelled) setError(e.response?.data?.error || 'Could not load the member list.');
       }
@@ -151,6 +154,41 @@ export default function Organization() {
               <div className="flex flex-wrap gap-3">
                 {advisory.map((p) => (
                   <PersonCard key={p.id} person={p} muted />
+                ))}
+              </div>
+            </section>
+          )}
+
+          {pods.length > 0 && (
+            <section>
+              <h2 className="mb-3 text-[11px] font-bold uppercase tracking-[0.18em] text-navy-300">
+                Drafted pods
+              </h2>
+              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                {pods.map((pod) => (
+                  <div
+                    key={pod.pm.id}
+                    className="rounded-2xl border border-navy-100 bg-white p-4 shadow-card"
+                  >
+                    <Link
+                      to={`/members/${pod.pm.id}`}
+                      className="font-serif text-base font-semibold text-navy hover:text-gold-700"
+                    >
+                      {pod.pm.name}
+                    </Link>
+                    <ul className="mt-2 space-y-1">
+                      {pod.analysts.map((a) => (
+                        <li key={a.id}>
+                          <Link
+                            to={`/members/${a.id}`}
+                            className="text-sm text-navy-600 hover:text-gold-700"
+                          >
+                            {a.name}
+                          </Link>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
                 ))}
               </div>
             </section>
