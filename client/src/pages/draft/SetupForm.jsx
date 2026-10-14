@@ -211,7 +211,8 @@ export default function SetupForm({ draftId }) {
               <div>
                 <h2 className="font-serif text-2xl font-medium text-navy">Portfolio managers</h2>
                 <p className="mt-1 text-sm text-navy-400">
-                  Check who drafts. The order below is round one; randomize it or move names by hand.
+                  Pod leaders draft, and so does anyone whose role is portfolio manager.
+                  The order below is round one; randomize it or move names by hand.
                 </p>
               </div>
               <Button
@@ -240,6 +241,7 @@ export default function SetupForm({ draftId }) {
                     </span>
                     <span className="flex-1 text-sm font-medium text-navy">{p.name}</span>
                     <span className="text-[11px] uppercase tracking-wider text-navy-400">
+                      {p.pods?.length ? `${p.pods.join(', ')} · ` : ''}
                       {ROLE_SHORT[p.role] || p.role}
                     </span>
                     <button

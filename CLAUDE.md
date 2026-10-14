@@ -511,7 +511,9 @@ file, not `/field-visit.webp`.
 
 - **Analyst draft** (`services/analystDraft.js`, `services/draftRoom.js`,
   `routes/drafts.js`, `client/src/pages/Draft.jsx`). Portfolio managers
-  draft analysts onto pods. Coverage stays `UserIndustry` — a
+  draft analysts onto pods. The seats are the sector-pod leaders,
+  whatever role they hold, plus anyone whose role is portfolio
+  manager. Coverage stays `UserIndustry` — a
   Technology analyst can be drafted by any PM — and the result is
   `PmPodMember`, one pod per manager, replaced by that manager's
   newest completed draft. Snake order, the 30-second clock, and who

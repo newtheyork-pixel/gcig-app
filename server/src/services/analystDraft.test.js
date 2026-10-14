@@ -14,6 +14,8 @@ import {
   toExpiryState,
   afterPick,
   collectTracks,
+  draftsAsPm,
+  isDraftableAnalyst,
 } from './analystDraft.js';
 
 const pm = (id) => ({ id, role: 'PortfolioManager' });
@@ -209,10 +211,14 @@ test('an expired clock with nobody left completes without a pick', () => {
   assert.deepEqual(decision, { kind: 'complete' });
 });
 
-test('only the portfolio manager on the clock, or an admin, can pick', () => {
+test('the person on the clock, or an admin, can pick', () => {
   assert.equal(canMakePick({ user: analyst(20), status: 'live', onClockUserId: 10 }), false);
   assert.equal(canMakePick({ user: pm(11), status: 'live', onClockUserId: 10 }), false);
   assert.equal(canMakePick({ user: pm(10), status: 'live', onClockUserId: 10 }), true);
+  assert.equal(
+    canMakePick({ user: { id: 10, role: 'Analyst' }, status: 'live', onClockUserId: 10 }),
+    true
+  );
   assert.equal(canMakePick({ user: president, status: 'live', onClockUserId: 10 }), true);
   assert.equal(
     canMakePick({
@@ -302,6 +308,26 @@ test('only the portfolio manager on the clock, or an admin, can pick', () => {
     takenIds: [],
   });
   assert.equal(outsider.status, 400);
+});
+
+test('a pod leader drafts even when the role is not portfolio manager', () => {
+  const leaders = new Set([2, 3]);
+  const eric = { id: 2, role: 'CIO' };
+  const carter = { id: 3, role: 'DirectorOfResearch' };
+  const cole = { id: 4, role: 'CIO' };
+  const titled = { id: 5, role: 'PortfolioManager' };
+  const extra = { id: 6, role: 'Analyst', extraRoles: ['PortfolioManager'] };
+  const analystOnly = { id: 7, role: 'Analyst' };
+  assert.equal(draftsAsPm(eric, leaders), true);
+  assert.equal(draftsAsPm(carter, leaders), true);
+  assert.equal(draftsAsPm(cole, leaders), false);
+  assert.equal(draftsAsPm(titled, leaders), true);
+  assert.equal(draftsAsPm(extra, leaders), true);
+  assert.equal(draftsAsPm(analystOnly, leaders), false);
+  assert.equal(isDraftableAnalyst(eric, leaders), false);
+  assert.equal(isDraftableAnalyst(extra, leaders), false);
+  assert.equal(isDraftableAnalyst(analystOnly, leaders), true);
+  assert.equal(isDraftableAnalyst({ id: 8, role: 'Analyst' }, new Set([8])), false);
 });
 
 test('draft controls belong to the president, the director of research, the CIO, and the owner', () => {
