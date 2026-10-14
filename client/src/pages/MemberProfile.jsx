@@ -180,6 +180,41 @@ export default function MemberProfile() {
               </span>
             )}
           </div>
+          {profile.classYear ? (
+            <div className="mt-1 text-[11px] uppercase tracking-[0.18em] text-navy-400">
+              Class of {profile.classYear}
+            </div>
+          ) : null}
+          {profile.draftedPod && (
+            <div className="mt-2 text-sm text-navy">
+              On{' '}
+              <Link to={`/members/${profile.draftedPod.pm.id}`} className="font-semibold hover:text-gold-700">
+                {profile.draftedPod.pm.name}
+              </Link>
+              's pod
+              {profile.draftedPod.draftId ? (
+                <>
+                  {' · '}
+                  <Link to={`/draft/${profile.draftedPod.draftId}`} className="text-navy-400 hover:text-gold-700">
+                    {profile.draftedPod.draftName || 'Draft'}
+                  </Link>
+                </>
+              ) : null}
+            </div>
+          )}
+          {profile.podRoster?.length > 0 && (
+            <div className="mt-2 text-sm text-navy">
+              Pod:{' '}
+              {profile.podRoster.map((a, i) => (
+                <span key={a.id}>
+                  {i > 0 ? ', ' : ''}
+                  <Link to={`/members/${a.id}`} className="font-semibold hover:text-gold-700">
+                    {a.name}
+                  </Link>
+                </span>
+              ))}
+            </div>
+          )}
           {profile.industries && profile.industries.length > 0 && (
             <div className="mt-2 flex flex-wrap gap-1.5">
               {profile.industries.map((i) => (

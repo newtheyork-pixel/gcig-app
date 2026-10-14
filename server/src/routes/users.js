@@ -232,6 +232,7 @@ router.get('/:id/profile', async (req, res) => {
       extraRoles: true,
       memberStatus: true,
       createdAt: true,
+      classYear: true,
       industries: {
         include: { industry: { select: { id: true, name: true } } },
       },
@@ -456,17 +457,40 @@ router.get('/:id/profile', async (req, res) => {
 
   const profile = nameProfile(user.name || '');
 
+  // Pods are the result of the analyst draft, separate from the
+  // industry a person covers. One row if this member was drafted,
+  // a list if they are the portfolio manager.
+  const [draftedSeat, managed] = await Promise.all([
+    prisma.pmPodMember.findUnique({
+      where: { analystId: id },
+      include: {
+        pm: { select: { id: true, name: true } },
+        draft: { select: { id: true, name: true } },
+      },
+    }),
+    prisma.pmPodMember.findMany({
+      where: { pmId: id },
+      orderBy: { assignedAt: 'asc' },
+      include: { analyst: { select: { id: true, name: true, role: true, classYear: true } } },
+    }),
+  ]);
+
   res.json({
     id: user.id,
     name: user.name,
     role: user.role,
     extraRoles: user.extraRoles,
+    classYear: user.classYear ?? null,
     createdAt: user.createdAt,
     firstName: profile.firstName,
     honorificName: profile.honorificName,
     industries: user.industries
       .map((ui) => ui.industry)
       .filter((industry) => !mentionsSegLabel(industry?.name)),
+    draftedPod: draftedSeat
+      ? { pm: draftedSeat.pm, draftId: draftedSeat.draftId, draftName: draftedSeat.draft?.name || null }
+      : null,
+    podRoster: managed.map((row) => row.analyst),
     pitches,
     reports: visibleReports,
     // Unified pitches + reports feed — clients should prefer this over

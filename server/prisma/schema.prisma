@@ -85,6 +85,10 @@ model User {
   failedLogins              Int                   @default(0)
   lockedUntil               DateTime?
   createdAt                 DateTime              @default(now())
+  // Graduation year at Grace — the class of. The roster never had
+  // one; the analyst draft is where it gets recorded. Null means
+  // unrecorded, which the board shows as a blank rather than a guess.
+  classYear                 Int?
   // Day-of-week lunch period schedule. JSON shape:
   //   { mon: "First"|"Second"|"Both"|null, tue: ..., wed: ..., thu: ..., fri: ... }
   // Surfaced on the "Request a Pitch" form so the requester can see when
@@ -148,6 +152,15 @@ model User {
   siteVisits                SiteVisit[]           @relation("SiteVisitVisitor")
   gmailAccount              GmailAccount?         @relation("GmailAccountOwner")
   scheduledDrafts           OutreachDraft[]       @relation("OutreachDraftScheduler")
+  draftsCreated             AnalystDraft[]        @relation("DraftCreator")
+  draftSeats                DraftSeat[]           @relation("DraftSeatUser")
+  draftEligible             DraftEligible[]       @relation("DraftEligibleUser")
+  draftPicksMade            DraftPick[]           @relation("DraftPickPm")
+  draftPicksReceived        DraftPick[]           @relation("DraftPickAnalyst")
+  draftQueueAsPm            DraftQueueRank[]      @relation("DraftQueuePm")
+  draftQueueAsAnalyst       DraftQueueRank[]      @relation("DraftQueueAnalyst")
+  podAsPm                   PmPodMember[]         @relation("PodPm")
+  podAsAnalyst              PmPodMember?          @relation("PodAnalyst")
 }
 
 // Chat channels are addressed by a simple string:
@@ -2142,4 +2155,126 @@ model Meeting {
 
   @@index([startsAt])
   @@index([createdById])
+}
+
+// Analyst draft. Portfolio managers take turns claiming analysts,
+// fantasy-football style. Coverage (which industry a person sits in)
+// stays what it is — a Technology analyst can be drafted onto an
+// Energy PM's pod — so the result is a PmPodMember roster, not a
+// rewrite of UserIndustry.
+//
+// status walks setup → live → paused → complete. The clock is a
+// timestamp, not a process: whoever reads a live draft past
+// clockEndsAt makes the expired pick, and a one-second sweeper does
+// the same when the room is empty. Snake order is computed from the
+// seats, never stored, so an undo cannot leave a saved order behind.
+model AnalystDraft {
+  id                Int       @id @default(autoincrement())
+  name              String
+  // setup | live | paused | complete
+  status            String    @default("setup")
+  rounds            Int
+  pickSeconds       Int       @default(30)
+  snake             Boolean   @default(true)
+  createdById       Int
+  createdBy         User      @relation("DraftCreator", fields: [createdById], references: [id])
+  createdAt         DateTime  @default(now())
+  startedAt         DateTime?
+  completedAt       DateTime?
+  // When the pick on the clock expires. Null in setup, while paused,
+  // and once the draft is over.
+  clockEndsAt       DateTime?
+  // Frozen remainder, so resume gives back the same seconds pause took.
+  pausedRemainingMs Int?
+  // How many picks have been made. The seat on the clock is order[pickIndex].
+  pickIndex         Int       @default(0)
+
+  seats DraftSeat[]
+  pool  DraftEligible[]
+  picks DraftPick[]
+  queue DraftQueueRank[]
+  pods  PmPodMember[]
+
+  @@index([status])
+  @@index([createdById])
+}
+
+model DraftSeat {
+  id      Int          @id @default(autoincrement())
+  draftId Int
+  draft   AnalystDraft @relation(fields: [draftId], references: [id], onDelete: Cascade)
+  userId  Int
+  user    User         @relation("DraftSeatUser", fields: [userId], references: [id])
+  // 0-based position in round 1. Snake flips this order on even rounds.
+  slot    Int
+
+  @@unique([draftId, userId])
+  @@unique([draftId, slot])
+  @@index([userId])
+}
+
+model DraftEligible {
+  id      Int          @id @default(autoincrement())
+  draftId Int
+  draft   AnalystDraft @relation(fields: [draftId], references: [id], onDelete: Cascade)
+  userId  Int
+  user    User         @relation("DraftEligibleUser", fields: [userId], references: [id])
+
+  @@unique([draftId, userId])
+  @@index([userId])
+}
+
+model DraftPick {
+  id          Int          @id @default(autoincrement())
+  draftId     Int
+  draft       AnalystDraft @relation(fields: [draftId], references: [id], onDelete: Cascade)
+  pickNumber  Int
+  round       Int
+  slotInRound Int
+  pmId        Int
+  pm          User         @relation("DraftPickPm", fields: [pmId], references: [id])
+  analystId   Int
+  analyst     User         @relation("DraftPickAnalyst", fields: [analystId], references: [id])
+  // board (the PM clicked), admin (a commissioner assigned it),
+  // queue (timer, their ranking), auto (timer, empty queue).
+  source      String
+  pickedAt    DateTime     @default(now())
+
+  @@unique([draftId, pickNumber])
+  @@unique([draftId, analystId])
+  @@index([pmId])
+  @@index([analystId])
+}
+
+model DraftQueueRank {
+  id        Int          @id @default(autoincrement())
+  draftId   Int
+  draft     AnalystDraft @relation(fields: [draftId], references: [id], onDelete: Cascade)
+  pmId      Int
+  pm        User         @relation("DraftQueuePm", fields: [pmId], references: [id], onDelete: Cascade)
+  analystId Int
+  analyst   User         @relation("DraftQueueAnalyst", fields: [analystId], references: [id], onDelete: Cascade)
+  // 1 is the name taken first when the clock expires.
+  rank      Int
+
+  @@unique([draftId, pmId, rank])
+  @@unique([draftId, pmId, analystId])
+  @@index([pmId])
+}
+
+// The live pod: one PM, the analysts their latest completed draft
+// gave them. An analyst is on one pod. History stays on DraftPick;
+// this table is replaced when a later draft completes.
+model PmPodMember {
+  id         Int          @id @default(autoincrement())
+  pmId       Int
+  pm         User         @relation("PodPm", fields: [pmId], references: [id], onDelete: Cascade)
+  analystId  Int          @unique
+  analyst    User         @relation("PodAnalyst", fields: [analystId], references: [id], onDelete: Cascade)
+  draftId    Int
+  draft      AnalystDraft @relation(fields: [draftId], references: [id], onDelete: Cascade)
+  assignedAt DateTime     @default(now())
+
+  @@index([pmId])
+  @@index([draftId])
 }

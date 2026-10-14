@@ -18,6 +18,7 @@ import {
   Terminal,
   Download,
   ChevronDown,
+  Users,
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext.jsx';
 import { griffinLogo } from '../brand/logos.js';
@@ -46,6 +47,7 @@ const NAV_SECTIONS = [
       { to: '/library', label: 'Library', icon: BookOpen },
       { to: '/outcomes', label: 'Coverage', icon: Trophy },
       { to: '/industries', label: 'Industries', icon: Building2 },
+      { to: '/draft', label: 'Draft', icon: Users },
       { to: '/pitch-requests', label: 'Pitch Requests', icon: Send, badgeKey: 'pitchRequests' },
       { to: '/attendance', label: 'Attendance', icon: ClipboardCheck, hideForAdvisory: true },
       { to: '/broadcast', label: 'Broadcast', icon: Megaphone, executiveOnly: true },
