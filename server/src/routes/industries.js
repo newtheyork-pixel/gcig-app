@@ -74,11 +74,27 @@ router.put('/:id', requireExecutive, async (req, res) => {
   const id = Number(req.params.id);
   const { name, leaderId } = req.body || {};
   const data = {};
-  if (name !== undefined) data.name = String(name).trim();
+  if (name !== undefined) {
+    const trimmed = String(name).trim();
+    // A blank name would leave the pod as an empty heading on every
+    // surface that prints it. Reject it the same way create does.
+    if (!trimmed) return res.status(400).json({ error: 'name required' });
+    data.name = trimmed;
+  }
   if (leaderId !== undefined) data.leaderId = leaderId ? Number(leaderId) : null;
-  const industry = await prisma.industry.update({ where: { id }, data });
-  await ensureLeaderIsMember(industry.id, industry.leaderId);
-  res.json(industry);
+  try {
+    const industry = await prisma.industry.update({ where: { id }, data });
+    await ensureLeaderIsMember(industry.id, industry.leaderId);
+    res.json(industry);
+  } catch (err) {
+    // The name is unique. Creating already says so; renaming used to
+    // throw and come back as a 500, which reads as the server dying
+    // rather than as "that pod already exists".
+    if (err.code === 'P2002') {
+      return res.status(409).json({ error: 'An industry with that name already exists' });
+    }
+    throw err;
+  }
 });
 
 router.delete('/:id', requireExecutive, async (req, res) => {
