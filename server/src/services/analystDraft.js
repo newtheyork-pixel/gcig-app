@@ -2,6 +2,8 @@
 // call these so a permission or a snake reversal cannot be implemented
 // twice and disagree. Nothing here touches the database.
 
+import { mentionsSegLabel } from './segLabel.js';
+
 export const PM_ROLES = new Set(['PortfolioManager', 'SeniorPortfolioManager']);
 export const DRAFTABLE_ROLES = new Set(['Analyst', 'SeniorAnalyst', 'JuniorAnalyst']);
 // The people who run a meeting. Super admin is checked separately,
@@ -105,6 +107,53 @@ export function summarizeTrack(pitches) {
     buys,
     hitRate: decided > 0 ? buys / decided : 0,
   };
+}
+
+// "Jane Doe, John Smith" and "Jane Doe & John Smith" are one string
+// standing in for two presenters. A token has to be someone's whole
+// name — a first name alone would claim the wrong member.
+export function pitcherNameKeys(value) {
+  return String(value || '')
+    .split(/[,&]|\band\b/i)
+    .map(nameKey)
+    .filter(Boolean);
+}
+
+function nameKey(value) {
+  return String(value || '').trim().replace(/\s+/g, ' ').toLowerCase();
+}
+
+// PitchPresenter is the link a pitch writes now. The archive before
+// that is only a name in Pitch.pitcherName, and a member's profile
+// already unions the two. Counting the link alone put "no pitches
+// on file" under people who have presented for years. One pitch
+// reached by both paths counts once. A pitch filed under the SEG
+// label stays off the board, same as every other member-facing list.
+export function collectTracks(users, pitches) {
+  const idsByName = new Map();
+  for (const user of users || []) {
+    const key = nameKey(user.name);
+    if (!key) continue;
+    if (!idsByName.has(key)) idsByName.set(key, []);
+    idsByName.get(key).push(user.id);
+  }
+  const known = new Set((users || []).map((u) => u.id));
+  const bags = new Map((users || []).map((u) => [u.id, new Map()]));
+  for (const pitch of pitches || []) {
+    if (!pitch || pitch.id == null) continue;
+    if (mentionsSegLabel(pitch.industryName)) continue;
+    const credited = new Set();
+    for (const id of pitch.presenterIds || []) {
+      if (known.has(id)) credited.add(id);
+    }
+    for (const key of pitcherNameKeys(pitch.pitcherName)) {
+      for (const id of idsByName.get(key) || []) credited.add(id);
+    }
+    for (const id of credited) bags.get(id).set(pitch.id, pitch);
+  }
+  const out = new Map();
+  for (const [id, bag] of bags) out.set(id, summarizeTrack([...bag.values()]));
+  return out;
 }
 
 // Pool membership decides who can still be taken. `analysts` only

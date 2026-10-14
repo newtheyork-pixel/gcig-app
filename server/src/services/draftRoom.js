@@ -10,6 +10,7 @@ import {
   PM_ROLES,
   DRAFTABLE_ROLES,
   summarizeTrack,
+  collectTracks,
   toExpiryState,
   decideExpiry,
   onClock,
@@ -36,21 +37,57 @@ function coverageOf(user) {
     .filter((name) => name && !mentionsSegLabel(name));
 }
 
+const PITCH_CARD = {
+  id: true,
+  votedOutcome: true,
+  pitcherName: true,
+  industry: { select: { name: true } },
+};
+
+function rememberPitch(byId, pitch, presenterId) {
+  if (!pitch) return;
+  let row = byId.get(pitch.id);
+  if (!row) {
+    row = {
+      id: pitch.id,
+      votedOutcome: pitch.votedOutcome,
+      pitcherName: pitch.pitcherName,
+      industryName: pitch.industry?.name || '',
+      presenterIds: [],
+    };
+    byId.set(pitch.id, row);
+  }
+  if (presenterId != null) row.presenterIds.push(presenterId);
+}
+
 async function trackFor(db, userIds) {
   const ids = [...new Set(userIds)];
-  const out = new Map();
-  if (ids.length === 0) return out;
-  const rows = await db.pitchPresenter.findMany({
-    where: { userId: { in: ids } },
-    select: { userId: true, pitch: { select: { votedOutcome: true } } },
+  if (ids.length === 0) return new Map();
+  const users = await db.user.findMany({
+    where: { id: { in: ids } },
+    select: { id: true, name: true },
   });
-  const grouped = new Map(ids.map((id) => [id, []]));
-  for (const row of rows) {
-    if (!grouped.has(row.userId)) grouped.set(row.userId, []);
-    grouped.get(row.userId).push(row.pitch);
-  }
-  for (const [id, pitches] of grouped) out.set(id, summarizeTrack(pitches));
-  return out;
+  const names = [...new Set(users.map((u) => String(u.name || '').trim()).filter(Boolean))];
+  const [presenterRows, named] = await Promise.all([
+    db.pitchPresenter.findMany({
+      where: { userId: { in: ids } },
+      select: { userId: true, pitch: { select: PITCH_CARD } },
+    }),
+    names.length
+      ? db.pitch.findMany({
+          where: {
+            OR: names.map((name) => ({
+              pitcherName: { contains: name, mode: 'insensitive' },
+            })),
+          },
+          select: PITCH_CARD,
+        })
+      : [],
+  ]);
+  const byId = new Map();
+  for (const row of presenterRows) rememberPitch(byId, row.pitch, row.userId);
+  for (const pitch of named) rememberPitch(byId, pitch);
+  return collectTracks(users, [...byId.values()]);
 }
 
 function loadRaw(db, id) {

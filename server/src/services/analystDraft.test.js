@@ -13,6 +13,7 @@ import {
   selectPodRosters,
   toExpiryState,
   afterPick,
+  collectTracks,
 } from './analystDraft.js';
 
 const pm = (id) => ({ id, role: 'PortfolioManager' });
@@ -395,4 +396,56 @@ test('the newest completed draft owns the pod, and an analyst is only on one', (
   // 102 moved to the later draft, so the earlier pod loses them.
   assert.deepEqual(map.get(11).analystIds, []);
   assert.equal(map.has(11), true);
+});
+
+test('a pitch filed only under the pitcher name still belongs to that member', () => {
+  const users = [
+    { id: 20, name: 'Carter Bayard' },
+    { id: 21, name: 'August Potter' },
+  ];
+  const tracks = collectTracks(users, [
+    {
+      id: 1,
+      pitcherName: 'Carter Bayard',
+      presenterIds: [],
+      votedOutcome: 'Buy',
+      industryName: '',
+    },
+    {
+      id: 2,
+      pitcherName: 'Carter Bayard, August Potter',
+      presenterIds: [],
+      votedOutcome: 'NoBuy',
+      industryName: 'Technology',
+    },
+    {
+      id: 3,
+      pitcherName: 'Technology pod',
+      presenterIds: [21],
+      votedOutcome: null,
+      industryName: 'Technology',
+    },
+    {
+      id: 1,
+      pitcherName: 'Carter Bayard',
+      presenterIds: [20],
+      votedOutcome: 'Buy',
+      industryName: '',
+    },
+    {
+      id: 4,
+      pitcherName: 'Carter Bayard',
+      presenterIds: [],
+      votedOutcome: 'Buy',
+      industryName: 'SEG historical',
+    },
+  ]);
+  const carter = tracks.get(20);
+  assert.equal(carter.pitches, 2);
+  assert.equal(carter.buys, 1);
+  assert.equal(carter.decided, 2);
+  const august = tracks.get(21);
+  assert.equal(august.pitches, 2);
+  assert.equal(august.decided, 1);
+  assert.equal(august.buys, 0);
 });
