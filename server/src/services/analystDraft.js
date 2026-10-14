@@ -282,7 +282,9 @@ export function canEditSetup(user, status) {
 export function validateSetup(body) {
   const name = String(body?.name || '').trim();
   const rounds = Number(body?.rounds);
-  const pickSeconds = body?.pickSeconds == null ? 120 : Number(body.pickSeconds);
+  // An omitted clock is 30 seconds. The band stays 15s–15min so a
+  // commissioner can still run a slower room.
+  const pickSeconds = body?.pickSeconds == null ? 30 : Number(body.pickSeconds);
   const snake = body?.snake !== false;
   const pmIds = Array.isArray(body?.pmIds) ? body.pmIds.map(Number) : [];
   const analystIds = Array.isArray(body?.analystIds) ? body.analystIds.map(Number) : [];

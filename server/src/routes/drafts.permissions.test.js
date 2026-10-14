@@ -12,7 +12,7 @@ function liveDraft() {
     pickIndex: 0,
     rounds: 1,
     snake: true,
-    pickSeconds: 120,
+    pickSeconds: 30,
     clockEndsAt: new Date(Date.now() + 60_000),
     seats: [
       { slot: 0, userId: 10, user: { id: 10, name: 'Ada', role: 'PortfolioManager' } },

@@ -2174,7 +2174,7 @@ model AnalystDraft {
   // setup | live | paused | complete
   status            String    @default("setup")
   rounds            Int
-  pickSeconds       Int       @default(120)
+  pickSeconds       Int       @default(30)
   snake             Boolean   @default(true)
   createdById       Int
   createdBy         User      @relation("DraftCreator", fields: [createdById], references: [id])

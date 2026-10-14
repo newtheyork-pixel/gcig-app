@@ -26,7 +26,7 @@ function room({
   rounds = 2,
   snake = true,
   clockEndsAt = new Date('2026-10-14T12:00:00Z'),
-  pickSeconds = 120,
+  pickSeconds = 30,
   available = [
     { id: 101, name: 'Amy', hitRate: 0.25, buys: 1 },
     { id: 102, name: 'Bea', hitRate: 0.8, buys: 4 },
@@ -154,12 +154,12 @@ test('the moment the clock hits zero, the pick is due', () => {
 
 test('a long outage catches up one pick per timer', () => {
   const start = new Date('2026-10-14T12:00:00Z');
-  const wall = new Date(start.getTime() + 500_000);
+  const wall = new Date(start.getTime() + 125_000);
   let state = room({
     seats: 2,
     rounds: 4,
     clockEndsAt: start,
-    pickSeconds: 120,
+    pickSeconds: 30,
     available: [1, 2, 3, 4, 5, 6, 7, 8].map((id) => ({
       id,
       name: `A${id}`,
@@ -180,7 +180,7 @@ test('a long outage catches up one pick per timer', () => {
       available: state.available.filter((a) => a.id !== decision.analystId),
     };
   }
-  // Clocks due at t, t+120, t+240, t+360 and t+480. t+600 is still ahead.
+  // Clocks due at t, t+30, t+60, t+90 and t+120. t+150 is still ahead.
   assert.equal(picks.length, 5);
   assert.equal(state.status, 'live');
   assert.ok(state.clockEndsAt.getTime() > wall.getTime());
@@ -345,7 +345,7 @@ test('setup rejects a one-manager draft and a timer outside the band', () => {
     analystIds: [4, 5],
   });
   assert.equal(ok.ok, true);
-  assert.equal(ok.value.pickSeconds, 120);
+  assert.equal(ok.value.pickSeconds, 30);
   assert.equal(ok.value.snake, true);
 });
 
@@ -354,13 +354,13 @@ test('a pick made while paused banks a full clock and stays paused', () => {
     pickIndex: 0,
     orderLength: 4,
     availableCount: 4,
-    pickSeconds: 120,
+    pickSeconds: 30,
     now: new Date('2026-10-14T12:00:00Z'),
     paused: true,
   });
   assert.equal(next.status, 'paused');
   assert.equal(next.clockEndsAt, null);
-  assert.equal(next.pausedRemainingMs, 120_000);
+  assert.equal(next.pausedRemainingMs, 30_000);
 });
 
 test('the newest completed draft owns the pod, and an analyst is only on one', () => {

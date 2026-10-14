@@ -13,7 +13,7 @@ export default function SetupForm({ draftId }) {
   const [candidates, setCandidates] = useState(null);
   const [name, setName] = useState(`Fall ${new Date().getFullYear()} Analyst Draft`);
   const [rounds, setRounds] = useState(3);
-  const [pickSeconds, setPickSeconds] = useState(120);
+  const [pickSeconds, setPickSeconds] = useState(30);
   const [snake, setSnake] = useState(true);
   const [pmOrder, setPmOrder] = useState([]);
   const [analystIds, setAnalystIds] = useState([]);
@@ -191,6 +191,7 @@ export default function SetupForm({ draftId }) {
                   value={pickSeconds}
                   onChange={(e) => setPickSeconds(e.target.value)}
                 />
+                <span className="mt-1 block text-xs text-navy-400">30 seconds unless you change it</span>
               </label>
             </div>
             <label className="mt-4 flex items-center gap-2 text-sm text-navy">

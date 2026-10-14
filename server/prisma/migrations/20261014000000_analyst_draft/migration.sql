@@ -10,7 +10,7 @@ CREATE TABLE "AnalystDraft" (
     "name" TEXT NOT NULL,
     "status" TEXT NOT NULL DEFAULT 'setup',
     "rounds" INTEGER NOT NULL,
-    "pickSeconds" INTEGER NOT NULL DEFAULT 120,
+    "pickSeconds" INTEGER NOT NULL DEFAULT 30,
     "snake" BOOLEAN NOT NULL DEFAULT true,
     "createdById" INTEGER NOT NULL,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,

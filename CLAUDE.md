@@ -514,7 +514,7 @@ file, not `/field-visit.webp`.
   draft analysts onto pods. Coverage stays `UserIndustry` — a
   Technology analyst can be drafted by any PM — and the result is
   `PmPodMember`, one pod per manager, replaced by that manager's
-  newest completed draft. Snake order, the clock, and who may pick
+  newest completed draft. Snake order, the 30-second clock, and who may pick
   are pure functions; the write claims `pickIndex` with `updateMany`
   so two polls cannot take the same pick. An expired clock is noticed
   by the room's poll and by a one-second sweeper, because the only
