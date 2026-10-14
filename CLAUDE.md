@@ -514,15 +514,18 @@ file, not `/field-visit.webp`.
   draft analysts onto pods. Coverage stays `UserIndustry` — a
   Technology analyst can be drafted by any PM — and the result is
   `PmPodMember`, one pod per manager, replaced by that manager's
-  newest completed draft. Snake order, the 30-second clock, and who may pick
-  are pure functions; the write claims `pickIndex` with `updateMany`
-  so two polls cannot take the same pick. An expired clock is noticed
-  by the room's poll and by a one-second sweeper, because the only
-  websocket in the app is the desk squawk box. A queue picks first;
-  an empty queue takes the best decided-pitch record (hit rate, then
-  buys, then name). Commissioners are President, Director of Research,
-  CIO, and the super admin. `classYear` on User is the graduation
-  year, optional, edited from draft setup.
+  newest completed draft. Snake order, the 30-second clock, and who
+  may pick are pure functions; the write claims `pickIndex` with
+  `updateMany` so two polls cannot take the same pick. A pitch
+  counts when the member is a presenter or the pitcher name is
+  theirs — the same union a profile already uses — so a name with
+  no presenter row is not an empty record. An expired clock is
+  noticed by the room's poll and by a one-second sweeper, because
+  the only websocket in the app is the desk squawk box. A queue
+  picks first; an empty queue takes the best decided-pitch record
+  (hit rate, then buys, then name). Commissioners are President,
+  Director of Research, CIO, and the super admin. `classYear` on
+  User is the graduation year, optional, edited from draft setup.
 - `server/src/services/dayInReview.js` — DIR cache + LLM
   orchestration. Scheduled at "5 16 * * *" America/New_York
   (4:05pm ET, post-close). Lazy fallback if cache empty.
