@@ -183,8 +183,11 @@ export default function Calendar() {
     });
     // Approved pitch meetings — anchor each event at the proposed
     // start time within the proposed date and give it a 30 min slot.
+    // Once the approval has been written through as a Pitch, that row
+    // is already on this calendar. Drawing the request beside it puts
+    // the same lunch up twice.
     const meetingEvents = pitchMeetings
-      .filter((m) => m.proposedDate && m.proposedStartTime)
+      .filter((m) => m.proposedDate && m.proposedStartTime && !m.pitchId)
       .map((m) => {
         const day = new Date(m.proposedDate);
         const [hh, mm] = m.proposedStartTime.split(':').map(Number);

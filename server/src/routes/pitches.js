@@ -767,6 +767,16 @@ router.delete('/:id', canEditPitches, async (req, res) => {
   const id = Number(req.params.id);
   const existing = await prisma.pitch.findUnique({ where: { id } });
   if (!existing) return res.status(404).json({ error: 'Not found' });
+  // The pitch is how an approved request reaches the vote form. The
+  // foreign key would refuse this delete anyway; saying so here keeps
+  // it from coming back as an opaque database error.
+  const linked = await prisma.pitchRequest.findUnique({ where: { pitchId: id } });
+  if (linked) {
+    return res.status(409).json({
+      error:
+        'This pitch came from an approved pitch request. Edit it instead of deleting it — deleting it takes it off the vote list.',
+    });
+  }
   await prisma.pitch.delete({ where: { id } });
   res.json({ ok: true });
 });

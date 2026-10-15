@@ -70,6 +70,7 @@ import draftRoutes from './routes/drafts.js';
 import { startDraftClock } from './services/draftRoom.js';
 import { attachHoot } from './realtime/hoot.js';
 import { ensureRecurringMeetings } from './services/recurringMeetings.js';
+import { ensureApprovedRequestPitches } from './services/pitchFromRequest.js';
 import cron from 'node-cron';
 import { checkBuyLevels, checkStaleValuations } from './services/buyLevelWatch.js';
 import { regenerate as regenerateDayInReview } from './services/dayInReview.js';
@@ -475,5 +476,18 @@ server.listen(port, async () => {
     await ensureRecurringMeetings();
   } catch (err) {
     console.error('Failed to ensure recurring meetings:', err);
+  }
+  // Requests approved before they were written through as pitches.
+  // Without this, the one already sitting at Approved still does not
+  // appear when a vote is started.
+  try {
+    const { ensured } = await ensureApprovedRequestPitches();
+    if (ensured > 0) {
+      console.log(
+        `Materialized ${ensured} approved pitch request(s) into pitches`
+      );
+    }
+  } catch (err) {
+    console.error('Failed to materialize approved pitch requests:', err);
   }
 });
