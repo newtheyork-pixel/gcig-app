@@ -1062,6 +1062,22 @@ HMAC enabled, events: envelope sent/delivered/completed/declined/voided.
 
 ---
 
+## Approved pitch requests become pitches
+
+A pitch request is how a member asks to pitch. The President's approval
+used to flip `PitchRequest.status` and stop there. The vote form's
+"Attach pitch" list, the pitches calendar and the assignment popup all
+read `Pitch`, so an approved request never appeared where a pitch
+scheduled by hand did. Approval now writes a `Pitch` — the requester
+and their PM as presenters, at the New York lunch they picked — and
+stores `PitchRequest.pitchId`. The day is taken from the UTC calendar
+fields of `proposedDate` (an `<input type="date">` stores UTC midnight,
+which Eastern reads as the previous evening). Requests approved before
+that link existed are filled in on server boot. A meeting still ahead
+announces itself; one that already happened is marked seen so it does
+not pop up as a new assignment. The pitch cannot be deleted while the
+request points at it.
+
 ## Voting session kinds (buy vs sell)
 
 `VotingSession.kind` is `"buy"` (default) or `"sell"`. A **buy** vote is the

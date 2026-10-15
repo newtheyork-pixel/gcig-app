@@ -60,6 +60,32 @@ function ActionBadge({ action, large }) {
   );
 }
 
+// The vote form's attach list is every pitch the club has ever
+// scheduled. An approval from this week has to sit above a pitch from
+// last spring, or it reads as missing when someone opens Start Vote
+// looking for the meeting they just approved.
+function pitchTime(p) {
+  const t = new Date(p.date).getTime();
+  return Number.isNaN(t) ? 0 : t;
+}
+
+function splitPitchesForVote(pitches, now = Date.now()) {
+  const upcoming = [];
+  const earlier = [];
+  for (const p of pitches || []) {
+    (pitchTime(p) >= now ? upcoming : earlier).push(p);
+  }
+  upcoming.sort((a, b) => pitchTime(a) - pitchTime(b));
+  earlier.sort((a, b) => pitchTime(b) - pitchTime(a));
+  return { upcoming, earlier };
+}
+
+function pitchOptionLabel(p) {
+  const who = p.pitcherName || 'TBD';
+  const when = format(new Date(p.date), 'MMM d, yyyy');
+  return `${p.ticker} — ${who} (${when})`;
+}
+
 function emptyForm() {
   return {
     kind: 'buy',
@@ -175,6 +201,8 @@ export default function Votes() {
 
   const openSessions = sessions.filter((s) => s.status === 'open');
   const closedSessions = sessions.filter((s) => s.status !== 'open');
+  const { upcoming: upcomingPitches, earlier: earlierPitches } =
+    splitPitchesForVote(pitches);
 
   return (
     <>
@@ -306,15 +334,39 @@ export default function Votes() {
               <label className="block text-sm font-medium text-navy">Attach Pitch (optional)</label>
               <select
                 value={form.pitchId}
-                onChange={(e) => setForm({ ...form, pitchId: e.target.value })}
+                onChange={(e) => {
+                  const pitchId = e.target.value;
+                  const picked = pitches.find((p) => String(p.id) === pitchId);
+                  setForm((f) => ({
+                    ...f,
+                    pitchId,
+                    // The ticker is a separate required field. Leaving it
+                    // blank after the pitch was chosen is how a vote got
+                    // started on the wrong name, or not started at all.
+                    ticker: picked ? picked.ticker : f.ticker,
+                  }));
+                }}
                 className="mt-1 w-full rounded-lg border border-navy-100 px-3 py-2 text-sm"
               >
                 <option value="">None</option>
-                {pitches.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.ticker} — {p.pitcherName} ({format(new Date(p.date), 'MMM d, yyyy')})
-                  </option>
-                ))}
+                {upcomingPitches.length > 0 && (
+                  <optgroup label="Upcoming">
+                    {upcomingPitches.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {pitchOptionLabel(p)}
+                      </option>
+                    ))}
+                  </optgroup>
+                )}
+                {earlierPitches.length > 0 && (
+                  <optgroup label="Earlier">
+                    {earlierPitches.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {pitchOptionLabel(p)}
+                      </option>
+                    ))}
+                  </optgroup>
+                )}
               </select>
             </div>
           )}

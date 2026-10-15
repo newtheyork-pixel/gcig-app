@@ -273,6 +273,13 @@ model PitchRequest {
   // Flags so the requester sees an in-app notification once when the
   // status changes — same pattern as PitchPresenter.seenAt.
   requesterSeenAt        DateTime?
+  // Set when the President approves. The vote picker, the pitches
+  // calendar and the assignment popup all read Pitch; an approval that
+  // only flips `status` is invisible on every one of them. Restrict
+  // keeps a delete of that pitch from quietly unlinking the request
+  // and reproducing the miss.
+  pitchId                Int?               @unique
+  pitch                  Pitch?             @relation(fields: [pitchId], references: [id], onDelete: Restrict)
   createdAt              DateTime           @default(now())
   updatedAt              DateTime           @updatedAt
 
@@ -315,6 +322,11 @@ model Pitch {
   createdAt      DateTime         @default(now())
   votingSessions VotingSession[]
   presenters     PitchPresenter[]
+  // The approved request this row was written from, when the meeting
+  // was asked for rather than put on the calendar by hand. The vote
+  // form attaches a Pitch, so a request that never becomes one cannot
+  // be voted the way a scheduled pitch can.
+  sourceRequest  PitchRequest?
 }
 
 model VotingSession {

@@ -16,6 +16,7 @@ import {
   isValidRoom,
   ROOM_LABELS,
 } from '../lib/lunchSlots.js';
+import { ensurePitchForApprovedRequest } from '../services/pitchFromRequest.js';
 
 const router = Router();
 router.use(verifyJwt);
@@ -413,18 +414,31 @@ router.post('/:id/president-decision', async (req, res) => {
     return res.status(409).json({ error: 'Request already decided' });
   }
 
-  const updated = await prisma.pitchRequest.update({
-    where: { id },
-    data: {
-      status: approved ? 'Approved' : 'Declined',
-      presidentId: req.user.id,
-      presidentDecidedAt: new Date(),
-      presidentDeclineReason: approved ? null : reason || null,
-      // Clear any stale "seen" timestamp so the requester sees a fresh
-      // notification on their dashboard.
-      requesterSeenAt: null,
-    },
-    include: pitchRequestInclude(),
+  // Approval and the Pitch it produces commit together. A request
+  // that is Approved with no Pitch is the one that never shows up
+  // when somebody starts a vote.
+  const updated = await prisma.$transaction(async (tx) => {
+    const row = await tx.pitchRequest.update({
+      where: { id },
+      data: {
+        status: approved ? 'Approved' : 'Declined',
+        presidentId: req.user.id,
+        presidentDecidedAt: new Date(),
+        presidentDeclineReason: approved ? null : reason || null,
+        // Clear any stale "seen" timestamp so the requester sees a fresh
+        // notification on their dashboard.
+        requesterSeenAt: null,
+      },
+      include: pitchRequestInclude(),
+    });
+    if (approved) {
+      await ensurePitchForApprovedRequest(tx, row);
+      return tx.pitchRequest.findUnique({
+        where: { id },
+        include: pitchRequestInclude(),
+      });
+    }
+    return row;
   });
 
   await auditReq(
