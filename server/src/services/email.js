@@ -410,7 +410,7 @@ export async function sendPitchRequestEmail(
     proposedDate,
     proposedLunch,
     proposedStartTime, // "HH:MM" — pretty-printed in the body
-    room, // 'LIBRARY' | 'LOWER_COMMONS' | 'ATHLETIC_COMMONS'
+    room, // 'LIBRARY' | 'LOWER_COMMONS' | 'ATHLETIC_COMMONS' | 'CLUB_ROOM'
     notes,
     deckUrl, // External URL when deck wasn't uploaded
     deckFileName, // For the body when we have an attachment
@@ -735,6 +735,7 @@ function roomLabelFor(room) {
     LIBRARY: 'Library (near smart board / printers)',
     LOWER_COMMONS: 'Lower Commons',
     ATHLETIC_COMMONS: 'Athletic Commons',
+    CLUB_ROOM: 'Club room',
   };
   return map[room] || room;
 }

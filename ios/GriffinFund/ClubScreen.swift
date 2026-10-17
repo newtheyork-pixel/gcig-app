@@ -114,7 +114,7 @@ private struct ClubPitchRequest: Decodable {
     /// Already an "HH:MM" 24h string, validated server-side against the
     /// lunch-block schedule. Rendered as the server wrote it.
     let proposedStartTime: String?
-    /// LIBRARY | LOWER_COMMONS | ATHLETIC_COMMONS, an allowlist rather than
+    /// LIBRARY | LOWER_COMMONS | ATHLETIC_COMMONS | CLUB_ROOM, an allowlist rather than
     /// an enum so a new room is a code change and not a migration.
     let room: String?
     let presidentDecidedAt: String?
@@ -377,6 +377,7 @@ private func clubRoomLabel(_ raw: String?) -> String? {
     case "LIBRARY":          return "Library"
     case "LOWER_COMMONS":    return "Lower Commons"
     case "ATHLETIC_COMMONS": return "Athletic Commons"
+    case "CLUB_ROOM":        return "Club room"
     default:                 return raw
     }
 }

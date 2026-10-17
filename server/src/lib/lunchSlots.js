@@ -33,11 +33,12 @@ const CLUB_START = { wed: '13:50' };
 
 export const PERIOD_VALUES = ['First', 'Second', 'Both', 'Club'];
 
-export const ROOM_VALUES = ['LIBRARY', 'LOWER_COMMONS', 'ATHLETIC_COMMONS'];
+export const ROOM_VALUES = ['LIBRARY', 'LOWER_COMMONS', 'ATHLETIC_COMMONS', 'CLUB_ROOM'];
 export const ROOM_LABELS = {
   LIBRARY: 'Library (near smart board / printers)',
   LOWER_COMMONS: 'Lower Commons',
   ATHLETIC_COMMONS: 'Athletic Commons',
+  CLUB_ROOM: 'Club room',
 };
 
 // Returns the weekday key (mon..fri) for a "YYYY-MM-DD" or ISO date
