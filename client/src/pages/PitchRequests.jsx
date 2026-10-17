@@ -23,6 +23,7 @@ function lunchSummary(v) {
   if (v === 'Both') return 'Either lunch';
   if (v === 'First') return 'First lunch';
   if (v === 'Second') return 'Second lunch';
+  if (v === 'Club') return 'Club block';
   return null;
 }
 

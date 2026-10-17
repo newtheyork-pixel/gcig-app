@@ -1,4 +1,5 @@
 import nodemailer from 'nodemailer';
+import { periodLabel } from '../lib/lunchSlots.js';
 
 // Canonical URL used when building user-facing links (invites, password
 // resets, pitch notifications). Order of precedence:
@@ -425,11 +426,7 @@ export async function sendPitchRequestEmail(
         year: 'numeric',
       })
     : 'No date proposed';
-  const lunchLabel = proposedLunch
-    ? proposedLunch === 'Both'
-      ? 'either lunch'
-      : `${proposedLunch.toLowerCase()} lunch`
-    : null;
+  const lunchLabel = periodLabel(proposedLunch);
   const timeLabel = formatHHMMto12h(proposedStartTime);
   const roomLabel = roomLabelFor(room);
   // Per-recipient greeting + framing copy. President / PM get the

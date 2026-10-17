@@ -64,6 +64,7 @@ enum LunchPeriod {
   First
   Second
   Both
+  Club
 }
 
 model User {
@@ -249,11 +250,12 @@ model PitchRequest {
   // every industry has a leader assigned.
   pmId                   Int?
   pm                     User?              @relation("PitchRequestPM", fields: [pmId], references: [id], onDelete: SetNull)
-  // Proposed meeting date + lunch period so the President / PM can see
-  // exactly when the requester wants to meet.
+  // Proposed meeting date + block (a lunch, either lunch, or Wednesday
+  // club block) so the President / PM can see when the requester wants
+  // to meet. Null means no preference.
   proposedDate           DateTime?
   proposedLunch          LunchPeriod?
-  // "HH:MM" 24h string. Validated server-side against the lunch-block
+  // "HH:MM" 24h string. Validated server-side against the block
   // schedule so we never persist an out-of-range time.
   proposedStartTime      String?
   // LIBRARY / LOWER_COMMONS / ATHLETIC_COMMONS — validated server-side

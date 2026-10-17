@@ -14,6 +14,7 @@ import {
   weekdayKeyFor,
   isValidSlot,
   isValidRoom,
+  PERIOD_VALUES,
   ROOM_LABELS,
 } from '../lib/lunchSlots.js';
 import { ensurePitchForApprovedRequest } from '../services/pitchFromRequest.js';
@@ -105,8 +106,8 @@ router.post('/', canRequest, async (req, res) => {
   if (!ticker || !deckRef) {
     return res.status(400).json({ error: 'Ticker and slide deck are required' });
   }
-  if (proposedLunch && !['First', 'Second', 'Both'].includes(proposedLunch)) {
-    return res.status(400).json({ error: 'Invalid lunch period' });
+  if (proposedLunch && !PERIOD_VALUES.includes(proposedLunch)) {
+    return res.status(400).json({ error: 'Invalid block' });
   }
   // Start time + room are now required. Both gate the submit button on the
   // client; we re-check server-side so a manual API caller can't bypass.
@@ -131,12 +132,14 @@ router.post('/', canRequest, async (req, res) => {
   if (!weekday) {
     return res
       .status(400)
-      .json({ error: 'Pick a weekday — lunch periods only run Mon–Fri' });
+      .json({ error: 'Pick a weekday — meetings only run Mon–Fri' });
   }
-  if (!isValidSlot(weekday, proposedLunch || 'Both', proposedStartTime)) {
+  // Blank period means "no preference": lunch slots plus Wednesday club
+  // block. "Both" stays lunch-only.
+  if (!isValidSlot(weekday, proposedLunch || '', proposedStartTime)) {
     return res
       .status(400)
-      .json({ error: 'Start time is outside the chosen lunch block' });
+      .json({ error: 'Start time is outside the chosen block' });
   }
   // External URLs (Google Drive paste-link path) must pass the same SSRF
   // guard we use for pitch slideshow URLs. OneDrive refs bypass the check

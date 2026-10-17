@@ -17,6 +17,7 @@ const LUNCH_OPTIONS = [
   { value: 'First', label: 'First lunch' },
   { value: 'Second', label: 'Second lunch' },
   { value: 'Both', label: 'Either lunch' },
+  { value: 'Club', label: 'Club block' },
 ];
 
 function lunchLabel(v) {
@@ -135,6 +136,9 @@ export default function RequestPitchModal({ open, onClose, onSubmitted }) {
   // President only has Second free, etc. Surfaces the conflict before
   // submission rather than after the email has gone out.
   const mismatchWarning = useMemo(() => {
+    // Club block isn't a lunch, so a President's lunch schedule doesn't
+    // conflict with it.
+    if (form.proposedLunch === 'Club') return null;
     if (!form.proposedLunch || !dayKey) return null;
     function clashes(scheduleVal) {
       if (!scheduleVal) return null; // unknown — don't warn
@@ -271,7 +275,7 @@ export default function RequestPitchModal({ open, onClose, onSubmitted }) {
           />
           <div>
             <label className="block text-sm font-medium text-navy">
-              Lunch period
+              Block
             </label>
             <select
               value={form.proposedLunch}
@@ -281,11 +285,14 @@ export default function RequestPitchModal({ open, onClose, onSubmitted }) {
               className="mt-1 w-full rounded-lg border border-navy-100 px-3 py-2 text-sm focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold"
             >
               {LUNCH_OPTIONS.map((o) => (
-                <option key={o.value} value={o.value}>
+                <option key={o.value || 'none'} value={o.value}>
                   {o.label}
                 </option>
               ))}
             </select>
+            <p className="mt-1 text-xs text-navy-400">
+              First lunch, second lunch, or Wednesday club block.
+            </p>
           </div>
         </div>
 
@@ -305,7 +312,11 @@ export default function RequestPitchModal({ open, onClose, onSubmitted }) {
             >
               <option value="">
                 {availableSlots.length === 0
-                  ? 'Pick a date first…'
+                  ? !form.proposedDate
+                    ? 'Pick a date first…'
+                    : form.proposedLunch === 'Club'
+                      ? 'Club block is Wednesday'
+                      : 'Pick a weekday…'
                   : 'Select a start time…'}
               </option>
               {availableSlots.map((s) => (
@@ -315,8 +326,9 @@ export default function RequestPitchModal({ open, onClose, onSubmitted }) {
               ))}
             </select>
             <p className="mt-1 text-xs text-navy-400">
-              Slots end 45 min into the lunch block — anything later doesn't
-              leave room to actually meet.
+              {form.proposedLunch === 'Club'
+                ? 'Wednesday club block is 1:50–2:15. The meeting starts at 1:50.'
+                : "Slots end 45 min into the lunch block — anything later doesn't leave room to actually meet. No preference also includes Wednesday club block at 1:50."}
             </p>
           </div>
           <div>
