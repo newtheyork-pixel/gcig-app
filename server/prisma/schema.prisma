@@ -339,7 +339,8 @@ model VotingSession {
   pitch       Pitch?    @relation(fields: [pitchId], references: [id], onDelete: SetNull)
   status      String    @default("open")
   // "buy"  → a pitch vote (Buy/Hold/Sell, proposed allocation).
-  // "sell" → a vote to exit a holding we own (Sell/Hold, no amount).
+  // "sell" → a vote to sell a holding we own (Sell/Hold, no amount),
+  //          either the whole position or sellShares of it.
   kind        String    @default("buy")
   // How a Buy session sizes the trade. "average" (default) lets each
   // Buy voter propose a dollar figure and we trade the mean. "fixed"
@@ -348,6 +349,9 @@ model VotingSession {
   amountMode  String    @default("average")
   // The pinned dollar figure when amountMode = "fixed". Null otherwise.
   fixedAmount Float?
+  // Sell sessions only: how many shares the vote proposes to sell. Null
+  // means the whole position (the original behaviour).
+  sellShares  Int?
   deadline    DateTime
   createdAt   DateTime  @default(now())
   createdBy   Int

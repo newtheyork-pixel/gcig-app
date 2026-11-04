@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { resolveSessionKind, prepareBallot, computeTally } from './votes.js';
+import { resolveSessionKind, prepareBallot, computeTally, resolveSellShares } from './votes.js';
 
 test('resolveSessionKind defaults to buy and rejects junk', () => {
   assert.equal(resolveSessionKind(undefined), 'buy');
@@ -91,4 +91,15 @@ test('computeTally weights a sell session (Sell vs Hold) like a buy vote', () =>
   assert.equal(t.finalDecision, 'Sell');
   assert.equal(t.buyAmountStats, null);
   assert.equal(t.weights.Sell, 4); // general-body bloc (3) + 1 leadership
+});
+
+test('resolveSellShares: blank means the whole position, else a positive whole number', () => {
+  assert.deepEqual(resolveSellShares(undefined), { sellShares: null });
+  assert.deepEqual(resolveSellShares(''), { sellShares: null });
+  assert.deepEqual(resolveSellShares('40'), { sellShares: 40 });
+  assert.deepEqual(resolveSellShares(7), { sellShares: 7 });
+  assert.match(resolveSellShares(0).error, /whole number/);
+  assert.match(resolveSellShares(-3).error, /whole number/);
+  assert.match(resolveSellShares(2.5).error, /whole number/);
+  assert.match(resolveSellShares('abc').error, /whole number/);
 });

@@ -98,6 +98,10 @@ function emptyForm() {
     // ratify it.
     amountMode: 'average',
     fixedAmount: '',
+    // Sell sessions only. "all" = exit the whole position; "part" = sell
+    // sellShares of it.
+    sellMode: 'all',
+    sellShares: '',
   };
 }
 
@@ -160,6 +164,10 @@ export default function Votes() {
         deadline: etInputValueToUtcIso(form.deadline),
         amountMode: fixed ? 'fixed' : 'average',
         fixedAmount: fixed ? Number(form.fixedAmount) : null,
+        sellShares:
+          form.kind === 'sell' && form.sellMode === 'part'
+            ? Number(form.sellShares)
+            : null,
       });
       setModalOpen(false);
       setForm(emptyForm());
@@ -320,6 +328,9 @@ export default function Votes() {
               />
             )}
           </div>
+          {form.kind === 'sell' && (
+            <SellSizePicker form={form} setForm={setForm} holdings={holdings} />
+          )}
           <div>
             <label className="block text-sm font-medium text-navy">Title / Question (optional)</label>
             <input
@@ -451,6 +462,69 @@ export default function Votes() {
 
 // ── Session card (used in the list) ──────────────────────────────────
 
+// What a sell vote proposes: the whole position or a set number of shares.
+function sellLabel(session) {
+  const n = session?.sellShares;
+  return n ? `Sell ${n.toLocaleString()} share${n === 1 ? '' : 's'}` : 'Exit the whole position';
+}
+
+// Sell-vote sizing: exit the whole holding, or sell part of it.
+function SellSizePicker({ form, setForm, holdings }) {
+  const held = holdings.find((h) => String(h.ticker).toUpperCase() === form.ticker);
+  const heldShares = held?.shares != null ? Math.floor(Number(held.shares)) : null;
+  const n = Number(form.sellShares);
+  const price =
+    held?.shares && held?.marketValue != null ? held.marketValue / held.shares : null;
+  return (
+    <div>
+      <label className="block text-sm font-medium text-navy">How much to sell</label>
+      <div className="mt-1 grid grid-cols-2 gap-2">
+        {[
+          { m: 'all', label: 'Whole position', hint: 'Exit the holding' },
+          { m: 'part', label: 'Part of it', hint: 'Sell a set number of shares' },
+        ].map((opt) => (
+          <button
+            key={opt.m}
+            type="button"
+            onClick={() => setForm({ ...form, sellMode: opt.m })}
+            className={`rounded-lg border px-3 py-2 text-left text-sm transition ${
+              form.sellMode === opt.m
+                ? 'border-gold bg-gold-100/40 ring-1 ring-gold'
+                : 'border-navy-100 bg-white hover:bg-navy-50'
+            }`}
+          >
+            <div className="font-semibold text-navy">{opt.label}</div>
+            <div className="text-xs text-navy-400">{opt.hint}</div>
+          </button>
+        ))}
+      </div>
+      {form.sellMode === 'part' && (
+        <div className="mt-2">
+          <label className="block text-sm font-medium text-navy">
+            Shares to sell <span className="text-red-600">*</span>
+          </label>
+          <input
+            type="number"
+            inputMode="numeric"
+            min={1}
+            max={heldShares && heldShares > 1 ? heldShares - 1 : undefined}
+            step={1}
+            required
+            value={form.sellShares}
+            onChange={(e) => setForm({ ...form, sellShares: e.target.value })}
+            placeholder={heldShares != null ? `1 – ${heldShares}` : 'e.g. 25'}
+            className="mt-1 w-full rounded-lg border border-navy-100 px-3 py-2 text-sm focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold"
+          />
+          <p className="mt-1 text-xs text-navy-400">
+            {heldShares != null ? `We hold ${heldShares.toLocaleString()} shares.` : ''}
+            {price && n > 0 ? ` About $${Math.round(n * price).toLocaleString()} at today's price.` : ''}
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function SessionCard({ session: s, onClick }) {
   const isOpen = s.status === 'open';
   return (
@@ -472,6 +546,9 @@ function SessionCard({ session: s, onClick }) {
             </span>
           )}
         </div>
+        {s.kind === 'sell' && (
+          <div className="mt-1 text-xs font-semibold text-red-700">{sellLabel(s)}</div>
+        )}
         {s.title && <div className="mt-1 text-[15px] text-navy">{s.title}</div>}
         <div className="mt-0.5 text-xs text-navy-400">
           {s.creator?.name} · {format(new Date(s.createdAt), 'MMM d, yyyy')}
@@ -688,7 +765,7 @@ function SessionDetail({ session, onBack, onRefresh, onClose, onDelete }) {
                       {isFixed ? FIXED_ACTION_LABEL[a] : a}
                       {session.kind === 'sell' && (
                         <span className="text-[10px] font-normal text-navy-400">
-                          {SELL_ACTION_DESC[a]}
+                          {a === 'Sell' ? sellLabel(session) : SELL_ACTION_DESC[a]}
                         </span>
                       )}
                       {isFixed && (
