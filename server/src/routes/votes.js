@@ -233,6 +233,17 @@ router.post('/', requireExecutive, async (req, res) => {
     fixedAmount = Math.round(n);
   }
 
+  // Sell sessions may sell only part of the position. A blank or missing
+  // sellShares means the whole position; otherwise it must be a positive
+  // whole number of shares. The over-sell check runs when the trade is
+  // built, against what we hold then.
+  let sellShares = null;
+  if (kind === 'sell') {
+    const sized = resolveSellShares(req.body?.sellShares);
+    if (sized.error) return res.status(400).json({ error: sized.error });
+    sellShares = sized.sellShares;
+  }
+
   const session = await prisma.votingSession.create({
     data: {
       ticker: ticker.toUpperCase(),
@@ -242,6 +253,7 @@ router.post('/', requireExecutive, async (req, res) => {
       kind,
       amountMode,
       fixedAmount,
+      sellShares,
       deadline: deadlineDate,
       createdBy: req.user.id,
     },
@@ -264,6 +276,17 @@ export function resolveSessionKind(raw) {
   return k === 'buy' || k === 'sell' ? k : null;
 }
 
+// Parse the share count a sell vote proposes. Blank/null = whole position.
+// Returns { sellShares } (null or a positive integer) or { error }.
+export function resolveSellShares(raw) {
+  if (raw == null || raw === '') return { sellShares: null };
+  const n = Number(raw);
+  if (!Number.isInteger(n) || n <= 0) {
+    return { error: 'Shares to sell must be a whole number above 0' };
+  }
+  return { sellShares: n };
+}
+
 // Validate + normalize a ballot for a session. Accepts the session (or a
 // bare kind string, for the unit tests). Returns { action,
 // investmentAmount } on success or { error } on rejection.
@@ -271,8 +294,8 @@ export function resolveSessionKind(raw) {
 //   Buy / fixed   : Buy or No only — the dollar figure is pinned on the
 //                   session, so a ballot never carries one. "No" maps to
 //                   Hold so the shared tally machinery is untouched.
-//   Sell          : Sell or Hold only, never an amount (we exit the whole
-//                   position; leadership sizes the order downstream).
+//   Sell          : Sell or Hold only, never an amount (the size, whole
+//                   position or sellShares, is fixed on the session).
 export function prepareBallot(session, { action, investmentAmount } = {}) {
   const kind = typeof session === 'string' ? session : session?.kind ?? 'buy';
   const amountMode = typeof session === 'object' ? session?.amountMode : 'average';

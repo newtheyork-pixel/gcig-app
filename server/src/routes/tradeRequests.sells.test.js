@@ -34,6 +34,18 @@ test('buildEligibleSells keeps only unclaimed Sell-majority sell sessions', () =
   assert.equal(out[0].ticker, 'AAPL');
   assert.equal(out[0].heldShares, 120);
   assert.equal(out[0].ballotCount, 3);
+  assert.equal(out[0].sellShares, null);
+});
+
+test('buildEligibleSells passes through a partial sell size', () => {
+  const out = buildEligibleSells({
+    sessions: [{ ...sellSession(10, 'AAPL', 'Sell'), sellShares: 25 }],
+    claimedIds: new Set(),
+    allUsers: users,
+    heldByTicker: new Map([['AAPL', 120]]),
+  });
+  assert.equal(out[0].sellShares, 25);
+  assert.equal(out[0].heldShares, 120);
 });
 
 test('buildEligibleSells annotates null heldShares when the sheet lacks the ticker', () => {
@@ -48,7 +60,11 @@ test('buildEligibleSells annotates null heldShares when the sheet lacks the tick
 
 test('resolveSellVoteLine validates the linked session', () => {
   const ok = resolveSellVoteLine(sellSession(10, 'AAPL', 'Sell'), users);
-  assert.deepEqual(ok, { ticker: 'AAPL', votingSessionId: 10 });
+  assert.deepEqual(ok, { ticker: 'AAPL', votingSessionId: 10, sellShares: null });
+
+  // A partial sell vote carries its approved share count through.
+  const part = resolveSellVoteLine({ ...sellSession(10, 'AAPL', 'Sell'), sellShares: 40 }, users);
+  assert.equal(part.sellShares, 40);
 
   assert.match(resolveSellVoteLine({ ...sellSession(10, 'AAPL', 'Sell'), status: 'open' }, users).error, /closed/i);
   assert.match(resolveSellVoteLine({ ...sellSession(10, 'AAPL', 'Sell'), kind: 'buy' }, users).error, /sell vote/i);

@@ -776,14 +776,19 @@ function Composer({ open, onClose, onCreated }) {
     }
 
     // Vote-driven Sell lines: one per selected passed sell vote, sized to
-    // the whole position the sheet says we hold.
+    // what the vote approved (sellShares), or the whole held position.
     const voteSells = [];
     for (const id of selectedSellIds) {
       const s = eligibleSells.find((e) => e.id === id);
       if (!s) continue;
       const t = String(s.ticker).toUpperCase();
       const quote = quotes[t];
-      const shares = s.heldShares != null ? Math.round(s.heldShares) : null;
+      const shares =
+        s.sellShares != null
+          ? s.sellShares
+          : s.heldShares != null
+            ? Math.round(s.heldShares)
+            : null;
       voteSells.push({
         kind: 'Sell',
         votingSessionId: s.id,
@@ -901,7 +906,8 @@ function Composer({ open, onClose, onCreated }) {
         items.push(sellItem);
       }
       for (const v of lines.voteSells) {
-        // Server re-validates the session and sizes to the held position.
+        // Server re-validates the session and sizes it (approved shares or
+        // the whole held position).
         items.push({ kind: 'Sell', votingSessionId: v.votingSessionId });
       }
       await api.post('/trade-requests', { items, note: note || null });
@@ -1048,9 +1054,11 @@ function Composer({ open, onClose, onCreated }) {
                       <TrendingDown className="h-4 w-4 text-red-700" />
                       <span className="font-bold text-navy">{s.ticker}</span>
                       <span className="text-xs text-navy-400">
-                        {s.heldShares != null
-                          ? `sell all ${s.heldShares} sh`
-                          : 'no position on sheet'}
+                        {s.heldShares == null
+                          ? 'no position on sheet'
+                          : s.sellShares != null
+                            ? `sell ${s.sellShares} of ${s.heldShares} sh`
+                            : `sell all ${s.heldShares} sh`}
                       </span>
                     </span>
                     {s.heldShares == null && (

@@ -139,6 +139,8 @@ export function buildEligibleSells({ sessions, claimedIds, allUsers, heldByTicke
       createdAt: s.createdAt,
       creator: s.creator,
       heldShares: heldByTicker.get(String(s.ticker).toUpperCase()) ?? null,
+      // Shares the vote approved selling; null = the whole position.
+      sellShares: s.sellShares ?? null,
       ballotCount: s.ballots.length,
     });
   }
@@ -159,7 +161,11 @@ export function resolveSellVoteLine(session, allUsers) {
   if (tally.finalDecision !== 'Sell') {
     return { error: `Session ${session.id} (${session.ticker}) did not result in Sell` };
   }
-  return { ticker: session.ticker, votingSessionId: session.id };
+  return {
+    ticker: session.ticker,
+    votingSessionId: session.id,
+    sellShares: session.sellShares ?? null,
+  };
 }
 
 // Final safety net on a resolved envelope: no voting session may be claimed
@@ -485,9 +491,15 @@ router.post('/', requireExecutive, async (req, res, next) => {
         }
         ticker = resolvedLine.ticker;
         votingSessionId = resolvedLine.votingSessionId;
-        // Default to selling the whole held position (exec can override `shares`).
-        const held = heldByTicker.get(ticker);
-        if (held > 0) proposedSellShares = Math.round(held);
+        // Sell what the vote approved: a set number of shares, or the whole
+        // held position when the vote didn't name one. The exec can still
+        // override `shares`; the over-sell guard below catches too many.
+        if (resolvedLine.sellShares != null) {
+          proposedSellShares = resolvedLine.sellShares;
+        } else {
+          const held = heldByTicker.get(ticker);
+          if (held > 0) proposedSellShares = Math.round(held);
+        }
       }
 
       if (!ticker) {
@@ -526,7 +538,7 @@ router.post('/', requireExecutive, async (req, res, next) => {
         // Buy from a session: round to nearest whole share at the live quote.
         shares = Math.max(1, Math.round(proposedAvg / price));
       } else if (proposedSellShares != null) {
-        // Sell from a passed vote: exit the whole held position by default.
+        // Sell from a passed vote: the approved size (or the whole position).
         shares = proposedSellShares;
       } else {
         return res.status(400).json({
