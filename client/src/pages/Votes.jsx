@@ -99,7 +99,7 @@ function emptyForm() {
     amountMode: 'average',
     fixedAmount: '',
     // Sell sessions only. "all" = exit the whole position; "part" = sell
-    // sellShares of it.
+    // sellShares of it; "vote" = each Sell voter names a share count.
     sellMode: 'all',
     sellShares: '',
   };
@@ -164,6 +164,7 @@ export default function Votes() {
         deadline: etInputValueToUtcIso(form.deadline),
         amountMode: fixed ? 'fixed' : 'average',
         fixedAmount: fixed ? Number(form.fixedAmount) : null,
+        sellMode: form.kind === 'sell' ? form.sellMode : undefined,
         sellShares:
           form.kind === 'sell' && form.sellMode === 'part'
             ? Number(form.sellShares)
@@ -464,6 +465,7 @@ export default function Votes() {
 
 // What a sell vote proposes: the whole position or a set number of shares.
 function sellLabel(session) {
+  if (session?.amountMode === 'vote') return 'Voters decide how many shares';
   const n = session?.sellShares;
   return n ? `Sell ${n.toLocaleString()} share${n === 1 ? '' : 's'}` : 'Exit the whole position';
 }
@@ -478,10 +480,11 @@ function SellSizePicker({ form, setForm, holdings }) {
   return (
     <div>
       <label className="block text-sm font-medium text-navy">How much to sell</label>
-      <div className="mt-1 grid grid-cols-2 gap-2">
+      <div className="mt-1 grid grid-cols-3 gap-2">
         {[
           { m: 'all', label: 'Whole position', hint: 'Exit the holding' },
-          { m: 'part', label: 'Part of it', hint: 'Sell a set number of shares' },
+          { m: 'part', label: 'Part of it', hint: 'You set the shares' },
+          { m: 'vote', label: 'Voters decide', hint: 'Average of Sell votes' },
         ].map((opt) => (
           <button
             key={opt.m}
@@ -498,6 +501,13 @@ function SellSizePicker({ form, setForm, holdings }) {
           </button>
         ))}
       </div>
+      {form.sellMode === 'vote' && (
+        <p className="mt-2 text-xs text-navy-400">
+          Each member who votes Sell says how many shares to sell. If the vote
+          passes, we sell the average.
+          {heldShares != null ? ` We hold ${heldShares.toLocaleString()} shares.` : ''}
+        </p>
+      )}
       {form.sellMode === 'part' && (
         <div className="mt-2">
           <label className="block text-sm font-medium text-navy">
@@ -574,6 +584,7 @@ function SessionDetail({ session, onBack, onRefresh, onClose, onDelete }) {
   const [ballotAction, setBallotAction] = useState('');
   const [ballotNote, setBallotNote] = useState('');
   const [ballotAmount, setBallotAmount] = useState('');
+  const [ballotShares, setBallotShares] = useState('');
   const [ballotError, setBallotError] = useState('');
   const [casting, setCasting] = useState(false);
   // One PDFModal mount per session detail view. Falsy `selectedPdf`
@@ -588,6 +599,7 @@ function SessionDetail({ session, onBack, onRefresh, onClose, onDelete }) {
   // than proposing their own, so the ballot drops the amount box and the
   // choices collapse to Buy / No.
   const isFixed = session.kind === 'buy' && session.amountMode === 'fixed';
+  const sharesVote = session.kind === 'sell' && session.amountMode === 'vote';
 
   async function sendDocusign() {
     setDocusignError('');
@@ -613,6 +625,9 @@ function SessionDetail({ session, onBack, onRefresh, onClose, onDelete }) {
           ? String(session.myBallot.investmentAmount)
           : ''
       );
+      setBallotShares(
+        session.myBallot.sellShares != null ? String(session.myBallot.sellShares) : ''
+      );
     }
   }, [session.myBallot]);
 
@@ -629,12 +644,24 @@ function SessionDetail({ session, onBack, onRefresh, onClose, onDelete }) {
         return;
       }
     }
+    if (sharesVote && ballotAction === 'Sell') {
+      const n = Number(ballotShares);
+      if (!Number.isInteger(n) || n <= 0) {
+        setBallotError('Enter how many shares to sell (a whole number)');
+        return;
+      }
+      if (session.heldShares != null && n > session.heldShares) {
+        setBallotError(`We only hold ${session.heldShares.toLocaleString()} shares`);
+        return;
+      }
+    }
     setCasting(true);
     try {
       await api.post(`/votes/${session.id}/ballot`, {
         action: ballotAction,
         note: ballotNote || null,
         investmentAmount: ballotAction === 'Buy' && !isFixed ? Number(ballotAmount) : null,
+        sellShares: sharesVote && ballotAction === 'Sell' ? Number(ballotShares) : null,
       });
       onRefresh();
     } catch (err) {
@@ -813,6 +840,36 @@ function SessionDetail({ session, onBack, onRefresh, onClose, onDelete }) {
                 </div>
               )}
 
+              {/* Voter-sized sell vote: a Sell ballot names a share count. */}
+              {sharesVote && ballotAction === 'Sell' && (
+                <div>
+                  <label className="block text-sm font-medium text-navy">
+                    Shares to sell <span className="text-red-600">*</span>
+                  </label>
+                  <input
+                    type="number"
+                    inputMode="numeric"
+                    min={1}
+                    max={session.heldShares ?? undefined}
+                    step={1}
+                    required
+                    value={ballotShares}
+                    onChange={(e) => {
+                      setBallotShares(e.target.value);
+                      setBallotError('');
+                    }}
+                    placeholder={session.heldShares != null ? `1 – ${session.heldShares}` : 'e.g. 25'}
+                    className="mt-1 w-full rounded-lg border border-navy-100 px-3 py-2 text-sm focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold"
+                  />
+                  <p className="mt-1 text-xs text-navy-400">
+                    {session.heldShares != null
+                      ? `We hold ${session.heldShares.toLocaleString()} shares. `
+                      : ''}
+                    If the vote passes, we sell the average of the Sell votes.
+                  </p>
+                </div>
+              )}
+
               <div>
                 <label className="block text-sm font-medium text-navy">Note (optional)</label>
                 <textarea
@@ -900,6 +957,11 @@ function SessionDetail({ session, onBack, onRefresh, onClose, onDelete }) {
                       {b.action === 'Buy' && b.investmentAmount != null && (
                         <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-bold text-emerald-800">
                           ${b.investmentAmount.toLocaleString()}
+                        </span>
+                      )}
+                      {b.action === 'Sell' && b.sellShares != null && (
+                        <span className="rounded-full bg-red-50 px-2 py-0.5 text-[10px] font-bold text-red-800">
+                          {b.sellShares.toLocaleString()} sh
                         </span>
                       )}
                     </div>
@@ -1237,6 +1299,11 @@ function TallyDisplay({ tally, isOpen, ticker }) {
                       ${lv.investmentAmount.toLocaleString()}
                     </span>
                   )}
+                  {lv.action === 'Sell' && lv.sellShares != null && (
+                    <span className="rounded-full bg-red-50 px-2 py-0.5 text-[10px] font-bold text-red-800">
+                      {lv.sellShares.toLocaleString()} sh
+                    </span>
+                  )}
                   <ActionBadge action={lv.action} />
                 </div>
               </li>
@@ -1244,6 +1311,25 @@ function TallyDisplay({ tally, isOpen, ticker }) {
           </ul>
         )}
       </div>
+
+      {/* Voter-sized sell: average / range of the Sell ballots' shares. */}
+      {tally?.sellShareStats && (
+        <div className="rounded-lg border border-red-200 bg-red-50/40 p-3">
+          <div className="text-xs font-semibold uppercase text-red-800">Proposed sale</div>
+          <div className="mt-2 flex items-baseline gap-3">
+            <div className="text-2xl font-bold tabular-nums text-red-800">
+              {tally.sellShareStats.avg.toLocaleString()} sh
+            </div>
+            <div className="text-xs text-navy-400">
+              average across {tally.sellShareStats.count} Sell ballot
+              {tally.sellShareStats.count === 1 ? '' : 's'}
+            </div>
+          </div>
+          <div className="mt-1 text-xs text-navy-400">
+            Range: {tally.sellShareStats.min.toLocaleString()} – {tally.sellShareStats.max.toLocaleString()} sh
+          </div>
+        </div>
+      )}
 
       {/* Proposed Buy allocation — average / range from Buy ballots,
           plus a live share-count sizing against the current quote. */}

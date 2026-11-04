@@ -2,6 +2,7 @@ import { Router } from 'express';
 import prisma from '../db.js';
 import { verifyJwt, requireExecutive } from '../middleware/auth.js';
 import { summarizeVoteSession } from '../services/articleSummarizer.js';
+import { getSheetPortfolio } from '../services/sheetPortfolio.js';
 
 const router = Router();
 router.use(verifyJwt);
@@ -92,6 +93,21 @@ export function computeTally(ballots, allUsers, session = {}) {
         : null;
   }
 
+  // Sell votes sized by the voters: each Sell ballot names a share count
+  // and the club sells the rounded average.
+  const sellCounts = ballots
+    .filter((b) => b.action === 'Sell' && typeof b.sellShares === 'number')
+    .map((b) => b.sellShares);
+  const sellShareStats =
+    sellCounts.length > 0
+      ? {
+          count: sellCounts.length,
+          avg: Math.round(sellCounts.reduce((s, n) => s + n, 0) / sellCounts.length),
+          min: Math.min(...sellCounts),
+          max: Math.max(...sellCounts),
+        }
+      : null;
+
   return {
     memberCounts,
     memberTotal: memberBallots.length,
@@ -105,8 +121,10 @@ export function computeTally(ballots, allUsers, session = {}) {
       action: b.action,
       note: b.note,
       investmentAmount: b.investmentAmount ?? null,
+      sellShares: b.sellShares ?? null,
     })),
     buyAmountStats,
+    sellShareStats,
     leadershipCount: leadershipBallots.length,
     leadershipEligible,
     maxWeightedVotes,
@@ -200,7 +218,22 @@ router.get('/:id', async (req, res) => {
     }
   }
 
-  res.json({ ...session, tally, myBallot, synthesis });
+  // Sell votes show voters how many shares we hold, so a voter sizing the
+  // sale has the ceiling in front of them. Best-effort.
+  let heldShares = null;
+  if (session.kind === 'sell') {
+    try {
+      const { holdings } = await getSheetPortfolio();
+      const h = (holdings || []).find(
+        (x) => !x.isCash && String(x.ticker).toUpperCase() === session.ticker
+      );
+      if (h?.shares != null) heldShares = Math.floor(Number(h.shares));
+    } catch {
+      /* leave null */
+    }
+  }
+
+  res.json({ ...session, tally, myBallot, synthesis, heldShares });
 });
 
 // Create a new voting session (President only).
@@ -237,8 +270,12 @@ router.post('/', requireExecutive, async (req, res) => {
   // sellShares means the whole position; otherwise it must be a positive
   // whole number of shares. The over-sell check runs when the trade is
   // built, against what we hold then.
+  // Or let the voters decide: sellMode "vote" means each Sell ballot names
+  // a share count and the trade sells the average.
   let sellShares = null;
-  if (kind === 'sell') {
+  if (kind === 'sell' && String(req.body?.sellMode).toLowerCase() === 'vote') {
+    amountMode = 'vote';
+  } else if (kind === 'sell') {
     const sized = resolveSellShares(req.body?.sellShares);
     if (sized.error) return res.status(400).json({ error: sized.error });
     sellShares = sized.sellShares;
@@ -296,13 +333,22 @@ export function resolveSellShares(raw) {
 //                   Hold so the shared tally machinery is untouched.
 //   Sell          : Sell or Hold only, never an amount (the size, whole
 //                   position or sellShares, is fixed on the session).
-export function prepareBallot(session, { action, investmentAmount } = {}) {
+export function prepareBallot(session, { action, investmentAmount, sellShares } = {}) {
   const kind = typeof session === 'string' ? session : session?.kind ?? 'buy';
   const amountMode = typeof session === 'object' ? session?.amountMode : 'average';
 
   if (kind === 'sell') {
     if (action !== 'Sell' && action !== 'Hold') {
       return { error: 'action must be Sell or Hold' };
+    }
+    // Voters size the sale: a Sell ballot must name how many shares.
+    if (amountMode === 'vote' && action === 'Sell') {
+      const sized = resolveSellShares(sellShares);
+      if (sized.error) return { error: sized.error };
+      if (sized.sellShares == null) {
+        return { error: 'Say how many shares to sell' };
+      }
+      return { action, investmentAmount: null, sellShares: sized.sellShares };
     }
     return { action, investmentAmount: null };
   }
@@ -347,6 +393,7 @@ router.post('/:id/ballot', async (req, res) => {
   const prepared = prepareBallot(session, req.body || {});
   if (prepared.error) return res.status(400).json({ error: prepared.error });
   const { action, investmentAmount: amount } = prepared;
+  const sellShares = prepared.sellShares ?? null;
   const note = req.body?.note;
 
   const ballot = await prisma.ballot.upsert({
@@ -355,6 +402,7 @@ router.post('/:id/ballot', async (req, res) => {
       action,
       note: note || null,
       investmentAmount: amount,
+      sellShares,
       castAt: new Date(),
     },
     create: {
@@ -363,6 +411,7 @@ router.post('/:id/ballot', async (req, res) => {
       action,
       note: note || null,
       investmentAmount: amount,
+      sellShares,
     },
     include: { user: { select: { id: true, name: true, role: true } } },
   });
