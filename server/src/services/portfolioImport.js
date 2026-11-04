@@ -1,5 +1,6 @@
 import prisma from '../db.js';
 import { readSheetPortfolio } from './sheetPortfolio.js';
+import { OPENING_LOT_NOTE } from './tradeExecution.js';
 
 // The one-time (idempotent) import of the live sheet into the database — the
 // cutover's data step, shared by the CLI backfill and the in-app "Import from
@@ -111,7 +112,7 @@ export async function importFromSheet({ commit = false, reset = false, force = f
               shares: h.shares,
               pricePerShare: h.costBasis,
               buyDate: new Date(),
-              note: 'opening balance (sheet import)',
+              note: OPENING_LOT_NOTE,
             },
           });
           lotsSeeded += 1;

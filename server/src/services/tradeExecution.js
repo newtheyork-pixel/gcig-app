@@ -83,6 +83,46 @@ export async function recomputeHoldingFromLots(client, ticker, meta = {}) {
   });
 }
 
+// The sheet import seeds each position with one stand-in lot (all shares at
+// the sheet's average cost, dated the import day). When someone later types in
+// the real purchase history with Add Lot, those lots describe shares the
+// stand-in already counts. Stacking them on top doubled positions in prod, so
+// a hand-entered lot carves its shares out of the stand-in by default: the
+// position's share count stays put until the stand-in is used up, and then
+// the lot history is the real one.
+export const OPENING_LOT_NOTE = 'opening balance (sheet import)';
+
+export async function addManualLot(
+  client,
+  { ticker, shares, pricePerShare, buyDate, note, carveOpening = true }
+) {
+  const t = String(ticker).toUpperCase();
+  const lot = await client.holdingLot.create({
+    data: { ticker: t, shares, pricePerShare, buyDate, note: note || null },
+  });
+  let carved = 0;
+  if (carveOpening) {
+    const lots = await client.holdingLot.findMany({ where: { ticker: t } });
+    const openings = lots.filter((l) => l.note === OPENING_LOT_NOTE && l.id !== lot.id);
+    let left = shares;
+    for (const o of openings) {
+      if (left <= 0) break;
+      const take = Math.min(o.shares, left);
+      const remaining = o.shares - take;
+      // Float residue (e.g. 0.30000000000000004) must not leave a dust lot.
+      if (remaining <= 1e-9) {
+        await client.holdingLot.delete({ where: { id: o.id } });
+      } else {
+        await client.holdingLot.update({ where: { id: o.id }, data: { shares: remaining } });
+      }
+      carved += take;
+      left -= take;
+    }
+  }
+  await recomputeHoldingFromLots(client, t);
+  return { lot, carved };
+}
+
 // Append a buy lot and refold the Holding. Returns the cash outflow.
 async function applyBuy(tx, { ticker, shares, price, note, meta, buyDate }) {
   await tx.holdingLot.create({

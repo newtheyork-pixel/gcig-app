@@ -397,6 +397,7 @@ export default function HoldingDetailModal({ holding, onClose, onChanged }) {
             <LotSection
               ticker={ticker}
               lots={lots}
+              positionShares={holding?.shares ?? null}
               currentPrice={view.price}
               currency={view.currency}
               canEdit={isSuperAdmin}
@@ -705,9 +706,14 @@ function Stat({ label, value }) {
   );
 }
 
-function LotSection({ ticker, lots, currentPrice, currency, canEdit, onChange, onDelete }) {
+// Must match OPENING_LOT_NOTE in server/src/services/tradeExecution.js.
+const OPENING_LOT_NOTE = 'opening balance (sheet import)';
+
+function LotSection({ ticker, lots, positionShares, currentPrice, currency, canEdit, onChange, onDelete }) {
   const [adding, setAdding] = useState(false);
   const [form, setForm] = useState({ shares: '', pricePerShare: '', buyDate: '' });
+  const [carveOpening, setCarveOpening] = useState(true);
+  const hasOpeningLot = lots.some((l) => l.note === OPENING_LOT_NOTE);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState('');
 
@@ -724,6 +730,12 @@ function LotSection({ ticker, lots, currentPrice, currency, canEdit, onChange, o
     { shares: 0, cost: 0, mv: null }
   );
   const avgCost = totals.shares > 0 ? totals.cost / totals.shares : null;
+  // Lots are supposed to add up to the position. When they don't, the next
+  // lot change or trade refolds the position to the lot total, so say so.
+  const lotsDisagree =
+    lots.length > 0 &&
+    positionShares != null &&
+    Math.abs(totals.shares - positionShares) > 1e-6;
   const gainDollar = totals.mv != null ? totals.mv - totals.cost : null;
   const gainPct = gainDollar != null && totals.cost > 0 ? (gainDollar / totals.cost) * 100 : null;
 
@@ -737,6 +749,7 @@ function LotSection({ ticker, lots, currentPrice, currency, canEdit, onChange, o
         shares: Number(form.shares),
         pricePerShare: Number(form.pricePerShare),
         buyDate: new Date(form.buyDate).toISOString(),
+        carveOpening: hasOpeningLot ? carveOpening : true,
       });
       setForm({ shares: '', pricePerShare: '', buyDate: '' });
       setAdding(false);
@@ -764,6 +777,14 @@ function LotSection({ ticker, lots, currentPrice, currency, canEdit, onChange, o
           </button>
         )}
       </div>
+
+      {lotsDisagree && (
+        <div className="mb-2 rounded-lg border border-amber-200 bg-amber-50 p-2 text-[11px] text-amber-800">
+          Lots add up to {totals.shares.toLocaleString('en-US')} shares but the position holds{' '}
+          {positionShares.toLocaleString('en-US')}. Fix the lots before the next lot change or
+          trade, which resets the position to the lot total.
+        </div>
+      )}
 
       {lots.length === 0 && !adding ? (
         <div className="rounded-lg border border-dashed border-navy-100 bg-navy-50/40 p-3 text-center text-xs text-navy-400">
@@ -794,6 +815,14 @@ function LotSection({ ticker, lots, currentPrice, currency, canEdit, onChange, o
                   <tr key={l.id}>
                     <td className="px-3 py-2 text-navy">
                       {format(new Date(l.buyDate), 'MMM d, yyyy')}
+                      {l.note === OPENING_LOT_NOTE && (
+                        <span
+                          className="ml-1 rounded bg-navy-50 px-1 text-[9px] font-semibold uppercase text-navy-400"
+                          title="Stand-in lot from the sheet import: all shares at the sheet's average cost"
+                        >
+                          import
+                        </span>
+                      )}
                     </td>
                     <td className="px-3 py-2 text-right tabular-nums text-navy">
                       {l.shares.toLocaleString('en-US')}
@@ -931,6 +960,20 @@ function LotSection({ ticker, lots, currentPrice, currency, canEdit, onChange, o
               />
             </label>
           </div>
+          {hasOpeningLot && (
+            <label className="flex items-start gap-2 text-[11px] text-navy">
+              <input
+                type="checkbox"
+                checked={carveOpening}
+                onChange={(e) => setCarveOpening(e.target.checked)}
+                className="mt-0.5"
+              />
+              <span>
+                Take these shares out of the import lot. Leave on when entering past purchases
+                the position already holds; turn off only for new shares.
+              </span>
+            </label>
+          )}
           {err && <div className="text-xs text-red-600">{err}</div>}
           <div className="flex justify-end gap-2">
             <button
