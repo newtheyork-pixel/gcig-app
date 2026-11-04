@@ -221,19 +221,32 @@ router.get('/:id', async (req, res) => {
   // Sell votes show voters how many shares we hold, so a voter sizing the
   // sale has the ceiling in front of them. Best-effort.
   let heldShares = null;
+  let position = null;
   if (session.kind === 'sell') {
     try {
       const { holdings } = await getSheetPortfolio();
       const h = (holdings || []).find(
         (x) => !x.isCash && String(x.ticker).toUpperCase() === session.ticker
       );
-      if (h?.shares != null) heldShares = Math.floor(Number(h.shares));
+      if (h?.shares != null) {
+        heldShares = Math.floor(Number(h.shares));
+        // Price per share for the dollar view. Fall back to value / shares
+        // when the quote is missing but the position still has a value.
+        const price =
+          h.price ?? (h.marketValue != null && h.shares ? h.marketValue / h.shares : null);
+        position = {
+          shares: heldShares,
+          price,
+          marketValue: h.marketValue ?? null,
+          portfolioPct: h.portfolioPct ?? null,
+        };
+      }
     } catch {
       /* leave null */
     }
   }
 
-  res.json({ ...session, tally, myBallot, synthesis, heldShares });
+  res.json({ ...session, tally, myBallot, synthesis, heldShares, position });
 });
 
 // Create a new voting session (President only).

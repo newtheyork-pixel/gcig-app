@@ -463,6 +463,28 @@ export default function Votes() {
 
 // ── Session card (used in the list) ──────────────────────────────────
 
+const usd = (n) => `$${Math.round(n).toLocaleString()}`;
+
+// "≈ $3,840 · 25% of the position" for a share count, given the held
+// position ({ shares, price }). Empty when we can't price it.
+function sellValueText(shares, position) {
+  const n = Number(shares);
+  if (!position || !(n > 0)) return '';
+  const parts = [];
+  if (position.price) parts.push(`≈ ${usd(n * position.price)}`);
+  if (position.shares) parts.push(`${Math.round((n / position.shares) * 100)}% of the position`);
+  return parts.join(' · ');
+}
+
+// "121 shares, $15,486 (11.8% of the fund)"
+function positionText(position) {
+  if (!position) return '';
+  let t = `${position.shares.toLocaleString()} shares`;
+  if (position.marketValue != null) t += `, ${usd(position.marketValue)}`;
+  if (position.portfolioPct != null) t += ` (${position.portfolioPct.toFixed(1)}% of the fund)`;
+  return t;
+}
+
 // What a sell vote proposes: the whole position or a set number of shares.
 function sellLabel(session) {
   if (session?.amountMode === 'vote') return 'Voters decide how many shares';
@@ -505,7 +527,11 @@ function SellSizePicker({ form, setForm, holdings }) {
         <p className="mt-2 text-xs text-navy-400">
           Each member who votes Sell says how many shares to sell. If the vote
           passes, we sell the average.
-          {heldShares != null ? ` We hold ${heldShares.toLocaleString()} shares.` : ''}
+          {heldShares != null
+            ? ` We hold ${heldShares.toLocaleString()} shares${
+                held?.marketValue != null ? ` (${usd(held.marketValue)})` : ''
+              }.`
+            : ''}
         </p>
       )}
       {form.sellMode === 'part' && (
@@ -526,7 +552,11 @@ function SellSizePicker({ form, setForm, holdings }) {
             className="mt-1 w-full rounded-lg border border-navy-100 px-3 py-2 text-sm focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold"
           />
           <p className="mt-1 text-xs text-navy-400">
-            {heldShares != null ? `We hold ${heldShares.toLocaleString()} shares.` : ''}
+            {heldShares != null
+              ? `We hold ${heldShares.toLocaleString()} shares${
+                  held?.marketValue != null ? ` (${usd(held.marketValue)})` : ''
+                }.`
+              : ''}
             {price && n > 0 ? ` About $${Math.round(n * price).toLocaleString()} at today's price.` : ''}
           </p>
         </div>
@@ -742,7 +772,12 @@ function SessionDetail({ session, onBack, onRefresh, onClose, onDelete }) {
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         {/* Tally */}
         <Card title="Weighted Tally">
-          <TallyDisplay tally={tally} isOpen={isOpen} ticker={session.ticker} />
+          <TallyDisplay
+            tally={tally}
+            isOpen={isOpen}
+            ticker={session.ticker}
+            position={session.position}
+          />
         </Card>
 
         {/* Cast ballot (if open) */}
@@ -861,10 +896,17 @@ function SessionDetail({ session, onBack, onRefresh, onClose, onDelete }) {
                     placeholder={session.heldShares != null ? `1 – ${session.heldShares}` : 'e.g. 25'}
                     className="mt-1 w-full rounded-lg border border-navy-100 px-3 py-2 text-sm focus:border-gold focus:outline-none focus:ring-1 focus:ring-gold"
                   />
+                  {sellValueText(ballotShares, session.position) && (
+                    <p className="mt-1 text-sm font-semibold text-red-800">
+                      {sellValueText(ballotShares, session.position)}
+                    </p>
+                  )}
                   <p className="mt-1 text-xs text-navy-400">
-                    {session.heldShares != null
-                      ? `We hold ${session.heldShares.toLocaleString()} shares. `
-                      : ''}
+                    {session.position
+                      ? `We hold ${positionText(session.position)}. `
+                      : session.heldShares != null
+                        ? `We hold ${session.heldShares.toLocaleString()} shares. `
+                        : ''}
                     If the vote passes, we sell the average of the Sell votes.
                   </p>
                 </div>
@@ -962,6 +1004,7 @@ function SessionDetail({ session, onBack, onRefresh, onClose, onDelete }) {
                       {b.action === 'Sell' && b.sellShares != null && (
                         <span className="rounded-full bg-red-50 px-2 py-0.5 text-[10px] font-bold text-red-800">
                           {b.sellShares.toLocaleString()} sh
+                          {session.position?.price ? ` · ${usd(b.sellShares * session.position.price)}` : ''}
                         </span>
                       )}
                     </div>
@@ -1161,7 +1204,7 @@ function DocusignPanel({ session, canSend, sending, error, onSend, onRefresh }) 
 
 // ── Tally display ────────────────────────────────────────────────────
 
-function TallyDisplay({ tally, isOpen, ticker }) {
+function TallyDisplay({ tally, isOpen, ticker, position }) {
   // Live quote for the share-count math in the Proposed Buy block. We
   // keep this hook unconditional so it runs in stable order; the body
   // bails out if there's no ticker or no Buy ballots to size.
@@ -1302,6 +1345,7 @@ function TallyDisplay({ tally, isOpen, ticker }) {
                   {lv.action === 'Sell' && lv.sellShares != null && (
                     <span className="rounded-full bg-red-50 px-2 py-0.5 text-[10px] font-bold text-red-800">
                       {lv.sellShares.toLocaleString()} sh
+                      {position?.price ? ` · ${usd(lv.sellShares * position.price)}` : ''}
                     </span>
                   )}
                   <ActionBadge action={lv.action} />
@@ -1328,6 +1372,14 @@ function TallyDisplay({ tally, isOpen, ticker }) {
           <div className="mt-1 text-xs text-navy-400">
             Range: {tally.sellShareStats.min.toLocaleString()} – {tally.sellShareStats.max.toLocaleString()} sh
           </div>
+          {sellValueText(tally.sellShareStats.avg, position) && (
+            <div className="mt-2 text-sm font-semibold text-red-800">
+              {sellValueText(tally.sellShareStats.avg, position)}
+            </div>
+          )}
+          {position && (
+            <div className="mt-1 text-xs text-navy-400">Position: {positionText(position)}</div>
+          )}
         </div>
       )}
 
