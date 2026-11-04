@@ -6,6 +6,8 @@ import {
   executeDirectTrade,
   executeBulkTrades,
   TradeExecutionError,
+  addManualLot,
+  OPENING_LOT_NOTE,
 } from './tradeExecution.js';
 
 // Exercises the whole settlement orchestration — buying-power guard, sells
@@ -365,4 +367,52 @@ test('editable fills override the recorded quote-at-send', async () => {
   assert.equal(db.holding('NEW').shares, 9);
   assert.equal(db.holding('NEW').costBasis, 102.5);
   assert.equal(db.cash(), 10000 - 9 * 102.5);
+});
+
+// The MLAB case from prod: 121 shares imported as one stand-in lot, then the
+// real 68 + 53 lots typed in by hand. Stacking them doubled the lots to 242.
+function mlabDb() {
+  return makeFakeDb({
+    holdings: [{ ticker: 'MLAB', name: 'Mesa', shares: 121, costBasis: 84.96, isCash: false, closedAt: null }],
+    lots: [{ id: 1, ticker: 'MLAB', shares: 121, pricePerShare: 84.96, buyDate: new Date('2026-06-28T00:00:00Z'), note: OPENING_LOT_NOTE }],
+  });
+}
+
+test('manual lots carve out of the import lot, so the position does not double', async () => {
+  const db = mlabDb();
+  await db.$transaction((tx) =>
+    addManualLot(tx, { ticker: 'MLAB', shares: 68, pricePerShare: 72.94, buyDate: new Date('2025-10-16') })
+  );
+  assert.equal(db.holding('MLAB').shares, 121);
+  assert.equal(db.lotsFor('MLAB').find((l) => l.note === OPENING_LOT_NOTE).shares, 53);
+
+  const { carved } = await db.$transaction((tx) =>
+    addManualLot(tx, { ticker: 'MLAB', shares: 53, pricePerShare: 100.44, buyDate: new Date('2026-04-13') })
+  );
+  assert.equal(carved, 53);
+  const lots = db.lotsFor('MLAB');
+  assert.equal(lots.length, 2); // stand-in used up and gone
+  assert.ok(!lots.some((l) => l.note === OPENING_LOT_NOTE));
+  const h = db.holding('MLAB');
+  assert.equal(h.shares, 121);
+  assert.ok(Math.abs(h.costBasis - (68 * 72.94 + 53 * 100.44) / 121) < 1e-9);
+});
+
+test('a manual lot bigger than the import lot carves what is left and adds the rest', async () => {
+  const db = mlabDb();
+  const { carved } = await db.$transaction((tx) =>
+    addManualLot(tx, { ticker: 'MLAB', shares: 150, pricePerShare: 90, buyDate: new Date('2026-01-02') })
+  );
+  assert.equal(carved, 121);
+  assert.equal(db.holding('MLAB').shares, 150);
+  assert.equal(db.lotsFor('MLAB').length, 1);
+});
+
+test('carveOpening false stacks the lot on top (genuinely new shares)', async () => {
+  const db = mlabDb();
+  const { carved } = await db.$transaction((tx) =>
+    addManualLot(tx, { ticker: 'MLAB', shares: 10, pricePerShare: 120, buyDate: new Date('2026-11-01'), carveOpening: false })
+  );
+  assert.equal(carved, 0);
+  assert.equal(db.holding('MLAB').shares, 131);
 });

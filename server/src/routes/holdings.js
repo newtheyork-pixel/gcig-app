@@ -156,6 +156,7 @@ import { scrapeAndStoreDailyRates } from '../services/gsamRates.js';
 import { backfillFgtxxFromEdgar } from '../services/secNmfp.js';
 import {
   recomputeHoldingFromLots,
+  addManualLot,
   getCashBalance,
   executeDirectTrade,
   executeBulkTrades,
@@ -849,7 +850,7 @@ router.get('/lots/:ticker', async (req, res) => {
 // derived position can never drift from the lot history.
 router.post('/lots', requireSuperAdmin, async (req, res, next) => {
   try {
-    const { ticker, shares, pricePerShare, buyDate, note } = req.body || {};
+    const { ticker, shares, pricePerShare, buyDate, note, carveOpening } = req.body || {};
     const t = String(ticker || '').trim().toUpperCase();
     const s = Number(shares);
     const p = Number(pricePerShare);
@@ -858,14 +859,19 @@ router.post('/lots', requireSuperAdmin, async (req, res, next) => {
     if (!Number.isFinite(s) || s <= 0) return res.status(400).json({ error: 'Invalid shares' });
     if (!Number.isFinite(p) || p <= 0) return res.status(400).json({ error: 'Invalid price' });
     if (!d || Number.isNaN(d.getTime())) return res.status(400).json({ error: 'Invalid buy date' });
-    const lot = await prisma.$transaction(async (tx) => {
-      const created = await tx.holdingLot.create({
-        data: { ticker: t, shares: s, pricePerShare: p, buyDate: d, note: note || null },
-      });
-      await recomputeHoldingFromLots(tx, t);
-      return created;
-    });
-    res.status(201).json(lot);
+    // carveOpening defaults on: only an explicit `false` stacks the lot on
+    // top of the sheet-import stand-in (see addManualLot).
+    const { lot, carved } = await prisma.$transaction((tx) =>
+      addManualLot(tx, {
+        ticker: t,
+        shares: s,
+        pricePerShare: p,
+        buyDate: d,
+        note,
+        carveOpening: carveOpening !== false,
+      })
+    );
+    res.status(201).json({ ...lot, carvedFromOpening: carved });
   } catch (err) {
     next(err);
   }
