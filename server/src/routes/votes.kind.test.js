@@ -103,3 +103,25 @@ test('resolveSellShares: blank means the whole position, else a positive whole n
   assert.match(resolveSellShares(2.5).error, /whole number/);
   assert.match(resolveSellShares('abc').error, /whole number/);
 });
+
+test('prepareBallot: sell vote sized by voters needs shares on a Sell ballot', () => {
+  const session = { kind: 'sell', amountMode: 'vote' };
+  assert.deepEqual(prepareBallot(session, { action: 'Sell', sellShares: '30' }), {
+    action: 'Sell', investmentAmount: null, sellShares: 30,
+  });
+  assert.match(prepareBallot(session, { action: 'Sell' }).error, /how many shares/);
+  assert.match(prepareBallot(session, { action: 'Sell', sellShares: 1.5 }).error, /whole number/);
+  assert.deepEqual(prepareBallot(session, { action: 'Hold', sellShares: 30 }), {
+    action: 'Hold', investmentAmount: null,
+  });
+});
+
+test('computeTally averages Sell ballot share counts', () => {
+  const users = [{ id: 1, role: 'JuniorAnalyst' }, { id: 2, role: 'JuniorAnalyst' }, { id: 3, role: 'President' }];
+  const t = computeTally([
+    { userId: 1, action: 'Sell', sellShares: 20 },
+    { userId: 2, action: 'Sell', sellShares: 41 },
+    { userId: 3, action: 'Hold', sellShares: null },
+  ], users, { kind: 'sell', amountMode: 'vote' });
+  assert.deepEqual(t.sellShareStats, { count: 2, avg: 31, min: 20, max: 41 });
+});

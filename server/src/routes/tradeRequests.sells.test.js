@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildEligibleSells, resolveSellVoteLine, validateResolvedTrade } from './tradeRequests.js';
+import { approvedSellShares, buildEligibleSells, resolveSellVoteLine, validateResolvedTrade } from './tradeRequests.js';
 
 const users = [
   { id: 1, role: 'JuniorAnalyst' }, { id: 2, role: 'JuniorAnalyst' },
@@ -102,4 +102,20 @@ test('validateResolvedTrade allows sells within the held position', () => {
 test('validateResolvedTrade skips the over-sell check when held shares are unknown', () => {
   const resolved = [{ kind: 'Sell', ticker: 'SPY', shares: 999 }];
   assert.equal(validateResolvedTrade(resolved, new Map()), null);
+});
+
+test('approvedSellShares: voters\' average, the set number, or whole position', () => {
+  const voted = {
+    ...sellSession(10, 'AAPL', 'Sell'), amountMode: 'vote',
+    ballots: [
+      { userId: 1, action: 'Sell', sellShares: 10 },
+      { userId: 2, action: 'Sell', sellShares: 30 },
+      { userId: 3, action: 'Hold', sellShares: null },
+    ],
+  };
+  assert.equal(approvedSellShares(voted, users), 20);
+  assert.equal(approvedSellShares({ ...sellSession(11, 'AAPL', 'Sell'), sellShares: 15 }, users), 15);
+  assert.equal(approvedSellShares(sellSession(12, 'AAPL', 'Sell'), users), null);
+  const line = resolveSellVoteLine(voted, users);
+  assert.equal(line.sellShares, 20);
 });

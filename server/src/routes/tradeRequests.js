@@ -121,6 +121,16 @@ function withApproval(row) {
 // end-of-year baskets; bump this in lockstep if the PDF grows again.
 const MAX_ITEMS = 13;
 
+// Shares a passed sell vote approved: the voters' average when they sized
+// it, the set number when the creator did, else null (whole position).
+export function approvedSellShares(session, allUsers) {
+  if (session.amountMode === 'vote') {
+    const stats = computeTally(session.ballots || [], allUsers, session).sellShareStats;
+    return stats ? stats.avg : null;
+  }
+  return session.sellShares ?? null;
+}
+
 // Closed sell-vote sessions that passed (finalDecision "Sell") and aren't
 // already on a TradeRequest, annotated with the shares we currently hold so
 // the composer can default to selling the whole position. Pure so it's
@@ -140,7 +150,7 @@ export function buildEligibleSells({ sessions, claimedIds, allUsers, heldByTicke
       creator: s.creator,
       heldShares: heldByTicker.get(String(s.ticker).toUpperCase()) ?? null,
       // Shares the vote approved selling; null = the whole position.
-      sellShares: s.sellShares ?? null,
+      sellShares: approvedSellShares(s, allUsers),
       ballotCount: s.ballots.length,
     });
   }
@@ -164,7 +174,7 @@ export function resolveSellVoteLine(session, allUsers) {
   return {
     ticker: session.ticker,
     votingSessionId: session.id,
-    sellShares: session.sellShares ?? null,
+    sellShares: approvedSellShares(session, allUsers),
   };
 }
 

@@ -345,7 +345,8 @@ model VotingSession {
   // How a Buy session sizes the trade. "average" (default) lets each
   // Buy voter propose a dollar figure and we trade the mean. "fixed"
   // pins the amount up front — the creator names the number and members
-  // only ratify it (Buy = yes, No = Hold). Ignored for sell sessions.
+  // only ratify it (Buy = yes, No = Hold). On a sell session, "vote"
+  // means each Sell voter names a share count and we sell the average.
   amountMode  String    @default("average")
   // The pinned dollar figure when amountMode = "fixed". Null otherwise.
   fixedAmount Float?
@@ -462,6 +463,10 @@ model Ballot {
   // should allocate, constrained to $1,500–$10,000 at the API layer. Null
   // for Hold/Sell.
   investmentAmount Float?
+  // Sell votes where the voters decide the size (session amountMode
+  // "vote"): shares this voter wants to sell. Required on a Sell ballot
+  // there, null everywhere else.
+  sellShares       Int?
   note             String?
   castAt           DateTime      @default(now())
 
