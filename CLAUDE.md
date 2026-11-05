@@ -537,11 +537,16 @@ file, not `/field-visit.webp`.
 - `server/src/services/sheetPortfolio.js` — Google Sheets read of
   the live portfolio. Fall through gracefully if unreachable.
   `getPortfolioMovers` ranks the **live portfolio sheet** (not the
-  PriceBar cache) for the terminal's MOVR panel: daily % is recovered
-  from each position's dollar day-change over its prior position value,
-  cash excluded. The first cut ranked the PriceBar cache and only ever
-  surfaced the 2-3 tickers someone had charted — superseded so MOVR
-  reflects the whole book.
+  PriceBar cache) for the terminal's MOVR panel: daily % is the
+  per-share move over the prior share price, cash excluded. Every reader
+  (MOVR, PM, the Portfolio page, the brief) takes a holding's `dayChange`
+  as the per-share DOLLAR move, but the sheet's Day Change column now
+  holds a percentage ("-3.80%"), so `perShareDayChange` converts it at
+  parse time. Read as dollars it was wrong both ways (Nov '26): VOO's
+  3.78% fall showed as 0.55%, ImmunityBio's 9.35% as 53.58%. The
+  first cut ranked the PriceBar cache and only ever surfaced the 2-3
+  tickers someone had charted — superseded so MOVR reflects the whole
+  book.
 - `server/src/routes/terminal.js` — terminal data panels. `/movers`
   serves the MOVR ranking from `getPortfolioMovers`.
 - `server/src/services/secFilings.js` — SEC EDGAR. company_tickers
