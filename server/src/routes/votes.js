@@ -317,7 +317,7 @@ router.post('/', requireExecutive, async (req, res) => {
 
 // Dollar bounds for a Buy ballot. Mirrored in the client inputs.
 const BUY_MIN = 1500;
-const BUY_MAX = 10000;
+const BUY_MAX = 25000;
 
 // Resolve the requested session kind. Defaults to "buy"; anything that
 // isn't a known kind returns null so the route can 400.
@@ -340,7 +340,7 @@ export function resolveSellShares(raw) {
 // Validate + normalize a ballot for a session. Accepts the session (or a
 // bare kind string, for the unit tests). Returns { action,
 // investmentAmount } on success or { error } on rejection.
-//   Buy / average : Buy/Hold/Sell, Buy carries a $1,500–$10,000 amount.
+//   Buy / average : Buy/Hold/Sell, Buy carries a $1,500–$25,000 amount.
 //   Buy / fixed   : Buy or No only — the dollar figure is pinned on the
 //                   session, so a ballot never carries one. "No" maps to
 //                   Hold so the shared tally machinery is untouched.

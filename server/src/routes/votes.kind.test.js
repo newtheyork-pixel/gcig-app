@@ -17,7 +17,12 @@ test('prepareBallot — buy session keeps existing Buy/Hold/Sell rules', () => {
   assert.deepEqual(prepareBallot('buy', { action: 'Hold', investmentAmount: 5000 }), {
     action: 'Hold', investmentAmount: null,
   });
+  // Band is $1,500–$25,000; the old $10k ceiling is inside it now.
+  assert.deepEqual(prepareBallot('buy', { action: 'Buy', investmentAmount: 25000 }), {
+    action: 'Buy', investmentAmount: 25000,
+  });
   assert.equal(prepareBallot('buy', { action: 'Buy', investmentAmount: 100 }).error !== undefined, true);
+  assert.equal(prepareBallot('buy', { action: 'Buy', investmentAmount: 25001 }).error !== undefined, true);
   assert.equal(prepareBallot('buy', { action: 'Nope' }).error !== undefined, true);
 });
 

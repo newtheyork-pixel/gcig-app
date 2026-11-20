@@ -607,7 +607,7 @@ function SessionCard({ session: s, onClick }) {
 // ── Session detail view ──────────────────────────────────────────────
 
 const BUY_MIN = 1500;
-const BUY_MAX = 10000;
+const BUY_MAX = 25000;
 
 function SessionDetail({ session, onBack, onRefresh, onClose, onDelete }) {
   const { user, isAdmin } = useAuth();
