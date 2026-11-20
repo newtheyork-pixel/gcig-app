@@ -254,7 +254,7 @@ enum VoteRules {
     /// the member cannot be handed a 400 for a number our own control
     /// offered them.
     static let buyMin: Double = 1500
-    static let buyMax: Double = 10000
+    static let buyMax: Double = 25000
     static let buyStep: Double = 250
 
     static func isSell(_ session: VoteSession) -> Bool {
@@ -1056,7 +1056,7 @@ struct VoteDetailScreen: View, Hashable {
     private var amountPicker: some View {
         VStack(alignment: .leading, spacing: Space.s) {
             HStack(spacing: 0) {
-                ForEach([1500.0, 2500.0, 5000.0, 7500.0, 10000.0], id: \.self) { preset in
+                ForEach([1500.0, 5000.0, 10000.0, 15000.0, 25000.0], id: \.self) { preset in
                     Button { amount = preset } label: {
                         Text(Fmt.money(preset))
                             .font(Type.chip)

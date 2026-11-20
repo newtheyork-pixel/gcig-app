@@ -1081,7 +1081,7 @@ request points at it.
 ## Voting session kinds (buy vs sell)
 
 `VotingSession.kind` is `"buy"` (default) or `"sell"`. A **buy** vote is the
-original pitch vote — Buy/Hold/Sell with a $1,500–$10,000 proposed
+original pitch vote — Buy/Hold/Sell with a $1,500–$25,000 proposed
 allocation. A **sell** vote is opened against a holding we own (ticker picked
 from the sheet, no pitch, no amount) and offers only **Sell** ("Exit the
 position") or **Hold** ("Maintain"). Weighting is identical — `computeTally`
@@ -1094,7 +1094,7 @@ analyst prompt in `articleSummarizer.js`.
 
 A **buy** session also picks how it sizes the trade —
 `VotingSession.amountMode` is `"average"` (default) or `"fixed"`. In
-**average** mode each Buy voter proposes a $1,500–$10,000 figure and we
+**average** mode each Buy voter proposes a $1,500–$25,000 figure and we
 trade the mean (the original behavior). In **fixed** mode the creator
 pins one `fixedAmount` (same band) at session creation and members only
 ratify it: the ballot collapses to **Buy** ("support the amount") or
