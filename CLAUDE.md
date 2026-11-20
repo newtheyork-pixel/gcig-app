@@ -1095,19 +1095,22 @@ analyst prompt in `articleSummarizer.js`.
 A **buy** session also picks how it sizes the trade —
 `VotingSession.amountMode` is `"average"` (default) or `"fixed"`. In
 **average** mode each Buy voter proposes a $1,500–$25,000 figure and we
-trade the mean (the original behavior). In **fixed** mode the creator
-pins one `fixedAmount` (same band) at session creation and members only
-ratify it: the ballot collapses to **Buy** ("support the amount") or
-**No** — and "No" is persisted as **Hold** so `computeTally` is untouched.
-The pinned figure drives the trade by way of `computeTally`, which in
-fixed mode synthesizes `buyAmountStats` from `fixedAmount` (avg = min =
-max = the pin, `fixed: true`) instead of averaging ballots. That keeps
-every downstream consumer — the DocuSign share math, the Trade Requests
-sizing, the client's allocation card — reading the same `buyAmountStats`
-shape with no special-casing. `computeTally(ballots, users, session)` now
-takes the session so it can see the mode; callers in `docusign.js` and
-`tradeRequests.js` pass it. Sell sessions are always average/null (they
-carry no amount). Migration `20260604000000_add_voting_session_amount_mode`.
+trade the role-weighted mean: President, Director of Research and CIO
+amounts count double, everyone else once (the original flat mean
+under-weighted the seats that size the book). In **fixed** mode the
+creator pins one `fixedAmount` (same band) at session creation and
+members only ratify it: the ballot collapses to **Buy** ("support the
+amount") or **No** — and "No" is persisted as **Hold** so `computeTally`
+is untouched. The pinned figure drives the trade by way of
+`computeTally`, which in fixed mode synthesizes `buyAmountStats` from
+`fixedAmount` (avg = min = max = the pin, `fixed: true`) instead of
+averaging ballots. That keeps every downstream consumer — the DocuSign
+share math, the Trade Requests sizing, the client's allocation card —
+reading the same `buyAmountStats` shape with no special-casing.
+`computeTally(ballots, users, session)` now takes the session so it can
+see the mode; callers in `docusign.js` and `tradeRequests.js` pass it.
+Sell sessions are always average/null (they carry no amount). Migration
+`20260604000000_add_voting_session_amount_mode`.
 
 ## Pitch outcome inference (the AIT bug fix)
 
