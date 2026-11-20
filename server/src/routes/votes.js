@@ -17,6 +17,16 @@ router.use(verifyJwt);
 const GENERAL_BODY_WEIGHT = 3;
 const LEADERSHIP_ROLES = new Set(['President', 'CIO']);
 
+// Buy-amount average: President, Director of Research and CIO proposals
+// count twice. Decision weighting above is a different ladder — DoR is
+// not on it — so this set is named for what it does, not reused.
+const AMOUNT_DOUBLE_ROLES = new Set(['President', 'DirectorOfResearch', 'CIO']);
+const AMOUNT_DOUBLE_WEIGHT = 2;
+
+function buyAmountWeight(role) {
+  return AMOUNT_DOUBLE_ROLES.has(role) ? AMOUNT_DOUBLE_WEIGHT : 1;
+}
+
 export function computeTally(ballots, allUsers, session = {}) {
   const userMap = new Map(allUsers.map((u) => [u.id, u]));
 
@@ -57,20 +67,37 @@ export function computeTally(ballots, allUsers, session = {}) {
   const finalDecision = finalWinners.length === 1 ? finalWinners[0] : 'Hold';
 
   // Aggregate what the voters want to allocate. Only Buy ballots carry an
-  // amount; we surface the average + min + max so leadership can see at a
-  // glance how much the club thinks to commit.
-  const buyAmounts = ballots
-    .filter((b) => b.action === 'Buy' && typeof b.investmentAmount === 'number')
-    .map((b) => b.investmentAmount);
-  let buyAmountStats =
-    buyAmounts.length > 0
-      ? {
-          count: buyAmounts.length,
-          avg: buyAmounts.reduce((s, n) => s + n, 0) / buyAmounts.length,
-          min: Math.min(...buyAmounts),
-          max: Math.max(...buyAmounts),
-        }
-      : null;
+  // amount; we surface the (role-weighted) average + min + max so
+  // leadership can see at a glance how much the club thinks to commit.
+  // President / DoR / CIO amounts enter the mean twice — their seat is
+  // the one that sizes the book in practice, so a flat mean under-weights
+  // them whenever the general body outnumbers them on the ballot.
+  const buyBallots = ballots.filter(
+    (b) => b.action === 'Buy' && typeof b.investmentAmount === 'number'
+  );
+  const buyAmounts = buyBallots.map((b) => b.investmentAmount);
+  let buyAmountStats = null;
+  if (buyAmounts.length > 0) {
+    let weightedSum = 0;
+    let weightTotal = 0;
+    let doubledCount = 0;
+    for (const b of buyBallots) {
+      const w = buyAmountWeight(userMap.get(b.userId)?.role);
+      weightedSum += b.investmentAmount * w;
+      weightTotal += w;
+      if (w > 1) doubledCount += 1;
+    }
+    buyAmountStats = {
+      count: buyAmounts.length,
+      avg: weightedSum / weightTotal,
+      min: Math.min(...buyAmounts),
+      max: Math.max(...buyAmounts),
+      // Lets the UI say when the mean is not a flat average, without
+      // forcing every consumer to re-derive the role ladder.
+      amountWeighted: doubledCount > 0,
+      doubledCount,
+    };
+  }
 
   // Fixed-amount session: the allocation isn't an aggregate of ballots,
   // it's the number the creator pinned. Ballots carry no amount (a Buy is

@@ -54,6 +54,53 @@ test('prepareBallot — fixed buy session is Buy/No (Hold) only, never an amount
   assert.match(sell.error, /Buy or No/i);
 });
 
+test('computeTally — President / DoR / CIO Buy amounts count double in the average', () => {
+  const users = [
+    { id: 1, role: 'JuniorAnalyst' },
+    { id: 2, role: 'Analyst' },
+    { id: 3, role: 'President' },
+    { id: 4, role: 'DirectorOfResearch' },
+    { id: 5, role: 'CIO' },
+  ];
+  // Flat mean of 5k/5k/10k would be ~6.7k; with the three seats at 2×
+  // the mean is pulled up: (5+5 + 2×10 + 2×10 + 2×10) / (1+1+2+2+2) = 70/8 = 8750.
+  const t = computeTally(
+    [
+      { userId: 1, action: 'Buy', investmentAmount: 5000 },
+      { userId: 2, action: 'Buy', investmentAmount: 5000 },
+      { userId: 3, action: 'Buy', investmentAmount: 10000 },
+      { userId: 4, action: 'Buy', investmentAmount: 10000 },
+      { userId: 5, action: 'Buy', investmentAmount: 10000 },
+    ],
+    users
+  );
+  assert.equal(t.buyAmountStats.count, 5);
+  assert.equal(t.buyAmountStats.avg, 8750);
+  assert.equal(t.buyAmountStats.min, 5000);
+  assert.equal(t.buyAmountStats.max, 10000);
+  assert.equal(t.buyAmountStats.amountWeighted, true);
+  assert.equal(t.buyAmountStats.doubledCount, 3);
+});
+
+test('computeTally — Buy average stays flat when no double-weight seat voted Buy', () => {
+  const users = [
+    { id: 1, role: 'JuniorAnalyst' },
+    { id: 2, role: 'Analyst' },
+    { id: 9, role: 'President' },
+  ];
+  const t = computeTally(
+    [
+      { userId: 1, action: 'Buy', investmentAmount: 2000 },
+      { userId: 2, action: 'Buy', investmentAmount: 8000 },
+      { userId: 9, action: 'Hold', investmentAmount: null },
+    ],
+    users
+  );
+  assert.equal(t.buyAmountStats.avg, 5000);
+  assert.equal(t.buyAmountStats.amountWeighted, false);
+  assert.equal(t.buyAmountStats.doubledCount, 0);
+});
+
 test('computeTally — fixed session derives buyAmountStats from fixedAmount', () => {
   const users = [
     { id: 1, role: 'JuniorAnalyst' }, { id: 2, role: 'JuniorAnalyst' },
