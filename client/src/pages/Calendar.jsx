@@ -22,6 +22,7 @@ import FileSummary from '../components/FileSummary.jsx';
 import FilePreviewModal from '../components/FilePreviewModal.jsx';
 import RequestPitchModal from '../components/RequestPitchModal.jsx';
 import { formatStartTime, ROOM_LABELS } from '../lib/lunchSlots.js';
+import { requestDay } from '../utils/requestDay.js';
 import { isManagedFile, openOrPreview } from '../api/fileHelpers.js';
 
 const PITCH_ROLES = ['President', 'DirectorOfResearch', 'CIO', 'SeniorPortfolioManager', 'PortfolioManager'];
@@ -504,7 +505,7 @@ export default function Calendar() {
               <div>
                 <div className="text-xs uppercase text-navy-400">When</div>
                 <div className="text-navy">
-                  {format(new Date(selected.proposedDate), 'EEE, MMM d')}
+                  {format(requestDay(selected.proposedDate), 'EEE, MMM d')}
                 </div>
                 <div className="text-sm text-navy">
                   {formatStartTime(selected.proposedStartTime)}

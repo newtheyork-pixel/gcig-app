@@ -1083,6 +1083,23 @@ announces itself; one that already happened is marked seen so it does
 not pop up as a new assignment. The pitch cannot be deleted while the
 request points at it.
 
+Three things about requests, each paid for (Nov '26):
+- **`proposedDate` is a calendar day stored as UTC midnight.** Read it
+  with UTC fields (`requestDay` on the client, `requestDateLabel` in
+  the emails), never as an instant: formatted in New York it is the
+  evening before. The Pitch Requests page did exactly that, so every
+  requester and both presidents saw a Wednesday club block labelled
+  Tuesday while the pitch itself sat on the right day.
+- **Every President is emailed.** The club runs co-presidents and
+  `findPresident()` emailed only the oldest account, so the other never
+  heard a request had arrived. `newRequestRecipients` sends to each
+  President, then the requester and the pod PM, nobody twice.
+- **A deck over 15 MB is linked, not attached.** Gmail refuses a
+  message over 25 MB and base64 makes a file a third larger, while
+  uploads are allowed up to 25 MB, so a big deck bounced the President's
+  and PM's emails whole while the requester's copy, with no attachment,
+  arrived. The link points at the request on the site.
+
 ## Voting session kinds (buy vs sell)
 
 `VotingSession.kind` is `"buy"` (default) or `"sell"`. A **buy** vote is the

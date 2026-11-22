@@ -18,6 +18,11 @@ import {
   ROOM_LABELS,
 } from '../lib/lunchSlots.js';
 import { ensurePitchForApprovedRequest } from '../services/pitchFromRequest.js';
+import {
+  deckFitsInEmail,
+  deckForEmail,
+  newRequestRecipients,
+} from '../services/pitchRequestMail.js';
 
 const router = Router();
 router.use(verifyJwt);
@@ -45,12 +50,12 @@ function pitchRequestInclude() {
   };
 }
 
-// Resolve the President of the club. We treat the role string as
-// authoritative (single-president clubs); if multiple users hold the role,
-// take the first (sorted by id for determinism). Returns null when no
-// President exists yet — caller decides how to handle.
-async function findPresident() {
-  return prisma.user.findFirst({
+// Every President of the club, oldest account first. The role string is
+// authoritative, as in requireAdmin. The club runs co-presidents, so
+// this is a list: taking the first alone is how one of them was never
+// emailed about a request.
+async function findPresidents() {
+  return prisma.user.findMany({
     where: { role: 'President' },
     orderBy: { id: 'asc' },
     select: { id: true, name: true, email: true },
@@ -63,28 +68,25 @@ async function findPresident() {
 //   - the OneDrive download fails for any reason (file removed, OneDrive
 //     not connected). We don't want to fail the whole request flow just
 //     because the attachment couldn't be fetched.
+//   - the deck is too big to send (see MAX_DECK_ATTACHMENT_BYTES); the
+//     email links to the request instead of bouncing whole.
 async function tryBuildAttachment(deckRef) {
   if (!deckRef) return null;
   if (!deckRef.startsWith('onedrive:')) return null;
   const itemId = deckRef.slice('onedrive:'.length);
   try {
     const { buffer, filename, contentType } = await downloadBuffer(itemId);
+    if (!deckFitsInEmail(buffer.length)) {
+      console.warn(
+        `pitch-request: deck ${itemId} is ${(buffer.length / 1048576).toFixed(1)} MB, linking it instead of attaching`
+      );
+      return null;
+    }
     return { filename, content: buffer, contentType };
   } catch (err) {
     console.warn(`pitch-request: attachment fetch failed for ${itemId}: ${err.message}`);
     return null;
   }
-}
-
-function deckLinkUrl(req, deckRef) {
-  if (!deckRef) return null;
-  if (deckRef.startsWith('onedrive:')) {
-    // Authenticated download endpoint. Useful when attachment fetch fails
-    // and as a fallback for the email body when sending succeeded.
-    const origin = `${req.protocol}://${req.get('host')}`;
-    return `${origin}/api/files/${encodeURIComponent(deckRef.slice('onedrive:'.length))}`;
-  }
-  return deckRef;
 }
 
 // ── Create ────────────────────────────────────────────────────────────
@@ -169,7 +171,8 @@ router.post('/', canRequest, async (req, res) => {
     pmId = industry.leaderId || null;
   }
 
-  const president = await findPresident();
+  const presidents = await findPresidents();
+  const president = presidents[0] || null;
 
   const created = await prisma.pitchRequest.create({
     data: {
@@ -203,7 +206,6 @@ router.post('/', canRequest, async (req, res) => {
     const origin = primaryClientOrigin();
     const inboxUrl = `${origin}/pitch-requests`;
     const attachment = await tryBuildAttachment(deckRef);
-    const externalDeckUrl = deckRef.startsWith('onedrive:') ? null : deckRef;
     const emailParams = {
       requesterName: req.user.name,
       requesterRole: req.user.role,
@@ -215,55 +217,35 @@ router.post('/', canRequest, async (req, res) => {
       proposedStartTime: created.proposedStartTime,
       room: created.room,
       notes: created.notes,
-      deckUrl: externalDeckUrl,
-      deckFileName: attachment?.filename || null,
+      ...deckForEmail({ deckRef, attachment, inboxUrl }),
       inboxUrl,
       attachment,
     };
-    if (president?.email) {
+    const pm = pmId
+      ? await prisma.user.findUnique({
+          where: { id: pmId },
+          select: { id: true, name: true, email: true },
+        })
+      : null;
+    const recipients = newRequestRecipients({
+      presidents,
+      requester: { id: req.user.id, name: req.user.name, email: req.user.email },
+      pm,
+    });
+    for (const to of recipients) {
       try {
-        await sendPitchRequestEmail(president.email, {
+        await sendPitchRequestEmail(to.email, {
           ...emailParams,
-          recipientName: president.name,
-          recipientRole: 'President',
+          recipientName: to.name,
+          recipientRole: to.role,
+          // The requester uploaded the deck; their confirmation does
+          // not need it back.
+          ...(to.role === 'Requester' ? { attachment: null } : {}),
         });
       } catch (err) {
-        console.error(`pitch-request ${created.id} president email failed: ${err.message}`);
-      }
-    }
-    if (pmId && pmId !== president?.id) {
-      const pm = await prisma.user.findUnique({
-        where: { id: pmId },
-        select: { name: true, email: true },
-      });
-      if (pm?.email) {
-        try {
-          await sendPitchRequestEmail(pm.email, {
-            ...emailParams,
-            recipientName: pm.name,
-            recipientRole: 'PM',
-          });
-        } catch (err) {
-          console.error(`pitch-request ${created.id} PM email failed: ${err.message}`);
-        }
-      }
-    }
-    // Confirmation copy to the submitter — closes the loop on "did my
-    // request go through?" without forcing them to refresh the inbox.
-    // Skipped only if the submitter is also the President (they already
-    // got a copy as recipientRole='President').
-    if (req.user?.email && req.user.id !== president?.id) {
-      try {
-        await sendPitchRequestEmail(req.user.email, {
-          ...emailParams,
-          recipientName: req.user.name,
-          recipientRole: 'Requester',
-          // Don't double-attach the deck on the requester's own email
-          // — they uploaded it, they don't need it back.
-          attachment: null,
-        });
-      } catch (err) {
-        console.error(`pitch-request ${created.id} requester email failed: ${err.message}`);
+        console.error(
+          `pitch-request ${created.id} ${to.role} email to user ${to.id} failed: ${err.message}`
+        );
       }
     }
   })().catch((err) => console.error('pitch-request fan-out failed:', err));

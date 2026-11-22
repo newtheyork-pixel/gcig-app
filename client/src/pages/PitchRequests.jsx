@@ -9,6 +9,7 @@ import Button from '../components/Button.jsx';
 import RequestPitchModal from '../components/RequestPitchModal.jsx';
 import PDFModal from '../components/PDFModal.jsx';
 import { formatStartTime, ROOM_LABELS } from '../lib/lunchSlots.js';
+import { requestDay } from '../utils/requestDay.js';
 
 const PM_RANKED = [
   'PortfolioManager',
@@ -232,9 +233,8 @@ function RequestRow({
   onDecide,
 }) {
   const lunch = lunchSummary(row.proposedLunch);
-  const proposed = row.proposedDate
-    ? format(new Date(row.proposedDate), 'EEE, MMM d, yyyy')
-    : 'No date proposed';
+  const day = requestDay(row.proposedDate);
+  const proposed = day ? format(day, 'EEE, MMM d, yyyy') : 'No date proposed';
   // PDFModal mounts only once a deck has been selected — the parent
   // component is a row, so this is one-modal-per-row scoped state.
   // Passing { url, title } in the same shape FilePreviewModal used
