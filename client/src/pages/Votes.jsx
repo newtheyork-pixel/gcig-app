@@ -607,7 +607,7 @@ function SessionCard({ session: s, onClick }) {
 // ── Session detail view ──────────────────────────────────────────────
 
 const BUY_MIN = 1500;
-const BUY_MAX = 10000;
+const BUY_MAX = 25000;
 
 function SessionDetail({ session, onBack, onRefresh, onClose, onDelete }) {
   const { user, isAdmin } = useAuth();
@@ -869,8 +869,10 @@ function SessionDetail({ session, onBack, onRefresh, onClose, onDelete }) {
                     />
                   </div>
                   <p className="mt-1 text-xs text-navy-400">
-                    How much should the fund allocate? Enter a whole dollar
-                    amount between ${BUY_MIN.toLocaleString()} and ${BUY_MAX.toLocaleString()}.
+                    How much should the fund allocate? Whole dollars,
+                    ${BUY_MIN.toLocaleString()}–${BUY_MAX.toLocaleString()}.
+                    President, Director of Research and CIO amounts count
+                    double in the average.
                   </p>
                 </div>
               )}
@@ -1395,7 +1397,11 @@ function TallyDisplay({ tally, isOpen, ticker, position }) {
               ${Math.round(buyAmountStats.avg).toLocaleString()}
             </div>
             <div className="text-xs text-navy-400">
-              {buyAmountStats.fixed ? 'fixed — ratified by ' : 'average across '}
+              {buyAmountStats.fixed
+                ? 'fixed — ratified by '
+                : buyAmountStats.amountWeighted
+                  ? 'weighted average across '
+                  : 'average across '}
               {buyAmountStats.count} Buy {buyAmountStats.fixed ? 'vote' : 'ballot'}
               {buyAmountStats.count === 1 ? '' : 's'}
             </div>
@@ -1403,6 +1409,9 @@ function TallyDisplay({ tally, isOpen, ticker, position }) {
           {!buyAmountStats.fixed && (
             <div className="mt-1 text-xs text-navy-400">
               Range: ${buyAmountStats.min.toLocaleString()} – ${buyAmountStats.max.toLocaleString()}
+              {buyAmountStats.amountWeighted
+                ? ' · President, Director of Research and CIO amounts count double'
+                : ''}
             </div>
           )}
 

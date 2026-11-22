@@ -222,6 +222,10 @@ struct VoteAmountStats: Decodable {
     let min: Double?
     let max: Double?
     let fixed: Bool?
+    /// Set when at least one President / DoR / CIO Buy amount entered
+    /// the mean at double weight (votes.js amountWeighted).
+    let amountWeighted: Bool?
+    let doubledCount: Int?
 }
 
 // MARK: - The choice rules
@@ -254,7 +258,7 @@ enum VoteRules {
     /// the member cannot be handed a 400 for a number our own control
     /// offered them.
     static let buyMin: Double = 1500
-    static let buyMax: Double = 10000
+    static let buyMax: Double = 25000
     static let buyStep: Double = 250
 
     static func isSell(_ session: VoteSession) -> Bool {
@@ -1056,7 +1060,7 @@ struct VoteDetailScreen: View, Hashable {
     private var amountPicker: some View {
         VStack(alignment: .leading, spacing: Space.s) {
             HStack(spacing: 0) {
-                ForEach([1500.0, 2500.0, 5000.0, 7500.0, 10000.0], id: \.self) { preset in
+                ForEach([1500.0, 5000.0, 10000.0, 15000.0, 25000.0], id: \.self) { preset in
                     Button { amount = preset } label: {
                         Text(Fmt.money(preset))
                             .font(Type.chip)
@@ -1084,7 +1088,7 @@ struct VoteDetailScreen: View, Hashable {
             }
             .tint(T.amber)
 
-            Text("The club's band is \(Fmt.money(VoteRules.buyMin)) to \(Fmt.money(VoteRules.buyMax)). A Buy is a proposal, not the trade: the club commits the average of the Buy ballots.")
+            Text("The club's band is \(Fmt.money(VoteRules.buyMin)) to \(Fmt.money(VoteRules.buyMax)). A Buy is a proposal, not the trade: the club commits the average of the Buy ballots (President, Director of Research and CIO amounts count double).")
                 .font(Type.meta)
                 .foregroundStyle(T.muted)
                 .fixedSize(horizontal: false, vertical: true)
@@ -1259,10 +1263,15 @@ struct VoteDetailScreen: View, Hashable {
         let avg = Fmt.money(stats.avg)
         let lo = Fmt.money(stats.min)
         let hi = Fmt.money(stats.max)
+        // votes.js: President / DoR / CIO Buy amounts enter the mean twice.
+        let weightNote = stats.amountWeighted == true
+            ? " President, Director of Research and CIO amounts count double."
+            : ""
         if lo == hi {
-            return "Proposed allocation \(avg), from \(n) Buy ballot\(n == 1 ? "" : "s")."
+            return "Proposed allocation \(avg), from \(n) Buy ballot\(n == 1 ? "" : "s").\(weightNote)"
         }
-        return "Proposed allocation averages \(avg) across \(n) Buy ballot\(n == 1 ? "" : "s"), ranging \(lo) to \(hi)."
+        let meanWord = stats.amountWeighted == true ? "weighted average" : "averages"
+        return "Proposed allocation \(meanWord) \(avg) across \(n) Buy ballot\(n == 1 ? "" : "s"), ranging \(lo) to \(hi).\(weightNote)"
     }
 
     // MARK: what people said
