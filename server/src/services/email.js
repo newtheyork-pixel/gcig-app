@@ -418,14 +418,7 @@ export async function sendPitchRequestEmail(
     attachment, // { filename, content (Buffer), contentType }
   }
 ) {
-  const dateStr = proposedDate
-    ? new Date(proposedDate).toLocaleDateString('en-US', {
-        weekday: 'long',
-        month: 'long',
-        day: 'numeric',
-        year: 'numeric',
-      })
-    : 'No date proposed';
+  const dateStr = requestDateLabel(proposedDate) || 'No date proposed';
   const lunchLabel = periodLabel(proposedLunch);
   const timeLabel = formatHHMMto12h(proposedStartTime);
   const roomLabel = roomLabelFor(room);
@@ -434,18 +427,18 @@ export async function sendPitchRequestEmail(
   // short confirmation that the request went through.
   const audienceCopy =
     recipientRole === 'President'
-      ? `<strong>${requesterName}</strong> has requested a pitch meeting with you.`
+      ? `<strong>${escapeHtml(requesterName)}</strong> has requested a pitch meeting with you.`
       : recipientRole === 'PM'
-      ? `<strong>${requesterName}</strong> (one of your pod members) has requested a pitch meeting with the President. You're cc'd as the responsible portfolio manager.`
+      ? `<strong>${escapeHtml(requesterName)}</strong> (one of your pod members) has requested a pitch meeting with the President. You're cc'd as the responsible portfolio manager.`
       : `Your pitch request was submitted. The President will review it shortly — we've cc'd your sector PM for awareness.`;
   const deckBlock = attachment
     ? `<p style="color: #1B2A4A; font-size: 13px; margin: 0 0 4px;">
-         <strong>Slide deck:</strong> attached (${attachment.filename})
+         <strong>Slide deck:</strong> attached (${escapeHtml(attachment.filename)})
        </p>`
     : deckUrl
     ? `<p style="color: #1B2A4A; font-size: 13px; margin: 0 0 4px;">
          <strong>Slide deck:</strong>
-         <a href="${deckUrl}" style="color: #1B2A4A;">${deckFileName || deckUrl}</a>
+         <a href="${escapeHtml(deckUrl)}" style="color: #1B2A4A;">${escapeHtml(deckFileName || deckUrl)}</a>
        </p>`
     : '';
 
@@ -465,19 +458,19 @@ export async function sendPitchRequestEmail(
           </p>
         </div>
         <div style="background: #F7F8FB; border-radius: 12px; padding: 24px;">
-          <p style="color: #1B2A4A; font-size: 14px; margin: 0 0 8px;">Hi ${recipientName},</p>
+          <p style="color: #1B2A4A; font-size: 14px; margin: 0 0 8px;">Hi ${escapeHtml(recipientName)},</p>
           <p style="color: #1B2A4A; font-size: 14px; margin: 0 0 16px;">
             ${audienceCopy}
           </p>
           <div style="background: #1B2A4A; border-radius: 8px; padding: 16px; margin: 0 0 16px;">
             <p style="color: #8C99BB; font-size: 12px; margin: 0 0 4px;">Ticker</p>
-            <p style="color: #C9A84C; font-size: 22px; font-weight: 700; margin: 0 0 12px;">${ticker}${companyName ? ` <span style="color: white; font-size: 14px; font-weight: 400;">— ${companyName}</span>` : ''}</p>
+            <p style="color: #C9A84C; font-size: 22px; font-weight: 700; margin: 0 0 12px;">${ticker}${companyName ? ` <span style="color: white; font-size: 14px; font-weight: 400;">— ${escapeHtml(companyName)}</span>` : ''}</p>
             <p style="color: #8C99BB; font-size: 12px; margin: 0 0 4px;">Requested by</p>
-            <p style="color: white; font-size: 13px; margin: 0 0 12px;">${requesterName}${requesterRole ? ` <span style="color: #8C99BB;">(${requesterRole})</span>` : ''}</p>
+            <p style="color: white; font-size: 13px; margin: 0 0 12px;">${escapeHtml(requesterName)}${requesterRole ? ` <span style="color: #8C99BB;">(${requesterRole})</span>` : ''}</p>
             ${
               industryName
                 ? `<p style="color: #8C99BB; font-size: 12px; margin: 0 0 4px;">Sector</p>
-                   <p style="color: white; font-size: 13px; margin: 0 0 12px;">${industryName}</p>`
+                   <p style="color: white; font-size: 13px; margin: 0 0 12px;">${escapeHtml(industryName)}</p>`
                 : ''
             }
             <p style="color: #8C99BB; font-size: 12px; margin: 0 0 4px;">Proposed meeting</p>
@@ -561,25 +554,18 @@ export async function sendPitchRequestDecisionEmail(
     ? `Your PM has approved your ${ticker} pitch request`
     : `Your PM can't make your ${ticker} pitch meeting`;
   const body = ccCopy
-    ? `<strong>${actorName}</strong> approved the pitch meeting. You're cc'd as the responsible PM — see the time + room below and add it to your calendar.`
+    ? `<strong>${escapeHtml(actorName)}</strong> approved the pitch meeting. You're cc'd as the responsible PM — see the time + room below and add it to your calendar.`
     : actor === 'President'
     ? isApproved
-      ? `<strong>${actorName}</strong> approved your pitch request. The meeting is on — see the details below, and the attached calendar invite will drop it onto your Gmail / Apple / Outlook calendar.`
-      : `<strong>${actorName}</strong> declined your pitch request.${reason ? ` Reason: <em>${escapeHtml(reason)}</em>` : ''} You can submit a new request with a different time or refined thesis.`
+      ? `<strong>${escapeHtml(actorName)}</strong> approved your pitch request. The meeting is on — see the details below, and the attached calendar invite will drop it onto your Gmail / Apple / Outlook calendar.`
+      : `<strong>${escapeHtml(actorName)}</strong> declined your pitch request.${reason ? ` Reason: <em>${escapeHtml(reason)}</em>` : ''} You can submit a new request with a different time or refined thesis.`
     : isApproved
-    ? `<strong>${actorName}</strong> (your PM) approved the request. The President's decision is still pending.`
-    : `<strong>${actorName}</strong> (your PM) can't make this meeting${reason ? ` — <em>${escapeHtml(reason)}</em>` : ''}. The President can still approve, so the meeting may go ahead without your PM.`;
+    ? `<strong>${escapeHtml(actorName)}</strong> (your PM) approved the request. The President's decision is still pending.`
+    : `<strong>${escapeHtml(actorName)}</strong> (your PM) can't make this meeting${reason ? ` — <em>${escapeHtml(reason)}</em>` : ''}. The President can still approve, so the meeting may go ahead without your PM.`;
 
   // Meeting details block — only rendered when we have a date AND a
   // start time (i.e. on approve emails, where it matters most).
-  const dateStr = proposedDate
-    ? new Date(proposedDate).toLocaleDateString('en-US', {
-        weekday: 'long',
-        month: 'long',
-        day: 'numeric',
-        year: 'numeric',
-      })
-    : null;
+  const dateStr = requestDateLabel(proposedDate);
   const timeLabel = formatHHMMto12h(proposedStartTime);
   const showDetails = isApproved && dateStr && timeLabel;
   const detailsBlock = showDetails
@@ -608,7 +594,7 @@ export async function sendPitchRequestDecisionEmail(
           </p>
         </div>
         <div style="background: #F7F8FB; border-radius: 12px; padding: 24px;">
-          <p style="color: #1B2A4A; font-size: 14px; margin: 0 0 8px;">Hi ${requesterName},</p>
+          <p style="color: #1B2A4A; font-size: 14px; margin: 0 0 8px;">Hi ${escapeHtml(requesterName)},</p>
           <p style="color: #1B2A4A; font-size: 14px; margin: 0 0 16px;">${body}</p>
           ${detailsBlock}
           <div style="text-align: center; margin: 20px 0 0;">
@@ -738,6 +724,24 @@ function roomLabelFor(room) {
     CLUB_ROOM: 'Club room',
   };
   return map[room] || room;
+}
+
+// A pitch request's proposedDate is the calendar day the member typed,
+// stored as UTC midnight. Read it in UTC, as the invite does: in the
+// server's own zone it is the day before anywhere behind UTC. On a
+// server that happens to run in UTC the two agree, which is how these
+// emails could look right while the website showed the day before.
+export function requestDateLabel(proposedDate) {
+  if (!proposedDate) return null;
+  const day = new Date(proposedDate);
+  if (Number.isNaN(day.getTime())) return null;
+  return day.toLocaleDateString('en-US', {
+    timeZone: 'UTC',
+    weekday: 'long',
+    month: 'long',
+    day: 'numeric',
+    year: 'numeric',
+  });
 }
 
 function escapeHtml(s) {

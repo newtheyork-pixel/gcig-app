@@ -537,11 +537,16 @@ file, not `/field-visit.webp`.
 - `server/src/services/sheetPortfolio.js` — Google Sheets read of
   the live portfolio. Fall through gracefully if unreachable.
   `getPortfolioMovers` ranks the **live portfolio sheet** (not the
-  PriceBar cache) for the terminal's MOVR panel: daily % is recovered
-  from each position's dollar day-change over its prior position value,
-  cash excluded. The first cut ranked the PriceBar cache and only ever
-  surfaced the 2-3 tickers someone had charted — superseded so MOVR
-  reflects the whole book.
+  PriceBar cache) for the terminal's MOVR panel: daily % is the
+  per-share move over the prior share price, cash excluded. Every reader
+  (MOVR, PM, the Portfolio page, the brief) takes a holding's `dayChange`
+  as the per-share DOLLAR move, but the sheet's Day Change column now
+  holds a percentage ("-3.80%"), so `perShareDayChange` converts it at
+  parse time. Read as dollars it was wrong both ways (Nov '26): VOO's
+  3.78% fall showed as 0.55%, ImmunityBio's 9.35% as 53.58%. The
+  first cut ranked the PriceBar cache and only ever surfaced the 2-3
+  tickers someone had charted — superseded so MOVR reflects the whole
+  book.
 - `server/src/routes/terminal.js` — terminal data panels. `/movers`
   serves the MOVR ranking from `getPortfolioMovers`.
 - `server/src/services/secFilings.js` — SEC EDGAR. company_tickers
@@ -1077,6 +1082,23 @@ that link existed are filled in on server boot. A meeting still ahead
 announces itself; one that already happened is marked seen so it does
 not pop up as a new assignment. The pitch cannot be deleted while the
 request points at it.
+
+Three things about requests, each paid for (Nov '26):
+- **`proposedDate` is a calendar day stored as UTC midnight.** Read it
+  with UTC fields (`requestDay` on the client, `requestDateLabel` in
+  the emails), never as an instant: formatted in New York it is the
+  evening before. The Pitch Requests page did exactly that, so every
+  requester and both presidents saw a Wednesday club block labelled
+  Tuesday while the pitch itself sat on the right day.
+- **Every President is emailed.** The club runs co-presidents and
+  `findPresident()` emailed only the oldest account, so the other never
+  heard a request had arrived. `newRequestRecipients` sends to each
+  President, then the requester and the pod PM, nobody twice.
+- **A deck over 15 MB is linked, not attached.** Gmail refuses a
+  message over 25 MB and base64 makes a file a third larger, while
+  uploads are allowed up to 25 MB, so a big deck bounced the President's
+  and PM's emails whole while the requester's copy, with no attachment,
+  arrived. The link points at the request on the site.
 
 ## Voting session kinds (buy vs sell)
 

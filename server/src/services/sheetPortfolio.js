@@ -32,6 +32,25 @@ function toNumber(raw) {
   return Number.isFinite(n) ? n : null;
 }
 
+// Every reader of a holding's dayChange (MOVR, PM, the Portfolio page,
+// the club brief) takes it as the per-share dollar move, which is what
+// the sheet's Day Change column held when they were written. The column
+// now holds the day's percentage ("-3.80%"), and read as dollars that
+// was wrong both ways: VOO's 3.78% fall showed as 0.55%, ImmunityBio's
+// 9.35% as 53.58%, because the error scales with the share price. A
+// percentage is turned back into the per-share move here, from the
+// current price, so nothing downstream has to know which form the
+// sheet is in.
+function perShareDayChange(raw, price) {
+  const n = toNumber(raw);
+  if (n == null || !String(raw).includes('%')) return n;
+  const ratio = 1 + n / 100;
+  // No price, or a fall of 100% or more, leaves nothing to scale by:
+  // null hands the row to the quote fallback rather than inventing a move.
+  if (price == null || !(ratio > 0)) return null;
+  return price - price / ratio;
+}
+
 // Map the sheet's header row to canonical field keys we care about.
 // Anything we don't recognize is ignored.
 const HEADER_ALIASES = {
@@ -108,6 +127,18 @@ export async function readSheetPortfolio({ forceFresh = false } = {}) {
   }
   const csvText = await res.text();
 
+  const data = {
+    ...parsePortfolioCsv(csvText),
+    fetchedAt: new Date().toISOString(),
+    source: 'sheet',
+  };
+  cached = { at: Date.now(), data };
+  return data;
+}
+
+// The sheet's CSV export → { holdings, totals }. Kept apart from the
+// fetch so the parsing can be tested on a written-out sheet.
+export function parsePortfolioCsv(csvText) {
   const rows = parse(csvText, {
     skip_empty_lines: false,
     relax_column_count: true,
@@ -162,16 +193,17 @@ export async function readSheetPortfolio({ forceFresh = false } = {}) {
       costBasis = marketValue;
     }
 
+    const price = toNumber(row[colMap.currentPrice]);
     const h = {
       ticker: rawTicker ? rawTicker.toUpperCase() : isCash ? 'CASH' : rawName.toUpperCase(),
       name: rawName || rawTicker,
       sector: colMap.sector != null ? String(row[colMap.sector] || '').trim() : null,
       shares: toNumber(row[colMap.shares]),
-      price: toNumber(row[colMap.currentPrice]),
+      price,
       costBasis,
       marketValue,
       portfolioPct: toNumber(row[colMap.portfolioPct]),
-      dayChange: toNumber(row[colMap.dayChange]),
+      dayChange: perShareDayChange(row[colMap.dayChange], price),
       dollarReturn: toNumber(row[colMap.dollarReturn]),
       ytdReturn: toNumber(row[colMap.ytdReturn]),
       percentReturn: toNumber(row[colMap.percentReturn]),
@@ -213,14 +245,10 @@ export async function readSheetPortfolio({ forceFresh = false } = {}) {
   const totalGainLoss = totalValue - totalCost;
   const totalGainLossPct = totalCost > 0 ? (totalGainLoss / totalCost) * 100 : 0;
 
-  const data = {
+  return {
     holdings,
     totals: { totalValue, totalCost, totalGainLoss, totalGainLossPct, cashValue, unpricedCount },
-    fetchedAt: new Date().toISOString(),
-    source: 'sheet',
   };
-  cached = { at: Date.now(), data };
-  return data;
 }
 
 // MOVR — every holding in the book and how much it's up or down
@@ -228,9 +256,10 @@ export async function readSheetPortfolio({ forceFresh = false } = {}) {
 // uses (cash excluded), as one flat list sorted best-to-worst — not a
 // gainers/losers split with weights.
 //
-// The sheet's day-change column is a PER-SHARE dollar figure (it's
-// money — clubBrief.js formats it so — but on the same scale as the
-// share price, not the position). Daily percent is therefore the
+// A holding's dayChange is a PER-SHARE dollar figure (it's money —
+// clubBrief.js formats it so — but on the same scale as the share
+// price, not the position; perShareDayChange makes it one when the
+// sheet holds a percentage). Daily percent is therefore the
 // per-share move over the prior share price: dayChange / (price -
 // dayChange). An earlier cut divided it by position value and
 // produced percentages ~100x too small.

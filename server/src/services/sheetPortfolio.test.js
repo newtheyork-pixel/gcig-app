@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { getPortfolioMovers } from './sheetPortfolio.js';
+import { getPortfolioMovers, parsePortfolioCsv } from './sheetPortfolio.js';
 
 // MOVR is the whole book ranked by today's move. The failure that
 // prompted these tests was quiet: the sheet's day-change cells are
@@ -77,4 +77,61 @@ test('a nonsensical prior price is dropped rather than ranked', async () => {
   });
   assert.equal(out.count, 0);
   assert.equal(out.unpriced, 1);
+});
+
+// The club's sheet as its CSV export writes it: a date cell above the
+// header, a blank row, the header, positions, cash, then the totals.
+function sheetCsv(dayCells) {
+  const header = [
+    '', 'Name', 'Ticker', 'Sector', 'Shares Owned', 'Price on X Date:', 'Current Price',
+    'Average Purchase Price', 'Current Market Value', '% of Portfolio', 'Day Change',
+    'Trend 30d', 'Trend 180d', '$ Return', 'YTD Return', '% Return Since Purchase',
+  ];
+  const line = (cells) => cells.map((c) => `"${c}"`).join(',');
+  return [
+    line(['', '', '', '', '', '1/1/2026']),
+    '',
+    line(header),
+    line(['', 'Vanguard S&P 500 ETF', 'VOO', 'Multi-Sector', '95', '628.3', '677.98', '$640.91',
+      '$64,408.10', '47.25%', dayCells.VOO, '', '', '$3,521.65', '7.91%', '5.78%']),
+    line(['', 'Mesa Laboratories Inc', 'MLAB', 'Health Care', '121', '79.43', '118.56', '$84.96',
+      '$14,345.76', '10.53%', dayCells.MLAB, '', '', '$4,065.60', '49.26%', '39.55%']),
+    line(['', 'Cash', '', 'Cash and Cash Equivalents', '1', '', '', '', '$8,935.56', '6.56%']),
+    line(['', '', '', '', '', '', '', '', '$87,689.42']),
+    line(['', 'Total Portfolio Value:', '', '', '', '', '', '', '$87,689.42']),
+  ].join('\n');
+}
+
+test('a Day Change written as a percentage becomes the per-share move', async () => {
+  // Read as dollars, "-3.80%" made VOO's day a 0.56% dip.
+  const { holdings } = parsePortfolioCsv(sheetCsv({ VOO: '-3.80%', MLAB: '-6.05%' }));
+  const voo = holdings.find((h) => h.ticker === 'VOO');
+  const prior = 677.98 / (1 - 0.038);
+  assert.ok(Math.abs(voo.dayChange - (677.98 - prior)) < 1e-9);
+
+  // Every screen derives the percentage back from price and dayChange,
+  // so the sheet's own figure has to survive the round trip.
+  const out = await getPortfolioMovers({
+    getSheetPortfolio: async () => ({ fetchedAt: null, holdings }),
+    resolveQuotes: async () => ({}),
+  });
+  const pct = Object.fromEntries(out.rows.map((r) => [r.ticker, r.changePct]));
+  assert.ok(Math.abs(pct.VOO - -0.038) < 1e-12, `VOO ${pct.VOO}`);
+  assert.ok(Math.abs(pct.MLAB - -0.0605) < 1e-12, `MLAB ${pct.MLAB}`);
+  assert.equal(out.unpriced, 0);
+});
+
+test('a Day Change written in dollars is still read as dollars', () => {
+  const { holdings } = parsePortfolioCsv(sheetCsv({ VOO: '$-26.78', MLAB: '-7.65' }));
+  assert.equal(holdings.find((h) => h.ticker === 'VOO').dayChange, -26.78);
+  assert.equal(holdings.find((h) => h.ticker === 'MLAB').dayChange, -7.65);
+});
+
+test('a percentage with nothing to scale by is left for the quote fallback', () => {
+  const csv = sheetCsv({ VOO: '-3.80%', MLAB: '-100.00%' }).replace('"677.98"', '"#N/A"');
+  const { holdings } = parsePortfolioCsv(csv);
+  assert.equal(holdings.find((h) => h.ticker === 'VOO').dayChange, null, 'no price');
+  assert.equal(holdings.find((h) => h.ticker === 'MLAB').dayChange, null, 'a 100% fall');
+  // Cash is never given a move.
+  assert.equal(holdings.find((h) => h.isCash).dayChange, null);
 });
