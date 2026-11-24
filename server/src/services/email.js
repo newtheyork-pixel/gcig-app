@@ -355,7 +355,7 @@ export async function sendBuyLevelEmail(toEmails, alert) {
 
 export async function sendBroadcastEmail(
   toEmails,
-  { subject, bodyHtml, senderName, audienceLabel }
+  { subject, bodyHtml, senderName, senderEmail, audienceLabel }
 ) {
   if (!Array.isArray(toEmails) || toEmails.length === 0) {
     throw new Error('No recipients');
@@ -364,6 +364,10 @@ export async function sendBroadcastEmail(
     from: from(),
     to: from(), // our own address — recipients are bcc'd
     bcc: toEmails,
+    // The footer promises replies reach the sender, and for as long as
+    // there was no Reply-To they went to the club's own inbox, where
+    // nobody who sent the broadcast was reading.
+    ...(senderEmail ? { replyTo: senderEmail } : {}),
     subject,
     html: `
       <div style="font-family: 'Inter', system-ui, sans-serif; max-width: 560px; margin: 0 auto; padding: 32px;">
@@ -378,14 +382,14 @@ export async function sendBroadcastEmail(
             From
           </div>
           <div style="color: #1B2A4A; font-size: 14px; font-weight: 600; margin: 0 0 12px;">
-            ${senderName}${audienceLabel ? ` &middot; to ${audienceLabel}` : ''}
+            ${escapeHtml(senderName)}${audienceLabel ? ` &middot; to ${escapeHtml(audienceLabel)}` : ''}
           </div>
           <div style="color: #1B2A4A; font-size: 15px; line-height: 1.55; white-space: pre-wrap;">
             ${bodyHtml}
           </div>
         </div>
         <p style="color: #8C99BB; font-size: 11px; text-align: center; margin: 16px 0 0;">
-          You received this because you are a member of the Griffin Fund. Replies go to ${senderName}.
+          You received this because you are a member of the Griffin Fund. Replies go to ${escapeHtml(senderName)}.
         </p>
       </div>
     `,
@@ -541,10 +545,19 @@ export async function sendPitchRequestDecisionEmail(
     roomLabel,
     icsAttachment, // optional { filename, content (Buffer or string), contentType }
     ccCopy, // when true, this is the PM's cc copy of an approval
+    // A president took an approval back. The requester and the PM both
+    // had a confirmed meeting and a calendar invite, so this copy has to
+    // say the meeting is off, not that a request was turned down.
+    withdrawn,
   }
 ) {
   const isApproved = String(decision || '').toLowerCase() === 'approved';
-  const headline = ccCopy
+  const why = reason ? ` Reason: <em>${escapeHtml(reason)}</em>` : '';
+  const headline = withdrawn
+    ? ccCopy
+      ? `Off the calendar: ${ticker} pitch meeting`
+      : `Approval withdrawn: your ${ticker} pitch meeting`
+    : ccCopy
     ? `Confirmed: ${ticker} pitch meeting on the calendar`
     : actor === 'President'
     ? isApproved
@@ -553,7 +566,11 @@ export async function sendPitchRequestDecisionEmail(
     : isApproved
     ? `Your PM has approved your ${ticker} pitch request`
     : `Your PM can't make your ${ticker} pitch meeting`;
-  const body = ccCopy
+  const body = withdrawn
+    ? ccCopy
+      ? `<strong>${escapeHtml(actorName)}</strong> withdrew the approval of this pitch meeting, so it is off.${why} The attached cancellation takes it off your calendar.`
+      : `<strong>${escapeHtml(actorName)}</strong> withdrew the approval of your pitch request, so the meeting is off.${why} The attached cancellation takes it off your calendar. You can submit a new request with a different time.`
+    : ccCopy
     ? `<strong>${escapeHtml(actorName)}</strong> approved the pitch meeting. You're cc'd as the responsible PM — see the time + room below and add it to your calendar.`
     : actor === 'President'
     ? isApproved
@@ -564,10 +581,11 @@ export async function sendPitchRequestDecisionEmail(
     : `<strong>${escapeHtml(actorName)}</strong> (your PM) can't make this meeting${reason ? ` — <em>${escapeHtml(reason)}</em>` : ''}. The President can still approve, so the meeting may go ahead without your PM.`;
 
   // Meeting details block — only rendered when we have a date AND a
-  // start time (i.e. on approve emails, where it matters most).
+  // start time (i.e. on approve emails, where it matters most, and on a
+  // withdrawal, so nobody has to guess which meeting is off).
   const dateStr = requestDateLabel(proposedDate);
   const timeLabel = formatHHMMto12h(proposedStartTime);
-  const showDetails = isApproved && dateStr && timeLabel;
+  const showDetails = (isApproved || withdrawn) && dateStr && timeLabel;
   const detailsBlock = showDetails
     ? `<div style="background: #1B2A4A; border-radius: 8px; padding: 16px; margin: 0 0 16px;">
          <p style="color: #8C99BB; font-size: 12px; margin: 0 0 4px;">When</p>
@@ -634,7 +652,12 @@ export function buildPitchMeetingIcs({
   organizerEmail,
   organizerName,
   attendeeEmails = [],
+  // 'CANCEL' takes back an invite sent earlier. Calendars match it to
+  // the original by UID, and a cancellation has to carry a higher
+  // SEQUENCE than the invite it replaces, which had none (zero).
+  method = 'REQUEST',
 }) {
+  const cancel = method === 'CANCEL';
   if (!proposedDate || !proposedStartTime) {
     throw new Error('proposedDate + proposedStartTime required');
   }
@@ -666,10 +689,12 @@ export function buildPitchMeetingIcs({
     'BEGIN:VCALENDAR',
     'VERSION:2.0',
     'PRODID:-//Griffin Fund//Pitch Request//EN',
-    'METHOD:REQUEST',
+    cancel ? 'METHOD:CANCEL' : 'METHOD:REQUEST',
     'CALSCALE:GREGORIAN',
     'BEGIN:VEVENT',
     `UID:${uid}`,
+    cancel ? 'SEQUENCE:1' : null,
+    cancel ? 'STATUS:CANCELLED' : null,
     `DTSTAMP:${dtstamp}`,
     `DTSTART;TZID=America/New_York:${startWallclock}`,
     `DTEND;TZID=America/New_York:${endWallclock}`,
@@ -688,9 +713,9 @@ export function buildPitchMeetingIcs({
     'END:VCALENDAR',
   ].filter(Boolean);
   return {
-    filename: 'pitch-meeting.ics',
+    filename: cancel ? 'pitch-meeting-cancelled.ics' : 'pitch-meeting.ics',
     content: lines.join('\r\n'),
-    contentType: 'text/calendar; charset=utf-8; method=REQUEST',
+    contentType: `text/calendar; charset=utf-8; method=${cancel ? 'CANCEL' : 'REQUEST'}`,
   };
 }
 

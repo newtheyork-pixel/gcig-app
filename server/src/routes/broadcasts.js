@@ -189,6 +189,7 @@ router.post('/send', sendLimiter, async (req, res) => {
       subject: s,
       bodyHtml: escapeHtml(b),
       senderName: req.user.name,
+      senderEmail: req.user.email,
       audienceLabel: label,
     });
   } catch (err) {
