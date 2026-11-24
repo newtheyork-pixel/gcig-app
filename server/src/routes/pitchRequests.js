@@ -23,6 +23,11 @@ import {
   deckForEmail,
   newRequestRecipients,
 } from '../services/pitchRequestMail.js';
+import {
+  meetingTime,
+  pitchMadeByApproval,
+  withdrawRefusal,
+} from '../services/pitchRequestWithdraw.js';
 
 const router = Router();
 router.use(verifyJwt);
@@ -320,6 +325,26 @@ router.get('/pending-for-pm', async (req, res) => {
   res.json(rows);
 });
 
+// Approved meetings that are still ahead, for the one thing a president
+// can do to an approval after the fact: withdraw it. The inbox lists
+// only what is pending, so an approval left every view a president had
+// the moment it was pressed, which is how an accidental press stayed.
+router.get('/approved-for-president', async (req, res) => {
+  if (req.user.role !== 'President') {
+    return res.status(403).json({ error: 'President only' });
+  }
+  const rows = await prisma.pitchRequest.findMany({
+    where: { status: 'Approved' },
+    orderBy: { proposedDate: 'asc' },
+    include: {
+      ...pitchRequestInclude(),
+      pitch: { select: { id: true, date: true } },
+    },
+  });
+  const now = Date.now();
+  res.json(rows.filter((row) => meetingTime(row, row.pitch).getTime() > now));
+});
+
 // ── Decisions ─────────────────────────────────────────────────────────
 
 async function emailRequesterDecision(row, { actor, actorName, decision, reason }) {
@@ -442,6 +467,163 @@ router.post('/:id/president-decision', async (req, res) => {
   }).catch(() => {});
 
   res.json(updated);
+});
+
+// The requester and the PM were both sent the approval with a calendar
+// invite, so both are told the meeting is off, with a cancellation
+// that names the original invite. `row` is the request as it stood
+// before the withdrawal: the cancellation has to come from the invite's
+// organizer, and that is the president who approved it.
+async function emailWithdrawal(row, { actorName, reason }) {
+  const roomLabel = row.room ? ROOM_LABELS[row.room] || row.room : null;
+  let cancellation = null;
+  if (row.proposedDate && row.proposedStartTime) {
+    try {
+      cancellation = buildPitchMeetingIcs({
+        uid: `pitch-request-${row.id}@griffinfund`,
+        proposedDate: row.proposedDate,
+        proposedStartTime: row.proposedStartTime,
+        ticker: row.ticker,
+        companyName: row.companyName,
+        roomLabel,
+        organizerEmail: row.president?.email || null,
+        organizerName: row.president?.name || 'President',
+        attendeeEmails: [row.requester?.email, row.pm?.email].filter(Boolean),
+        method: 'CANCEL',
+      });
+    } catch (err) {
+      console.warn(`pitch-request ${row.id} cancellation build failed: ${err.message}`);
+    }
+  }
+  const params = {
+    requesterName: row.requester?.name,
+    actor: 'President',
+    actorName,
+    decision: 'Declined',
+    ticker: row.ticker,
+    reason,
+    dashboardUrl: `${primaryClientOrigin()}/pitch-requests`,
+    proposedDate: row.proposedDate,
+    proposedStartTime: row.proposedStartTime,
+    roomLabel,
+    icsAttachment: cancellation,
+    withdrawn: true,
+  };
+  if (row.requester?.email) {
+    try {
+      await sendPitchRequestDecisionEmail(row.requester.email, params);
+    } catch (err) {
+      console.error(`pitch-request ${row.id} withdrawal email failed: ${err.message}`);
+    }
+  }
+  if (row.pm?.email && row.pm.id !== row.requester?.id) {
+    try {
+      await sendPitchRequestDecisionEmail(row.pm.email, {
+        ...params,
+        requesterName: row.pm.name,
+        ccCopy: true,
+      });
+    } catch (err) {
+      console.error(`pitch-request ${row.id} PM withdrawal email failed: ${err.message}`);
+    }
+  }
+}
+
+class WithdrawConflict extends Error {}
+
+// Take an approval back while its meeting is still ahead and no vote
+// has been opened on it. The request becomes a decline, the pitch the
+// approval wrote comes off the calendar with it, and a pitch that was
+// on the calendar first is unlinked and left standing.
+router.post('/:id/withdraw-approval', async (req, res) => {
+  if (req.user.role !== 'President') {
+    return res.status(403).json({ error: 'President only' });
+  }
+  const id = Number(req.params.id);
+  const given = typeof req.body?.reason === 'string' ? req.body.reason.trim() : '';
+  const reason = given || null;
+  const existing = await prisma.pitchRequest.findUnique({
+    where: { id },
+    include: {
+      ...pitchRequestInclude(),
+      pitch: {
+        select: {
+          id: true,
+          date: true,
+          createdAt: true,
+          _count: { select: { votingSessions: true } },
+        },
+      },
+    },
+  });
+  if (!existing) return res.status(404).json({ error: 'Not found' });
+  const pitch = existing.pitch
+    ? { ...existing.pitch, votingSessionCount: existing.pitch._count.votingSessions }
+    : null;
+  const refusal = withdrawRefusal(existing, pitch);
+  if (refusal) return res.status(409).json({ error: refusal });
+  const removePitch = !!pitch && pitchMadeByApproval(pitch, existing);
+
+  let updated;
+  try {
+    updated = await prisma.$transaction(async (tx) => {
+      // Claimed against the state that was checked, so a second press
+      // or a decision made in another tab cannot half-apply.
+      const claimed = await tx.pitchRequest.updateMany({
+        where: { id, status: 'Approved', pitchId: existing.pitchId },
+        data: {
+          status: 'Declined',
+          pitchId: null,
+          presidentId: req.user.id,
+          presidentDecidedAt: new Date(),
+          // There is no separate status for this, so the reason says
+          // it, or the requester's page would show a plain decline.
+          presidentDeclineReason: reason
+            ? `Approval withdrawn: ${reason}`
+            : 'Approval withdrawn',
+          requesterSeenAt: null,
+        },
+      });
+      if (claimed.count === 0) {
+        throw new WithdrawConflict(
+          'This request changed while you were looking at it. Reload and try again.'
+        );
+      }
+      if (removePitch) {
+        const votes = await tx.votingSession.count({ where: { pitchId: pitch.id } });
+        if (votes > 0) {
+          throw new WithdrawConflict(
+            'A vote has already been opened on this pitch, so its approval stands.'
+          );
+        }
+        await tx.pitch.delete({ where: { id: pitch.id } });
+      }
+      return tx.pitchRequest.findUnique({
+        where: { id },
+        include: pitchRequestInclude(),
+      });
+    });
+  } catch (err) {
+    if (err instanceof WithdrawConflict) {
+      return res.status(409).json({ error: err.message });
+    }
+    throw err;
+  }
+
+  await auditReq(req, 'pitch_request.withdraw_approval', 'PitchRequest', id, {
+    ticker: updated.ticker,
+    reason,
+    pitchId: existing.pitchId,
+    pitchRemoved: removePitch,
+  });
+
+  emailWithdrawal(existing, { actorName: req.user.name, reason }).catch(() => {});
+
+  res.json({
+    ...updated,
+    pitchRemoved: removePitch,
+    keptPitchId: removePitch ? null : existing.pitchId,
+  });
 });
 
 // PM decision — informational. Doesn't change status.

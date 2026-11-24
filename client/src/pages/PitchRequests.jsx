@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { format } from 'date-fns';
-import { CheckCircle2, XCircle, Clock, Eye, Send } from 'lucide-react';
+import { CheckCircle2, XCircle, Clock, Eye, Send, Undo2 } from 'lucide-react';
 import api from '../api/client.js';
 import { useAuth } from '../context/AuthContext.jsx';
 import PageHeader from '../components/PageHeader.jsx';
@@ -55,6 +55,7 @@ export default function PitchRequests() {
 
   const [mine, setMine] = useState([]);
   const [pendingPresident, setPendingPresident] = useState([]);
+  const [approvedUpcoming, setApprovedUpcoming] = useState([]);
   const [pendingPM, setPendingPM] = useState([]);
   const [requestOpen, setRequestOpen] = useState(false);
   const [busyId, setBusyId] = useState(null);
@@ -66,6 +67,10 @@ export default function PitchRequests() {
         api
           .get('/pitch-requests/pending-for-president')
           .then((r) => setPendingPresident(r.data))
+          .catch(() => {}),
+        api
+          .get('/pitch-requests/approved-for-president')
+          .then((r) => setApprovedUpcoming(r.data))
           .catch(() => {})
       );
     }
@@ -100,6 +105,21 @@ export default function PitchRequests() {
   }, [isPresident, isPM]);
 
   async function decide(row, role, approved) {
+    // Approving puts a pitch on the club calendar and mails invites, so
+    // it asks first. One press used to do all of that with no way back.
+    if (approved && role === 'President') {
+      const day = requestDay(row.proposedDate);
+      const when = [
+        day ? format(day, 'EEE, MMM d') : null,
+        row.proposedStartTime ? formatStartTime(row.proposedStartTime) : null,
+      ]
+        .filter(Boolean)
+        .join(' at ');
+      const ok = window.confirm(
+        `Approve ${row.ticker}${when ? ` for ${when}` : ''}? This puts the pitch on the club calendar and emails ${row.requester?.name || 'the requester'} a calendar invite.`
+      );
+      if (!ok) return;
+    }
     let reason = null;
     if (!approved) {
       reason = window.prompt(
@@ -119,6 +139,29 @@ export default function PitchRequests() {
       await loadAll();
     } catch (err) {
       alert(err.response?.data?.error || 'Failed to record decision.');
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  async function withdraw(row) {
+    const reason = window.prompt(
+      `Withdraw the approval of ${row.ticker}? The meeting comes off the calendar and ${row.requester?.name || 'the requester'} is emailed a cancellation.\n\nOptional: say why (they will see this).`
+    );
+    if (reason === null) return; // cancelled
+    setBusyId(`withdraw-${row.id}`);
+    try {
+      const { data } = await api.post(`/pitch-requests/${row.id}/withdraw-approval`, {
+        reason,
+      });
+      if (!data.pitchRemoved && data.keptPitchId) {
+        alert(
+          'This pitch was on the calendar before the request was approved, so it is still there. Remove it from the pitches calendar if the meeting is not happening.'
+        );
+      }
+      await loadAll();
+    } catch (err) {
+      alert(err.response?.data?.error || 'Failed to withdraw the approval.');
     } finally {
       setBusyId(null);
     }
@@ -151,6 +194,24 @@ export default function PitchRequests() {
       </Card>
     );
   }, [isPresident, pendingPresident, busyId]);
+
+  const approvedSection = useMemo(() => {
+    if (!isPresident || approvedUpcoming.length === 0) return null;
+    return (
+      <Card kicker="Approved" title={`Coming up (${approvedUpcoming.length})`}>
+        <div className="space-y-3">
+          {approvedUpcoming.map((row) => (
+            <RequestRow
+              key={row.id}
+              row={row}
+              busy={busyId}
+              onWithdraw={() => withdraw(row)}
+            />
+          ))}
+        </div>
+      </Card>
+    );
+  }, [isPresident, approvedUpcoming, busyId]);
 
   const pmSection = useMemo(() => {
     if (!isPM) return null;
@@ -197,6 +258,7 @@ export default function PitchRequests() {
 
       <div className="space-y-4">
         {presidentSection}
+        {approvedSection}
         {pmSection}
 
         <Card kicker="Yours" title={`My requests (${mine.length})`}>
@@ -231,6 +293,7 @@ function RequestRow({
   mine,
   busy,
   onDecide,
+  onWithdraw,
 }) {
   const lunch = lunchSummary(row.proposedLunch);
   const day = requestDay(row.proposedDate);
@@ -341,6 +404,18 @@ function RequestRow({
           >
             <XCircle className="h-4 w-4" />
             {showPresidentActions ? 'Decline' : "Can't make it"}
+          </Button>
+        </div>
+      )}
+      {onWithdraw && row.status === 'Approved' && (
+        <div className="mt-3 flex gap-2 border-t border-navy-50 pt-3">
+          <Button
+            variant="outline"
+            disabled={busy === `withdraw-${row.id}`}
+            onClick={onWithdraw}
+          >
+            <Undo2 className="h-4 w-4" />
+            Withdraw approval
           </Button>
         </div>
       )}

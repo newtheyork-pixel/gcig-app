@@ -1100,6 +1100,21 @@ Three things about requests, each paid for (Nov '26):
   and PM's emails whole while the requester's copy, with no attachment,
   arrived. The link points at the request on the site.
 
+**An approval can be withdrawn (Nov '26).** Approve had no undo: one
+accidental press on a test request put a pitch on the club calendar,
+the vote form and the dashboard, and the pitch could not be deleted
+because the request pointed at it. A President now withdraws from
+"Approved, coming up" on the Pitch Requests page, while the meeting is
+ahead and no vote is attached (`services/pitchRequestWithdraw.js`).
+The request becomes Declined, its reason marked as a withdrawal, and
+the requester and PM get a calendar cancellation for the invite they
+were sent. The pitch comes off the calendar only if the approval wrote
+it, judged by its creation time sitting within a minute of the
+decision. One that was on the calendar first, or that the boot
+backfill adopted, is unlinked and left standing: a pitch we cannot
+prove the approval made is not ours to delete. Approve also asks for
+confirmation now.
+
 ## Voting session kinds (buy vs sell)
 
 `VotingSession.kind` is `"buy"` (default) or `"sell"`. A **buy** vote is the
